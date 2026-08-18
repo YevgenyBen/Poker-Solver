@@ -1,16 +1,14 @@
 import random
 
 import numpy as np
-import pytest
 
 from poker_solver.equity import (
     build_equity_table,
     deal_two_hands,
     get_equity_table,
-    hand_index,
     monte_carlo_equity,
 )
-from poker_solver.starting_hands import StartingHand, all_starting_hands
+from poker_solver.starting_hands import StartingHand
 
 
 def test_deal_two_hands_returns_four_distinct_cards():
@@ -137,14 +135,3 @@ def test_get_equity_table_force_rebuild_still_valid(tmp_path):
     assert rebuilt.shape == (2, 2)
     assert np.all(rebuilt.diagonal() == 0.5)
 
-
-def test_hand_index_is_a_bijection_over_all_hands():
-    hands = all_starting_hands()
-    indices = {hand_index(hand) for hand in hands}
-    assert indices == set(range(169))
-
-
-def test_hand_index_matches_all_starting_hands_order():
-    hands = all_starting_hands()
-    assert hand_index(hands[0]) == 0
-    assert hand_index(hands[-1]) == 168

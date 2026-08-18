@@ -145,8 +145,7 @@ def solve(
     """Run `iterations` of CFR+ over `root`, for the given `hands`.
 
     `equity_table` must be shaped (len(hands), len(hands)) with rows/cols
-    in the same order as `hands` (see equity.get_equity_table /
-    equity.hand_index).
+    in the same order as `hands` (see equity.get_equity_table).
 
     Returns a dict of {id(DecisionNode): InfoSetTable}. There's no
     randomness anywhere in this process (the tree is walked exhaustively,

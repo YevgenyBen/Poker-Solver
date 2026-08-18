@@ -11,8 +11,6 @@ simulation. It has no dependency on the solver/game-tree logic.
 from collections import Counter
 from itertools import combinations
 
-from .cards import Card
-
 # Hand categories, low to high — the first element of every rank tuple.
 HIGH_CARD = 0
 PAIR = 1

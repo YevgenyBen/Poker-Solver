@@ -1,8 +1,8 @@
-"""Small helper functions for working with card ranks.
+"""Small helper for working with a single card rank character.
 
-This module is an early scaffold for the poker solver. It currently
-only handles rank parsing and comparison; suit logic and full hand
-evaluation will be added later.
+`cards.py` builds full Card/Deck objects on top of `rank_value`; actual
+hand comparison lives in `hand_eval.py` (full 5-7 card poker hand
+ranking), not here.
 """
 
 RANK_ORDER = "23456789TJQKA"
@@ -21,18 +21,3 @@ def rank_value(rank: str) -> int:
     if rank not in RANK_ORDER:
         raise ValueError(f"Unknown rank: {rank!r}")
     return RANK_ORDER.index(rank)
-
-
-def compare_ranks(rank_a: str, rank_b: str) -> int:
-    """Compare two card ranks.
-
-    Returns -1 if `rank_a` is lower than `rank_b`, 1 if it's higher,
-    and 0 if they're equal.
-    """
-    value_a = rank_value(rank_a)
-    value_b = rank_value(rank_b)
-    if value_a < value_b:
-        return -1
-    if value_a > value_b:
-        return 1
-    return 0
