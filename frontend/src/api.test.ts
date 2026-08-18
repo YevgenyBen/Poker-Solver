@@ -44,4 +44,41 @@ describe('fetchOpeningRange', () => {
 
     await expect(fetchOpeningRange(100)).rejects.toThrow('Request failed (500)');
   });
+
+  it('appends players and position as query params when given', async () => {
+    const payload = {
+      stack_bb: 100,
+      iterations: 1000,
+      elapsed_seconds: 2.5,
+      opening_range: {},
+      position: 'SB',
+      positions: ['BTN', 'SB', 'BB'],
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(payload) }),
+    );
+
+    const result = await fetchOpeningRange(100, undefined, { players: 3, position: 'SB' });
+    expect(result).toEqual(payload);
+    expect(fetch).toHaveBeenCalledWith('/solve/100?players=3&position=SB', { signal: undefined });
+  });
+
+  it('omits the query string entirely when no params are given', async () => {
+    const payload = {
+      stack_bb: 100,
+      iterations: 1000,
+      elapsed_seconds: 2.5,
+      opening_range: {},
+      position: 'BTN',
+      positions: ['BTN', 'BB'],
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(payload) }),
+    );
+
+    await fetchOpeningRange(100);
+    expect(fetch).toHaveBeenCalledWith('/solve/100', { signal: undefined });
+  });
 });

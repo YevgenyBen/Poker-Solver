@@ -8,3 +8,5 @@ class SolveResponse(BaseModel):
     iterations: int
     elapsed_seconds: float
     opening_range: dict[str, dict[str, float]]
+    position: str
+    positions: list[str]

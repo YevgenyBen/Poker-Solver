@@ -27,6 +27,11 @@ def test_default_config_is_valid():
     GameConfig()  # should not raise
 
 
+def test_default_config_is_heads_up():
+    assert GameConfig().positions == (BTN, BB)
+    assert GameConfig().num_players == 2
+
+
 def test_config_rejects_wrong_raise_sizes_length():
     with pytest.raises(ValueError):
         GameConfig(max_raises=4, raise_sizes=(2.5, 3.0))  # needs 3 entries
@@ -47,53 +52,93 @@ def test_config_rejects_nonpositive_blinds():
         GameConfig(small_blind=0, raise_sizes=())
 
 
+def test_config_rejects_fewer_than_two_positions():
+    with pytest.raises(ValueError):
+        GameConfig(positions=("BTN",), raise_sizes=())
+
+
+def test_config_rejects_duplicate_positions():
+    with pytest.raises(ValueError):
+        GameConfig(positions=("BTN", "BTN", "BB"), raise_sizes=())
+
+
 # ---------------------------------------------------------------------------
 # TerminalNode.payoff
 # ---------------------------------------------------------------------------
 
 
 def test_payoff_btn_folds():
-    node = TerminalNode(pot=1.5, btn_invested=0.5, bb_invested=1.0, folded_player=BTN)
-    assert node.payoff(None, None) == -0.5
+    node = TerminalNode(pot=1.5, invested={"BTN": 0.5, "BB": 1.0}, folded=frozenset({"BTN"}))
+    assert node.payoff({}) == {"BTN": -0.5, "BB": 0.5}
 
 
 def test_payoff_bb_folds():
-    node = TerminalNode(pot=1.5, btn_invested=0.5, bb_invested=1.0, folded_player=BB)
+    node = TerminalNode(pot=1.5, invested={"BTN": 0.5, "BB": 1.0}, folded=frozenset({"BB"}))
     # BTN wins the whole pot: net = pot - btn_invested = 1.0.
-    assert node.payoff(None, None) == 1.0
+    assert node.payoff({}) == {"BTN": 1.0, "BB": -1.0}
 
 
-def test_payoff_fold_is_zero_sum():
-    node = TerminalNode(pot=5.0, btn_invested=2.0, bb_invested=3.0, folded_player=BTN)
-    btn_net = node.payoff(None, None)
-    # BB's net when BTN folds = pot - bb_invested, which must equal
-    # -btn_net for the outcome to be zero-sum.
-    bb_net = node.pot - node.bb_invested
-    assert btn_net == -bb_net
+def test_payoff_fold_is_zero_sum_multiway():
+    node = TerminalNode(
+        pot=15.0,
+        invested={"BTN": 5.0, "SB": 5.0, "BB": 5.0},
+        folded=frozenset({"BTN", "SB"}),
+    )
+    payoffs = node.payoff({})
+    assert sum(payoffs.values()) == pytest.approx(0.0)
+    assert payoffs["BB"] == pytest.approx(10.0)  # wins BTN's and SB's chips
+    assert payoffs["BTN"] == pytest.approx(-5.0)
+    assert payoffs["SB"] == pytest.approx(-5.0)
 
 
 def test_payoff_showdown_uses_payoff_fn():
-    node = TerminalNode(pot=10.0, btn_invested=5.0, bb_invested=5.0, folded_player=None)
-    # Stub: BTN gets 70% of the pot.
-    payoff_fn = lambda btn_hand, bb_hand, pot: 0.7 * pot
-    assert node.payoff("AA", "72o", payoff_fn) == pytest.approx(7.0 - 5.0)
+    node = TerminalNode(pot=10.0, invested={"BTN": 5.0, "BB": 5.0}, folded=frozenset())
+    # Stub: the first live hand gets 70% of the pot, the second 30%.
+    payoff_fn = lambda hands, pot: [0.7 * pot, 0.3 * pot]
+    payoffs = node.payoff({"BTN": "AA", "BB": "72o"}, payoff_fn)
+    assert payoffs["BTN"] == pytest.approx(7.0 - 5.0)
+    assert payoffs["BB"] == pytest.approx(3.0 - 5.0)
+    assert sum(payoffs.values()) == pytest.approx(0.0)
+
+
+def test_payoff_showdown_multiway_with_a_folder():
+    # BTN folded earlier; SB and BB go to showdown.
+    node = TerminalNode(
+        pot=12.0,
+        invested={"BTN": 2.0, "SB": 5.0, "BB": 5.0},
+        folded=frozenset({"BTN"}),
+    )
+    payoff_fn = lambda hands, pot: [0.4 * pot, 0.6 * pot]  # [SB share, BB share]
+    payoffs = node.payoff({"SB": "KK", "BB": "QQ"}, payoff_fn)
+    assert payoffs["BTN"] == pytest.approx(-2.0)
+    assert payoffs["SB"] == pytest.approx(0.4 * 12.0 - 5.0)
+    assert payoffs["BB"] == pytest.approx(0.6 * 12.0 - 5.0)
+    assert sum(payoffs.values()) == pytest.approx(0.0)
 
 
 def test_payoff_showdown_without_payoff_fn_raises():
-    node = TerminalNode(pot=10.0, btn_invested=5.0, bb_invested=5.0, folded_player=None)
+    node = TerminalNode(pot=10.0, invested={"BTN": 5.0, "BB": 5.0}, folded=frozenset())
     with pytest.raises(ValueError):
-        node.payoff("AA", "72o")
+        node.payoff({"BTN": "AA", "BB": "72o"})
 
 
 def test_terminal_is_showdown_property():
-    fold_node = TerminalNode(pot=1, btn_invested=1, bb_invested=1, folded_player=BTN)
-    showdown_node = TerminalNode(pot=1, btn_invested=1, bb_invested=1, folded_player=None)
+    fold_node = TerminalNode(pot=1, invested={"BTN": 1, "BB": 1}, folded=frozenset({"BTN"}))
+    showdown_node = TerminalNode(pot=1, invested={"BTN": 1, "BB": 1}, folded=frozenset())
     assert fold_node.is_showdown is False
     assert showdown_node.is_showdown is True
 
 
+def test_terminal_is_showdown_with_multiple_folds_still_multiway():
+    node = TerminalNode(
+        pot=1, invested={"BTN": 1, "SB": 1, "BB": 1, "CO": 1}, folded=frozenset({"BTN"})
+    )
+    assert node.is_showdown is True  # 3 live players remain
+
+
 # ---------------------------------------------------------------------------
-# Tree structure
+# Tree structure (heads-up — confirms the general builder still produces
+# the exact same behavior as the pre-generalization HU-specific one)
 # ---------------------------------------------------------------------------
 
 
@@ -111,9 +156,8 @@ def test_root_offers_fold_call_raise_and_allin():
 def test_root_fold_terminal_matches_blinds():
     root = build_game_tree(GameConfig(small_blind=0.5, big_blind=1.0))
     fold_terminal = root.children[Action(FOLD)]
-    assert fold_terminal.folded_player == BTN
-    assert fold_terminal.btn_invested == 0.5
-    assert fold_terminal.bb_invested == 1.0
+    assert fold_terminal.folded == frozenset({"BTN"})
+    assert fold_terminal.invested == {"BTN": 0.5, "BB": 1.0}
     assert fold_terminal.pot == 1.5
 
 
@@ -122,7 +166,7 @@ def test_btn_limp_passes_action_to_bb():
     after_limp = root.children[Action(CALL_OR_CHECK)]
     assert isinstance(after_limp, DecisionNode)
     assert after_limp.player_to_act == BB
-    assert after_limp.btn_invested == after_limp.bb_invested
+    assert after_limp.invested["BTN"] == after_limp.invested["BB"]
 
 
 def test_bb_facing_limp_has_no_fold_option():
@@ -168,85 +212,213 @@ def test_raise_sizing_3bet_is_multiplier_times_open():
 def test_fourth_raise_has_no_sized_tier_only_allin():
     config = GameConfig(big_blind=1.0, raise_sizes=(2.5, 3.0, 2.2), max_raises=4)
     node = build_game_tree(config)
-    # Walk down the "always raise" line three times (raises 1, 2, 3).
     for _ in range(3):
         raise_action = next(a for a in node.legal_actions if a.kind == RAISE)
         node = node.children[raise_action]
-    # Now raises_so_far == 3 == max_raises - 1: no sized raise offered.
     kinds = {action.kind for action in node.legal_actions}
     assert RAISE not in kinds
     assert ALL_IN in kinds
 
 
 # ---------------------------------------------------------------------------
-# Terminal-node counts (hand-verified for max_raises=1 by exhaustive
-# enumeration; cross-checked against an independent recursive formula for
-# max_raises 1-4).
+# Terminal-node counts, cross-checked against an independently-coded
+# reference formula that works for any number of players (a fresh
+# implementation of the same round-closing rules, not a call into
+# game_tree.py), for a generic deep-stack config where only the raise
+# cap ever limits action.
 #
-# Key structural fact the formula has to respect: once a player shoves
-# all-in, the responder's remaining stack exactly equals their call
-# amount (both players share the same starting stack), so a node reached
-# via an all-in never offers a further raise — it's always just
-# fold/call (2 terminals), regardless of how many raises came before it.
-# A node reached via a *sized* raise still has room behind, so it keeps
-# the full fold/call/raise/all-in shape.
+# Key structural fact that generalizes cleanly from HU to N players:
+# once ANY player shoves all-in, every subsequent responder's remaining
+# stack always exactly equals what they owe (current_bet == stack_bb
+# from then on, unaffected by other players' choices), so nobody after
+# a jam is ever offered a further raise — the whole "who still needs to
+# respond to this jam" tail is a pure fold/call binary chain of length k
+# (k = how many live players still need to act), giving exactly 2**k
+# terminal leaves for that tail, regardless of N.
 # ---------------------------------------------------------------------------
 
 
-def test_terminal_count_max_raises_1():
-    config = GameConfig(raise_sizes=(), max_raises=1)
-    root = build_game_tree(config)
-    assert count_terminal_nodes(root) == 6
+def _reference_terminal_count(num_players: int, max_raises: int) -> int:
+    positions = tuple(range(num_players))
+    sb_index, bb_index = positions[-2], positions[-1]
+    invested0 = {p: 0.0 for p in positions}
+    invested0[sb_index] = 0.5
+    invested0[bb_index] = 1.0
 
+    def post_jam_count(k: int) -> int:
+        return 2**k
 
-def _reference_terminal_count(max_raises: int) -> int:
-    """Independent recursive re-derivation of the terminal-node count,
-    for a "generic" (deep-stack) config where only the raise cap ever
-    limits action, never remaining stack.
-    """
-    POST_JAM = 2  # fold/call only, forever, once someone has shoved
+    def count(invested: dict, to_act: tuple, live: frozenset, raises_so_far: int) -> int:
+        if len(live) == 1 or not to_act:
+            return 1
+        player, rest = to_act[0], to_act[1:]
+        current_bet = max(invested[p] for p in live)
+        to_call = current_bet - invested[player]
 
-    def generic(r: int) -> int:
-        """A node reached via a sized raise, with `r` raises so far."""
-        total = 2  # fold + call
-        if r < max_raises - 1:
-            total += generic(r + 1)  # sized raise child
-        if r < max_raises:
-            total += POST_JAM  # all-in child
+        total = 0
+        if to_call > 0:
+            total += count(invested, rest, live - {player}, raises_so_far)  # fold
+
+        call_invested = dict(invested)
+        call_invested[player] = current_bet
+        total += count(call_invested, rest, live, raises_so_far)  # call/check
+
+        next_raise_number = raises_so_far + 1
+        if next_raise_number <= max_raises:
+            reopened = tuple(p for p in range(num_players) if p != player and p in live)
+            if next_raise_number < max_raises:
+                raise_invested = dict(invested)
+                raise_invested[player] = current_bet + 1.0  # any distinct higher value
+                total += count(raise_invested, reopened, live, next_raise_number)
+            total += post_jam_count(len(reopened))
         return total
 
-    def bb_facing_limp() -> int:
-        """BB's node after BTN limps: same shape as `generic` but with
-        no fold option (nothing to call yet)."""
-        total = 1  # call/check
-        if 0 < max_raises - 1:
-            total += generic(1)
-        if 0 < max_raises:
-            total += POST_JAM
-        return total
-
-    # Root: BTN's first action. fold + (limp -> bb_facing_limp) +
-    # (sized raise -> generic(1), if a sized tier exists) + all-in.
-    total = 1 + bb_facing_limp()
-    if 0 < max_raises - 1:
-        total += generic(1)
-    if 0 < max_raises:
-        total += POST_JAM
-    return total
+    return count(invested0, positions, frozenset(positions), 0)
 
 
 @pytest.mark.parametrize("max_raises", [1, 2, 3, 4])
-def test_terminal_count_matches_reference_formula(max_raises):
+def test_terminal_count_matches_reference_formula_heads_up(max_raises):
     raise_sizes = tuple([2.0] * (max_raises - 1))
-    config = GameConfig(stack_bb=1000.0, raise_sizes=raise_sizes, max_raises=max_raises)
+    config = GameConfig(
+        positions=(BTN, BB), stack_bb=1000.0, raise_sizes=raise_sizes, max_raises=max_raises
+    )
     root = build_game_tree(config)
-    assert count_terminal_nodes(root) == _reference_terminal_count(max_raises)
+    assert count_terminal_nodes(root) == _reference_terminal_count(2, max_raises)
+
+
+def test_reference_formula_matches_known_hu_values():
+    # Hand-verified (by exhaustive enumeration) in the original HU test
+    # suite — cross-checking the general formula reduces to these.
+    assert [_reference_terminal_count(2, m) for m in (1, 2, 3, 4)] == [6, 14, 22, 30]
+
+
+@pytest.mark.parametrize("max_raises", [1, 2, 3, 4])
+def test_terminal_count_matches_reference_formula_three_max(max_raises):
+    raise_sizes = tuple([2.0] * (max_raises - 1))
+    config = GameConfig(
+        positions=("BTN", "SB", "BB"), stack_bb=1000.0, raise_sizes=raise_sizes, max_raises=max_raises
+    )
+    root = build_game_tree(config)
+    assert count_terminal_nodes(root) == _reference_terminal_count(3, max_raises)
 
 
 def test_default_config_terminal_count():
-    # max_raises=4 by default; matches _reference_terminal_count(4).
     root = build_game_tree(GameConfig())
-    assert count_terminal_nodes(root) == _reference_terminal_count(4)
+    assert count_terminal_nodes(root) == _reference_terminal_count(2, 4)
+
+
+def test_three_max_default_raises_terminal_count():
+    config = GameConfig(positions=("BTN", "SB", "BB"))
+    root = build_game_tree(config)
+    assert count_terminal_nodes(root) == _reference_terminal_count(3, 4)
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatibility regression: the generalized builder must behave
+# identically to the pre-generalization heads-up-only implementation.
+# ---------------------------------------------------------------------------
+
+
+def test_heads_up_backward_compatibility():
+    config = GameConfig(positions=(BTN, BB))
+    root = build_game_tree(config)
+    assert root.player_to_act == BTN
+    assert set(root.invested) == {BTN, BB}
+    assert count_terminal_nodes(root) == 30  # unchanged from the original HU implementation
+
+
+# ---------------------------------------------------------------------------
+# Multiway (3-max) structural checks
+# ---------------------------------------------------------------------------
+
+
+def test_three_max_root_is_first_position():
+    config = GameConfig(positions=("BTN", "SB", "BB"))
+    root = build_game_tree(config)
+    assert root.player_to_act == "BTN"
+    assert root.invested == {"BTN": 0.0, "SB": 0.5, "BB": 1.0}
+
+
+def test_three_max_btn_fold_passes_action_to_sb():
+    # BTN folding doesn't end the hand — SB and BB still need to settle
+    # up on the blinds (SB owes another 0.5 to match BB).
+    config = GameConfig(positions=("BTN", "SB", "BB"))
+    root = build_game_tree(config)
+    after_btn_fold = root.children[Action(FOLD)]
+    assert isinstance(after_btn_fold, DecisionNode)
+    assert after_btn_fold.player_to_act == "SB"
+    assert after_btn_fold.folded == frozenset({"BTN"})
+
+
+def test_three_max_sb_still_has_fold_option_after_btn_limps():
+    config = GameConfig(positions=("BTN", "SB", "BB"))
+    root = build_game_tree(config)
+    after_btn_limp = root.children[Action(CALL_OR_CHECK)]
+    assert after_btn_limp.player_to_act == "SB"
+    kinds = {action.kind for action in after_btn_limp.legal_actions}
+    assert FOLD in kinds  # SB only posted half the big blind, still owes the rest
+
+
+def test_three_max_bb_has_no_fold_option_after_everyone_limps():
+    config = GameConfig(positions=("BTN", "SB", "BB"))
+    root = build_game_tree(config)
+    after_btn_limp = root.children[Action(CALL_OR_CHECK)]
+    after_sb_limp = after_btn_limp.children[Action(CALL_OR_CHECK)]
+    assert after_sb_limp.player_to_act == "BB"
+    kinds = {action.kind for action in after_sb_limp.legal_actions}
+    assert FOLD not in kinds
+
+
+def test_three_max_all_limp_is_terminal_showdown():
+    config = GameConfig(positions=("BTN", "SB", "BB"))
+    root = build_game_tree(config)
+    after_btn_limp = root.children[Action(CALL_OR_CHECK)]
+    after_sb_limp = after_btn_limp.children[Action(CALL_OR_CHECK)]
+    all_checked = after_sb_limp.children[Action(CALL_OR_CHECK)]
+    assert isinstance(all_checked, TerminalNode)
+    assert all_checked.is_showdown
+    assert all_checked.invested == {"BTN": 1.0, "SB": 1.0, "BB": 1.0}
+
+
+def test_three_max_raise_reopens_for_every_other_live_player():
+    config = GameConfig(positions=("BTN", "SB", "BB"))
+    root = build_game_tree(config)
+    raise_action = next(a for a in root.legal_actions if a.kind == RAISE)
+    after_btn_raise = root.children[raise_action]
+    assert after_btn_raise.player_to_act == "SB"
+    # SB folds; BB hasn't matched BTN's raise yet, so the round can't be
+    # closed by SB's fold — BB must still get a decision.
+    after_sb_fold = after_btn_raise.children[Action(FOLD)]
+    assert isinstance(after_sb_fold, DecisionNode)
+    assert after_sb_fold.player_to_act == "BB"
+    assert after_sb_fold.folded == frozenset({"SB"})
+    sb_call = after_btn_raise.children[Action(CALL_OR_CHECK)]
+    assert isinstance(sb_call, DecisionNode)
+    assert sb_call.player_to_act == "BB"
+
+
+def test_three_max_fold_removes_player_from_future_reopening():
+    # BTN raises; SB folds; BB 3-bets — the reopened queue for BB's
+    # 3-bet must be [BTN] only, never SB (already folded).
+    config = GameConfig(positions=("BTN", "SB", "BB"))
+    root = build_game_tree(config)
+    raise_action = next(a for a in root.legal_actions if a.kind == RAISE)
+    after_btn_raise = root.children[raise_action]
+    assert after_btn_raise.player_to_act == "SB"
+    after_sb_fold = after_btn_raise.children[Action(FOLD)]
+    assert after_sb_fold.player_to_act == "BB"
+    threebet_action = next(a for a in after_sb_fold.legal_actions if a.kind == RAISE)
+    after_bb_threebet = after_sb_fold.children[threebet_action]
+    assert after_bb_threebet.player_to_act == "BTN"
+
+
+def test_no_side_pots_multiway_all_actions_cap_at_stack():
+    config = GameConfig(positions=("BTN", "SB", "BB"), stack_bb=5.0, raise_sizes=(2.5, 3.0, 2.2))
+    root = build_game_tree(config)
+    for node in walk(root):
+        if isinstance(node, (DecisionNode, TerminalNode)):
+            for amount in node.invested.values():
+                assert amount <= config.stack_bb
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +430,12 @@ def test_tree_build_terminates_for_larger_raise_caps():
     config = GameConfig(stack_bb=1000.0, raise_sizes=tuple([2.0] * 7), max_raises=8)
     root = build_game_tree(config)
     assert tree_depth(root) <= 2 * config.max_raises + 1
+
+
+def test_tree_build_terminates_multiway():
+    config = GameConfig(positions=("BTN", "SB", "BB"), stack_bb=1000.0, raise_sizes=(2.0, 2.0, 2.0), max_raises=4)
+    root = build_game_tree(config)
+    assert tree_depth(root) > 0  # just needs to complete without recursing forever
 
 
 def test_no_decision_node_exceeds_max_raises():
@@ -274,10 +452,10 @@ def test_allin_present_exactly_when_raise_room_and_stack_remain():
     for node in walk(root):
         if not isinstance(node, DecisionNode):
             continue
-        opponent_invested = node.bb_invested if node.player_to_act == BTN else node.btn_invested
-        own_invested = node.btn_invested if node.player_to_act == BTN else node.bb_invested
-        to_call = opponent_invested - own_invested
-        remaining_stack = config.stack_bb - own_invested
+        live = [p for p in node.invested if p not in node.folded]
+        current_bet = max(node.invested[p] for p in live)
+        to_call = current_bet - node.invested[node.player_to_act]
+        remaining_stack = config.stack_bb - node.invested[node.player_to_act]
         should_have_allin = node.raises_so_far < config.max_raises and remaining_stack > to_call
         kinds = {action.kind for action in node.legal_actions}
         assert (ALL_IN in kinds) == should_have_allin
@@ -304,8 +482,6 @@ def test_no_action_commits_more_than_the_stack():
 
 
 def test_short_stack_collapses_sized_raise_to_allin_only():
-    # BTN opens to 2.5; BB's 3-bet would be 3.0 * 2.5 = 7.5, which
-    # exceeds a 5bb stack — BB should only see all_in as a raise option.
     config = GameConfig(stack_bb=5.0, raise_sizes=(2.5, 3.0, 2.2), max_raises=4)
     root = build_game_tree(config)
     open_action = next(a for a in root.legal_actions if a.kind == RAISE)

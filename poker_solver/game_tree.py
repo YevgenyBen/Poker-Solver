@@ -1,29 +1,37 @@
-"""Heads-up preflop betting-action tree.
+"""N-player preflop betting-action tree.
 
-This module models only the sequence of preflop actions (fold / call or
-check / raise / all-in) between the two heads-up positions, BTN (button
-and small blind, acts first) and BB (big blind, acts second and closes
-the action when there's been no raise).
+This module models the sequence of preflop actions (fold / call or check
+/ raise / all-in) around a table of N players, in a fixed table order
+given by `GameConfig.positions`. Heads-up (2 players, e.g.
+`positions=("BTN", "BB")`) is just the N=2 special case — this module
+makes no HU-specific assumptions.
 
 It deliberately does not branch on hole cards or hand classes anywhere —
-the same tree is reused for every (BTN hand, BB hand) pair during CFR
-solving (added in a later milestone). Terminal nodes instead expose a
-generic `payoff_fn` seam: whoever solves the tree supplies a function
-mapping (btn_hand, bb_hand, pot) to BTN's raw share of the pot, so this
-module has no dependency on cards/equity concepts at all. Today that
-payoff_fn is backed by the preflop equity table; if postflop streets are
-added later, it could be backed by a full postflop subgame value instead,
-without changing anything here.
+the same tree is reused for every combination of hands across all N
+players during CFR solving. Terminal nodes instead expose a generic
+`payoff_fn` seam: whoever solves the tree supplies a function mapping
+(a list of the live players' hands, pot) to their raw shares of the pot,
+so this module has no dependency on cards/equity concepts at all. Today
+that payoff_fn is backed by the preflop equity table; if postflop
+streets are added later, it could be backed by a full postflop subgame
+value instead, without changing anything here.
 
 This is a preflop-only model: any action sequence that isn't a fold (a
 limp-and-check, a raise that gets called, a jam that gets called) ends
 immediately at a "showdown" terminal valued via the injected payoff
 function, standing in for "then the rest of the hand gets played out."
+
+No side pots, at any N: `GameConfig` requires one shared `stack_bb` for
+every player, and the raise-sizing logic below guarantees no one is ever
+asked to commit more than that — so calling an all-in always brings the
+caller's own total investment up to exactly the same ceiling.
 """
 
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+# Defaults / conventional heads-up position labels — GameConfig.positions
+# accepts any table of unique strings, this isn't a hardcoded constraint.
 BTN = "BTN"
 BB = "BB"
 
@@ -35,19 +43,26 @@ ALL_IN = "all_in"
 
 @dataclass(frozen=True)
 class GameConfig:
-    """Parameters defining one heads-up preflop game to build a tree for.
+    """Parameters defining one N-player preflop game to build a tree for.
 
-    Both players are assumed to start with the same effective stack
-    (`stack_bb`) — standard for heads-up preflop solving.
+    All players are assumed to start with the same effective stack
+    (`stack_bb`) — standard for preflop solving at any table size.
+
+    `positions` is the acting order for the *first* betting round,
+    starting from the first player to act. The *last two* entries always
+    post the small and big blind respectively (and so act last) — e.g.
+    `("BTN", "SB", "BB")` for a 3-max table (BTN opens with nothing
+    posted), or the heads-up default `("BTN", "BB")` (BTN posts the
+    small blind and also opens first, same as today).
 
     `raise_sizes` has exactly `max_raises - 1` entries: the first raise
     (the "open") is sized as `raise_sizes[0] * big_blind`; every raise
     after that is sized as `raise_sizes[i] * <the previous bet's total
     size>`. The max_raises-th raise has no sized tier at all — it's
-    always forced to be an all-in shove. This mirrors real heads-up play,
-    where a 5th preflop raise is essentially always a jam.
+    always forced to be an all-in shove.
     """
 
+    positions: tuple = (BTN, BB)
     stack_bb: float = 100.0
     small_blind: float = 0.5
     big_blind: float = 1.0
@@ -55,6 +70,10 @@ class GameConfig:
     max_raises: int = 4
 
     def __post_init__(self):
+        if len(self.positions) < 2:
+            raise ValueError("positions must have at least 2 entries")
+        if len(set(self.positions)) != len(self.positions):
+            raise ValueError(f"positions must be unique, got {self.positions!r}")
         if self.max_raises < 1:
             raise ValueError("max_raises must be at least 1")
         if len(self.raise_sizes) != self.max_raises - 1:
@@ -66,6 +85,10 @@ class GameConfig:
             raise ValueError("stack_bb must be greater than small_blind")
         if self.small_blind <= 0 or self.big_blind <= 0:
             raise ValueError("small_blind and big_blind must be positive")
+
+    @property
+    def num_players(self) -> int:
+        return len(self.positions)
 
 
 @dataclass(frozen=True)
@@ -87,33 +110,41 @@ class Action:
 
 @dataclass(frozen=True)
 class TerminalNode:
-    """A leaf of the betting tree: either a fold or a (preflop) showdown."""
+    """A leaf of the betting tree: either a fold-out or a (preflop) showdown."""
 
     pot: float
-    btn_invested: float
-    bb_invested: float
-    folded_player: Optional[str]  # BTN, BB, or None for a showdown
+    invested: dict  # position -> total chips committed
+    folded: frozenset  # positions that folded
 
     @property
     def is_showdown(self) -> bool:
-        return self.folded_player is None
+        return len(self.invested) - len(self.folded) > 1
 
-    def payoff(self, btn_hand, bb_hand, payoff_fn: Optional[Callable] = None) -> float:
-        """BTN's net payoff at this terminal; BB's is always its negation.
+    def payoff(self, hands: dict, payoff_fn: Optional[Callable] = None) -> dict:
+        """Net payoff per position; always zero-sum (sums to 0).
 
-        `payoff_fn(btn_hand, bb_hand, pot)` must return BTN's *raw* share
-        of the pot (e.g. `equity(btn_hand, bb_hand) * pot`) — this method
-        subtracts BTN's investment for you. It's only called (and only
-        needs to be supplied) for showdown terminals; fold terminals are
-        resolved from the pot/investment bookkeeping alone.
+        `hands` maps position -> that position's hand. For a showdown,
+        `payoff_fn(live_hands, pot)` must return a list of *raw* pot
+        shares (e.g. equity * pot) in the same order as `live_hands`
+        (the live, non-folded positions in table order) — this method
+        subtracts each player's investment for you. It's only called
+        (and only needs to be supplied) for showdown terminals; a
+        fold-out is resolved from the pot/investment bookkeeping alone.
         """
-        if self.folded_player == BTN:
-            return -self.btn_invested
-        if self.folded_player == BB:
-            return self.bb_invested
+        live = [p for p in self.invested if p not in self.folded]
+        if len(live) == 1:
+            winner = live[0]
+            return {
+                p: (self.pot - self.invested[p] if p == winner else -self.invested[p])
+                for p in self.invested
+            }
         if payoff_fn is None:
             raise ValueError("payoff_fn is required to score a showdown terminal")
-        return payoff_fn(btn_hand, bb_hand, self.pot) - self.btn_invested
+        shares = payoff_fn([hands[p] for p in live], self.pot)
+        result = {p: -self.invested[p] for p in self.folded}
+        for position, share in zip(live, shares):
+            result[position] = share - self.invested[position]
+        return result
 
 
 @dataclass(frozen=True)
@@ -122,8 +153,8 @@ class DecisionNode:
 
     player_to_act: str
     pot: float
-    btn_invested: float
-    bb_invested: float
+    invested: dict
+    folded: frozenset
     raises_so_far: int
     children: dict  # Action -> DecisionNode | TerminalNode
 
@@ -140,84 +171,76 @@ def _raise_total_size(raise_number: int, big_blind: float, previous_bet: float, 
     return multiplier * previous_bet
 
 
-def _build_decision_node(
+def _reopened_order(config: GameConfig, raiser: str, invested: dict, folded: frozenset) -> list:
+    """Table order starting right after `raiser`, excluding `raiser`
+    itself and anyone folded or already all-in (they have no decision
+    left to make)."""
+    idx = config.positions.index(raiser)
+    order_after = config.positions[idx + 1 :] + config.positions[:idx]
+    return [p for p in order_after if p not in folded and invested[p] < config.stack_bb]
+
+
+def _build(
     config: GameConfig,
-    player_to_act: str,
     invested: dict,
+    folded: frozenset,
     raises_so_far: int,
     previous_bet: float,
-) -> DecisionNode:
-    opponent = BB if player_to_act == BTN else BTN
-    to_call = invested[opponent] - invested[player_to_act]
-    pot = invested[BTN] + invested[BB]
-    remaining_stack = config.stack_bb - invested[player_to_act]
+    to_act: list,
+):
+    live = [p for p in config.positions if p not in folded]
+    pot = sum(invested.values())
+
+    if len(live) == 1 or not to_act:
+        return TerminalNode(pot=pot, invested=dict(invested), folded=folded)
+
+    player, rest = to_act[0], to_act[1:]
+    current_bet = max(invested[p] for p in live)
+    to_call = current_bet - invested[player]
+    remaining_stack = config.stack_bb - invested[player]
 
     children = {}
 
     if to_call > 0:
-        children[Action(FOLD)] = TerminalNode(
-            pot=pot,
-            btn_invested=invested[BTN],
-            bb_invested=invested[BB],
-            folded_player=player_to_act,
-        )
+        children[Action(FOLD)] = _build(config, invested, folded | {player}, raises_so_far, previous_bet, rest)
 
     call_invested = dict(invested)
-    call_invested[player_to_act] = invested[opponent]
-    call_pot = call_invested[BTN] + call_invested[BB]
-
-    # BTN's very first action is the one case where a call (a limp)
-    # doesn't close the betting round: BB still gets the "option" to
-    # check or raise, since BB hasn't acted yet. Every other call closes
-    # the action immediately.
-    is_opening_limp = raises_so_far == 0 and player_to_act == BTN
-    if is_opening_limp:
-        children[Action(CALL_OR_CHECK)] = _build_decision_node(
-            config, opponent, call_invested, raises_so_far, previous_bet
-        )
-    else:
-        children[Action(CALL_OR_CHECK)] = TerminalNode(
-            pot=call_pot,
-            btn_invested=call_invested[BTN],
-            bb_invested=call_invested[BB],
-            folded_player=None,
-        )
+    call_invested[player] = current_bet
+    children[Action(CALL_OR_CHECK)] = _build(config, call_invested, folded, raises_so_far, previous_bet, rest)
 
     next_raise_number = raises_so_far + 1
     if next_raise_number <= config.max_raises and remaining_stack > to_call:
+        reopened = _reopened_order(config, player, invested, folded)
         if next_raise_number < config.max_raises:
             size = _raise_total_size(next_raise_number, config.big_blind, previous_bet, config.raise_sizes)
             if size < config.stack_bb:
                 raise_invested = dict(invested)
-                raise_invested[player_to_act] = size
-                children[Action(RAISE, size)] = _build_decision_node(
-                    config, opponent, raise_invested, next_raise_number, size
+                raise_invested[player] = size
+                children[Action(RAISE, size)] = _build(
+                    config, raise_invested, folded, next_raise_number, size, reopened
                 )
         jam_invested = dict(invested)
-        jam_invested[player_to_act] = config.stack_bb
-        children[Action(ALL_IN, config.stack_bb)] = _build_decision_node(
-            config, opponent, jam_invested, next_raise_number, config.stack_bb
+        jam_invested[player] = config.stack_bb
+        children[Action(ALL_IN, config.stack_bb)] = _build(
+            config, jam_invested, folded, next_raise_number, config.stack_bb, reopened
         )
 
     return DecisionNode(
-        player_to_act=player_to_act,
+        player_to_act=player,
         pot=pot,
-        btn_invested=invested[BTN],
-        bb_invested=invested[BB],
+        invested=dict(invested),
+        folded=folded,
         raises_so_far=raises_so_far,
         children=children,
     )
 
 
 def build_game_tree(config: GameConfig) -> DecisionNode:
-    """Build the full heads-up preflop betting tree for `config`."""
-    return _build_decision_node(
-        config,
-        player_to_act=BTN,
-        invested={BTN: config.small_blind, BB: config.big_blind},
-        raises_so_far=0,
-        previous_bet=config.big_blind,
-    )
+    """Build the full N-player preflop betting tree for `config`."""
+    invested = {position: 0.0 for position in config.positions}
+    invested[config.positions[-2]] = config.small_blind
+    invested[config.positions[-1]] = config.big_blind
+    return _build(config, invested, frozenset(), 0, config.big_blind, list(config.positions))
 
 
 def walk(node):

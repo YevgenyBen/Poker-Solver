@@ -89,6 +89,43 @@ header h1 {
   font-weight: 600;
 }
 
+.table-mode-control {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.35rem;
+}
+
+.players-toggle,
+.position-selector {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.players-toggle button,
+.position-selector button {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 4px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.players-toggle button:hover,
+.position-selector button:hover {
+  background: #eeeee9;
+}
+
+.players-toggle button.active,
+.position-selector button.active {
+  border-color: var(--call);
+  color: var(--call);
+  font-weight: 600;
+}
+
 .status {
   display: inline-block;
   font-size: 0.85rem;
