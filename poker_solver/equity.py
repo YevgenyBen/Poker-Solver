@@ -30,12 +30,6 @@ DEFAULT_SEED = 42
 DEFAULT_CACHE_PATH = Path(__file__).parent / "data" / "preflop_equity.npy"
 
 _ALL_HANDS = all_starting_hands()
-_HAND_INDEX = {hand: i for i, hand in enumerate(_ALL_HANDS)}
-
-
-def hand_index(hand: StartingHand) -> int:
-    """This hand class's row/column index in the canonical equity table."""
-    return _HAND_INDEX[hand]
 
 
 def _suit_pairs_for(hand: StartingHand) -> list:

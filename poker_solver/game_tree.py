@@ -132,9 +132,6 @@ class DecisionNode:
         return list(self.children.keys())
 
 
-Node = "DecisionNode | TerminalNode"
-
-
 def _raise_total_size(raise_number: int, big_blind: float, previous_bet: float, raise_sizes: tuple) -> float:
     """Total committed size for raise number `raise_number` (1-indexed)."""
     multiplier = raise_sizes[raise_number - 1]

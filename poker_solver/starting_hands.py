@@ -15,7 +15,6 @@ preflop-only solver — see the project plan for the tradeoff discussion.
 
 from dataclasses import dataclass
 
-from .cards import Card
 from .hand_utils import RANK_ORDER, rank_value
 
 PAIR_COMBOS = 6
@@ -70,29 +69,6 @@ class StartingHand:
         return f"StartingHand({self.high_rank!r}, {self.low_rank!r}, suited={self.suited!r})"
 
 
-def parse_starting_hand(label: str) -> StartingHand:
-    """Parse a label like 'AA', 'AKs', or 'AKo' into a StartingHand."""
-    label = label.strip()
-    if len(label) == 2:
-        r1, r2 = label[0].upper(), label[1].upper()
-        if rank_value(r1) != rank_value(r2):
-            raise ValueError(
-                f"Two-character label {label!r} must be a pocket pair "
-                "(e.g. 'AA'); use a 's'/'o' suffix for non-pairs"
-            )
-        return StartingHand(r1, r2, suited=False)
-    if len(label) == 3:
-        r1, r2, kind = label[0].upper(), label[1].upper(), label[2].lower()
-        if kind not in ("s", "o"):
-            raise ValueError(f"Invalid suited/offsuit suffix in {label!r}: {kind!r}")
-        v1, v2 = rank_value(r1), rank_value(r2)
-        if v1 == v2:
-            raise ValueError(f"Pocket pair {label!r} cannot have an 's'/'o' suffix")
-        high, low = (r1, r2) if v1 > v2 else (r2, r1)
-        return StartingHand(high, low, suited=(kind == "s"))
-    raise ValueError(f"Invalid starting hand label: {label!r}")
-
-
 def all_starting_hands() -> list[StartingHand]:
     """All 169 canonical starting-hand classes, highest rank first."""
     hands: list[StartingHand] = []
@@ -104,17 +80,3 @@ def all_starting_hands() -> list[StartingHand]:
             hands.append(StartingHand(high, low, suited=True))
             hands.append(StartingHand(high, low, suited=False))
     return hands
-
-
-def representative_combo(hand: StartingHand) -> tuple[Card, Card]:
-    """One concrete pair of Cards representative of this hand class.
-
-    Useful anywhere a real Card pair is needed (e.g. equity computation)
-    but the exact suits don't matter beyond matching the class's
-    suited/offsuit/pair-ness.
-    """
-    if hand.is_pair:
-        return Card(hand.high_rank, "s"), Card(hand.low_rank, "h")
-    if hand.suited:
-        return Card(hand.high_rank, "s"), Card(hand.low_rank, "s")
-    return Card(hand.high_rank, "s"), Card(hand.low_rank, "h")
