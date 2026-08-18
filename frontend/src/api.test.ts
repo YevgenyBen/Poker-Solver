@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchOpeningRange, SolveError } from './api';
+import { fetchEquity, fetchOpeningRange, SolveError } from './api';
 
 describe('fetchOpeningRange', () => {
   afterEach(() => {
@@ -80,5 +80,44 @@ describe('fetchOpeningRange', () => {
 
     await fetchOpeningRange(100);
     expect(fetch).toHaveBeenCalledWith('/solve/100', { signal: undefined });
+  });
+});
+
+describe('fetchEquity', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('returns the parsed response and builds the query string correctly', async () => {
+    const payload = { hand_a: 'AhAd', hand_b: '4h3h', board: '2c7d9h', equity_a: 0.85, equity_b: 0.15 };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(payload) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await fetchEquity('AhAd', '3h4h', '2c7d9h');
+    expect(result).toEqual(payload);
+    expect(fetchMock).toHaveBeenCalledWith('/equity?hand_a=AhAd&hand_b=3h4h&board=2c7d9h', { signal: undefined });
+  });
+
+  it('sends an empty board param when no board is given', async () => {
+    const payload = { hand_a: 'AhAd', hand_b: 'KhKd', board: '', equity_a: 0.82, equity_b: 0.18 };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(payload) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchEquity('AhAd', 'KhKd', '');
+    expect(fetchMock).toHaveBeenCalledWith('/equity?hand_a=AhAd&hand_b=KhKd&board=', { signal: undefined });
+  });
+
+  it('throws SolveError with the server-provided detail on failure', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 422,
+        json: () => Promise.resolve({ detail: 'hand_a and hand_b share a card' }),
+      }),
+    );
+
+    await expect(fetchEquity('AhAd', 'AhKd', '')).rejects.toThrow(SolveError);
+    await expect(fetchEquity('AhAd', 'AhKd', '')).rejects.toThrow('hand_a and hand_b share a card');
   });
 });

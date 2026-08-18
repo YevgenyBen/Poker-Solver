@@ -200,3 +200,50 @@ def test_multiway_solve_is_cached_separately_per_table_size(client):
 def test_solve_rejects_unsupported_player_count(client):
     response = client.get("/solve/100?players=4")
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# M10: GET /equity — combo-level, board-aware equity between two hands
+# (see api/main.py's module docstring and poker_solver/board_equity.py).
+# ---------------------------------------------------------------------------
+
+
+def test_equity_returns_200_with_well_formed_response(client):
+    response = client.get("/equity?hand_a=AhAd&hand_b=3h4h&board=2c7d9h")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["hand_a"] == "AhAd"
+    assert body["hand_b"] == "4h3h"  # HandCombo normalizes to higher card first
+    assert body["board"] == "2c7d9h"
+    assert body["equity_a"] + body["equity_b"] == pytest.approx(1.0)
+
+
+def test_equity_complete_board_matches_known_outcome(client):
+    # A river board makes this exact (no Monte Carlo noise) — pocket
+    # aces pairs a dry, unpaired board for one pair; two unconnected
+    # undercards improve nothing, so aces should win outright.
+    response = client.get("/equity?hand_a=AhAd&hand_b=3h4h&board=2c7d9hJcKs")
+    body = response.json()
+    assert body["equity_a"] == pytest.approx(1.0)
+    assert body["equity_b"] == pytest.approx(0.0)
+
+
+def test_equity_defaults_board_to_empty(client):
+    response = client.get("/equity?hand_a=AhAd&hand_b=KhKd")
+    assert response.status_code == 200
+    assert response.json()["board"] == ""
+
+
+def test_equity_rejects_malformed_hand(client):
+    response = client.get("/equity?hand_a=Ah&hand_b=KhKd")
+    assert response.status_code == 422
+
+
+def test_equity_rejects_hands_sharing_a_card(client):
+    response = client.get("/equity?hand_a=AhAd&hand_b=AhKd")
+    assert response.status_code == 422
+
+
+def test_equity_rejects_hand_blocked_by_the_board(client):
+    response = client.get("/equity?hand_a=AhAd&hand_b=KhKd&board=Ah7d9h")
+    assert response.status_code == 422

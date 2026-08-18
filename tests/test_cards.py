@@ -1,6 +1,6 @@
 import pytest
 
-from poker_solver.cards import Card, Deck, SUITS
+from poker_solver.cards import Card, Deck, SUITS, parse_cards
 
 
 def test_deck_has_52_cards():
@@ -76,3 +76,20 @@ def test_deck_shuffle_keeps_all_cards():
     deck.shuffle()
     assert set(deck) == original
     assert len(deck) == 52
+
+
+def test_parse_cards_empty_string():
+    assert parse_cards("") == []
+
+
+def test_parse_cards_two_cards():
+    assert parse_cards("AhKh") == [Card("A", "h"), Card("K", "h")]
+
+
+def test_parse_cards_flop_board():
+    assert parse_cards("Ts9h2c") == [Card("T", "s"), Card("9", "h"), Card("2", "c")]
+
+
+def test_parse_cards_rejects_odd_length():
+    with pytest.raises(ValueError):
+        parse_cards("Ah9")

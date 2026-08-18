@@ -47,6 +47,18 @@ class Card:
         return cls(text[0], text[1])
 
 
+def parse_cards(text: str) -> list:
+    """Parse a string of concatenated two-character card codes, e.g.
+    'AhKh' (2 cards) or 'Ts9h2c' (3 cards, a flop board), into a list of
+    Cards. Used by the API layer and HandCombo.from_str — a single
+    shared parser rather than one per caller.
+    """
+    text = text.strip()
+    if len(text) % 2 != 0:
+        raise ValueError(f"Invalid card string: {text!r} (must have an even number of characters)")
+    return [Card.from_str(text[i : i + 2]) for i in range(0, len(text), 2)]
+
+
 class Deck:
     """A standard 52-card deck."""
 

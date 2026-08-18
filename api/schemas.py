@@ -10,3 +10,11 @@ class SolveResponse(BaseModel):
     opening_range: dict[str, dict[str, float]]
     position: str
     positions: list[str]
+
+
+class EquityResponse(BaseModel):
+    hand_a: str
+    hand_b: str
+    board: str
+    equity_a: float
+    equity_b: float

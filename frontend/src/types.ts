@@ -10,3 +10,12 @@ export interface SolveResponse {
   position: string;
   positions: string[];
 }
+
+// Mirrors api/schemas.py's EquityResponse.
+export interface EquityResponse {
+  hand_a: string;
+  hand_b: string;
+  board: string;
+  equity_a: number;
+  equity_b: number;
+}
