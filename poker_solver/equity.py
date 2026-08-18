@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 
 from .cards import SUITS, Card
-from .hand_eval import best_hand_rank
+from .hand_eval import best_hand_rank, best_hand_rank_batch
 from .hand_utils import RANK_ORDER
 from .starting_hands import StartingHand, all_starting_hands
 
@@ -168,13 +168,21 @@ MULTIWAY_DEFAULT_SAMPLES = 200  # measured during M8: at 50 samples, equity
 # actually encountered, not an eager one-time build.
 
 
-def deal_n_hands(hands: list) -> list:
-    """Pick concrete, mutually-distinct cards for N StartingHand classes.
+def deal_n_hands(hands: list, avoiding: frozenset = frozenset()) -> list:
+    """Pick concrete, mutually-distinct cards for N StartingHand classes,
+    additionally avoiding any card already in `avoiding`.
 
     Generalizes deal_two_hands via backtracking (assign one hand's cards,
     filter the next hand's candidates against what's already used,
     recurse, backtrack on dead ends) — this stays correct, not just
     "usually works", as N grows toward 6/9-max later.
+
+    `avoiding` lets a caller deal a *subset* of hands (e.g. just one
+    candidate hand) around cards already committed elsewhere (e.g. a
+    fixed set of opponents dealt separately) — see
+    MultiwayEquityCache.traverser_equity_vector, which deals its fixed
+    opponents once and reuses that instead of re-dealing them from
+    scratch for every candidate hand it evaluates.
     """
     assignment = [None] * len(hands)
 
@@ -196,9 +204,54 @@ def deal_n_hands(hands: list) -> list:
             assignment[index] = None
         return False
 
-    if not backtrack(0, set()):
+    if not backtrack(0, set(avoiding)):
         raise RuntimeError(f"Could not deal distinct cards for {hands}")
     return assignment
+
+
+_SUIT_INDEX = {suit: i for i, suit in enumerate(SUITS)}
+
+
+def _simulate_equity(dealt: list, samples: int, rng: random.Random) -> list:
+    """Each already-dealt hand's all-in win-share (a k-way tie splits
+    1/k), via random shared-board runouts. `dealt` is a list of
+    (card_a, card_b) tuples, already guaranteed mutually distinct (see
+    deal_n_hands) — this is the reusable "simulate" half of
+    monte_carlo_equity_n, split out so a caller that deals hands its own
+    way (see MultiwayEquityCache.traverser_equity_vector) doesn't have to
+    re-deal everything through deal_n_hands to use it.
+
+    The *ranking* of each sampled board is vectorized
+    (hand_eval.best_hand_rank_batch) instead of calling the scalar
+    best_hand_rank once per (hand, sample) pair — see hand_eval.py's
+    module docstring for why: at N>=6 that per-call Python overhead was
+    the dominant cost of solving at all.
+    """
+    used_cards = [card for pair in dealt for card in pair]
+    deck = _remaining_deck(used_cards)
+
+    num_hands = len(dealt)
+    hole_values = np.array([[card_a.value, card_b.value] for card_a, card_b in dealt])
+    hole_suits = np.array([[_SUIT_INDEX[card_a.suit], _SUIT_INDEX[card_b.suit]] for card_a, card_b in dealt])
+
+    values = np.empty((samples, num_hands, 7), dtype=np.int64)
+    suits = np.empty((samples, num_hands, 7), dtype=np.int64)
+    values[:, :, :2] = hole_values[None, :, :]
+    suits[:, :, :2] = hole_suits[None, :, :]
+
+    for sample_idx in range(samples):
+        board = rng.sample(deck, 5)
+        values[sample_idx, :, 2:] = [card.value for card in board]
+        suits[sample_idx, :, 2:] = [_SUIT_INDEX[card.suit] for card in board]
+
+    scores = best_hand_rank_batch(
+        values.reshape(samples * num_hands, 7), suits.reshape(samples * num_hands, 7)
+    ).reshape(samples, num_hands)
+
+    best = scores.max(axis=1, keepdims=True)
+    is_winner = scores == best
+    shares = is_winner / is_winner.sum(axis=1, keepdims=True)
+    return (shares.sum(axis=0) / samples).tolist()
 
 
 def monte_carlo_equity_n(
@@ -214,19 +267,7 @@ def monte_carlo_equity_n(
     """
     rng = rng if rng is not None else random.Random(DEFAULT_SEED)
     dealt = deal_n_hands(hands)
-    used_cards = [card for pair in dealt for card in pair]
-    deck = _remaining_deck(used_cards)
-
-    wins = [0.0] * len(hands)
-    for _ in range(samples):
-        board = rng.sample(deck, 5)
-        ranks = [best_hand_rank([card_a, card_b, *board]) for card_a, card_b in dealt]
-        best_rank = max(ranks)
-        winners = [i for i, rank in enumerate(ranks) if rank == best_rank]
-        share = 1.0 / len(winners)
-        for i in winners:
-            wins[i] += share
-    return [total / samples for total in wins]
+    return _simulate_equity(dealt, samples, rng)
 
 
 def _stable_seed(*parts) -> int:
@@ -269,17 +310,44 @@ class MultiwayEquityCache:
         """Length-len(self.hands) array: index i is the win-share of a
         traverser holding self.hands[i], against the fixed
         `opponent_hands` (in any order — the result doesn't depend on
-        which opponent holds which hand, only the traverser's own)."""
+        which opponent holds which hand, only the traverser's own).
+
+        Deals the (fixed) opponents' concrete cards *once*, then deals
+        just each candidate hand's own 2 cards around that — not once
+        per candidate hand via a full monte_carlo_equity_n(hand,
+        *opponents) call each time, which re-deals the same opponents'
+        cards from scratch len(self.hands) times over. Measured during
+        M9 at N=9 (8 opponents): re-dealing dominated this method's cost
+        even after vectorizing the ranking computation itself (~60% of
+        the time was deal_n_hands's backtracking, not hand evaluation).
+        """
         key = tuple(sorted(opponent_hands, key=str))
         cached = self._cache.get(key)
         if cached is not None:
             return cached
 
         rng = random.Random(_stable_seed(self.seed, *key))
+
+        try:
+            opponent_dealt = deal_n_hands(list(opponent_hands))
+        except RuntimeError:
+            # The opponents' own hands are mutually incompatible (e.g.
+            # two opponents both holding KK exhausts all 4 kings) —
+            # every candidate would be equally blocked, so there's no
+            # meaningful equity to compute here at all; this exact
+            # combination has true probability 0 regardless (see the
+            # module docstring's blocker-effects note), so a neutral
+            # placeholder for the whole vector is fine.
+            vector = np.full(len(self.hands), 0.5)
+            self._cache[key] = vector
+            return vector
+        opponent_used = frozenset(card for pair in opponent_dealt for card in pair)
+
         values = []
         for hand in self.hands:
             try:
-                equity = monte_carlo_equity_n([hand, *opponent_hands], samples=self.samples, rng=rng)[0]
+                candidate_dealt = deal_n_hands([hand], avoiding=opponent_used)
+                equity = _simulate_equity(candidate_dealt + opponent_dealt, self.samples, rng)[0]
             except RuntimeError:
                 # `hand` can't physically be dealt alongside these exact
                 # opponent hands — e.g. two opponents both holding KK

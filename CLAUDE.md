@@ -54,7 +54,58 @@ the phased approach. Landed so far:
     mode, a position selector (BTN/SB/BB) — see `TableModeControl.tsx`. The
     3-max grid is deliberately sparse (only the curated 8 hands are colored,
     the rest gray) since it's a demo, not a full range chart.
-- **M9 — scale multiway preflop to 6-max/full ring.** Not started yet.
+- **M9 — scale multiway preflop to 6-max/full ring.**
+  - **Two real bottlenecks found and fixed, neither of which was "just turn
+    the dial up" as the plan hoped:**
+    1. *Eager tree construction.* `build_game_tree` used to build the whole
+       tree upfront — fine at N<=3, but every raise re-opens the round for
+       every remaining live player, so tree size grows combinatorially with
+       both player count and `max_raises` (measured: ~333K terminals for
+       6-max, ~8.7M for 9-max at just 3 raises, tens of millions at the
+       default 4). Fixed via `game_tree.LazyChildren` — a `DecisionNode`'s
+       `children` now builds (and memoizes) each child only when actually
+       accessed, so solving pays only for nodes it visits, not the whole
+       combinatorial tree. `walk`/`count_terminal_nodes`/`tree_depth` still
+       fully materialize a tree when called (that's their point), just not
+       during normal solving.
+    2. *Equity computation cost.* Even with a lazy tree, MCCFR at N>=6 was
+       still impractically slow — profiling traced it to
+       `equity.MultiwayEquityCache`: it caches by the *exact* opponent-hand
+       tuple, and that cache's hit rate collapses as opponent count grows
+       (the space of possible tuples is roughly `hand_pool_size^opponent_count`
+       — small enough to reuse heavily at 3-max's 2 opponents, far too large
+       at 9-max's 8 for a hit to be likely). Fixed two ways: (a)
+       `hand_eval.best_hand_rank_batch` — a NumPy-vectorized hand evaluator
+       (kept alongside the original scalar `best_hand_rank`/`rank_five` as
+       the trusted reference; cross-validated against it, not independently
+       trusted) that batches many (hand, sampled-board) rankings into one
+       computation instead of one Python call each; (b)
+       `MultiwayEquityCache.traverser_equity_vector` now deals its fixed
+       opponents' cards once and reuses that across every candidate hand,
+       instead of re-dealing the same opponents from scratch per candidate.
+       Together: ~7x faster per cache-miss computation at 9-max, and 6-max's
+       *cache-hit rate* also improved enough that a 30K-iteration 6-max
+       solve now runs in ~2.5 minutes. 9-max's cache-miss rate stays high
+       regardless of raw speed (that's the nature of the combinatorial
+       problem, not something more optimization alone fixes), so it ships
+       with a much smaller iteration budget and correspondingly noisier
+       output — a real, measured tradeoff, not a hidden shortcut.
+  - **Iteration budgets, by table size** (`api/main.py`'s
+    `MULTIWAY_TABLE_CONFIGS`, same numbers `test_solver.py`'s
+    `six_max_result`/`nine_max_result` fixtures validate): 3-max 100K
+    (unchanged from M8), 6-max 30K (tight convergence, ~2.5 min), 9-max 300
+    (real MCCFR, but noisier — per-iteration cost at 9-max proved too
+    variable to safely budget a large count for a live endpoint, so this is
+    a much smaller, empirically-verified-reliable count, ~1.5 min; only
+    AA's fold rate is asserted tightly in tests, not the full hand set the
+    way 6-max's is).
+  - **Frontend:** `TableModeControl` now offers heads-up / 3-max / 6-max /
+    9-max, each with its own position list (`hands.ts`'s
+    `MULTIWAY_POSITIONS`, keyed by table size — UTG through BB at 9-max).
+    Switching table size defaults to *that size's* first-to-act position
+    (UTG at 6/9-max, not a hardcoded BTN) — an early version of this got
+    that wrong, caught by a frontend test asserting the actual position
+    list, not just that a position selector rendered.
 
 ## Engine is standalone
 

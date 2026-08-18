@@ -1,8 +1,8 @@
 """FastAPI app exposing the preflop solver over HTTP.
 
-GET /solve/{stack_bb} is the primary route. `players` (2 or 3, default 2)
-picks heads-up or 3-max; `position` (default: first-to-act) picks whose
-strategy comes back — see the two solving paths below.
+GET /solve/{stack_bb} is the primary route. `players` (2, 3, 6, or 9,
+default 2) picks the table size; `position` (default: first-to-act)
+picks whose strategy comes back — see the two solving paths below.
 
 Heads-up (players=2) solves are cached in-process, keyed by (rounded
 stack_bb, iterations) — stack depth is expected to come from a
@@ -15,17 +15,33 @@ building the underlying preflop equity table once (see
 poker_solver/equity.py) — that happens transparently the first time it's
 needed, whether that's a pre-warm or a live request.
 
-3-max (players=3) solves use MCCFR over a small curated hand subset, not
-the full 169 classes — a real 169-hand 3-max MCCFR solve was measured
-during M8 to take well over 10 minutes even at a modest iteration count
-(the lazy per-matchup equity cache has to pay for a great many distinct
-opponent-hand combinations at that scale), which isn't viable for an
-interactive endpoint. The curated subset (DEMO_MULTIWAY_HANDS — the same
-one test_solver.py's 3-max tests use, so its convergence behavior is
-already validated there) keeps this fast enough to serve live. This is a
-real, documented v1 scope limit, not a hidden shortcut: it demonstrates
-the N-player-general engine (M8's actual deliverable), not a production-
-grade 3-max range chart — see the project plan's M9 for scaling this up.
+Multiway (players=3/6/9) solves use MCCFR over a small curated hand
+subset, not the full 169 classes — a real 169-hand 3-max MCCFR solve was
+measured during M8 to take well over 10 minutes even at a modest
+iteration count (the lazy per-matchup equity cache has to pay for a
+great many distinct opponent-hand combinations at that scale), which
+isn't viable for an interactive endpoint. The curated subset
+(DEMO_MULTIWAY_HANDS — the same one test_solver.py's multiway tests use,
+so convergence behavior is already validated there) keeps this fast
+enough to serve live. This is a real, documented scope limit, not a
+hidden shortcut: it demonstrates the N-player-general engine, not a
+production-grade multiway range chart.
+
+Per-table-size iteration budgets (MULTIWAY_TABLE_CONFIGS) shrink as
+player count grows, and that's not just "less time budgeted" — it's a
+real, measured tradeoff. M9 found that MultiwayEquityCache's cache-hit
+rate (the thing that makes repeated solving fast) collapses as opponent
+count grows: the space of possible opponent-hand combinations is
+roughly (hand pool size)^(opponent count), so a cache hit at 3-max
+(2 opponents) is common but at 9-max (8 opponents) is rare regardless of
+how fast any *individual* equity computation is — see
+poker_solver/hand_eval.py and equity.py for the vectorized evaluator
+that was built to make each computation itself fast, and cfr.py's
+EXPLORATION_EPSILON docstring for the sampling-bias fix that makes
+higher iteration counts actually converge rather than just take longer.
+Net effect: 6-max reaches good convergence in minutes; 9-max is
+deliberately budgeted fewer iterations and correspondingly noisier —
+documented, not hidden, the same way M8 documented 3-max's own limits.
 """
 
 import logging
@@ -55,13 +71,12 @@ logger = logging.getLogger("poker_solver.api")
 PREWARM_STACK_DEPTHS = (20, 40, 50, 75, 100, 150, 200)
 MAX_ITERATIONS = 20_000
 
-# Same 8-hand pool as tests/test_solver.py's three_max_result fixture —
-# see that file's comment for why it's deliberately NOT pair-heavy (an
-# earlier version was, and it made "premium hands rarely fold" a false
+# Same 8-hand pool as tests/test_solver.py's multiway fixtures — see that
+# file's comment for why it's deliberately NOT pair-heavy (an earlier
+# version was, and it made "premium hands rarely fold" a false
 # expectation even for correctly-solved hands). Kept identical here so
-# this endpoint's behavior is covered by that test's convergence checks,
-# not just independently hoped to work.
-MULTIWAY_POSITIONS = ("BTN", "SB", "BB")
+# this endpoint's behavior is covered by those tests' convergence
+# checks, not just independently hoped to work.
 DEMO_MULTIWAY_HANDS = [
     StartingHand("A", "A"),
     StartingHand("K", "K"),
@@ -72,7 +87,22 @@ DEMO_MULTIWAY_HANDS = [
     StartingHand("7", "2", suited=False),
     StartingHand("3", "2", suited=False),
 ]
-DEMO_MULTIWAY_ITERATIONS = 100_000
+
+# One entry per supported multiway table size. `iterations` shrinks as
+# player count grows — see the module docstring for why (cache-hit rate
+# collapses with opponent count, not solvable by raw speed alone).
+# Measured during M9 (samples=200, this hand pool, 100bb): 3-max reaches
+# good convergence in seconds once cached; 6-max in ~2.5 minutes (30K
+# iterations); 9-max's per-iteration cost was too variable to safely
+# budget a large count for a live endpoint (some iterations touch far
+# more distinct opponent-hand combinations than others), so it's capped
+# at a smaller, empirically-verified-reliable count (~1.5 minutes) —
+# genuinely noisier than 6-max's output, not just "less time given".
+MULTIWAY_TABLE_CONFIGS = {
+    3: {"positions": ("BTN", "SB", "BB"), "iterations": 100_000},
+    6: {"positions": ("UTG", "MP", "CO", "BTN", "SB", "BB"), "iterations": 30_000},
+    9: {"positions": ("UTG", "UTG1", "MP1", "MP2", "MP3", "CO", "BTN", "SB", "BB"), "iterations": 300},
+}
 
 _cache: dict = {}
 _cache_lock = threading.Lock()
@@ -105,24 +135,26 @@ def _get_or_solve(stack_bb: float, iterations: int) -> dict:
     return response
 
 
-def _get_or_solve_multiway(stack_bb: float) -> StrategyResult:
-    """Solves (or returns the cached result of solving) the full 3-max
-    tree once for `stack_bb`, over DEMO_MULTIWAY_HANDS — every position's
-    strategy is derived from this single cached StrategyResult, so
-    switching `position` in the API/UI never triggers a re-solve."""
-    key = round(stack_bb)
+def _get_or_solve_multiway(stack_bb: float, players: int) -> StrategyResult:
+    """Solves (or returns the cached result of solving) the full
+    `players`-max tree once for `stack_bb`, over DEMO_MULTIWAY_HANDS —
+    every position's strategy is derived from this single cached
+    StrategyResult, so switching `position` in the API/UI never triggers
+    a re-solve."""
+    key = (round(stack_bb), players)
     with _multiway_lock:
         cached = _multiway_cache.get(key)
     if cached is not None:
         return cached
 
-    config = GameConfig(positions=MULTIWAY_POSITIONS, stack_bb=stack_bb)
+    table = MULTIWAY_TABLE_CONFIGS[players]
+    config = GameConfig(positions=table["positions"], stack_bb=stack_bb)
     equity_cache = MultiwayEquityCache(hands=DEMO_MULTIWAY_HANDS, seed=1)
     result = solve_preflop(
         config=config,
         hands=DEMO_MULTIWAY_HANDS,
         equity_cache=equity_cache,
-        iterations=DEMO_MULTIWAY_ITERATIONS,
+        iterations=table["iterations"],
         seed=1,
     )
 
@@ -139,11 +171,12 @@ def _prewarm_common_depths() -> None:
         except Exception:
             logger.exception("pre-warm failed for stack_bb=%s", depth)
 
-    try:
-        logger.info("pre-warming 3-max solve for stack_bb=100")
-        _get_or_solve_multiway(100.0)
-    except Exception:
-        logger.exception("pre-warm failed for 3-max stack_bb=100")
+    for players in MULTIWAY_TABLE_CONFIGS:
+        try:
+            logger.info("pre-warming %s-max solve for stack_bb=100", players)
+            _get_or_solve_multiway(100.0, players)
+        except Exception:
+            logger.exception("pre-warm failed for %s-max stack_bb=100", players)
 
 
 @asynccontextmanager
@@ -160,14 +193,17 @@ app = FastAPI(title="Poker Solver API", lifespan=lifespan)
 async def solve(
     stack_bb: float = Path(..., gt=0, description="Effective stack depth, in big blinds"),
     iterations: int = Query(DEFAULT_ITERATIONS, gt=0, le=MAX_ITERATIONS, description="Heads-up only"),
-    players: int = Query(2, ge=2, le=3, description="2 (heads-up) or 3 (3-max demo)"),
+    players: int = Query(2, description="2 (heads-up), or 3/6/9 for a multiway demo"),
     position: str | None = Query(None, description="Which position's strategy to return"),
 ):
+    if players != 2 and players not in MULTIWAY_TABLE_CONFIGS:
+        valid = ", ".join(str(p) for p in [2, *MULTIWAY_TABLE_CONFIGS])
+        raise HTTPException(status_code=422, detail=f"players must be one of {valid}")
     try:
         if players == 2:
             return await run_in_threadpool(_get_or_solve, stack_bb, iterations)
 
-        result = await run_in_threadpool(_get_or_solve_multiway, stack_bb)
+        result = await run_in_threadpool(_get_or_solve_multiway, stack_bb, players)
         return format_solve_response(result, position=position)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
