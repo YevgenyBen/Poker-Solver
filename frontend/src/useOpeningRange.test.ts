@@ -54,4 +54,51 @@ describe('useOpeningRange', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock).toHaveBeenLastCalledWith('/solve/50', expect.anything());
   });
+
+  it('passes players and position through to the fetch call', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          stack_bb: 100,
+          iterations: 1,
+          elapsed_seconds: 0,
+          opening_range: {},
+          position: 'SB',
+          positions: ['BTN', 'SB', 'BB'],
+        }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { result } = renderHook(() => useOpeningRange(100, { players: 3, position: 'SB' }));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(fetchMock).toHaveBeenCalledWith('/solve/100?players=3&position=SB', expect.anything());
+  });
+
+  it('re-fetches when position changes but stackBb does not', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          stack_bb: 100,
+          iterations: 1,
+          elapsed_seconds: 0,
+          opening_range: {},
+          position: 'BTN',
+          positions: ['BTN', 'SB', 'BB'],
+        }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { result, rerender } = renderHook(
+      ({ position }: { position: string }) => useOpeningRange(100, { players: 3, position }),
+      { initialProps: { position: 'BTN' } },
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    rerender({ position: 'SB' });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock).toHaveBeenLastCalledWith('/solve/100?players=3&position=SB', expect.anything());
+  });
 });

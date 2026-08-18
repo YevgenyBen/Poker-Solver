@@ -7,4 +7,6 @@ export interface SolveResponse {
   iterations: number;
   elapsed_seconds: number;
   opening_range: OpeningRange;
+  position: string;
+  positions: string[];
 }

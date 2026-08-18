@@ -18,12 +18,43 @@ its output interactively.
   `npm run build` produces `frontend/dist/`, which `api/main.py` serves
   directly at `/` when present. See `frontend/README.md`.
 
-Full postflop/multiway support is out of scope for v1 but the module
-boundaries (e.g. an injected `payoff_fn` at terminal tree nodes) are meant to
-allow adding it later without a rewrite. **v2 is in progress**, growing
-toward a full-table, any-street advisor — see the roadmap plan for the
-phased approach (multiway preflop next, then postflop via on-demand subgame
-solving, not a bigger precomputed table).
+Full postflop support is out of scope for v1 but the module boundaries (e.g.
+an injected `payoff_fn` at terminal tree nodes) are meant to allow adding it
+later without a rewrite.
+
+## v2 progress (in progress)
+
+Growing toward a full-table, any-street advisor — see the roadmap plan for
+the phased approach. Landed so far:
+
+- **M8 — N-player generalization (multiway preflop), validated at 3-handed.**
+  `game_tree.py`, `equity.py`, and `cfr.py` are now N-player-general, not
+  hardcoded to 2. Heads-up keeps the original exact, deterministic CFR+
+  solver as a fast path (`cfr.solve`); 3+ players use External-Sampling
+  MCCFR (`cfr.mccfr_solve`) with a lazy, memoized multiway equity cache
+  (`equity.MultiwayEquityCache`) — a full N-way equity table is never
+  precomputed eagerly, since it's combinatorially infeasible past N=2.
+  `solver.solve_preflop` dispatches between the two paths automatically
+  based on `GameConfig.positions`'s length.
+  - **Known, load-bearing tuning detail:** MCCFR's opponent-action sampling
+    intentionally does *not* use an importance-sampling correction — see
+    `EXPLORATION_EPSILON`'s docstring in `poker_solver/cfr.py` for why an
+    earlier (textbook-unbiased) version of this was reverted after it was
+    found to compound multiplicatively across nested opponent decisions at
+    N=3, causing high-variance value estimates that CFR+'s regret flooring
+    turned actively destructive. Don't reintroduce it without re-reading
+    that writeup.
+  - **Scope limit, by design:** the API's 3-max demo (`GET
+    /solve/{stack_bb}?players=3`) solves over a small curated 8-hand subset
+    (`api/main.py`'s `DEMO_MULTIWAY_HANDS`), not the full 169 classes — a
+    full 169-hand 3-max MCCFR solve was measured to take well over 10
+    minutes even at a modest iteration count, not viable for an interactive
+    endpoint. Scaling this up is M9's job.
+  - **Frontend:** a table-size toggle (heads-up / 3-max demo) and, in 3-max
+    mode, a position selector (BTN/SB/BB) — see `TableModeControl.tsx`. The
+    3-max grid is deliberately sparse (only the curated 8 hands are colored,
+    the rest gray) since it's a demo, not a full range chart.
+- **M9 — scale multiway preflop to 6-max/full ring.** Not started yet.
 
 ## Engine is standalone
 
