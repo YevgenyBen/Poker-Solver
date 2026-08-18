@@ -29,7 +29,9 @@ from poker_solver.strategy_format import format_solve_response
 
 from .schemas import SolveResponse
 
-WEBVIEW_DIR = FilePath(__file__).resolve().parent.parent / "webview"
+# The React app's production build (see frontend/, `npm run build`). Not
+# committed to git — build it locally or in CI before serving for real.
+FRONTEND_DIST_DIR = FilePath(__file__).resolve().parent.parent / "frontend" / "dist"
 
 logger = logging.getLogger("poker_solver.api")
 
@@ -98,6 +100,7 @@ async def solve(
 # Registered last so it only catches requests /solve doesn't match —
 # Starlette checks routes in registration order, and a Mount only
 # matches as a fallback for paths its earlier siblings didn't claim.
-# html=True serves webview/index.html for "/" and other directory paths.
-if WEBVIEW_DIR.is_dir():
-    app.mount("/", StaticFiles(directory=str(WEBVIEW_DIR), html=True), name="webview")
+# html=True serves frontend/dist/index.html for "/" and other paths
+# (client-side routing would need this too, though this app has none).
+if FRONTEND_DIST_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIST_DIR), html=True), name="frontend")

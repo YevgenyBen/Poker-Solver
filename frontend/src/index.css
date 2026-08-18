@@ -16,10 +16,13 @@
 
 body {
   margin: 0;
-  padding: 1.5rem;
   background: var(--bg);
   color: var(--text);
   font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+#root {
+  padding: 1.5rem;
 }
 
 header h1 {
@@ -38,7 +41,7 @@ header h1 {
   align-items: center;
   gap: 1rem;
   flex-wrap: wrap;
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.35rem;
 }
 
 .stack-control {
@@ -87,9 +90,11 @@ header h1 {
 }
 
 .status {
+  display: inline-block;
   font-size: 0.85rem;
   color: var(--text-muted);
   min-height: 1.2em;
+  margin-bottom: 0.75rem;
 }
 
 .legend {
@@ -147,7 +152,8 @@ main {
   user-select: none;
 }
 
-.cell:hover {
+.cell:hover,
+.cell:focus-visible {
   outline: 2px solid var(--text);
   outline-offset: -2px;
 }
@@ -199,6 +205,7 @@ main {
 
 .detail-row .bar-fill {
   height: 100%;
+  display: block;
 }
 
 .detail-row .pct {
