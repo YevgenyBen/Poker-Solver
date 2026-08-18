@@ -18,14 +18,18 @@ import logging
 import os
 import threading
 from contextlib import asynccontextmanager
+from pathlib import Path as FilePath
 
 from fastapi import FastAPI, HTTPException, Path, Query
+from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from poker_solver.solver import DEFAULT_ITERATIONS, solve_preflop
 from poker_solver.strategy_format import format_solve_response
 
 from .schemas import SolveResponse
+
+WEBVIEW_DIR = FilePath(__file__).resolve().parent.parent / "webview"
 
 logger = logging.getLogger("poker_solver.api")
 
@@ -89,3 +93,11 @@ async def solve(
         return await run_in_threadpool(_get_or_solve, stack_bb, iterations)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# Registered last so it only catches requests /solve doesn't match —
+# Starlette checks routes in registration order, and a Mount only
+# matches as a fallback for paths its earlier siblings didn't claim.
+# html=True serves webview/index.html for "/" and other directory paths.
+if WEBVIEW_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=str(WEBVIEW_DIR), html=True), name="webview")

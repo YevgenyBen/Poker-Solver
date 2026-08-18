@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Poker Solver</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>Heads-up preflop solver</h1>
+    <p class="subtitle">BTN opening range (button vs. big blind, first action)</p>
+  </header>
+
+  <section class="controls">
+    <div class="stack-control">
+      <label for="stack-slider">Effective stack</label>
+      <input type="range" id="stack-slider" min="10" max="250" step="5" value="100" />
+      <span id="stack-value" class="stack-value">100bb</span>
+    </div>
+    <div class="presets" id="presets"></div>
+    <span id="status" class="status" role="status"></span>
+  </section>
+
+  <div class="legend">
+    <span class="legend-item"><i class="swatch fold"></i>fold</span>
+    <span class="legend-item"><i class="swatch call"></i>call / check</span>
+    <span class="legend-item"><i class="swatch raise"></i>raise</span>
+    <span class="legend-item"><i class="swatch allin"></i>all-in</span>
+  </div>
+
+  <main>
+    <div id="grid" class="grid" aria-label="Starting hand grid"></div>
+    <aside id="detail" class="detail">
+      <p class="detail-placeholder">Click a hand to see its full strategy.</p>
+    </aside>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
