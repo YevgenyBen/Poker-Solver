@@ -42,6 +42,15 @@ higher iteration counts actually converge rather than just take longer.
 Net effect: 6-max reaches good convergence in minutes; 9-max is
 deliberately budgeted fewer iterations and correspondingly noisier —
 documented, not hidden, the same way M8 documented 3-max's own limits.
+
+GET /equity is M10's deliverable: given two concrete hand combos (not
+169-class hands — see poker_solver/combos.py for why postflop reasoning
+moves to combo granularity) and an optional board (0, 3, 4, or 5 cards),
+returns each side's win/tie share. No CFR involved, no caching needed —
+a single matchup is fast enough to compute live (poker_solver/
+board_equity.py's module-level comment has the measured numbers for why
+a *whole range* isn't, which is exactly why this endpoint takes two
+hands, not two ranges).
 """
 
 import logging
@@ -54,13 +63,16 @@ from fastapi import FastAPI, HTTPException, Path, Query
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
+from poker_solver.board_equity import two_combo_equity
+from poker_solver.cards import parse_cards
+from poker_solver.combos import HandCombo
 from poker_solver.equity import MultiwayEquityCache
 from poker_solver.game_tree import GameConfig
 from poker_solver.solver import DEFAULT_ITERATIONS, StrategyResult, solve_preflop
 from poker_solver.starting_hands import StartingHand
 from poker_solver.strategy_format import format_solve_response
 
-from .schemas import SolveResponse
+from .schemas import EquityResponse, SolveResponse
 
 # The React app's production build (see frontend/, `npm run build`). Not
 # committed to git — build it locally or in CI before serving for real.
@@ -207,6 +219,29 @@ async def solve(
         return format_solve_response(result, position=position)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/equity", response_model=EquityResponse)
+async def equity(
+    hand_a: str = Query(..., description="4-character combo, e.g. AhKh"),
+    hand_b: str = Query(..., description="4-character combo, e.g. QsQd"),
+    board: str = Query("", description="0, 6, 8, or 10 characters — 0/3/4/5 board cards, e.g. Ts9h2c"),
+):
+    try:
+        combo_a = HandCombo.from_str(hand_a)
+        combo_b = HandCombo.from_str(hand_b)
+        board_cards = tuple(parse_cards(board))
+        equity_a, equity_b = await run_in_threadpool(two_combo_equity, board_cards, combo_a, combo_b)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return EquityResponse(
+        hand_a=str(combo_a),
+        hand_b=str(combo_b),
+        board="".join(str(card) for card in board_cards),
+        equity_a=equity_a,
+        equity_b=equity_b,
+    )
 
 
 # Registered last so it only catches requests /solve doesn't match —

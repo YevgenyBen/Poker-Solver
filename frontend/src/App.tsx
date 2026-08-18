@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { DetailPanel } from './components/DetailPanel';
+import { EquityCalculator } from './components/EquityCalculator';
 import { Legend } from './components/Legend';
 import { RangeGrid } from './components/RangeGrid';
 import { StackControl } from './components/StackControl';
@@ -70,6 +71,8 @@ export function App() {
         <RangeGrid openingRange={openingRange} selectedHand={selectedHand} onSelect={setSelectedHand} />
         <DetailPanel hand={selectedHand} freqs={selectedFreqs} />
       </main>
+
+      <EquityCalculator />
     </>
   );
 }

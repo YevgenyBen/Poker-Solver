@@ -250,3 +250,62 @@ main {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+
+.equity-calculator {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border);
+  max-width: 420px;
+}
+
+.equity-calculator h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.1rem;
+}
+
+.equity-inputs {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.equity-inputs label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.equity-inputs input {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.9rem;
+  width: 7rem;
+}
+
+.equity-inputs button {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 4px;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  height: fit-content;
+}
+
+.equity-inputs button:hover {
+  background: #eeeee9;
+}
+
+.equity-error {
+  color: var(--fold);
+  font-size: 0.85rem;
+}
+
+.equity-result {
+  max-width: 320px;
+}

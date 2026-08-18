@@ -11,6 +11,7 @@ export default defineConfig({
     // production build gets served *by* FastAPI itself (see api/main.py).
     proxy: {
       '/solve': 'http://127.0.0.1:8000',
+      '/equity': 'http://127.0.0.1:8000',
     },
   },
   test: {

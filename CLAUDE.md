@@ -107,6 +107,50 @@ the phased approach. Landed so far:
     that wrong, caught by a frontend test asserting the actual position
     list, not just that a position selector rendered.
 
+### Phase C — Postflop (in progress)
+
+Design pass completed (see the roadmap plan) with two confirmed direction
+calls: postflop moves to concrete two-card **combos**, not the 169-class
+abstraction (blocker effects are a first-order postflop concern, unlike
+preflop); and the first milestone targets a **flop-only** tree (runouts
+averaged at the terminal) before building the chance-node machinery multi-
+street chaining needs.
+
+- **M10 — Combo representation + board-aware equity.**
+  - `poker_solver/combos.py` — `HandCombo` (a concrete two-card hand,
+    order-normalized so equality/hashing don't depend on construction
+    order — a real bug here, a classic swap-without-a-temp-variable
+    mistake in `__post_init__`, was caught by `test_combos.py` before it
+    ever shipped), `all_combos`/`combos_for_class` (reusing `equity.py`'s
+    `_suit_pairs_for`, not reinventing suit enumeration), and
+    `range_from_class_frequencies` — the bridge from a preflop solve's
+    per-class continue-frequency into a postflop range.
+  - `poker_solver/board_equity.py` — `build_board_equity_table`, a
+    board-aware N×N combo equity table (kept in its own module, not
+    folded into `equity.py`, specifically to avoid a circular import
+    with `combos.py`). Reuses `hand_eval.best_hand_rank_batch`, batching
+    across Monte Carlo runout samples within one matchup. **Measured,
+    not assumed:** ~O(N²) in combo count (a 23-combo range built in
+    ~1.1s, a 78-combo range in ~18.7s) — fine for the small-to-moderate
+    curated ranges this milestone and the next one actually use, would
+    take tens of minutes at the full ~1176-combo scale a wide range
+    could reach. Fully batching across matchups (not just within one)
+    is the natural next step if/when a milestone needs that scale — not
+    done yet since nothing does.
+  - `poker_solver/cards.py` gained `parse_cards` (a shared "AhKh"/
+    "Ts9h2c"-style parser used by `HandCombo.from_str` and the API layer).
+  - **Frontend/API:** `GET /equity?hand_a=...&hand_b=...&board=...` — no
+    CFR, no caching needed (a single matchup is fast enough to compute
+    live), and a standalone equity-calculator UI section below the main
+    range grid. Verified live: preflop AA vs KK ≈ 82/18, and on a
+    `2c7d9h` board AA's equity rises to ≈ 90/10 (sensible — a dry,
+    unpaired board that doesn't help KK). One real bug caught by live
+    verification (not by tests): `frontend/vite.config.ts`'s dev proxy
+    only forwarded `/solve`, so `/equity` silently fell through to
+    Vite's SPA-fallback `index.html` instead of reaching FastAPI —
+    fixed by adding `/equity` to the proxy list.
+- **M11 — Flop-only game tree + exact CFR solve.** Not started yet.
+
 ## Engine is standalone
 
 `poker_solver/` has zero dependency on the API or any web framework — it's a
