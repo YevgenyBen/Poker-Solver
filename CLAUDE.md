@@ -13,7 +13,10 @@ its output interactively.
   street, 4-raise cap before forced jam-or-fold).
 - Backend: FastAPI (`GET /solve/{stack_bb}`), on-demand solve with an
   in-process cache + startup pre-warm of common stack depths.
-- Frontend: plain HTML/CSS/vanilla JS in `webview/`, no build step.
+- Frontend: React + TypeScript (Vite) in `frontend/`. `npm run dev` for a
+  hot-reloading dev server (proxies `/solve` to FastAPI on :8000);
+  `npm run build` produces `frontend/dist/`, which `api/main.py` serves
+  directly at `/` when present. See `frontend/README.md`.
 
 Full postflop/multiway support is out of scope for now but the module
 boundaries (e.g. an injected `payoff_fn` at terminal tree nodes) are meant to
@@ -24,11 +27,14 @@ allow adding it later without a rewrite.
 - **Always work on a branch.** Never commit directly to `main`. Create a
   feature branch for every change, however small, and only merge into `main`
   when the user explicitly says to merge.
-- **Tests are mandatory.** Every function gets a test. Follow the existing
-  `tests/` + pytest convention (one test module per source module, e.g.
-  `poker_solver/foo.py` -> `tests/test_foo.py`).
+- **Tests are mandatory.** Every function gets a test.
+  - Python: follow the `tests/` + pytest convention (one test module per
+    source module, e.g. `poker_solver/foo.py` -> `tests/test_foo.py`).
+  - Frontend: Vitest + React Testing Library, colocated as `*.test.ts(x)`
+    next to the file it tests (e.g. `frontend/src/hands.ts` ->
+    `frontend/src/hands.test.ts`).
 - **Re-run the full suite after every change** — `python -m pytest tests/ -v`
-  — before considering any change done, not just the tests for the file just
-  touched.
+  and, for anything under `frontend/`, `npm test` there too — before
+  considering any change done, not just the tests for the file just touched.
 - Ship one coherent improvement per PR (matches how this project started:
   scaffold -> missing-test PR -> merge).
