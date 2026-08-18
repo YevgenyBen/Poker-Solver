@@ -1,3 +1,6 @@
+import random
+
+import numpy as np
 import pytest
 
 from poker_solver.cards import Card
@@ -11,7 +14,9 @@ from poker_solver.hand_eval import (
     STRAIGHT_FLUSH,
     TRIPS,
     TWO_PAIR,
+    _rank_five_batch,
     best_hand_rank,
+    best_hand_rank_batch,
     rank_five,
 )
 
@@ -124,3 +129,109 @@ def test_best_hand_rank_uses_best_available_flush_over_pair():
     seven = cards("Ad Ah 2h 4h 7h 9h Kc")
     result = best_hand_rank(seven)
     assert result[0] == FLUSH
+
+
+# ---------------------------------------------------------------------------
+# Vectorized (batch) evaluation — see hand_eval.py's module docstring for
+# why this exists (M9: equity computation speed at 6+ players). Batch is
+# a performance path over the same logic as rank_five/best_hand_rank
+# above, so it's tested primarily by cross-validating it *against* those
+# trusted scalar functions across many hands, not by re-deriving expected
+# categories from scratch.
+# ---------------------------------------------------------------------------
+
+
+def _card_arrays(card_list: list) -> tuple:
+    """(1, N) value/suit int arrays for one hand, matching batch_hand_rank's
+    expected input shape (suits as 0-3 ints via SUITS.index)."""
+    from poker_solver.cards import SUITS
+
+    values = np.array([[card.value for card in card_list]])
+    suits = np.array([[SUITS.index(card.suit) for card in card_list]])
+    return values, suits
+
+
+def _pack_scalar_rank(rank_tuple: tuple) -> int:
+    """Packs a scalar rank_five/best_hand_rank tuple the same way
+    hand_eval._pack_scores does, for direct comparison against a batch
+    score — category*13^5 + tiebreak[0]*13^4 + ... zero-padded to 5
+    tiebreak slots."""
+    category = rank_tuple[0]
+    tiebreak = (list(rank_tuple[1:]) + [0] * 5)[:5]
+    score = category * 13**5
+    for i, value in enumerate(tiebreak):
+        score += value * 13 ** (4 - i)
+    return score
+
+
+def test_rank_five_batch_matches_scalar_for_known_hands():
+    known_hands = [
+        "As Ks Qs Js Ts",  # royal flush
+        "9s 8s 7s 6s 5s",  # straight flush
+        "Ah Ad Ac As Kh",  # quads
+        "Ah Ad Ac Kh Kd",  # full house
+        "Ah Kh 9h 5h 2h",  # flush
+        "9s 8h 7d 6c 5s",  # straight
+        "As 2h 3d 4c 5s",  # wheel straight
+        "2h 2d 2c 9h 5h",  # trips
+        "Ah Ad Kh Kd 2c",  # two pair
+        "Ah Ad Kh 9d 2c",  # pair
+        "Ah Kd 9h 5d 2c",  # high card
+    ]
+    for text in known_hands:
+        card_list = cards(text)
+        scalar = _pack_scalar_rank(rank_five(card_list))
+        values, suits = _card_arrays(card_list)
+        batch = int(_rank_five_batch(values, suits)[0])
+        assert batch == scalar, f"mismatch for {text!r}: scalar={scalar} batch={batch}"
+
+
+def test_best_hand_rank_batch_matches_scalar_for_seven_card_hands():
+    seven_card_hands = [
+        "2h 2d 2c 9h 5h Kd Qc",  # trips among 7, no flush/straight
+        "Ad Ah 2h 4h 7h 9h Kc",  # flush beats a pair among 7
+        "As Ks Qs Js Ts 2c 3d",  # royal flush plus junk
+    ]
+    for text in seven_card_hands:
+        card_list = cards(text)
+        scalar = _pack_scalar_rank(best_hand_rank(card_list))
+        values, suits = _card_arrays(card_list)
+        batch = int(best_hand_rank_batch(values, suits)[0])
+        assert batch == scalar, f"mismatch for {text!r}: scalar={scalar} batch={batch}"
+
+
+def test_best_hand_rank_batch_requires_exactly_seven_cards():
+    values = np.zeros((1, 5), dtype=int)
+    suits = np.zeros((1, 5), dtype=int)
+    with pytest.raises(ValueError):
+        best_hand_rank_batch(values, suits)
+
+
+def test_best_hand_rank_batch_cross_validates_against_scalar_randomly():
+    # The real correctness signal: many random hands, not just fixed
+    # known cases — verified during M9 development at 30,000 trials with
+    # zero mismatches; kept smaller here to stay a fast test.
+    rng = random.Random(20240613)
+    all_cards = [(v, s) for v in range(13) for s in range(4)]
+    n_trials = 300
+
+    for _ in range(n_trials):
+        dealt = rng.sample(all_cards, 7)
+        card_list = [Card(rank="23456789TJQKA"[v], suit="cdhs"[s]) for v, s in dealt]
+        scalar = _pack_scalar_rank(best_hand_rank(card_list))
+        values, suits = _card_arrays(card_list)
+        batch = int(best_hand_rank_batch(values, suits)[0])
+        assert batch == scalar, f"mismatch for {dealt!r}: scalar={scalar} batch={batch}"
+
+
+def test_rank_five_batch_processes_many_hands_at_once():
+    hands = ["As Ks Qs Js Ts", "2h 2d 2c 9h 5h", "Ah Kd 9h 5d 2c"]
+    card_lists = [cards(text) for text in hands]
+    values = np.array([[c.value for c in cl] for cl in card_lists])
+    from poker_solver.cards import SUITS
+
+    suits = np.array([[SUITS.index(c.suit) for c in cl] for cl in card_lists])
+    scores = _rank_five_batch(values, suits)
+    assert scores.shape == (3,)
+    # Royal flush > trips > high card, same ordering as the scalar checks above.
+    assert scores[0] > scores[1] > scores[2]

@@ -147,6 +147,61 @@ class TerminalNode:
         return result
 
 
+class LazyChildren:
+    """Dict-like Action -> DecisionNode|TerminalNode mapping that builds
+    (and memoizes) each child only the first time it's actually accessed,
+    instead of eagerly building the whole subtree upfront.
+
+    Why: the tree is built by re-opening the betting round for every
+    remaining live player on every raise, so its size grows combinatorially
+    with both player count and max_raises — measured during M9 at
+    ~333K terminal nodes for 6-max (still fine eagerly) but ~8.7M for
+    9-max at just 3 raises, tens of millions at the default 4 raises.
+    Eagerly materializing that whole structure before solving even starts
+    is not viable at that scale. But no real traversal (CFR's own
+    recursion, MCCFR's sampling, or a human clicking through a handful of
+    tree nodes) ever needs more than a tiny fraction of the tree
+    materialized at once — so children are built on demand instead,
+    keeping memory/time proportional to what's actually visited.
+    `legal_actions` (the *set* of actions) is still known upfront without
+    building anything, since which actions exist is purely a function of
+    this node's own state (pot, stack, raises_so_far), not of what lies
+    beneath them.
+    """
+
+    def __init__(self, builders: dict):
+        # Action -> zero-arg callable that lazily builds that one child
+        # (which is itself lazy, if it's a DecisionNode).
+        self._builders = builders
+        self._built: dict = {}
+
+    def __getitem__(self, action):
+        if action not in self._built:
+            self._built[action] = self._builders[action]()
+        return self._built[action]
+
+    def __iter__(self):
+        return iter(self._builders)
+
+    def __len__(self) -> int:
+        return len(self._builders)
+
+    def __contains__(self, action) -> bool:
+        return action in self._builders
+
+    def keys(self):
+        return self._builders.keys()
+
+    def values(self):
+        """Builds (and memoizes) *every* child — only use this when you
+        actually mean to materialize the whole subtree (tests walking
+        the full tree), never on a hot solving path."""
+        return (self[action] for action in self._builders)
+
+    def items(self):
+        return ((action, self[action]) for action in self._builders)
+
+
 @dataclass(frozen=True)
 class DecisionNode:
     """A node where `player_to_act` chooses among `children`."""
@@ -156,7 +211,7 @@ class DecisionNode:
     invested: dict
     folded: frozenset
     raises_so_far: int
-    children: dict  # Action -> DecisionNode | TerminalNode
+    children: "LazyChildren"  # Action -> DecisionNode | TerminalNode, built lazily
 
     @property
     def legal_actions(self) -> list:
@@ -188,6 +243,13 @@ def _build(
     previous_bet: float,
     to_act: list,
 ):
+    """Builds one node. For a DecisionNode, `children` is populated with
+    zero-arg *builders* (closures), not already-built child nodes — see
+    LazyChildren. Each closure captures its own branch's state (the
+    `dict(invested)` copies etc.) exactly as before; the only change from
+    the old eager version is that the recursive `_build(...)` call is
+    deferred into a lambda instead of being made immediately.
+    """
     live = [p for p in config.positions if p not in folded]
     pot = sum(invested.values())
 
@@ -199,14 +261,15 @@ def _build(
     to_call = current_bet - invested[player]
     remaining_stack = config.stack_bb - invested[player]
 
-    children = {}
+    builders = {}
 
     if to_call > 0:
-        children[Action(FOLD)] = _build(config, invested, folded | {player}, raises_so_far, previous_bet, rest)
+        folded_after = folded | {player}
+        builders[Action(FOLD)] = lambda: _build(config, invested, folded_after, raises_so_far, previous_bet, rest)
 
     call_invested = dict(invested)
     call_invested[player] = current_bet
-    children[Action(CALL_OR_CHECK)] = _build(config, call_invested, folded, raises_so_far, previous_bet, rest)
+    builders[Action(CALL_OR_CHECK)] = lambda: _build(config, call_invested, folded, raises_so_far, previous_bet, rest)
 
     next_raise_number = raises_so_far + 1
     if next_raise_number <= config.max_raises and remaining_stack > to_call:
@@ -216,12 +279,12 @@ def _build(
             if size < config.stack_bb:
                 raise_invested = dict(invested)
                 raise_invested[player] = size
-                children[Action(RAISE, size)] = _build(
+                builders[Action(RAISE, size)] = lambda: _build(
                     config, raise_invested, folded, next_raise_number, size, reopened
                 )
         jam_invested = dict(invested)
         jam_invested[player] = config.stack_bb
-        children[Action(ALL_IN, config.stack_bb)] = _build(
+        builders[Action(ALL_IN, config.stack_bb)] = lambda: _build(
             config, jam_invested, folded, next_raise_number, config.stack_bb, reopened
         )
 
@@ -231,12 +294,25 @@ def _build(
         invested=dict(invested),
         folded=folded,
         raises_so_far=raises_so_far,
-        children=children,
+        children=LazyChildren(builders),
     )
 
 
 def build_game_tree(config: GameConfig) -> DecisionNode:
-    """Build the full N-player preflop betting tree for `config`."""
+    """Build the root of the N-player preflop betting tree for `config`.
+
+    Only the root itself is built eagerly — every DecisionNode's
+    `children` is a LazyChildren mapping that builds (and memoizes) each
+    child only when it's actually accessed. This is load-bearing, not
+    just an optimization: the full tree's size grows combinatorially
+    with both player count and max_raises (every raise re-opens the
+    round for every remaining live player), reaching tens of millions of
+    nodes at 9-max with the default raise cap — not viable to
+    materialize upfront before solving even starts. `walk`/
+    `count_terminal_nodes`/`tree_depth` below still fully materialize
+    the tree (that's their point), just pay that cost when actually
+    called rather than here.
+    """
     invested = {position: 0.0 for position in config.positions}
     invested[config.positions[-2]] = config.small_blind
     invested[config.positions[-1]] = config.big_blind
@@ -244,7 +320,13 @@ def build_game_tree(config: GameConfig) -> DecisionNode:
 
 
 def walk(node):
-    """Yield every node in the tree (DecisionNode and TerminalNode), DFS."""
+    """Yield every node in the tree (DecisionNode and TerminalNode), DFS.
+
+    Fully materializes the tree as it goes (see build_game_tree) — fine
+    for tests/introspection on small-to-medium trees, not meant to be
+    called on a hot solving path or on a huge (9-max, high max_raises)
+    tree.
+    """
     yield node
     if isinstance(node, DecisionNode):
         for child in node.children.values():
@@ -252,13 +334,21 @@ def walk(node):
 
 
 def count_terminal_nodes(node) -> int:
+    """Fully materializes the subtree under `node` (see walk's docstring
+    for the same caveat)."""
     if isinstance(node, TerminalNode):
         return 1
     return sum(count_terminal_nodes(child) for child in node.children.values())
 
 
 def tree_depth(node) -> int:
-    """Number of decision points on the longest path from `node` down."""
+    """Number of decision points on the longest path from `node` down.
+
+    Fully materializes the subtree under `node` (see walk's docstring
+    for the same caveat) — `not node.children` below is safe (checks
+    LazyChildren's __len__, doesn't build anything) but the recursive
+    call into `.values()` does.
+    """
     if isinstance(node, TerminalNode) or not node.children:
         return 0
     return 1 + max(tree_depth(child) for child in node.children.values())

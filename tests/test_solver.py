@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 
 from poker_solver.equity import MultiwayEquityCache, build_equity_table
-from poker_solver.game_tree import GameConfig
-from poker_solver.solver import DEFAULT_ITERATIONS, format_opening_range_grid, solve_preflop
+from poker_solver.game_tree import GameConfig, build_game_tree
+from poker_solver.solver import DEFAULT_ITERATIONS, StrategyResult, format_opening_range_grid, solve_preflop
 from poker_solver.starting_hands import StartingHand
 
 # A tiny hand set + freshly-built (small, fast) equity table, so these
@@ -55,6 +55,28 @@ def test_format_opening_range_grid_runs_without_error():
     text = format_opening_range_grid(result)
     assert "BTN opening range" in text
     assert "AA" in text
+
+
+def test_strategy_at_falls_back_to_uniform_for_an_unvisited_node():
+    # MCCFR (unlike the exact HU solver) only visits nodes actually
+    # reached along a sampled/traversed path — a StrategyResult with
+    # empty node_data simulates a node that solving never touched (e.g.
+    # a low-probability combination of earlier actions never got
+    # sampled within the iteration budget). strategy_at must fall back
+    # to a uniform strategy, not raise KeyError — this was a real M9
+    # bug, caught by the nine_max_result fixture's low iteration budget.
+    config = GameConfig(raise_sizes=(), max_raises=1)
+    root = build_game_tree(config)
+    result = StrategyResult(
+        config=config, root=root, hands=_SMALL_HANDS, node_data={}, iterations=0, elapsed_seconds=0.0
+    )
+    strategy = result.strategy_at(root)
+    num_actions = len(root.legal_actions)
+    for freqs in strategy.values():
+        assert len(freqs) == num_actions
+        assert pytest.approx(sum(freqs.values()), abs=1e-9) == 1.0
+        for freq in freqs.values():
+            assert freq == pytest.approx(1.0 / num_actions)
 
 
 # ---------------------------------------------------------------------------
@@ -211,5 +233,127 @@ def test_three_max_sb_facing_action_is_a_real_decision(three_max_result):
     sb_node = root.children[raise_action]
     assert sb_node.player_to_act == "SB"
     strategy = three_max_result.strategy_at(sb_node)
+    for freqs in strategy.values():
+        assert pytest.approx(sum(freqs.values()), abs=1e-6) == 1.0
+
+
+# ---------------------------------------------------------------------------
+# M9 deliverable: real 6-max and 9-max preflop solves through the full
+# pipeline, using the *default* max_raises=4 (not a reduced cap) — see
+# poker_solver/game_tree.py's LazyChildren for how the betting tree stays
+# buildable at these sizes (the eager tree explodes combinatorially with
+# player count: measured at ~333K terminals for 6-max, into the tens of
+# millions for 9-max, before laziness), and poker_solver/hand_eval.py's
+# best_hand_rank_batch for how equity computation itself was sped up
+# enough to make MCCFR at these player counts tractable at all.
+#
+# Same curated 8-hand pool as three_max_result above (see its comment for
+# why it's not pair-heavy) — kept identical across table sizes so this
+# file's own tests are each other's cross-check, not independent guesses.
+#
+# Iteration budgets differ sharply by table size, and that's not
+# arbitrary: MultiwayEquityCache's cache-hit rate collapses as opponent
+# count grows (the space of possible opponent-hand combinations is
+# roughly hand_pool_size^opponent_count — small enough to reuse heavily
+# at 3-max's 2 opponents, large enough at 9-max's 8 that a cache hit is
+# rare regardless of how fast any single computation is). Measured during
+# M9: 6-max reaches tight convergence at 30K iterations in ~2.5 minutes;
+# at 9-max, per-iteration cost was too variable to safely budget a large
+# count (some iterations touch far more distinct combinations than
+# others), so it's capped at a much smaller, empirically-verified-
+# reliable count. It's still genuinely multiway MCCFR (not a stub), just
+# correspondingly noisier — its assertions below are looser for exactly
+# that reason, not because the underlying solve is expected to be wrong.
+# ---------------------------------------------------------------------------
+
+_M9_HANDS = [
+    StartingHand("A", "A"),
+    StartingHand("K", "K"),
+    StartingHand("A", "K", suited=True),
+    StartingHand("Q", "Q"),
+    StartingHand("A", "K", suited=False),
+    StartingHand("T", "9", suited=False),
+    StartingHand("7", "2", suited=False),
+    StartingHand("3", "2", suited=False),
+]
+
+
+@pytest.fixture(scope="module")
+def six_max_result():
+    config = GameConfig(positions=("UTG", "MP", "CO", "BTN", "SB", "BB"))
+    equity_cache = MultiwayEquityCache(hands=_M9_HANDS, samples=200, seed=1)
+    return solve_preflop(config=config, hands=_M9_HANDS, equity_cache=equity_cache, iterations=30_000, seed=1)
+
+
+def test_six_max_solve_covers_every_hand(six_max_result):
+    opening = six_max_result.opening_range()
+    assert set(opening.keys()) == {str(hand) for hand in _M9_HANDS}
+
+
+def test_six_max_solve_frequencies_sum_to_one(six_max_result):
+    opening = six_max_result.opening_range()
+    for freqs in opening.values():
+        assert not any(np.isnan(freq) for freq in freqs.values())
+        assert pytest.approx(sum(freqs.values()), abs=1e-6) == 1.0
+
+
+def test_six_max_utg_premium_hands_rarely_fold(six_max_result):
+    # UTG opens tighter than BTN in real poker (more players left to act
+    # behind), but AA/KK/AKs/QQ are still comfortably premium even from
+    # first position — measured during M9 at 30K iterations: AA=0.000,
+    # KK=0.007, AKs=0.012, QQ=0.020, tight enough for a strict bound.
+    opening = six_max_result.opening_range()
+    for label in ["AA", "KK", "AKs", "QQ"]:
+        assert opening[label]["fold"] < 0.05
+
+
+def test_six_max_utg_weak_hands_fold_far_more_than_premium(six_max_result):
+    opening = six_max_result.opening_range()
+    assert opening["72o"]["fold"] > opening["AA"]["fold"]
+    assert opening["32o"]["fold"] > opening["KK"]["fold"]
+    assert opening["T9o"]["fold"] > opening["AKs"]["fold"]
+
+
+def test_six_max_strategy_for_position_bb_is_well_formed(six_max_result):
+    strategy = six_max_result.strategy_for_position("BB")
+    for freqs in strategy.values():
+        assert pytest.approx(sum(freqs.values()), abs=1e-6) == 1.0
+
+
+@pytest.fixture(scope="module")
+def nine_max_result():
+    config = GameConfig(positions=("UTG", "UTG1", "MP1", "MP2", "MP3", "CO", "BTN", "SB", "BB"))
+    equity_cache = MultiwayEquityCache(hands=_M9_HANDS, samples=200, seed=1)
+    return solve_preflop(config=config, hands=_M9_HANDS, equity_cache=equity_cache, iterations=300, seed=1)
+
+
+def test_nine_max_solve_covers_every_hand(nine_max_result):
+    opening = nine_max_result.opening_range()
+    assert set(opening.keys()) == {str(hand) for hand in _M9_HANDS}
+
+
+def test_nine_max_solve_frequencies_sum_to_one(nine_max_result):
+    opening = nine_max_result.opening_range()
+    for freqs in opening.values():
+        assert not any(np.isnan(freq) for freq in freqs.values())
+        assert pytest.approx(sum(freqs.values()), abs=1e-6) == 1.0
+
+
+def test_nine_max_utg_aa_rarely_folds(nine_max_result):
+    # Only AA is asserted tightly here — at 9-max's much smaller
+    # iteration budget every other hand carries more sampling noise (see
+    # this section's header comment), but AA folding meaningfully is
+    # still a strong enough signal to be worth catching.
+    opening = nine_max_result.opening_range()
+    assert opening["AA"]["fold"] < 0.2
+
+
+def test_nine_max_utg_weakest_hand_folds_far_more_than_aa(nine_max_result):
+    opening = nine_max_result.opening_range()
+    assert opening["32o"]["fold"] > opening["AA"]["fold"]
+
+
+def test_nine_max_strategy_for_position_bb_is_well_formed(nine_max_result):
+    strategy = nine_max_result.strategy_for_position("BB")
     for freqs in strategy.values():
         assert pytest.approx(sum(freqs.values()), abs=1e-6) == 1.0

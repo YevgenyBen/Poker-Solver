@@ -15,7 +15,7 @@ StrategyResult doesn't need to know which path produced it.
 import time
 from dataclasses import dataclass
 
-from .cfr import mccfr_solve, solve
+from .cfr import InfoSetTable, mccfr_solve, solve
 from .equity import MultiwayEquityCache, get_equity_table
 from .game_tree import CALL_OR_CHECK, DecisionNode, GameConfig, build_game_tree
 from .starting_hands import all_starting_hands
@@ -44,10 +44,24 @@ class StrategyResult:
 
     def strategy_at(self, node: DecisionNode) -> dict:
         """hand label -> {action label -> frequency} at any node in the
-        tree this result was solved for."""
-        table = self.node_data[id(node)]
-        avg = table.average_strategy()
+        tree this result was solved for.
+
+        Falls back to the uniform strategy if `node` has no entry in
+        `node_data` at all — MCCFR (unlike the exact HU solver) only
+        visits nodes actually reached along a sampled/traversed path, so
+        a node reachable only via a low-probability combination of
+        earlier actions (e.g. "every one of 8 earlier players limps" at
+        a 9-max table with a modest iteration budget) can genuinely go
+        unvisited. This mirrors InfoSetTable.average_strategy()'s own
+        fallback for a *visited* node with no accumulated strategy_sum
+        yet, so an unvisited node behaves the same as a visited-but-
+        untrained one — consistent, not a special case.
+        """
         actions = node.legal_actions
+        table = self.node_data.get(id(node))
+        if table is None:
+            table = InfoSetTable.zeros(len(self.hands), len(actions))
+        avg = table.average_strategy()
         return {
             str(hand): {str(action): float(avg[hand_idx, a_idx]) for a_idx, action in enumerate(actions)}
             for hand_idx, hand in enumerate(self.hands)

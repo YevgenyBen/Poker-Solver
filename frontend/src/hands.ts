@@ -7,11 +7,18 @@ export const RANKS = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3'
 // (after the server's first startup) always an instant response.
 export const PRESET_STACKS = [20, 40, 50, 75, 100, 150, 200] as const;
 
-// Matches api/main.py's MULTIWAY_POSITIONS (the 3-max demo's acting
-// order) — hardcoded here rather than derived from a solve response so
-// the position selector can render before the first 3-max response
-// arrives.
-export const MULTIWAY_POSITIONS = ['BTN', 'SB', 'BB'] as const;
+// Matches api/main.py's MULTIWAY_TABLE_CONFIGS (each multiway table
+// size's acting order) — hardcoded here rather than derived from a
+// solve response so the position selector can render before the first
+// response for that table size arrives.
+export const MULTIWAY_TABLE_SIZES = [3, 6, 9] as const;
+export type MultiwayTableSize = (typeof MULTIWAY_TABLE_SIZES)[number];
+
+export const MULTIWAY_POSITIONS: Record<MultiwayTableSize, readonly string[]> = {
+  3: ['BTN', 'SB', 'BB'],
+  6: ['UTG', 'MP', 'CO', 'BTN', 'SB', 'BB'],
+  9: ['UTG', 'UTG1', 'MP1', 'MP2', 'MP3', 'CO', 'BTN', 'SB', 'BB'],
+};
 
 /** Hand label ("AKs", "72o", "TT") for grid position (row, col), both
  * 0-indexed over RANKS (high to low). */

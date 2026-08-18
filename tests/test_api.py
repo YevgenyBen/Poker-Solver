@@ -4,23 +4,31 @@ from fastapi.testclient import TestClient
 from api import main as api_main
 from api.main import _cache, _multiway_cache, app
 
-# api.main's real multiway iteration count (100k) is tuned for a
-# reasonably-converged live demo, not test speed — see main.py's module
-# docstring. Convergence itself is already covered by
-# test_solver.py's three_max_result fixture (same hand pool); these
-# tests only need the HTTP plumbing to work, so a much smaller count
-# keeps them fast.
-FAST_MULTIWAY_ITERATIONS = 500
+# api.main's real multiway iteration counts (100K/30K/300, see main.py's
+# module docstring for why they differ by table size) are tuned for a
+# reasonably-converged live demo, not test speed. Convergence itself is
+# already covered by test_solver.py's multiway fixtures (same hand
+# pool); these tests only need the HTTP plumbing to work, so a much
+# smaller count keeps them fast — kept deliberately tiny (not just
+# "smaller than the real default") since 9-max's per-iteration cost is
+# high enough that even a few hundred iterations, multiplied across
+# several parametrized players=9 tests, was measured during M9 to make
+# the test suite itself slow.
+FAST_MULTIWAY_ITERATIONS = 30
 
 
 @pytest.fixture(autouse=True)
 def _disable_prewarm_and_clear_cache(monkeypatch):
-    # Pre-warming solves 7 full 169-hand spots (plus one 3-max spot) on
-    # startup — great for a real server, unnecessary cost for a test
-    # run. Each test also gets clean caches so tests can't leak state
-    # into each other.
+    # Pre-warming solves 7 full 169-hand spots (plus one spot per
+    # multiway table size) on startup — great for a real server,
+    # unnecessary cost for a test run. Each test also gets clean caches
+    # so tests can't leak state into each other.
     monkeypatch.setenv("POKER_SOLVER_PREWARM", "0")
-    monkeypatch.setattr(api_main, "DEMO_MULTIWAY_ITERATIONS", FAST_MULTIWAY_ITERATIONS)
+    fast_table_configs = {
+        players: {**table, "iterations": FAST_MULTIWAY_ITERATIONS}
+        for players, table in api_main.MULTIWAY_TABLE_CONFIGS.items()
+    }
+    monkeypatch.setattr(api_main, "MULTIWAY_TABLE_CONFIGS", fast_table_configs)
     _cache.clear()
     _multiway_cache.clear()
     yield
@@ -120,23 +128,34 @@ def test_heads_up_response_reports_position_and_positions(client):
 
 
 # ---------------------------------------------------------------------------
-# M8: players=3 (3-max demo, see api/main.py's module docstring for why
-# this uses a small curated hand subset rather than the full 169).
+# Multiway (players=3/6/9): M8 added 3-max, M9 added 6-max and 9-max —
+# see api/main.py's module docstring for why these use a small curated
+# hand subset rather than the full 169, and why iteration budgets shrink
+# as player count grows.
 # ---------------------------------------------------------------------------
 
 
-def test_multiway_solve_returns_200_with_well_formed_response(client):
-    response = client.get("/solve/100?players=3")
+@pytest.mark.parametrize(
+    "players,expected_positions",
+    [
+        (3, ["BTN", "SB", "BB"]),
+        (6, ["UTG", "MP", "CO", "BTN", "SB", "BB"]),
+        (9, ["UTG", "UTG1", "MP1", "MP2", "MP3", "CO", "BTN", "SB", "BB"]),
+    ],
+)
+def test_multiway_solve_returns_200_with_well_formed_response(client, players, expected_positions):
+    response = client.get(f"/solve/100?players={players}")
     assert response.status_code == 200
     body = response.json()
     assert body["stack_bb"] == 100.0
-    assert body["position"] == "BTN"
-    assert body["positions"] == ["BTN", "SB", "BB"]
+    assert body["position"] == expected_positions[0]
+    assert body["positions"] == expected_positions
     assert len(body["opening_range"]) == len(api_main.DEMO_MULTIWAY_HANDS)
 
 
-def test_multiway_solve_frequencies_sum_to_one_per_hand(client):
-    body = client.get("/solve/100?players=3").json()
+@pytest.mark.parametrize("players", [3, 6, 9])
+def test_multiway_solve_frequencies_sum_to_one_per_hand(client, players):
+    body = client.get(f"/solve/100?players={players}").json()
     for freqs in body["opening_range"].values():
         assert sum(freqs.values()) == pytest.approx(1.0, abs=1e-6)
 
@@ -155,7 +174,7 @@ def test_multiway_solve_position_selects_a_different_strategy(client):
 
 
 def test_multiway_solve_rejects_unknown_position(client):
-    response = client.get("/solve/100?players=3&position=UTG")
+    response = client.get("/solve/100?players=3&position=NOTAPOSITION")
     assert response.status_code == 422
 
 
@@ -167,3 +186,17 @@ def test_multiway_solve_is_cached_across_positions(client):
     second = client.get("/solve/100?players=3&position=SB").json()
     assert first["elapsed_seconds"] == second["elapsed_seconds"]
     assert first["iterations"] == second["iterations"]
+
+
+def test_multiway_solve_is_cached_separately_per_table_size(client):
+    # 3-max and 6-max at the same stack depth must be independent solves
+    # (different trees, different position lists) — not accidentally
+    # sharing a cache entry keyed only on stack depth.
+    three_max = client.get("/solve/100?players=3").json()
+    six_max = client.get("/solve/100?players=6").json()
+    assert three_max["positions"] != six_max["positions"]
+
+
+def test_solve_rejects_unsupported_player_count(client):
+    response = client.get("/solve/100?players=4")
+    assert response.status_code == 422

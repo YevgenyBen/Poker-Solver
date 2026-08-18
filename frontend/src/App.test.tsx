@@ -20,7 +20,7 @@ function mockResponseFor(stackBb: number) {
   };
 }
 
-function mockMultiwayResponseFor(position: string) {
+function mockMultiwayResponseFor(position: string, positions: string[] = ['BTN', 'SB', 'BB']) {
   return {
     ok: true,
     json: () =>
@@ -30,7 +30,7 @@ function mockMultiwayResponseFor(position: string) {
         elapsed_seconds: 12.5,
         opening_range: Object.fromEntries(['AA', 'KK', '72o'].map((hand) => [hand, { fold: 0.1, raise: 0.9 }])),
         position,
-        positions: ['BTN', 'SB', 'BB'],
+        positions,
       }),
   };
 }
@@ -110,5 +110,28 @@ describe('App', () => {
     await waitFor(() =>
       expect(fetchMock).toHaveBeenLastCalledWith('/solve/100?players=3&position=SB', expect.anything()),
     );
+  });
+
+  it.each([
+    ['6-max (demo)', 6, ['UTG', 'MP', 'CO', 'BTN', 'SB', 'BB']],
+    ['9-max (demo)', 9, ['UTG', 'UTG1', 'MP1', 'MP2', 'MP3', 'CO', 'BTN', 'SB', 'BB']],
+  ] as const)('switching to %s re-solves with players=%d and shows every position', async (label, players, positions) => {
+    const fetchMock = vi.fn().mockResolvedValue(mockMultiwayResponseFor(positions[0], [...positions]));
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/solved/i));
+    await user.click(screen.getByRole('button', { name: label }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenLastCalledWith(
+        `/solve/100?players=${players}&position=${positions[0]}`,
+        expect.anything(),
+      ),
+    );
+    for (const pos of positions) {
+      expect(screen.getByRole('button', { name: pos })).toBeInTheDocument();
+    }
   });
 });
