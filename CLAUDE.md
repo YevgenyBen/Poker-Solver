@@ -18,9 +18,27 @@ its output interactively.
   `npm run build` produces `frontend/dist/`, which `api/main.py` serves
   directly at `/` when present. See `frontend/README.md`.
 
-Full postflop/multiway support is out of scope for now but the module
+Full postflop/multiway support is out of scope for v1 but the module
 boundaries (e.g. an injected `payoff_fn` at terminal tree nodes) are meant to
-allow adding it later without a rewrite.
+allow adding it later without a rewrite. **v2 is in progress**, growing
+toward a full-table, any-street advisor — see the roadmap plan for the
+phased approach (multiway preflop next, then postflop via on-demand subgame
+solving, not a bigger precomputed table).
+
+## Engine is standalone
+
+`poker_solver/` has zero dependency on the API or any web framework — it's a
+plain library usable on its own (`import poker_solver; poker_solver.solve_preflop(...)`).
+This is enforced, not just true by convention: `tests/test_package_boundary.py`
+scans every file under `poker_solver/` and fails the build if it ever imports
+`fastapi`, `starlette`, `uvicorn`, or `api`. `api/` depends on `poker_solver`,
+never the reverse.
+
+Dependencies are split accordingly:
+- `requirements.txt` — the engine only (`numpy`). `pip install -r requirements.txt`
+  is enough to use `poker_solver` standalone.
+- `requirements-api.txt` — adds the FastAPI backend (`-r requirements.txt` + `fastapi` + `uvicorn`).
+- `requirements-dev.txt` — everything needed to run the full test suite (`-r requirements-api.txt` + `pytest` + `httpx2`).
 
 ## Workflow rules
 

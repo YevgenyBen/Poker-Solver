@@ -5,9 +5,18 @@ and a React frontend for exploring the resulting strategies.
 
 ## Getting started
 
+The engine (`poker_solver/`) is a standalone library with no web-framework
+dependency — see `CLAUDE.md`. Install just what you need:
+
+```bash
+pip install -r requirements.txt       # engine only (numpy)
+pip install -r requirements-api.txt   # + FastAPI backend
+pip install -r requirements-dev.txt   # + pytest, for running the test suite
+```
+
 ```bash
 # Backend
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 pytest
 
 # Frontend (in another terminal)
@@ -29,5 +38,6 @@ workflow.
 
 ## Status
 
-v1 complete: preflop-only, heads-up, single-bet-size abstraction. See
-`CLAUDE.md` for the full scope and workflow rules.
+v1 complete: preflop-only, heads-up, single-bet-size abstraction. v2 is in
+progress, growing toward a full-table, any-street advisor. See `CLAUDE.md`
+for the full scope and workflow rules.

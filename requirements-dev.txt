@@ -1,0 +1,5 @@
+# Everything needed to run the full test suite, including tests/test_api.py
+# (which needs the API deps too, via FastAPI's TestClient).
+-r requirements-api.txt
+pytest>=7.0
+httpx2>=2.0
