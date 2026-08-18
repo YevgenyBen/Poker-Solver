@@ -1,0 +1,5 @@
+# The FastAPI backend, on top of the engine. Not needed to use
+# poker_solver as a standalone library — see requirements.txt.
+-r requirements.txt
+fastapi>=0.110
+uvicorn>=0.29
