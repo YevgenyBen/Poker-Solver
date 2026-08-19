@@ -67,6 +67,56 @@ expansion): ~2.6s end to end, the large majority of it board_equity's
 Monte Carlo table build, not the CFR solve itself (~0.2s) — comfortably
 fine for a live request, cached per (board, pot, stack_bb, iterations)
 the same way multiway solves are cached per (stack_bb, players).
+
+GET /solve_flop_turn and GET /solve_flop_to_river are M14's deliverable:
+the same board/pot/stack-in, hero's-strategy-out shape as /solve_flop,
+but backed by solve_flop_turn (M12)/solve_flop_to_river (M13) — a real
+turn (and, for the second endpoint, river) betting round chained in via
+a real chance node, instead of /solve_flop's "average every remaining
+runout" shortcut. Both M12's and M13's own PRs measured /solve_flop's
+existing ~33-combo demo pool as far too slow to expose live (183s and
+"two-plus hours" respectively) — these two endpoints use a *much*
+smaller, separate curated pool instead (DEMO_CHAINED_FLOP_HERO_CLASSES/
+DEMO_CHAINED_FLOP_VILLAIN_CLASSES, shared between both endpoints so a
+frontend "runout depth" selector compares the same matchup at different
+depths, not silently different ranges), sized from real measurement, not
+assumption: at a 12-combo pool (one hero class, one villain class),
+solve_flop_turn (max_raises=2, one real sized bet + all-in on both
+streets) measured ~18-26s across two different real boards at its
+default iteration count, ~59s at its iteration cap; solve_flop_to_river
+(max_raises=1, push/fold only — a shallower tree specifically because
+of the extra chance-node hop's cost) measured a wider, genuinely
+board-dependent ~63-105s *at its default iteration count alone* across
+two different real boards (see the cost-shape paragraph below for why
+this is more variable than solve_flop_turn's). Both are genuinely
+slower than /solve_flop's ~2.6s — shipped anyway, same honesty
+precedent as M9's 9-max preflop endpoint (~90s, documented as
+noisier/slower rather than hidden), not because they're fast but
+because the real numbers make them tolerable for a live (if not snappy)
+request. Both endpoints expose only the *flop*-level strategy (the
+same response shape /solve_flop already returns) — the deeper solve
+improves the accuracy of that flop-level number by baking in real
+turn/river action, but the turn/river tree itself
+(StrategyResult.chance_data) isn't surfaced here; an interactive
+turn/river explorer is a separate, materially bigger feature, not
+attempted in this milestone.
+
+solve_flop_turn's cost is close to flat across iteration count (the
+exact-CFR path walks the whole tree every iteration, so every chance
+node gets built on iteration 1 regardless of how many iterations run
+after that) — confirmed live: 200 vs 2000 iterations on the same board
+measured ~18s vs ~59s, a real but modest marginal cost (~0.023s/
+iteration), not the dominant one. solve_flop_to_river's cost shape
+turned out to be genuinely board-dependent in a way solve_flop_turn's
+isn't: on one board it stayed close to flat (10 vs 20 iterations
+measured ~102s vs ~105s), but M13's own PR measurement on a different
+board found it scaling close to linearly with iteration count instead
+(50 iterations ~145s, 200 iterations ~218s, versus ~63s at the 20-
+iteration default there). Rather than trust either single board's shape
+to generalize, MAX_FLOP_TO_RIVER_ITERATIONS is set equal to its own
+default — no headroom above it at all — so `iterations` can only ever
+be used to get a faster, noisier result on this endpoint, never a
+slower one.
 """
 
 import logging
@@ -84,7 +134,17 @@ from poker_solver.cards import parse_cards
 from poker_solver.combos import HandCombo, range_from_class_frequencies
 from poker_solver.equity import MultiwayEquityCache
 from poker_solver.game_tree import GameConfig
-from poker_solver.solver import DEFAULT_FLOP_ITERATIONS, DEFAULT_ITERATIONS, StrategyResult, solve_flop, solve_preflop
+from poker_solver.solver import (
+    DEFAULT_FLOP_ITERATIONS,
+    DEFAULT_FLOP_TO_RIVER_ITERATIONS,
+    DEFAULT_FLOP_TURN_ITERATIONS,
+    DEFAULT_ITERATIONS,
+    StrategyResult,
+    solve_flop,
+    solve_flop_to_river,
+    solve_flop_turn,
+    solve_preflop,
+)
 from poker_solver.starting_hands import StartingHand
 from poker_solver.strategy_format import format_flop_response, format_solve_response
 
@@ -156,12 +216,71 @@ DEMO_FLOP_VILLAIN_CLASSES = {
     StartingHand("8", "4", suited=True): 1.0,
 }
 
+# /solve_flop_turn's and /solve_flop_to_river's curated demo pool (M14)
+# — deliberately separate from, and much smaller than, DEMO_FLOP_HERO_/
+# VILLAIN_CLASSES above (which stays serving only /solve_flop). Shared
+# between both new endpoints, not two separate pools, so a frontend
+# "runout depth" selector compares the *same* matchup at different
+# depths. Sized from real measurement, not assumption — see the module
+# docstring for the numbers this pool size is grounded in; a wider pool
+# was tried and rejected during M14 for pushing solve_flop_to_river well
+# past its own iteration-cap budget below.
+DEMO_CHAINED_FLOP_HERO_CLASSES = {
+    StartingHand("A", "A"): 1.0,
+}
+DEMO_CHAINED_FLOP_VILLAIN_CLASSES = {
+    StartingHand("Q", "Q"): 1.0,
+}
+
+# Matches FlopSolver.tsx's DEFAULT_BOARD/DEFAULT_POT/DEFAULT_STACK_BB —
+# used only to pick what to pre-warm below; kept in sync manually (a
+# drift here just makes the pre-warm quietly stop helping the real
+# common case, not a correctness bug).
+DEFAULT_CHAINED_FLOP_BOARD = "Jh7d2c"
+
+# Fixed server-side constants, not query params — same reasoning
+# DEMO_FLOP_HERO_/VILLAIN_CLASSES already establish (letting a client
+# control tree size/range directly is an unbounded-cost door). Different
+# max_raises per endpoint: solve_flop_to_river's extra chance-node hop
+# is expensive enough (see the module docstring's per-iteration cost
+# finding) that it needs a shallower tree than solve_flop_turn to stay
+# in a tolerable-for-a-live-request budget.
+FLOP_TURN_MAX_RAISES = 2
+FLOP_TURN_RAISE_SIZES = (2.5,)
+FLOP_TO_RIVER_MAX_RAISES = 1
+FLOP_TO_RIVER_RAISE_SIZES = ()
+
+# See the module docstring: solve_flop_turn's cost is close to flat
+# across iteration count (every chance node is built on iteration 1
+# regardless) — confirmed live at the cap (200 iters ~18-26s depending
+# on board, 2000 iters ~59s), so a generous cap is safe. solve_flop_to_
+# river's cost is much more board-dependent and, on at least one real
+# board, scales close to linearly with iterations rather than staying
+# flat — confirmed live that its DEFAULT (20 iterations) alone already
+# costs ~63-105s depending on board, wider variance than expected from
+# the single board M13's own PR measured. Given that, MAX_FLOP_TO_RIVER_
+# ITERATIONS is set equal to its own default rather than leaving any
+# headroom above it — the `iterations` query param can only be used to
+# get a faster, noisier result on this endpoint, never a slower one.
+MAX_FLOP_TURN_ITERATIONS = 2_000
+MAX_FLOP_TO_RIVER_ITERATIONS = DEFAULT_FLOP_TO_RIVER_ITERATIONS
+
 _cache: dict = {}
 _cache_lock = threading.Lock()
 _multiway_cache: dict = {}
 _multiway_lock = threading.Lock()
 _flop_cache: dict = {}
 _flop_lock = threading.Lock()
+# Deliberately separate from _flop_cache and from each other, not one
+# shared dict — the cache key (board, pot, stack_bb, iterations) omits
+# max_raises/raise_sizes/the demo pool because those are fixed constants
+# per endpoint, not request-varying, which is only safe *because* each
+# endpoint has its own dict. A shared dict would let an identical key
+# collide between two endpoints with different max_raises.
+_flop_turn_cache: dict = {}
+_flop_turn_lock = threading.Lock()
+_flop_to_river_cache: dict = {}
+_flop_to_river_lock = threading.Lock()
 
 
 def _prewarm_enabled() -> bool:
@@ -251,6 +370,70 @@ def _get_or_solve_flop(board_cards: tuple, pot: float, stack_bb: float, iteratio
     return result
 
 
+def _get_or_solve_flop_turn(board_cards: tuple, pot: float, stack_bb: float, iterations: int) -> StrategyResult:
+    """Solves (or returns the cached result of solving) DEMO_CHAINED_FLOP_
+    HERO/VILLAIN_CLASSES' board-legal expansion via solve_flop_turn — same
+    shape as _get_or_solve_flop, own cache dict (see its module-level
+    comment for why a shared one would be unsafe)."""
+    key = (board_cards, round(pot, 2), round(stack_bb), iterations)
+    with _flop_turn_lock:
+        cached = _flop_turn_cache.get(key)
+    if cached is not None:
+        return cached
+
+    exclude = frozenset(board_cards)
+    hero_range = range_from_class_frequencies(DEMO_CHAINED_FLOP_HERO_CLASSES, exclude=exclude)
+    villain_range = range_from_class_frequencies(DEMO_CHAINED_FLOP_VILLAIN_CLASSES, exclude=exclude)
+    if not hero_range or not villain_range:
+        raise ValueError(f"board {''.join(str(c) for c in board_cards)!r} blocks every demo-range combo")
+
+    result = solve_flop_turn(
+        board=board_cards,
+        hero_range=hero_range,
+        villain_range=villain_range,
+        pot=pot,
+        effective_stack_bb=stack_bb,
+        raise_sizes=FLOP_TURN_RAISE_SIZES,
+        max_raises=FLOP_TURN_MAX_RAISES,
+        iterations=iterations,
+    )
+
+    with _flop_turn_lock:
+        _flop_turn_cache[key] = result
+    return result
+
+
+def _get_or_solve_flop_to_river(board_cards: tuple, pot: float, stack_bb: float, iterations: int) -> StrategyResult:
+    """Same idea as _get_or_solve_flop_turn, via solve_flop_to_river and
+    its own (much tighter — see MAX_FLOP_TO_RIVER_ITERATIONS) cache."""
+    key = (board_cards, round(pot, 2), round(stack_bb), iterations)
+    with _flop_to_river_lock:
+        cached = _flop_to_river_cache.get(key)
+    if cached is not None:
+        return cached
+
+    exclude = frozenset(board_cards)
+    hero_range = range_from_class_frequencies(DEMO_CHAINED_FLOP_HERO_CLASSES, exclude=exclude)
+    villain_range = range_from_class_frequencies(DEMO_CHAINED_FLOP_VILLAIN_CLASSES, exclude=exclude)
+    if not hero_range or not villain_range:
+        raise ValueError(f"board {''.join(str(c) for c in board_cards)!r} blocks every demo-range combo")
+
+    result = solve_flop_to_river(
+        board=board_cards,
+        hero_range=hero_range,
+        villain_range=villain_range,
+        pot=pot,
+        effective_stack_bb=stack_bb,
+        raise_sizes=FLOP_TO_RIVER_RAISE_SIZES,
+        max_raises=FLOP_TO_RIVER_MAX_RAISES,
+        iterations=iterations,
+    )
+
+    with _flop_to_river_lock:
+        _flop_to_river_cache[key] = result
+    return result
+
+
 def _prewarm_common_depths() -> None:
     for depth in PREWARM_STACK_DEPTHS:
         try:
@@ -265,6 +448,29 @@ def _prewarm_common_depths() -> None:
             _get_or_solve_multiway(100.0, players)
         except Exception:
             logger.exception("pre-warm failed for %s-max stack_bb=100", players)
+
+    # solve_flop itself (~2.6s) isn't worth pre-warming — /solve_flop
+    # was never given this treatment, since a couple seconds is a fine
+    # cold-start tax. solve_flop_turn/solve_flop_to_river are meaningfully
+    # slower (~26s/~63s), so pre-warm one instance of each against the
+    # frontend's own default board/pot/stack (FlopSolver.tsx's
+    # DEFAULT_BOARD/DEFAULT_POT/DEFAULT_STACK_BB — keep these two in sync
+    # if either side's defaults ever change) so a user's very first,
+    # overwhelmingly-likely-unmodified click is instant rather than
+    # paying the full cost live.
+    try:
+        logger.info("pre-warming solve_flop_turn for the default board")
+        _get_or_solve_flop_turn(tuple(parse_cards(DEFAULT_CHAINED_FLOP_BOARD)), 10.0, 40.0, DEFAULT_FLOP_TURN_ITERATIONS)
+    except Exception:
+        logger.exception("pre-warm failed for solve_flop_turn")
+
+    try:
+        logger.info("pre-warming solve_flop_to_river for the default board")
+        _get_or_solve_flop_to_river(
+            tuple(parse_cards(DEFAULT_CHAINED_FLOP_BOARD)), 10.0, 40.0, DEFAULT_FLOP_TO_RIVER_ITERATIONS
+        )
+    except Exception:
+        logger.exception("pre-warm failed for solve_flop_to_river")
 
 
 @asynccontextmanager
@@ -333,6 +539,42 @@ async def solve_flop_endpoint(
         if len(board_cards) != 3:
             raise ValueError(f"board must have exactly 3 cards for a flop, got {len(board_cards)}")
         result = await run_in_threadpool(_get_or_solve_flop, board_cards, pot, stack_bb, iterations)
+        return format_flop_response(result, board="".join(str(c) for c in board_cards), position=position)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/solve_flop_turn", response_model=FlopSolveResponse)
+async def solve_flop_turn_endpoint(
+    board: str = Query(..., description="Exactly 3 cards, e.g. Jh7d2c"),
+    pot: float = Query(10.0, gt=0, description="Pot entering the flop"),
+    stack_bb: float = Query(40.0, gt=0, description="Effective stack behind, in big blinds"),
+    iterations: int = Query(DEFAULT_FLOP_TURN_ITERATIONS, gt=0, le=MAX_FLOP_TURN_ITERATIONS),
+    position: str | None = Query(None, description="OOP or IP — defaults to OOP, the first to act"),
+):
+    try:
+        board_cards = tuple(parse_cards(board))
+        if len(board_cards) != 3:
+            raise ValueError(f"board must have exactly 3 cards for a flop, got {len(board_cards)}")
+        result = await run_in_threadpool(_get_or_solve_flop_turn, board_cards, pot, stack_bb, iterations)
+        return format_flop_response(result, board="".join(str(c) for c in board_cards), position=position)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/solve_flop_to_river", response_model=FlopSolveResponse)
+async def solve_flop_to_river_endpoint(
+    board: str = Query(..., description="Exactly 3 cards, e.g. Jh7d2c"),
+    pot: float = Query(10.0, gt=0, description="Pot entering the flop"),
+    stack_bb: float = Query(40.0, gt=0, description="Effective stack behind, in big blinds"),
+    iterations: int = Query(DEFAULT_FLOP_TO_RIVER_ITERATIONS, gt=0, le=MAX_FLOP_TO_RIVER_ITERATIONS),
+    position: str | None = Query(None, description="OOP or IP — defaults to OOP, the first to act"),
+):
+    try:
+        board_cards = tuple(parse_cards(board))
+        if len(board_cards) != 3:
+            raise ValueError(f"board must have exactly 3 cards for a flop, got {len(board_cards)}")
+        result = await run_in_threadpool(_get_or_solve_flop_to_river, board_cards, pot, stack_bb, iterations)
         return format_flop_response(result, board="".join(str(c) for c in board_cards), position=position)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

@@ -382,6 +382,82 @@ street chaining needs.
     finding one milestone earlier. **Ships engine + tests only, no
     API/frontend slice, same as M12** — not a deferred-pending-
     measurement question this time, a confirmed one.
+- **M14 — Live `/solve_flop_turn` and `/solve_flop_to_river` endpoints.**
+  Revisits M12/M13's "too slow to expose live" finding at a *much*
+  smaller curated pool, sized from real measurement rather than
+  assumption, and wires both up live — two product decisions made with
+  the user before scoping: ship both endpoints this milestone (not
+  deferring the slower one, same honesty precedent as M9's 9-max
+  preflop endpoint), and `/solve_flop_turn`'s demo tree uses
+  `max_raises=2` (one real sized bet + all-in), not the faster-but-
+  thinner `max_raises=1`.
+  - `api/main.py` — `DEMO_CHAINED_FLOP_HERO_CLASSES`/`DEMO_CHAINED_FLOP_
+    VILLAIN_CLASSES` (one hero class, one villain class — 12 combos),
+    **shared** between both new endpoints (not two separate pools) so a
+    frontend "runout depth" selector compares the *same* matchup at
+    different depths, and deliberately separate from M11's own
+    `DEMO_FLOP_HERO_CLASSES`/`..._VILLAIN_CLASSES` (which stays serving
+    only `/solve_flop`, unchanged). `max_raises`/`raise_sizes` are fixed
+    per-endpoint module constants, never query params — same reasoning
+    the existing demo classes already establish (an unbounded-cost door
+    otherwise). Two new cache dicts (`_flop_turn_cache`/`_flop_to_river_
+    cache`), deliberately *separate* from each other and from
+    `_flop_cache` — the cache key omits `max_raises`/the demo pool
+    because those are fixed constants, which is only safe *because*
+    each endpoint has its own dict (a shared one could let an identical
+    key collide between two endpoints with different `max_raises`).
+  - **Measured, not assumed — including a real surprise the two-board
+    sample size caught:** at the 12-combo pool, `solve_flop_turn`
+    (`max_raises=2`) measured ~18-26s across two different real boards,
+    cost close to flat across iteration count (every chance node is
+    built on iteration 1 regardless — confirmed at the chosen cap, 2000
+    iterations, ~59s). `solve_flop_to_river` (`max_raises=1`) measured a
+    much wider, genuinely board-dependent ~63-105s *at its default
+    iteration count alone* — on one board its cost stayed flat across
+    iteration count, on the other it scaled close to linearly (50 iters
+    ~145s, 200 iters ~218s). Rather than trust either board's shape to
+    generalize, `MAX_FLOP_TO_RIVER_ITERATIONS` is set equal to its own
+    default (20) — no headroom above it at all, so `iterations` can only
+    ever request a faster, noisier result on this endpoint, never a
+    slower one. Also observed directly (not asserted in tests, just
+    honest to note): during the background pre-warm window right after
+    server startup, a concurrent live request for `solve_flop_to_river`
+    measured ~168s — real CPU contention with the in-progress pre-warm
+    thread (the same general "pre-warming costs background CPU" tradeoff
+    the project has always accepted, just far more visible here given
+    how expensive one solve already is), not a new bug; steady-state
+    (post-pre-warm) cost matches the ~63-105s range above.
+  - **Pre-warming**: unlike `/solve_flop` (~2.6s, never pre-warmed —
+    not worth the complexity), one instance of each new endpoint is
+    pre-warmed against the frontend's own default board/pot/stack
+    (`FlopSolver.tsx`'s `DEFAULT_BOARD`/`DEFAULT_POT`/`DEFAULT_STACK_BB`,
+    cross-referenced in a comment on both sides so they don't silently
+    drift apart) — ~26s/~63-105s is a meaningfully worse cold-start tax
+    on a user's very first, overwhelmingly-likely-default-valued click.
+  - `poker_solver/strategy_format.py` — `format_flop_response` reused
+    verbatim (docstring-only edit noting it's shape-agnostic across
+    solve depth): every field it reads is present identically on a
+    `solve_flop`/`solve_flop_turn`/`solve_flop_to_river` result, since
+    all three only ever expose the *flop*-level strategy through it.
+    `chance_data` (the turn/river tree) stays invisible at this response
+    shape — M14 exposes only the improved flop-level number those
+    deeper solves produce, not an interactive turn/river tree explorer
+    (a materially bigger, separate feature).
+  - **Frontend:** extended `FlopSolver.tsx` in place with a "runout
+    depth" selector (Flop only / Flop + turn / Flop + turn + river)
+    rather than three near-duplicate components — the board/pot/stack/
+    position inputs and per-combo rendering are already 100% shared.
+    `api.ts`'s `fetchFlopStrategy` gained a leading `depth` parameter
+    dispatching to the right endpoint via a lookup table. Depth-specific
+    button/loading copy (e.g. "Solving flop + turn + river (up to about
+    two minutes)…") is shown persistently near the button, not just
+    while loading, so a 60s+ wait isn't a surprise sprung only after
+    clicking; switching depth clears any stale result/error from a
+    different depth. Live-verified in the browser end to end for all
+    three depths: correct URL routing, correct loading/button copy,
+    correct clearing on depth switch, correct final rendering (real bet
+    sizing at the turn depth, push/fold-only structure at the river
+    depth, accurate `elapsed_seconds`).
 
 ## Engine is standalone
 

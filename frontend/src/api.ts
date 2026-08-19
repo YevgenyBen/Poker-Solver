@@ -1,4 +1,4 @@
-import type { EquityResponse, FlopSolveResponse, SolveResponse } from './types';
+import type { EquityResponse, FlopSolveDepth, FlopSolveResponse, SolveResponse } from './types';
 
 /** Thrown for any non-2xx API response, wrapping the server's `detail`
  * message when there is one (used for both /solve and /equity — the
@@ -49,7 +49,17 @@ export async function fetchEquity(
   return fetchJson<EquityResponse>(`/equity?${query.toString()}`, signal);
 }
 
+// M14: one endpoint per runout depth — see api/main.py's module
+// docstring for why these are separate routes (a fixed, server-side
+// curated demo pool/tree per depth, not a client-controlled one).
+const FLOP_DEPTH_ENDPOINTS: Record<FlopSolveDepth, string> = {
+  flop: '/solve_flop',
+  flop_turn: '/solve_flop_turn',
+  flop_to_river: '/solve_flop_to_river',
+};
+
 export async function fetchFlopStrategy(
+  depth: FlopSolveDepth,
   board: string,
   pot: number,
   stackBb: number,
@@ -62,5 +72,5 @@ export async function fetchFlopStrategy(
     stack_bb: String(stackBb),
     position,
   });
-  return fetchJson<FlopSolveResponse>(`/solve_flop?${query.toString()}`, signal);
+  return fetchJson<FlopSolveResponse>(`${FLOP_DEPTH_ENDPOINTS[depth]}?${query.toString()}`, signal);
 }

@@ -141,7 +141,7 @@ describe('fetchFlopStrategy', () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(payload) });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await fetchFlopStrategy('Jh7d2c', 10, 40, 'OOP');
+    const result = await fetchFlopStrategy('flop', 'Jh7d2c', 10, 40, 'OOP');
     expect(result).toEqual(payload);
     expect(fetchMock).toHaveBeenCalledWith(
       '/solve_flop?board=Jh7d2c&pot=10&stack_bb=40&position=OOP',
@@ -159,9 +159,36 @@ describe('fetchFlopStrategy', () => {
       }),
     );
 
-    await expect(fetchFlopStrategy('Jh7d', 10, 40, 'OOP')).rejects.toThrow(SolveError);
-    await expect(fetchFlopStrategy('Jh7d', 10, 40, 'OOP')).rejects.toThrow(
+    await expect(fetchFlopStrategy('flop', 'Jh7d', 10, 40, 'OOP')).rejects.toThrow(SolveError);
+    await expect(fetchFlopStrategy('flop', 'Jh7d', 10, 40, 'OOP')).rejects.toThrow(
       'board must have exactly 3 cards for a flop, got 2',
+    );
+  });
+
+  it('dispatches to /solve_flop_turn and /solve_flop_to_river for the other depths', async () => {
+    const payload = {
+      board: 'Jh7d2c',
+      pot: 10,
+      stack_bb: 40,
+      iterations: 200,
+      elapsed_seconds: 25.0,
+      strategy: {},
+      position: 'OOP',
+      positions: ['OOP', 'IP'],
+    };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(payload) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchFlopStrategy('flop_turn', 'Jh7d2c', 10, 40, 'OOP');
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/solve_flop_turn?board=Jh7d2c&pot=10&stack_bb=40&position=OOP',
+      { signal: undefined },
+    );
+
+    await fetchFlopStrategy('flop_to_river', 'Jh7d2c', 10, 40, 'OOP');
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/solve_flop_to_river?board=Jh7d2c&pot=10&stack_bb=40&position=OOP',
+      { signal: undefined },
     );
   });
 });

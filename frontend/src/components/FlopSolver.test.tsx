@@ -28,12 +28,14 @@ describe('FlopSolver', () => {
     vi.unstubAllGlobals();
   });
 
-  it('renders inputs prefilled with a default board/pot/stack', () => {
+  it('renders inputs prefilled with a default board/pot/stack/depth', () => {
     render(<FlopSolver />);
     expect(screen.getByLabelText('Board')).toHaveValue('Jh7d2c');
     expect(screen.getByLabelText('Pot')).toHaveValue(10);
     expect(screen.getByLabelText('Stack (bb)')).toHaveValue(40);
     expect(screen.getByLabelText('Position')).toHaveValue('OOP');
+    expect(screen.getByLabelText('Runout depth')).toHaveValue('flop');
+    expect(screen.getByRole('button', { name: 'Solve flop' })).toBeInTheDocument();
   });
 
   it('solves and shows each combo on click', async () => {
@@ -107,5 +109,68 @@ describe('FlopSolver', () => {
     fireEvent.click(screen.getByRole('button', { name: /solve flop/i }));
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
     expect(screen.getByText('AdAc')).toBeInTheDocument();
+  });
+
+  // ---------------------------------------------------------------------
+  // M14: the "runout depth" selector — /solve_flop_turn / /solve_flop_to_
+  // river are the same response shape as /solve_flop, just a different
+  // URL and depth-appropriate button/loading copy (see api/main.py's
+  // module docstring for the real cost numbers behind that copy).
+  // ---------------------------------------------------------------------
+
+  it('solves flop+turn and calls /solve_flop_turn with the right query string', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockFlopResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<FlopSolver />);
+    fireEvent.change(screen.getByLabelText('Runout depth'), { target: { value: 'flop_turn' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Solve flop + turn' }));
+
+    await waitFor(() => expect(screen.getByText('AdAc')).toBeInTheDocument());
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/solve_flop_turn?board=Jh7d2c&pot=10&stack_bb=40&position=OOP',
+      { signal: undefined },
+    );
+  });
+
+  it('solves flop+turn+river and calls /solve_flop_to_river with the right query string', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockFlopResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<FlopSolver />);
+    fireEvent.change(screen.getByLabelText('Runout depth'), { target: { value: 'flop_to_river' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Solve flop + turn + river' }));
+
+    await waitFor(() => expect(screen.getByText('AdAc')).toBeInTheDocument());
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/solve_flop_to_river?board=Jh7d2c&pot=10&stack_bb=40&position=OOP',
+      { signal: undefined },
+    );
+  });
+
+  it('shows depth-appropriate button and loading copy', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockFlopResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<FlopSolver />);
+    fireEvent.change(screen.getByLabelText('Runout depth'), { target: { value: 'flop_turn' } });
+    expect(screen.getByRole('button', { name: 'Solve flop + turn' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Solve flop + turn' }));
+    expect(screen.getByRole('button', { name: /solving flop \+ turn/i })).toBeInTheDocument();
+
+    await waitFor(() => expect(screen.getByText('AdAc')).toBeInTheDocument());
+  });
+
+  it('clears a stale result when the depth changes', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockFlopResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<FlopSolver />);
+    fireEvent.click(screen.getByRole('button', { name: 'Solve flop' }));
+    await waitFor(() => expect(screen.getByText('AdAc')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText('Runout depth'), { target: { value: 'flop_turn' } });
+    expect(screen.queryByText('AdAc')).not.toBeInTheDocument();
   });
 });
