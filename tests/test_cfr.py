@@ -529,3 +529,76 @@ def test_solve_chance_data_supplied_by_caller_is_read_back():
     solve(root, _ONE_HAND, _DUMMY_1X1_EQUITY_TABLE, iterations=10, chance_fn=_chance_fn, chance_data=my_chance_data)
     assert id(showdown_terminal) in my_chance_data
     assert isinstance(my_chance_data[id(showdown_terminal)], ChanceNode)
+
+
+def test_solve_handles_a_chance_node_nested_two_levels_deep():
+    # M13: proves cfr.py needs zero changes to support turn->river
+    # chaining (chance.py's chain_to_river just populates a *second*
+    # level of ChanceBranch.chance_fn — see its module docstring) by
+    # hand-building a tree with a chance node nested inside another
+    # chance node's own branch, using only the M12 mechanism already in
+    # place, and confirming both levels dispatch correctly into the
+    # *same* chance_data dict.
+    fold_terminal = TerminalNode(pot=1.5, invested={BTN: 0.5, BB: 1.0}, folded=frozenset({BTN}))
+
+    # Level 2 (river): a real DecisionNode so we can also confirm regret/
+    # strategy accumulates correctly beneath the second chance node.
+    river_fold = TerminalNode(pot=10.0, invested={BTN: 3.0, BB: 3.0}, folded=frozenset({BTN}))
+    river_showdown = TerminalNode(pot=16.0, invested={BTN: 6.0, BB: 6.0}, folded=frozenset())
+    river_decision = DecisionNode(
+        player_to_act=BTN, pot=10.0, invested={BTN: 3.0, BB: 3.0}, folded=frozenset(), raises_so_far=0,
+        children={Action(FOLD): river_fold, Action(RAISE, 6.0): river_showdown},
+    )
+    river_branch = ChanceBranch(card=Card("K", "s"), equity_table=np.array([[0.7]]), root=river_decision)
+
+    # Level 1 (turn): a real DecisionNode whose own showdown terminal is
+    # what triggers the level-2 (river) chance node, via the *inner*
+    # chance_fn — not the outer, flop-scoped one (that per-branch
+    # on/off switch is exactly M12's own scoping-bug fix).
+    turn_showdown = TerminalNode(pot=10.0, invested={BTN: 3.0, BB: 3.0}, folded=frozenset())
+    turn_decision = DecisionNode(
+        player_to_act=BTN, pot=1.5, invested={BTN: 1.0, BB: 1.0}, folded=frozenset(), raises_so_far=0,
+        children={Action(RAISE, 3.0): turn_showdown},
+    )
+
+    river_chance_calls = [0]
+
+    def river_chance_fn(terminal):
+        river_chance_calls[0] += 1
+        assert terminal is turn_showdown  # dispatched from the correct (turn-level) terminal
+        return ChanceNode(pot=terminal.pot, invested=dict(terminal.invested), branches={river_branch.card: river_branch})
+
+    turn_branch = ChanceBranch(card=Card("2", "c"), equity_table=np.array([[0.6]]), root=turn_decision, chance_fn=river_chance_fn)
+    flop_chance_node = ChanceNode(pot=1.5, invested={BTN: 1.0, BB: 1.0}, branches={turn_branch.card: turn_branch})
+
+    flop_chance_calls = [0]
+
+    def flop_chance_fn(terminal):
+        flop_chance_calls[0] += 1
+        return flop_chance_node
+
+    flop_showdown_terminal = TerminalNode(pot=1.5, invested={BTN: 1.0, BB: 1.0}, folded=frozenset())
+    root = DecisionNode(
+        player_to_act=BTN, pot=1.5, invested={BTN: 0.5, BB: 1.0}, folded=frozenset(), raises_so_far=0,
+        children={Action(FOLD): fold_terminal, Action(RAISE, 1.0): flop_showdown_terminal},
+    )
+    chance_data: dict = {}
+    node_data = solve(
+        root, _ONE_HAND, _DUMMY_1X1_EQUITY_TABLE, iterations=30, chance_fn=flop_chance_fn, chance_data=chance_data
+    )
+
+    # Both levels actually fired, exactly once each (memoized across all
+    # 30 iterations) - and both landed in the *same* chance_data dict,
+    # confirming M13's "flat, two-level dict" design needs no cfr.py
+    # changes at all.
+    assert flop_chance_calls[0] == 1
+    assert river_chance_calls[0] == 1
+    assert chance_data[id(flop_showdown_terminal)] is flop_chance_node
+    assert chance_data[id(turn_showdown)].branches[river_branch.card].root is river_decision
+
+    # A real DecisionNode beneath the *second* chance node still
+    # accumulates well-formed regret/strategy, same as any other node.
+    assert id(river_decision) in node_data
+    avg = node_data[id(river_decision)].average_strategy()
+    assert not np.any(np.isnan(avg))
+    assert np.allclose(avg.sum(axis=1), 1.0)
