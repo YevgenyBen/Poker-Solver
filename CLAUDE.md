@@ -214,6 +214,97 @@ street chaining needs.
     form and a sorted per-combo strategy list (not `RangeGrid`'s 169-cell
     layout — a flop combo range is a much smaller, variable-size,
     board-dependent set, ill-suited to that fixed grid).
+- **M12 — Flop→turn chance-node chaining.**
+  - `poker_solver/chance.py` (new) — `ChanceNode`/`ChanceBranch` +
+    `build_chance_node`: takes a showdown-eligible flop terminal (action
+    capped, nobody folded) and turns it into one branch per undealt card,
+    each with its own board-specific equity table and its own real
+    turn-street betting-round tree (`game_tree.build_street_tree`,
+    unmodified). `game_tree.py` itself stays completely untouched —
+    chance dispatch lives entirely in `cfr.py`'s recursion, fulfilling
+    that module's own docstring promise to stay card-agnostic and
+    sidestepping a fight with `LazyChildren`'s immutable, lazily-built
+    design (pre-walking the tree to attach chance nodes would undo the
+    laziness M9 built it for). Only chains flop→turn, one street — the
+    river still uses M11's existing trick (averaged inside the turn
+    branch's own equity table) one street further out; turn→river
+    chaining is mechanically the same machinery, deliberately left for a
+    future milestone, same "prove it small first" scope M9's iteration
+    budgets and M10/M11's cost write-ups established.
+  - **A real bug caught during design, not code review:** an initial
+    sketch threaded `chance_fn` unconditionally through every recursive
+    call, including inside a chance branch's own turn-street subtree —
+    which would let a turn-level showdown terminal re-trigger the
+    *flop*-scoped `chance_fn` and deal a "5th street" card off the wrong
+    (3-card) board. Fixed by making chance dispatch a per-branch
+    on/off switch (`ChanceBranch.chance_fn`, always `None` in M12) rather
+    than an ambient one — `cfr._solve_recurse` uses `branch.chance_fn`
+    when recursing into a branch, not the parent's — so a turn terminal
+    correctly falls through to its (already river-averaged) equity table
+    instead of dealing again. Covered by a dedicated regression test
+    (`test_solve_does_not_recurse_chance_fn_into_branch_subtrees`) that
+    would fail if this were ever threaded through unconditionally again.
+  - `poker_solver/cfr.py` — `_solve_recurse`/`solve()` gained optional
+    `chance_fn`/`chance_data` params (both default `None`, every M1–M11
+    call site unaffected — verified by full-suite rerun, not just
+    reasoning). A `ChanceNode`'s value is the *uniform* average of its
+    branches' value matrices; no `InfoSetTable`/regret update happens at
+    a chance node itself (not a decision point). `chance_data` is
+    caller-suppliable and memoizes each distinct showdown terminal's
+    built `ChanceNode` across all iterations (built once, not once per
+    iteration) — also what lets a caller walk
+    `chance_data[id(terminal)].branches[card].root` into a specific next
+    card's subtree afterward.
+  - `poker_solver/board_equity.py` — `build_board_equity_table` now
+    resolves `remaining_needed == 1` (a turn board, only the river left)
+    *exactly* (enumerating all ~44-46 possible rivers), not Monte Carlo
+    sampled like `remaining_needed >= 2` still is — cheaper and
+    noise-free, and load-bearing for M12 since every chance-branch table
+    it builds is exactly this case. `_remaining_deck`'s enumeration was
+    promoted to a shared `cards.remaining_deck`, reused by both this
+    module and `chance.py` rather than duplicated a third time.
+  - `poker_solver/solver.py` — new `solve_flop_turn(board, hero_range,
+    villain_range, pot, effective_stack_bb, ...)`, mirroring `solve_flop`
+    but wiring a `chance_fn` into `solve()` so every showdown-eligible
+    flop terminal chains into a real turn tree. `StrategyResult` gained a
+    `chance_data` field (empty `{}` for every pre-M12 result).
+    `raise_sizes`/`max_raises` apply to both flop and turn streets — one
+    deliberate scope cut, not a separate turn-specific sizing menu.
+  - **The new approximation, sized precisely, not hand-waved:** chance
+    branches get uniform weight (1 / undealt-card count) regardless of
+    which cards either player's range already holds — `remaining_deck`
+    only excludes the board, not hole cards, so for any combo, exactly 2
+    of the ~47 branches deal a card that combo physically holds; its
+    equity table correctly reports 0.5 there, but reach weight still
+    contributes to the uniform average over that impossible branch. A
+    real, small, precisely-bounded bias (~4.3% of branches per combo,
+    deterministic given the combo, non-compounding across iterations,
+    nets toward neutral rather than a wrong extreme) — distinct from,
+    not a restatement of, the project's existing cross-*player*
+    NaN→0.5 blocker precedent (`solve_flop`, `MultiwayEquityCache`),
+    which is about two different players' hands conflicting, not one
+    hand conflicting with the very card being dealt to decide its own
+    equity. Fixable later via per-branch reach masking + renormalization;
+    out of scope here to keep this one coherent improvement.
+  - **Measured, not assumed — and this is why M12 ships engine + tests
+    only, no API/frontend slice:** `build_chance_node` alone, at a tiny
+    2-combo pool, builds its ~49 branch tables in ~0.05–0.3s (the
+    exact-turn-board fix above is what makes this cheap — cross-checked
+    against M10's flop-level 23-combo/~1.1s number). But a flop tree can
+    have several distinct showdown terminals, each needing its own
+    ~49-table chance node, and the cost is genuinely O(N²) in combo-pool
+    size (same shape board_equity.py's own module comment already
+    flags): at `solve_flop`'s actual demo scale (`DEMO_FLOP_HERO_CLASSES`/
+    `DEMO_FLOP_VILLAIN_CLASSES` expanded to ~33 combos, default
+    `max_raises=4`), a real measurement came back at **~183 seconds for
+    just 50 iterations** (7 distinct chance nodes) — nowhere close to
+    viable for a live, on-demand-solved endpoint. Same honesty M9 applied
+    to 9-max's smaller iteration budget rather than pretending a slow
+    path is fast: `/solve_flop_turn` and a frontend section are deferred
+    to a follow-up milestone, not shipped speculatively slow. At the
+    tiny fixture scale tests actually use (2 combos, `max_raises=1`), a
+    full `solve_flop_turn` runs in ~2.5–3.3s for 20–100 iterations —
+    fine for the test suite.
 
 ## Engine is standalone
 

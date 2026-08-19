@@ -4,12 +4,13 @@ import pytest
 from poker_solver.cards import Card
 from poker_solver.combos import HandCombo
 from poker_solver.equity import MultiwayEquityCache, build_equity_table
-from poker_solver.game_tree import RAISE, GameConfig, build_game_tree
+from poker_solver.game_tree import CALL_OR_CHECK, RAISE, DecisionNode, GameConfig, build_game_tree
 from poker_solver.solver import (
     DEFAULT_ITERATIONS,
     StrategyResult,
     format_opening_range_grid,
     solve_flop,
+    solve_flop_turn,
     solve_preflop,
 )
 from poker_solver.starting_hands import StartingHand
@@ -514,3 +515,136 @@ def test_solve_flop_combo_missing_from_one_range_gets_zero_weight_there(small_fl
     villain_combos = {"9d8d", "Qc5c"}
     assert hero_combos.isdisjoint(villain_combos)
     assert set(small_flop_result.opening_range().keys()) == hero_combos | villain_combos
+
+
+# ---------------------------------------------------------------------------
+# M12 deliverable: solve_flop_turn — a flop showdown-eligible terminal
+# chains into a real turn betting round (via a real chance node) instead
+# of solve_flop's "average every remaining runout immediately" shortcut.
+# See chance.py's/cfr.py's module docstrings for the design.
+#
+# Deliberately the smallest possible combo pool (1 hero combo x 1 villain
+# combo, raise_sizes=(), max_raises=1) — every chance node this milestone
+# builds costs one board_equity table per undealt card (~49 of them, see
+# chance.py), and a flop tree can have several distinct showdown
+# terminals, each needing its own ~49-table chance node. Measured at this
+# fixture's scale (2-combo pool): ~0.3s just for one chance node's 49
+# tables (board_equity's exact-remaining_needed==1 fix makes this cheap —
+# see board_equity.py); measured separately at solve_flop's actual demo
+# scale (~34 combos, the full DEMO_FLOP_HERO/VILLAIN_CLASSES expansion):
+# well past what's reasonable for a live request (see the M12 PR for the
+# exact number) — real confirmation of the O(N^2)-in-combo-count cost
+# board_equity.py's own module comment already flags, now multiplied by
+# "however many distinct showdown terminals the flop tree has." This is
+# exactly why M12 ships engine + tests only, no API/frontend slice.
+# ---------------------------------------------------------------------------
+
+
+def _find_a_showdown_terminal(root: DecisionNode):
+    """Walk call_or_check from `root` until a showdown-eligible terminal
+    is reached (the "checked through" line) — same call_or_check-walking
+    idiom StrategyResult.node_for_position already uses."""
+    node = root
+    while isinstance(node, DecisionNode):
+        call_action = next(a for a in node.legal_actions if a.kind == CALL_OR_CHECK)
+        node = node.children[call_action]
+    return node
+
+
+@pytest.fixture(scope="module")
+def tiny_flop_turn_result():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    hero_range = {HandCombo(Card("7", "s"), Card("7", "c")): 1.0}
+    villain_range = {HandCombo(Card("9", "d"), Card("8", "d")): 1.0}
+    return solve_flop_turn(
+        board=board,
+        hero_range=hero_range,
+        villain_range=villain_range,
+        pot=10.0,
+        effective_stack_bb=15.0,
+        positions=("OOP", "IP"),
+        raise_sizes=(),
+        max_raises=1,
+        iterations=20,
+    )
+
+
+def test_solve_flop_turn_covers_the_union_of_both_ranges(tiny_flop_turn_result):
+    opening = tiny_flop_turn_result.opening_range()
+    assert set(opening.keys()) == {"7s7c", "9d8d"}
+
+
+def test_solve_flop_turn_frequencies_sum_to_one(tiny_flop_turn_result):
+    opening = tiny_flop_turn_result.opening_range()
+    for freqs in opening.values():
+        assert not any(np.isnan(freq) for freq in freqs.values())
+        assert pytest.approx(sum(freqs.values()), abs=1e-6) == 1.0
+
+
+def test_solve_flop_turn_root_is_the_flop_root(tiny_flop_turn_result):
+    root = tiny_flop_turn_result.root
+    assert isinstance(root, DecisionNode)
+    assert root.player_to_act == "OOP"
+    assert root.pot == pytest.approx(10.0)
+
+
+def test_solve_flop_turn_chance_data_reaches_a_real_turn_decision_node(tiny_flop_turn_result):
+    # This is the test that actually proves chaining happened, not just
+    # "solve_flop_turn ran without crashing": a real showdown-eligible
+    # flop terminal shows up in chance_data, and at least one of its
+    # branches leads to a real, well-formed turn DecisionNode.
+    terminal = _find_a_showdown_terminal(tiny_flop_turn_result.root)
+    assert terminal.is_showdown
+    assert id(terminal) in tiny_flop_turn_result.chance_data
+
+    chance_node = tiny_flop_turn_result.chance_data[id(terminal)]
+    any_branch = next(iter(chance_node.branches.values()))
+    assert isinstance(any_branch.root, DecisionNode)
+    assert any_branch.root.player_to_act == "OOP"
+
+    strategy = tiny_flop_turn_result.strategy_at(any_branch.root)
+    for freqs in strategy.values():
+        assert not any(np.isnan(freq) for freq in freqs.values())
+        assert pytest.approx(sum(freqs.values()), abs=1e-6) == 1.0
+
+
+def test_solve_flop_turn_deterministic_given_the_same_inputs():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    hero_range = {HandCombo(Card("7", "s"), Card("7", "c")): 1.0}
+    villain_range = {HandCombo(Card("9", "d"), Card("8", "d")): 1.0}
+    kwargs = dict(
+        board=board,
+        hero_range=hero_range,
+        villain_range=villain_range,
+        pot=10.0,
+        effective_stack_bb=15.0,
+        positions=("OOP", "IP"),
+        raise_sizes=(),
+        max_raises=1,
+        iterations=20,
+    )
+    # No equity_samples/equity_seed to pin here — every board_equity
+    # table this builds is a turn-board (remaining_needed==1) table,
+    # which is exact per the board_equity.py fix, so there's no sampling
+    # randomness left to control.
+    result_1 = solve_flop_turn(**kwargs)
+    result_2 = solve_flop_turn(**kwargs)
+    assert result_1.opening_range() == result_2.opening_range()
+
+
+def test_solve_flop_turn_uses_default_iterations_when_omitted():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    hero_range = {HandCombo(Card("7", "s"), Card("7", "c")): 1.0}
+    villain_range = {HandCombo(Card("9", "d"), Card("8", "d")): 1.0}
+    result = solve_flop_turn(
+        board=board,
+        hero_range=hero_range,
+        villain_range=villain_range,
+        pot=10.0,
+        effective_stack_bb=15.0,
+        positions=("OOP", "IP"),
+        raise_sizes=(),
+        max_raises=1,
+    )
+    assert result.iterations > 0
+    assert result.elapsed_seconds >= 0.0

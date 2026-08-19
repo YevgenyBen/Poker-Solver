@@ -1,7 +1,9 @@
 import numpy as np
 import pytest
 
+from poker_solver.cards import Card
 from poker_solver.cfr import InfoSetTable, mccfr_solve, solve
+from poker_solver.chance import ChanceBranch, ChanceNode
 from poker_solver.equity import MultiwayEquityCache, build_equity_table
 from poker_solver.game_tree import ALL_IN, BB, BTN, CALL_OR_CHECK, FOLD, RAISE, Action, DecisionNode, GameConfig, TerminalNode, build_game_tree
 from poker_solver.starting_hands import StartingHand
@@ -343,3 +345,187 @@ def test_mccfr_agrees_with_exact_solve_at_heads_up():
     # agree between the two solvers — both are solving the same game.
     assert abs(exact_avg[0, allin_idx] - mccfr_avg[0, allin_idx]) < 0.2
     assert abs(exact_avg[1, fold_idx] - mccfr_avg[1, fold_idx]) < 0.2
+
+
+# ---------------------------------------------------------------------------
+# M12: solve()'s chance_fn/chance_data — chaining a showdown-eligible
+# terminal into a ChanceNode (e.g. flop -> turn) instead of an immediate
+# showdown. See chance.py's module docstring and cfr.py's own for the
+# design (uniform-average-over-branches, and why chance dispatch has to
+# turn itself off per-branch rather than thread through unconditionally).
+# ---------------------------------------------------------------------------
+
+_ONE_HAND = [StartingHand("A", "A")]
+_DUMMY_1X1_EQUITY_TABLE = np.array([[0.5]])
+
+
+def test_solve_without_chance_fn_matches_pre_m12_behavior():
+    # Same toy game as test_solve_initial_reach_none_matches_omitting_it_
+    # entirely, but for the new chance_fn/chance_data params: omitting
+    # them entirely must be byte-identical to passing chance_fn=None,
+    # chance_data=None explicitly — the whole backward-compatibility
+    # story for every pre-M12 call site.
+    root, hands, equity_table = _toy_game(showdown_pot=10.0, showdown_btn_invested=1.0, equity_value=0.6)
+    omitted = solve(root, hands, equity_table, iterations=50)
+    explicit_none = solve(root, hands, equity_table, iterations=50, chance_fn=None, chance_data=None)
+    assert np.array_equal(omitted[id(root)].strategy_sum, explicit_none[id(root)].strategy_sum)
+    assert np.array_equal(omitted[id(root)].regret_sum, explicit_none[id(root)].regret_sum)
+
+
+def test_solve_chance_fn_not_called_for_fold_out_terminals():
+    # A tree whose only terminal is a fold-out (not showdown-eligible) —
+    # a chance_fn that raises if ever called proves dispatch correctly
+    # never fires there.
+    fold_terminal = TerminalNode(pot=1.5, invested={BTN: 0.5, BB: 1.0}, folded=frozenset({BTN}))
+    root = DecisionNode(
+        player_to_act=BTN, pot=1.5, invested={BTN: 0.5, BB: 1.0}, folded=frozenset(),
+        raises_so_far=0, children={Action(FOLD): fold_terminal},
+    )
+
+    def _chance_fn(terminal):
+        raise AssertionError("chance_fn should never be called for a fold-out terminal")
+
+    solve(root, _ONE_HAND, _DUMMY_1X1_EQUITY_TABLE, iterations=10, chance_fn=_chance_fn)
+
+
+def test_solve_averages_chance_node_branches_not_sums_them():
+    # Two branches whose hand-computed values average to -0.3 (raise
+    # narrowly beats fold's -0.5) but *sum* to -0.6 (fold would
+    # incorrectly beat -0.5 if the implementation summed instead of
+    # averaged) — a genuine arithmetic distinguisher, not just "some
+    # value came out and didn't crash." branch1: 0.1*5.0-1.0=-0.5;
+    # branch2: 0.3*3.0-1.0=-0.1; average=-0.3 > fold's -0.5.
+    fold_terminal = TerminalNode(pot=1.5, invested={BTN: 0.5, BB: 1.0}, folded=frozenset({BTN}))
+    branch_1 = ChanceBranch(
+        card=Card("2", "c"), equity_table=np.array([[0.1]]),
+        root=TerminalNode(pot=5.0, invested={BTN: 1.0, BB: 1.0}, folded=frozenset()),
+    )
+    branch_2 = ChanceBranch(
+        card=Card("3", "c"), equity_table=np.array([[0.3]]),
+        root=TerminalNode(pot=3.0, invested={BTN: 1.0, BB: 1.0}, folded=frozenset()),
+    )
+    chance_node = ChanceNode(
+        pot=1.5, invested={BTN: 1.0, BB: 1.0}, branches={branch_1.card: branch_1, branch_2.card: branch_2}
+    )
+    root = DecisionNode(
+        player_to_act=BTN, pot=1.5, invested={BTN: 0.5, BB: 1.0}, folded=frozenset(), raises_so_far=0,
+        children={Action(FOLD): fold_terminal, Action(RAISE, 1.0): chance_node},
+    )
+    node_data = solve(root, _ONE_HAND, _DUMMY_1X1_EQUITY_TABLE, iterations=300)
+    avg = node_data[id(root)].average_strategy()
+    raise_idx = root.legal_actions.index(Action(RAISE, 1.0))
+    assert avg[0, raise_idx] > 0.95
+
+
+def test_solve_no_infoset_table_created_for_a_chance_node():
+    fold_terminal = TerminalNode(pot=1.5, invested={BTN: 0.5, BB: 1.0}, folded=frozenset({BTN}))
+    branch = ChanceBranch(
+        card=Card("2", "c"), equity_table=np.array([[0.6]]),
+        root=TerminalNode(pot=10.0, invested={BTN: 1.0, BB: 1.0}, folded=frozenset()),
+    )
+    chance_node = ChanceNode(pot=1.5, invested={BTN: 1.0, BB: 1.0}, branches={branch.card: branch})
+    root = DecisionNode(
+        player_to_act=BTN, pot=1.5, invested={BTN: 0.5, BB: 1.0}, folded=frozenset(), raises_so_far=0,
+        children={Action(FOLD): fold_terminal, Action(RAISE, 1.0): chance_node},
+    )
+    node_data = solve(root, _ONE_HAND, _DUMMY_1X1_EQUITY_TABLE, iterations=20)
+    assert id(chance_node) not in node_data
+
+
+def test_solve_end_to_end_real_decision_nodes_beneath_a_chance_node():
+    # The chance branch leads into a real DecisionNode (fold/call), not
+    # straight to a terminal — regret/strategy should accumulate there
+    # correctly too, the same as any other DecisionNode in the tree.
+    fold_terminal = TerminalNode(pot=1.5, invested={BTN: 0.5, BB: 1.0}, folded=frozenset({BTN}))
+    turn_fold_terminal = TerminalNode(pot=1.5, invested={BTN: 1.0, BB: 1.0}, folded=frozenset({BTN}))
+    turn_showdown_terminal = TerminalNode(pot=10.0, invested={BTN: 3.0, BB: 3.0}, folded=frozenset())
+    turn_decision = DecisionNode(
+        player_to_act=BTN, pot=1.5, invested={BTN: 1.0, BB: 1.0}, folded=frozenset(), raises_so_far=0,
+        children={Action(FOLD): turn_fold_terminal, Action(RAISE, 3.0): turn_showdown_terminal},
+    )
+    branch = ChanceBranch(card=Card("2", "c"), equity_table=np.array([[0.9]]), root=turn_decision)
+    chance_node = ChanceNode(pot=1.5, invested={BTN: 1.0, BB: 1.0}, branches={branch.card: branch})
+    root = DecisionNode(
+        player_to_act=BTN, pot=1.5, invested={BTN: 0.5, BB: 1.0}, folded=frozenset(), raises_so_far=0,
+        children={Action(FOLD): fold_terminal, Action(RAISE, 1.0): chance_node},
+    )
+    node_data = solve(root, _ONE_HAND, _DUMMY_1X1_EQUITY_TABLE, iterations=100)
+    assert id(turn_decision) in node_data
+    avg = node_data[id(turn_decision)].average_strategy()
+    assert not np.any(np.isnan(avg))
+    assert np.allclose(avg.sum(axis=1), 1.0)
+
+
+def test_solve_chance_fn_memoized_across_iterations():
+    showdown_terminal = TerminalNode(pot=10.0, invested={BTN: 1.0, BB: 1.0}, folded=frozenset())
+    fold_terminal = TerminalNode(pot=1.5, invested={BTN: 0.5, BB: 1.0}, folded=frozenset({BTN}))
+    root = DecisionNode(
+        player_to_act=BTN, pot=1.5, invested={BTN: 0.5, BB: 1.0}, folded=frozenset(), raises_so_far=0,
+        children={Action(FOLD): fold_terminal, Action(RAISE, 1.0): showdown_terminal},
+    )
+    call_count = [0]
+
+    def _chance_fn(terminal):
+        call_count[0] += 1
+        branch = ChanceBranch(
+            card=Card("2", "c"), equity_table=np.array([[0.5]]),
+            root=TerminalNode(pot=terminal.pot, invested=dict(terminal.invested), folded=frozenset()),
+        )
+        return ChanceNode(pot=terminal.pot, invested=dict(terminal.invested), branches={branch.card: branch})
+
+    solve(root, _ONE_HAND, _DUMMY_1X1_EQUITY_TABLE, iterations=50, chance_fn=_chance_fn)
+    assert call_count[0] == 1
+
+
+def test_solve_does_not_recurse_chance_fn_into_branch_subtrees():
+    # Regression guard for the scoping bug the design explicitly calls
+    # out: a branch's own subtree reaching its own showdown terminal must
+    # NOT re-trigger the *outer* (flop-scoped) chance_fn — that would
+    # double-deal a card off the wrong board. The chance_fn spy here
+    # returns a branch whose root is itself a showdown terminal
+    # (chance_fn=None, the M12 default) — if dispatch were threaded
+    # unconditionally instead of turned off per-branch, call_count would
+    # be 2 (or more, across iterations), not 1.
+    showdown_terminal = TerminalNode(pot=10.0, invested={BTN: 1.0, BB: 1.0}, folded=frozenset())
+    fold_terminal = TerminalNode(pot=1.5, invested={BTN: 0.5, BB: 1.0}, folded=frozenset({BTN}))
+    root = DecisionNode(
+        player_to_act=BTN, pot=1.5, invested={BTN: 0.5, BB: 1.0}, folded=frozenset(), raises_so_far=0,
+        children={Action(FOLD): fold_terminal, Action(RAISE, 1.0): showdown_terminal},
+    )
+    call_count = [0]
+
+    def _chance_fn(terminal):
+        call_count[0] += 1
+        # The branch's own root is itself a showdown-eligible terminal —
+        # correct behavior treats it as a real (river-averaged) showdown,
+        # not something to deal yet another card for.
+        branch_showdown = TerminalNode(pot=terminal.pot, invested=dict(terminal.invested), folded=frozenset())
+        branch = ChanceBranch(card=Card("2", "c"), equity_table=np.array([[0.5]]), root=branch_showdown)
+        return ChanceNode(pot=terminal.pot, invested=dict(terminal.invested), branches={branch.card: branch})
+
+    solve(root, _ONE_HAND, _DUMMY_1X1_EQUITY_TABLE, iterations=50, chance_fn=_chance_fn)
+    assert call_count[0] == 1
+
+
+def test_solve_chance_data_supplied_by_caller_is_read_back():
+    # chance_data mutates by reference — a caller-supplied dict should
+    # end up holding the built ChanceNode, keyed by id(terminal), so a
+    # caller can walk into a specific branch's subtree afterward.
+    showdown_terminal = TerminalNode(pot=10.0, invested={BTN: 1.0, BB: 1.0}, folded=frozenset())
+    fold_terminal = TerminalNode(pot=1.5, invested={BTN: 0.5, BB: 1.0}, folded=frozenset({BTN}))
+    root = DecisionNode(
+        player_to_act=BTN, pot=1.5, invested={BTN: 0.5, BB: 1.0}, folded=frozenset(), raises_so_far=0,
+        children={Action(FOLD): fold_terminal, Action(RAISE, 1.0): showdown_terminal},
+    )
+
+    def _chance_fn(terminal):
+        branch = ChanceBranch(
+            card=Card("2", "c"), equity_table=np.array([[0.5]]),
+            root=TerminalNode(pot=terminal.pot, invested=dict(terminal.invested), folded=frozenset()),
+        )
+        return ChanceNode(pot=terminal.pot, invested=dict(terminal.invested), branches={branch.card: branch})
+
+    my_chance_data = {}
+    solve(root, _ONE_HAND, _DUMMY_1X1_EQUITY_TABLE, iterations=10, chance_fn=_chance_fn, chance_data=my_chance_data)
+    assert id(showdown_terminal) in my_chance_data
+    assert isinstance(my_chance_data[id(showdown_terminal)], ChanceNode)

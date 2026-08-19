@@ -100,3 +100,45 @@ def test_two_combo_equity_rejects_an_impossible_matchup():
     b = HandCombo(*cards("Ah Kd"))  # shares Ah with `a`
     with pytest.raises(ValueError):
         two_combo_equity(board, a, b)
+
+
+# ---------------------------------------------------------------------------
+# M12: a turn board (remaining_needed == 1, only the river left to come) is
+# resolved exactly — every possible river enumerated, not Monte Carlo
+# sampled — unlike a flop board's remaining_needed == 2, which stays sampled.
+# ---------------------------------------------------------------------------
+
+
+def test_turn_board_equity_is_exact_not_sampled():
+    # Different samples/rng should have zero effect on the result once
+    # remaining_needed == 1, since they're silently unused on that path.
+    board = tuple(cards("2c 7d 9h Ks"))
+    strong = HandCombo(*cards("Ah Ad"))
+    weak = HandCombo(*cards("3h 4d"))
+    table_1 = build_board_equity_table(board, [strong, weak], samples=10, rng=random.Random(1))
+    table_2 = build_board_equity_table(board, [strong, weak], samples=999, rng=random.Random(999))
+    assert table_1[0, 1] == table_2[0, 1]
+
+
+def test_turn_board_equity_matches_a_hand_verifiable_value():
+    # Hero holds quad aces outright (board already has three, hero's
+    # other hole card is a king kicker) — the literal best possible hand,
+    # beating anything villain could make on any of the 44 possible
+    # rivers, including villain's own best case (quad twos, from a river
+    # 2c completing three 2s already on board+in hand). Equity is exactly
+    # 1.0 regardless of the river, not "close to."
+    board = tuple(cards("Ac Ad Ah 2s"))
+    quad_aces = HandCombo(*cards("As Ks"))
+    trip_twos = HandCombo(*cards("2h 2d"))
+    table = build_board_equity_table(board, [quad_aces, trip_twos])
+    assert table[0, 1] == pytest.approx(1.0)
+    assert table[1, 0] == pytest.approx(0.0)
+
+
+def test_turn_board_equity_deterministic_with_no_rng_supplied():
+    board = tuple(cards("2c 7d 9h Ks"))
+    strong = HandCombo(*cards("Ah Ad"))
+    weak = HandCombo(*cards("3h 4d"))
+    table_1 = build_board_equity_table(board, [strong, weak])
+    table_2 = build_board_equity_table(board, [strong, weak])
+    assert table_1[0, 1] == table_2[0, 1]
