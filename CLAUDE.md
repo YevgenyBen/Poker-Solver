@@ -458,6 +458,74 @@ street chaining needs.
     correct clearing on depth switch, correct final rendering (real bet
     sizing at the turn depth, push/fold-only structure at the river
     depth, accurate `elapsed_seconds`).
+- **M15 — Preflop→flop range handoff (engine only).**
+  `combos.range_from_class_frequencies` has documented itself, since
+  M10, as "the bridge from a preflop solve's per-class continue-
+  frequency into a postflop range" — but nothing actually produced that
+  frequency dict from a real `solve_preflop` result until now; every
+  postflop demo used a hand-picked, hardcoded range instead. M15 closes
+  that gap for the single most common way a pot actually reaches a
+  flop: one player opens, one player calls, everyone else (if any)
+  already folded before either acted. Engine only, no `api/main.py`/
+  frontend changes this milestone — same "prove it before deciding the
+  API shape" pattern M12/M13 followed before M14 resolved their own
+  open question.
+  - `poker_solver/solver.py` — `StrategyResult.continuing_frequencies
+    (node, action_kind=None)`: hand -> frequency, deliberately keyed by
+    the actual `StartingHand` *objects* from `self.hands`, not the
+    string labels `strategy_at` returns — required because
+    `range_from_class_frequencies` reads `hand.high_rank`/`.low_rank`
+    off its keys, and `strategy_at`'s own output discards the object
+    (keeps only `str(hand)`, with the string→object parser long since
+    removed as dead code). `action_kind=None` sums every non-fold
+    action ("1 - fold probability," the continue-frequency
+    `range_from_class_frequencies`'s own docstring already
+    anticipated); `action_kind=<a kind constant>` isolates one specific
+    action's frequency instead — load-bearing for `derive_flop_scenario`
+    below, not just a nicety: a single node can have both a sized
+    `RAISE` and an `ALL_IN` simultaneously (`game_tree._build` adds
+    both independently), each leading to a *different* pot, so summing
+    them would misattribute a hand that prefers jamming into a range
+    meant to represent the sized raise's own pot specifically.
+  - `FlopScenario` (new dataclass) + `derive_flop_scenario(result,
+    raiser_position, caller_position)`: derives `raiser_range`,
+    `caller_range` (`continuing_frequencies` with `action_kind=RAISE`/
+    `CALL_OR_CHECK` respectively — not the simpler default, for the
+    same pot-consistency reason above), `pot`, and `effective_stack_bb`
+    — each ready to feed straight into `solve_flop`/`solve_flop_turn`/
+    `solve_flop_to_river`'s existing parameters unchanged. Rejects a
+    3+ player `result` (multiway pots out of scope this milestone),
+    either position missing from `result.config.positions`, no sized
+    raise available, and a `caller_position` that isn't the position
+    that actually acts right after the raise.
+  - **A real bug caught during design, not code review:** the initial
+    sketch found the raiser's node via `node_for_position(raiser_
+    position)` — but that method walks `call_or_check` from root
+    ("everyone before you limped"), so a non-first-to-act
+    `raiser_position` would silently derive a scenario for *raising
+    over an earlier limp* (a materially different, out-of-scope line)
+    instead of failing loudly. Fixed by using `result.root` directly
+    and explicitly checking `raiser_position == result.root.
+    player_to_act` first, raising `ValueError` otherwise.
+  - **A second real finding, from testing, not assumed:** an initial
+    end-to-end test asserted BB's *calling* frequency (`caller_range`)
+    is higher for AA than for 72o facing an open-raise — measured
+    instead to be the reverse (AA's own call-frequency ≈0.005, 72o's
+    ≈0.19, in a 3-hand toy pool) — not a bug: a premium hand facing a
+    raise correctly prefers to 3-bet/jam rather than flat-call, so most
+    of its non-fold mass goes to `RAISE`, not `CALL_OR_CHECK`, exactly
+    real-poker intuition once actually measured. The robust directional
+    check instead uses `continuing_frequencies(caller_node)` (overall
+    fold-vs-continue, `action_kind=None`) at the same node, which
+    behaves the way naive intuition expects — `caller_range` itself is
+    correct as `CALL_OR_CHECK`-specific per the design above; the test's
+    original *expectation* was wrong, not the code.
+  - **Tested end to end, not just structurally:** a real (small, fast)
+    `solve_preflop` → `derive_flop_scenario` → `combos.
+    range_from_class_frequencies` → real `solve_flop` pipeline, asserting
+    AA's combos carry far more weight than 72o's in the resulting range
+    — proving real numbers flow through every stage, not that a
+    hardcoded range still happens to work.
 
 ## Engine is standalone
 

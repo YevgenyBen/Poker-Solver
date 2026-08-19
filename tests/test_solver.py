@@ -2,12 +2,14 @@ import numpy as np
 import pytest
 
 from poker_solver.cards import Card
-from poker_solver.combos import HandCombo
+from poker_solver.combos import HandCombo, combos_for_class, range_from_class_frequencies
 from poker_solver.equity import MultiwayEquityCache, build_equity_table
 from poker_solver.game_tree import CALL_OR_CHECK, RAISE, DecisionNode, GameConfig, build_game_tree
 from poker_solver.solver import (
     DEFAULT_ITERATIONS,
+    FlopScenario,
     StrategyResult,
+    derive_flop_scenario,
     format_opening_range_grid,
     solve_flop,
     solve_flop_to_river,
@@ -805,3 +807,193 @@ def test_solve_flop_to_river_uses_default_iterations_when_omitted():
     )
     assert result.iterations > 0
     assert result.elapsed_seconds >= 0.0
+
+
+# ---------------------------------------------------------------------------
+# M15 deliverable: StrategyResult.continuing_frequencies + derive_flop_
+# scenario — a real preflop solve's per-class continue-frequency, bridged
+# into a postflop range via combos.range_from_class_frequencies (M10's own
+# documented "bridge" role for that function, never actually exercised by
+# a real preflop result until now). Engine only — no api/main.py/frontend
+# changes this milestone.
+# ---------------------------------------------------------------------------
+
+
+def _stub_preflop_result(config):
+    """A StrategyResult with an empty node_data (nothing solved) — fine
+    for tests that only check tree-shape-derived facts (pot, stack,
+    which positions/actions exist), not actual solved frequencies."""
+    root = build_game_tree(config)
+    return StrategyResult(config=config, root=root, hands=_SMALL_HANDS, node_data={}, iterations=0, elapsed_seconds=0.0)
+
+
+def test_continuing_frequencies_keys_are_starting_hand_objects():
+    config = GameConfig(raise_sizes=(), max_raises=1)
+    result = solve_preflop(iterations=20, config=config, hands=_SMALL_HANDS, equity_table=_SMALL_EQUITY_TABLE)
+    freqs = result.continuing_frequencies(result.root)
+    assert all(isinstance(hand, StartingHand) for hand in freqs)
+    assert set(freqs.keys()) == set(_SMALL_HANDS)
+
+
+def test_continuing_frequencies_default_matches_one_minus_fold():
+    config = GameConfig(raise_sizes=(), max_raises=1)
+    result = solve_preflop(iterations=20, config=config, hands=_SMALL_HANDS, equity_table=_SMALL_EQUITY_TABLE)
+    freqs = result.continuing_frequencies(result.root)
+    strategy = result.strategy_at(result.root)
+    for hand in _SMALL_HANDS:
+        expected = 1.0 - strategy[str(hand)]["fold"]
+        assert freqs[hand] == pytest.approx(expected)
+
+
+def test_continuing_frequencies_specific_action_kind_isolates_that_action():
+    # Default raise_sizes/max_raises gives root both a sized RAISE and an
+    # ALL_IN simultaneously — the exact case action_kind exists to
+    # disambiguate (see continuing_frequencies' own docstring).
+    config = GameConfig()
+    result = solve_preflop(iterations=20, config=config, hands=_SMALL_HANDS, equity_table=_SMALL_EQUITY_TABLE)
+    raise_only = result.continuing_frequencies(result.root, action_kind=RAISE)
+    overall = result.continuing_frequencies(result.root)
+    for hand in _SMALL_HANDS:
+        assert raise_only[hand] <= overall[hand] + 1e-9
+    # At least one hand's raise-only mass is strictly less than its
+    # overall continue mass — proves action_kind actually filters,
+    # rather than accidentally summing everything regardless.
+    assert any(raise_only[hand] < overall[hand] - 1e-9 for hand in _SMALL_HANDS)
+
+
+def test_continuing_frequencies_rejects_an_action_kind_not_present_at_the_node():
+    config = GameConfig(raise_sizes=(), max_raises=1)  # no sized RAISE at root
+    result = solve_preflop(iterations=20, config=config, hands=_SMALL_HANDS, equity_table=_SMALL_EQUITY_TABLE)
+    with pytest.raises(ValueError):
+        result.continuing_frequencies(result.root, action_kind=RAISE)
+
+
+def test_continuing_frequencies_falls_back_to_uniform_for_an_unvisited_node():
+    config = GameConfig(raise_sizes=(), max_raises=1)
+    result = _stub_preflop_result(config)
+    freqs = result.continuing_frequencies(result.root)
+    num_actions = len(result.root.legal_actions)
+    # Uniform strategy -> continue-frequency = every action except fold,
+    # i.e. (num_actions - 1) / num_actions (exactly one legal action is
+    # fold at this node).
+    expected = (num_actions - 1) / num_actions
+    for hand in _SMALL_HANDS:
+        assert freqs[hand] == pytest.approx(expected)
+
+
+def test_derive_flop_scenario_rejects_a_multiway_config():
+    config = GameConfig(positions=("BTN", "SB", "BB"))
+    result = _stub_preflop_result(config)
+    with pytest.raises(ValueError):
+        derive_flop_scenario(result, "BTN", "BB")
+
+
+def test_derive_flop_scenario_rejects_a_position_not_in_the_config():
+    result = _stub_preflop_result(GameConfig())
+    with pytest.raises(ValueError):
+        derive_flop_scenario(result, "UTG", "BB")
+
+
+def test_derive_flop_scenario_rejects_a_raiser_that_isnt_first_to_act():
+    # positions=(BTN, BB) by default — BTN acts first, not BB. Passing BB
+    # as the raiser would (without this guard) silently walk through
+    # BTN's *limp* via node_for_position and derive a scenario for an
+    # out-of-scope limped pot instead of raising a clear error.
+    result = _stub_preflop_result(GameConfig())
+    with pytest.raises(ValueError):
+        derive_flop_scenario(result, "BB", "BTN")
+
+
+def test_derive_flop_scenario_rejects_a_config_with_no_sized_raise():
+    config = GameConfig(raise_sizes=(), max_raises=1)
+    result = _stub_preflop_result(config)
+    with pytest.raises(ValueError):
+        derive_flop_scenario(result, "BTN", "BB")
+
+
+def test_derive_flop_scenario_rejects_a_caller_that_isnt_the_real_next_actor():
+    result = _stub_preflop_result(GameConfig())
+    with pytest.raises(ValueError):
+        derive_flop_scenario(result, "BTN", "BTN")
+
+
+def test_derive_flop_scenario_happy_path_pot_and_stack_match_hand_computed_values():
+    config = GameConfig(stack_bb=100.0, small_blind=0.5, big_blind=1.0, raise_sizes=(2.5, 3.0, 2.2), max_raises=4)
+    result = _stub_preflop_result(config)
+    scenario = derive_flop_scenario(result, "BTN", "BB")
+
+    raise_size = 2.5 * config.big_blind  # preflop's open_size_reference is big_blind
+    assert scenario.raiser_position == "BTN"
+    assert scenario.caller_position == "BB"
+    assert scenario.pot == pytest.approx(2 * raise_size)
+    assert scenario.effective_stack_bb == pytest.approx(config.stack_bb - raise_size)
+
+    # The load-bearing invariant that makes the [raiser_position]
+    # indexing choice for effective_stack_bb correct, not arbitrary: a
+    # call by definition matches the raiser's total investment.
+    raise_action = next(a for a in result.root.legal_actions if a.kind == RAISE)
+    caller_node = result.root.children[raise_action]
+    call_action = next(a for a in caller_node.legal_actions if a.kind == CALL_OR_CHECK)
+    after_call = caller_node.children[call_action]
+    assert after_call.invested["BTN"] == pytest.approx(after_call.invested["BB"])
+
+
+def test_derive_flop_scenario_pipeline_a_premium_hand_continues_far_more_than_trash():
+    # Real (small, fast) preflop solve -> derive_flop_scenario -> real
+    # combo expansion -> real solve_flop, proving real numbers flow
+    # through the whole pipeline, not just that hardcoded ranges still
+    # work.
+    config = GameConfig(raise_sizes=(2.5,), max_raises=2)
+    preflop_result = solve_preflop(iterations=300, config=config, hands=_SMALL_HANDS, equity_table=_SMALL_EQUITY_TABLE)
+    scenario = derive_flop_scenario(preflop_result, "BTN", "BB")
+
+    aa = StartingHand("A", "A")
+    trash = StartingHand("7", "2", suited=False)
+    assert scenario.raiser_range[aa] > scenario.raiser_range[trash]
+
+    # NOT scenario.caller_range[aa] > scenario.caller_range[trash]: caller_range
+    # is deliberately CALL_OR_CHECK-*specific* (see derive_flop_scenario's
+    # docstring), and a premium hand facing a raise often prefers to
+    # 3-bet/jam rather than flat-call — measured here: AA's own
+    # call-frequency (~0.005) is actually *lower* than 72o's (~0.19),
+    # since almost all of AA's non-fold mass at this node goes to raising
+    # instead, exactly the real-poker "premium hands don't just call"
+    # intuition, not a bug. The robust check instead uses overall
+    # continue-frequency (fold vs. not, action_kind=None) at the same
+    # node, which behaves the way intuition expects.
+    raise_action = next(a for a in preflop_result.root.legal_actions if a.kind == RAISE)
+    caller_node = preflop_result.root.children[raise_action]
+    caller_overall_continue = preflop_result.continuing_frequencies(caller_node)
+    assert caller_overall_continue[aa] > caller_overall_continue[trash]
+
+    board = (Card("2", "h"), Card("6", "d"), Card("9", "c"))
+    exclude = frozenset(board)
+    hero_combos = range_from_class_frequencies(scenario.raiser_range, exclude=exclude)
+    villain_combos = range_from_class_frequencies(scenario.caller_range, exclude=exclude)
+
+    flop_result = solve_flop(
+        board=board,
+        hero_range=hero_combos,
+        villain_range=villain_combos,
+        pot=scenario.pot,
+        effective_stack_bb=scenario.effective_stack_bb,
+        positions=("OOP", "IP"),
+        max_raises=1,
+        raise_sizes=(),
+        iterations=50,
+        equity_samples=50,
+    )
+    opening = flop_result.opening_range()
+    assert len(opening) > 0
+    for freqs in opening.values():
+        assert pytest.approx(sum(freqs.values()), abs=1e-6) == 1.0
+
+    # AA's own combos should carry far more weight in the derived hero
+    # range than 72o's — the same directional fact as the class-level
+    # check above, now confirmed to survive all the way through combo
+    # expansion into the range solve_flop actually solved.
+    aa_combos = combos_for_class(aa, exclude=exclude)
+    trash_combos = combos_for_class(trash, exclude=exclude)
+    aa_weight = sum(hero_combos.get(c, 0.0) for c in aa_combos)
+    trash_weight = sum(hero_combos.get(c, 0.0) for c in trash_combos)
+    assert aa_weight > trash_weight

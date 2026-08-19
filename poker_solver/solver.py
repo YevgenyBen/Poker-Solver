@@ -23,7 +23,7 @@ from .board_equity import build_board_equity_table
 from .chance import build_chance_node
 from .cfr import InfoSetTable, mccfr_solve, solve
 from .equity import MultiwayEquityCache, get_equity_table
-from .game_tree import CALL_OR_CHECK, DecisionNode, GameConfig, StreetConfig, build_game_tree, build_street_tree
+from .game_tree import CALL_OR_CHECK, FOLD, RAISE, DecisionNode, GameConfig, StreetConfig, build_game_tree, build_street_tree
 from .starting_hands import all_starting_hands
 
 # Exact path (heads-up): measured ~3-4ms/iteration at full 169-hand
@@ -122,6 +122,46 @@ class StrategyResult:
         opening_range()."""
         return self.strategy_at(self.node_for_position(position))
 
+    def continuing_frequencies(self, node: DecisionNode, action_kind: str | None = None) -> dict:
+        """hand -> frequency at `node`, keyed by the actual `StartingHand`/
+        combo *objects* from `self.hands` — deliberately NOT the
+        string-keyed shape `strategy_at` returns. This exists specifically
+        to feed `combos.range_from_class_frequencies` (M10), which reads
+        `hand.high_rank`/`.low_rank` off its keys and so needs the real
+        objects, not display labels; `strategy_at`'s own output can't be
+        repurposed for this since it discards the object (keeps only
+        `str(hand)`), and the string->object parser was removed as dead
+        code back at M10 (callers were expected to already have the
+        objects a StrategyResult was solved with — this is that expected
+        caller).
+
+        `action_kind=None` (default) sums every non-fold action's
+        frequency — the "1 - fold probability" continue-frequency
+        `range_from_class_frequencies`'s own docstring already
+        anticipated. `action_kind=<a game_tree.py kind constant>` (e.g.
+        RAISE) instead isolates *one specific action's* frequency —
+        needed because a single node can have both a sized RAISE and an
+        ALL_IN simultaneously (`game_tree._build` adds both
+        independently when applicable), each leading to a *different*
+        pot; summing them together would misattribute a hand that
+        prefers jamming into a range meant to represent a specific sized
+        raise's own pot. Raises ValueError if `action_kind` isn't legal
+        at this node at all (e.g. requesting RAISE where no sized raise
+        exists).
+        """
+        actions = node.legal_actions
+        table = self.node_data.get(id(node))
+        if table is None:
+            table = InfoSetTable.zeros(len(self.hands), len(actions))
+        avg = table.average_strategy()
+        if action_kind is None:
+            keep = [a_idx for a_idx, action in enumerate(actions) if action.kind != FOLD]
+        else:
+            keep = [a_idx for a_idx, action in enumerate(actions) if action.kind == action_kind]
+            if not keep:
+                raise ValueError(f"no action of kind {action_kind!r} exists at this node")
+        return {hand: float(avg[hand_idx, keep].sum()) for hand_idx, hand in enumerate(self.hands)}
+
 
 def solve_preflop(
     stack_bb: float = 100.0,
@@ -173,6 +213,110 @@ def solve_preflop(
         node_data=node_data,
         iterations=actual_iterations,
         elapsed_seconds=elapsed,
+    )
+
+
+@dataclass(frozen=True)
+class FlopScenario:
+    """Ranges + pot/stack state for a flop, derived from a preflop
+    StrategyResult for one specific line: `raiser_position` opens,
+    `caller_position` calls, everyone else (if any) already folded
+    before either of them acted — the single most common way a real pot
+    actually reaches a flop. Not multiway, not a limped pot, not a
+    3-bet pot; see derive_flop_scenario for why each of those is
+    explicitly out of scope here (M15).
+
+    `raiser_range`/`caller_range` map StartingHand -> that hand's
+    frequency of reaching *this exact* line (not each position's overall
+    continue frequency — see derive_flop_scenario for why that
+    distinction matters). Feed each through
+    combos.range_from_class_frequencies(..., exclude=frozenset(board))
+    to get a solve_flop/solve_flop_turn/solve_flop_to_river-ready combo
+    range; `pot`/`effective_stack_bb` are already exactly what those
+    functions' own `pot`/`effective_stack_bb` parameters expect.
+    """
+
+    raiser_position: str
+    caller_position: str
+    raiser_range: dict
+    caller_range: dict
+    pot: float
+    effective_stack_bb: float
+
+
+def derive_flop_scenario(result: StrategyResult, raiser_position: str, caller_position: str) -> FlopScenario:
+    """Derive a FlopScenario from a preflop StrategyResult's "raiser
+    opens, caller calls" line.
+
+    Requires `result` to have come from a heads-up (2-player) preflop
+    solve — a real multiway pot (3+ players still live after the raise)
+    isn't modeled by this milestone, so a 3+ player config is rejected
+    outright rather than silently producing a scenario that ignores
+    whoever else might still be live.
+
+    `raiser_position` must be the *first* position to act (`result.
+    root.player_to_act`), not just any position with a sized raise
+    somewhere in the tree — deliberately NOT resolved via
+    `node_for_position` (which walks call_or_check from root, i.e.
+    "everyone before you limped"): for a non-first-to-act position that
+    would silently derive a scenario for raising *over an earlier limp*,
+    a materially different, out-of-scope line, not the immediate-open
+    this function is documented to model.
+
+    `raiser_range`/`caller_range` use `continuing_frequencies(...,
+    action_kind=RAISE)` / `(..., action_kind=CALL_OR_CHECK)`, not the
+    simpler default (`action_kind=None`, "1 - fold") — load-bearing, not
+    stylistic: a single node can have both a sized RAISE and an ALL_IN,
+    each leading to a different pot, and `pot`/`effective_stack_bb` below
+    are read off the *specific* raise-then-call child, not an average
+    over every non-fold line. Using the "1-fold" default for either
+    range would silently weight in hands that actually took a different
+    (jam, or 3-bet) line into a (pot, stack) pair that isn't theirs.
+
+    Raises ValueError for: a 3+ player `result`; either position not in
+    `result.config.positions`; `raiser_position` not first to act; no
+    sized raise available at the raiser's node; `caller_position` not
+    the position that actually acts right after the raise.
+    """
+    if result.config.num_players != 2:
+        raise ValueError("derive_flop_scenario only models a heads-up raiser/caller pair, not a multiway pot")
+    if raiser_position not in result.config.positions:
+        raise ValueError(f"{raiser_position!r} is not one of {result.config.positions}")
+    if caller_position not in result.config.positions:
+        raise ValueError(f"{caller_position!r} is not one of {result.config.positions}")
+    if raiser_position != result.root.player_to_act:
+        raise ValueError(
+            f"{raiser_position!r} is not the first position to act "
+            f"({result.root.player_to_act!r} is) — this only models an immediate "
+            "open-raise, not a raise over an earlier limp"
+        )
+
+    raiser_node = result.root
+    raise_action = next((a for a in raiser_node.legal_actions if a.kind == RAISE), None)
+    if raise_action is None:
+        raise ValueError(f"{raiser_position!r} has no sized-raise action at their first decision")
+
+    caller_node = raiser_node.children[raise_action]
+    if caller_node.player_to_act != caller_position:
+        raise ValueError(f"{caller_position!r} doesn't act directly after {raiser_position!r}'s raise")
+
+    call_action = next((a for a in caller_node.legal_actions if a.kind == CALL_OR_CHECK), None)
+    if call_action is None:
+        # Structurally always present (game_tree._build adds CALL_OR_CHECK
+        # unconditionally at every DecisionNode) — guarded explicitly
+        # anyway, matching the raise_action lookup right above, rather
+        # than letting a future game_tree.py change surface as a bare
+        # StopIteration here instead of a clear error.
+        raise ValueError(f"no call action found at {caller_position!r}'s node")
+    after_call = caller_node.children[call_action]
+
+    return FlopScenario(
+        raiser_position=raiser_position,
+        caller_position=caller_position,
+        raiser_range=result.continuing_frequencies(raiser_node, action_kind=RAISE),
+        caller_range=result.continuing_frequencies(caller_node, action_kind=CALL_OR_CHECK),
+        pot=after_call.pot,
+        effective_stack_bb=result.config.stack_bb - after_call.invested[raiser_position],
     )
 
 
