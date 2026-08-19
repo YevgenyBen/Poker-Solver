@@ -647,6 +647,102 @@ street chaining needs.
     ~85 combos at B=16: MAE≈0.041, max AE≈0.42) and falls further as B
     grows, giving the next milestone real numbers to size a bucket
     count against instead of guessing.
+- **M18 — Wire card abstraction into a real solve (Phase 1b of the
+  real-time-speed roadmap).** Answers the question M17 explicitly
+  deferred: does a CFR solve running over B buckets instead of N combos
+  actually deliver the `(N/B)²`-shaped tensor-cost reduction M17
+  predicted? Measured directly this time, not extrapolated — and the
+  answer is no, for a specific, traceable reason recorded below.
+  - `poker_solver/abstraction.py` — `HandBucket.__str__` (`"bucket{id}
+    (n=..., strength=...)"`) gives every bucket the same `str(hand)` ->
+    dict-key contract `cfr.solve()`/`StrategyResult.strategy_at` already
+    rely on for `HandCombo`/`StartingHand`. New `bucket_reach_vector
+    (bucketed_pool, range_dict)` — per-bucket reach weight, summing one
+    side's own range dict over each bucket's members (`.get(combo,
+    0.0)`, not a raw lookup — a bucket's members can include combos
+    entirely absent from one side's range).
+  - **The dual-reach subtlety, confirmed before writing any solving
+    code, not discovered by a failing test:** `solve_flop`'s reach story
+    is two-sided — independent `hero_reach`/`villain_reach` vectors over
+    one combined combo pool. `HandBucket.weight` (from M17's
+    `build_hand_buckets`) is only a *single* aggregate, built from
+    whatever one `combo_weights` dict it was called with. A bucket built
+    over hero+villain's combined pool can contain combos that are
+    "mostly hero's" and combos that are "mostly villain's," so
+    `.weight` can't serve as either side's own CFR reach vector — using
+    it directly would silently blend the two positions' ranges inside
+    a shared reach number, corrupting the solve rather than merely
+    losing precision. Fixed by computing `hero_bucket_reach`/
+    `villain_bucket_reach` independently via `bucket_reach_vector`,
+    never touching `.weight` for this purpose (confirmed against
+    `abstraction.py`'s actual code, not assumed, that nothing else reads
+    `.weight` downstream of `build_hand_buckets`).
+  - `poker_solver/solver.py` — new `solve_flop_abstracted(board,
+    hero_range, villain_range, pot, effective_stack_bb, num_buckets,
+    ...)`, identical to `solve_flop` except the combined combo pool is
+    first bucketed via `build_hand_buckets` (weighted by each combo's
+    *combined* hero+villain weight — inert for bucket membership itself,
+    load-bearing for `build_bucket_equity_table`'s weighted aggregate),
+    then `cfr.solve()` runs over `bucketed_pool.buckets` and a bucket-
+    level equity table instead of real combos. Returns a `StrategyResult`
+    whose `hands` are `HandBucket` instances. New `expand_bucket_strategy
+    (bucket_strategy, bucketed_pool)` fans a bucket-keyed strategy dict
+    back out to real combos, every member inheriting its bucket's
+    strategy verbatim — what a real caller actually wants ("what does my
+    exact combo do," not "what does bucket 5 do").
+  - **Measured, not assumed — and the real finding of this milestone:**
+    at the same 23/~85-combo checkpoints M17 used (now with a real
+    two-sided `solve_flop` vs. `solve_flop_abstracted` comparison,
+    timing equity-build *and* CFR solve together, `DEFAULT_FLOP_
+    ITERATIONS`): 23 combos — baseline `solve_flop` 1.21s vs. B=8 1.09s
+    (1.11x) vs. B=16 1.09s (1.11x); ~85 combos — baseline 25.84s vs.
+    B=8 27.06s (0.95x, *slower*) vs. B=16 26.71s (0.97x) vs. B=32
+    26.67s (0.97x). **No meaningful speedup at either scale** — roughly
+    break-even at best, slightly slower at 85-combo scale. Tracing why
+    confirms M17's own finding rather than contradicting it: at 85
+    combos, `solve_flop`'s own equity-table build alone already costs
+    ~23.9s (M17's own number) out of this milestone's 25.84s total —
+    equity-table construction is the overwhelming majority of total
+    cost at these scales, and bucketing only ever *adds* a bucket-table
+    build on top of the same full N×N equity table (still required to
+    derive the bucketing signal itself), so shrinking N for the CFR
+    tensor step barely moves a number that step was never dominating.
+    The `(N/B)²` CFR-cost reduction M17 predicted is real *in isolation*
+    but not the actual bottleneck at any scale measured so far.
+  - **Accuracy, measured via strategy-level total-variation distance
+    (mean/max) against the real `solve_flop` result, compared directly
+    to M17's own equity-level MAE at matching bucket counts:** 23
+    combos — B=8 mean_TV=0.108/max_TV=0.497 (vs. M17's equity MAE=0.049/
+    maxAE=0.338 at the same B) and B=16 mean_TV=0.0005/max_TV=0.002 (vs.
+    equity MAE=0.013/maxAE=0.045); ~85 combos — B=8 mean_TV=0.419/
+    max_TV=0.988, B=16 mean_TV=0.260/max_TV=0.646, B=32 mean_TV=0.149/
+    max_TV=0.681 (vs. equity MAE=0.060/0.041/0.030 respectively).
+    **Strategy-level error is consistently larger than the underlying
+    equity-level error it's built from, sometimes far larger** (85-combo
+    B=8: a 0.06 equity MAE turns into a 0.42 mean strategy TV and a
+    0.99 *max* — a real hand's strategy can end up almost entirely
+    unlike its true equilibrium) — the precisely-bounded heterogeneous-
+    bucket risk flagged at design time (a blended bucket strategy isn't
+    any individual member's real best response) is confirmed to
+    materialize in practice, not just remain a theoretical risk, and it
+    compounds rather than dampens as bucket coarseness increases
+    relative to pool size.
+  - **Conclusion, reported honestly rather than pushed further into the
+    roadmap unexamined:** at the scales measured so far, card
+    abstraction wired into a single-street CFR solve is not a viable
+    real-time-speed lever — it doesn't meaningfully speed up the actual
+    bottleneck (equity-table construction) and it measurably degrades
+    strategy accuracy, worse than its own already-known equity-level
+    error would suggest. This doesn't invalidate the 4-phase roadmap's
+    later phases (canonicalization and an offline precomputed library
+    both sidestep live equity-table construction entirely, which is
+    where this milestone's finding says the real cost actually lives),
+    but it does mean phase 1's card abstraction, as built, isn't the
+    lever that makes live per-request solving fast — a real, measured
+    course correction for the roadmap, not a hidden setback.
+  - Engine only, no `api/main.py`/frontend changes — matches M12/M13/
+    M17's own precedent for a milestone whose entire point is a
+    measurement.
 
 ## v3 vision (future) — live-table advisor
 
@@ -718,12 +814,31 @@ each phase depending on the one before it:
 4. **Live query path** — a real situation (via M16's `derive_ranges_
    from_path` for the action history, hero's real hand, the actual
    board) gets canonicalized and looked up; a hit is instant, a miss
-   falls back to an on-demand solve — now cheaper than today because it
-   runs over abstracted buckets (phase 1), not exact combos, even
-   without a library hit.
+   falls back to an on-demand solve.
 
 Card abstraction has to come first: precomputing exact-combo spots
 doesn't achieve enough compactness to build a real library against.
+
+**M18 update — phase 1's own live-solve speedup didn't materialize,
+measured, not assumed:** wiring card abstraction into a real
+`solve_flop`-shaped CFR solve (M18) found no meaningful speedup at 23-
+or ~85-combo scale (0.95x-1.11x — break-even to slightly slower) and
+measurably worse strategy accuracy than its own equity-level error
+predicted. The reason traces cleanly to M17's own finding:
+equity-table construction, not the CFR tensor step, dominates total
+cost at these scales, and bucketing can only ever *add* a bucket-table
+build on top of the full N×N equity table already required to derive
+the bucketing signal — so a miss on the phase-3 library still costs
+roughly what it costs today, not less. This changes point 4 above:
+card abstraction doesn't make an on-demand miss cheaper by itself.
+Phases 2-3 (canonicalization + an offline precomputed library) remain
+the real lever for live speed, since they sidestep live equity-table
+construction entirely on a hit — that's where M18's own finding says
+the actual cost lives. Card abstraction may still matter for *offline*
+library-building cost (batch-solving many canonical situations ahead
+of time, where CFR iteration count/tensor size matters more relative
+to a one-time equity build per situation) — not measured yet, a real
+open question for whichever milestone scopes phase 3.
 
 ## Engine is standalone
 

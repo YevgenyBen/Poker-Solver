@@ -1,6 +1,9 @@
+import random
+
 import numpy as np
 import pytest
 
+from poker_solver.abstraction import BucketedPool, HandBucket, build_hand_buckets
 from poker_solver.cards import Card
 from poker_solver.cfr import InfoSetTable
 from poker_solver.combos import HandCombo, combos_for_class, range_from_class_frequencies
@@ -13,8 +16,10 @@ from poker_solver.solver import (
     StrategyResult,
     derive_flop_scenario,
     derive_ranges_from_path,
+    expand_bucket_strategy,
     format_opening_range_grid,
     solve_flop,
+    solve_flop_abstracted,
     solve_flop_to_river,
     solve_flop_turn,
     solve_preflop,
@@ -521,6 +526,204 @@ def test_solve_flop_combo_missing_from_one_range_gets_zero_weight_there(small_fl
     villain_combos = {"9d8d", "Qc5c"}
     assert hero_combos.isdisjoint(villain_combos)
     assert set(small_flop_result.opening_range().keys()) == hero_combos | villain_combos
+
+
+# ---------------------------------------------------------------------------
+# M18 deliverable: solve_flop_abstracted — the same betting tree/parameters
+# as small_flop_result above, but solved over abstraction.HandBucket
+# buckets instead of real combos. num_buckets=2 on this fixture's 4-combo
+# pool is the meaningful non-trivial case (fewer buckets than combos, so
+# real aggregation happens) while still small enough to hand-verify.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def small_flop_abstracted_result():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    hero_range = {
+        HandCombo(Card("7", "s"), Card("7", "c")): 1.0,
+        HandCombo(Card("K", "s"), Card("Q", "d")): 1.0,
+    }
+    villain_range = {
+        HandCombo(Card("9", "d"), Card("8", "d")): 1.0,
+        HandCombo(Card("Q", "c"), Card("5", "c")): 1.0,
+    }
+    return solve_flop_abstracted(
+        board=board,
+        hero_range=hero_range,
+        villain_range=villain_range,
+        pot=10.0,
+        effective_stack_bb=15.0,
+        num_buckets=2,
+        positions=("OOP", "IP"),
+        raise_sizes=(0.75, 2.5),
+        max_raises=3,
+        iterations=3000,
+        equity_samples=300,
+        equity_seed=1,
+    )
+
+
+def test_solve_flop_abstracted_hands_are_buckets_covering_the_whole_pool(small_flop_abstracted_result):
+    assert len(small_flop_abstracted_result.hands) == 2
+    for hand in small_flop_abstracted_result.hands:
+        assert isinstance(hand, HandBucket)
+
+
+def test_solve_flop_abstracted_opening_range_keys_match_str_of_each_bucket(small_flop_abstracted_result):
+    opening = small_flop_abstracted_result.opening_range()
+    expected = {str(bucket) for bucket in small_flop_abstracted_result.hands}
+    assert set(opening.keys()) == expected
+
+
+def test_solve_flop_abstracted_frequencies_sum_to_one(small_flop_abstracted_result):
+    opening = small_flop_abstracted_result.opening_range()
+    for freqs in opening.values():
+        assert not any(np.isnan(freq) for freq in freqs.values())
+        assert pytest.approx(sum(freqs.values()), abs=1e-6) == 1.0
+
+
+def test_solve_flop_abstracted_config_reflects_pot_and_stack(small_flop_abstracted_result):
+    assert small_flop_abstracted_result.config.pot == pytest.approx(10.0)
+    assert small_flop_abstracted_result.config.stack_bb == pytest.approx(15.0)
+    assert small_flop_abstracted_result.config.positions == ("OOP", "IP")
+
+
+def test_solve_flop_abstracted_deterministic_given_the_same_equity_seed():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    hero_range = {HandCombo(Card("7", "s"), Card("7", "c")): 1.0}
+    villain_range = {HandCombo(Card("A", "h"), Card("K", "h")): 1.0}
+    kwargs = dict(
+        board=board,
+        hero_range=hero_range,
+        villain_range=villain_range,
+        pot=10.0,
+        effective_stack_bb=15.0,
+        num_buckets=2,
+        max_raises=1,
+        raise_sizes=(),
+        iterations=50,
+        equity_samples=50,
+        equity_seed=7,
+    )
+    result_1 = solve_flop_abstracted(**kwargs)
+    result_2 = solve_flop_abstracted(**kwargs)
+    assert result_1.opening_range() == result_2.opening_range()
+
+
+def test_solve_flop_abstracted_uses_default_iterations_when_omitted():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    hero_range = {HandCombo(Card("7", "s"), Card("7", "c")): 1.0}
+    villain_range = {HandCombo(Card("A", "h"), Card("K", "h")): 1.0}
+    result = solve_flop_abstracted(
+        board=board,
+        hero_range=hero_range,
+        villain_range=villain_range,
+        pot=10.0,
+        effective_stack_bb=15.0,
+        num_buckets=2,
+        max_raises=1,
+        raise_sizes=(),
+        equity_samples=50,
+    )
+    assert result.iterations > 0
+    assert result.elapsed_seconds >= 0.0
+
+
+def test_solve_flop_abstracted_rejects_more_buckets_than_unblocked_combos():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    hero_range = {HandCombo(Card("7", "s"), Card("7", "c")): 1.0}
+    villain_range = {HandCombo(Card("A", "h"), Card("K", "h")): 1.0}
+    # Only 2 combos total in the combined pool — build_hand_buckets'
+    # existing ValueError (num_buckets > len(unblocked combos)) must
+    # propagate unmodified through solve_flop_abstracted.
+    with pytest.raises(ValueError):
+        solve_flop_abstracted(
+            board=board,
+            hero_range=hero_range,
+            villain_range=villain_range,
+            pot=10.0,
+            effective_stack_bb=15.0,
+            num_buckets=5,
+            max_raises=1,
+            raise_sizes=(),
+            equity_samples=50,
+        )
+
+
+def test_expand_bucket_strategy_fans_each_combo_out_to_its_bucket_entry():
+    combo_a = HandCombo(Card("7", "s"), Card("7", "c"))
+    combo_b = HandCombo(Card("K", "s"), Card("Q", "d"))
+    combo_c = HandCombo(Card("9", "d"), Card("8", "d"))
+    bucket_weak = HandBucket(bucket_id=0, members=(combo_b,), weight=1.0, strength=0.2)
+    bucket_strong = HandBucket(bucket_id=1, members=(combo_a, combo_c), weight=2.0, strength=0.8)
+    pool = BucketedPool(
+        buckets=(bucket_weak, bucket_strong),
+        combo_to_bucket={combo_b: 0, combo_a: 1, combo_c: 1},
+        source_combos=(combo_a, combo_b, combo_c),
+        equity_table=np.full((3, 3), np.nan),
+    )
+    bucket_strategy = {
+        str(bucket_weak): {"fold": 1.0, "call": 0.0},
+        str(bucket_strong): {"fold": 0.1, "call": 0.9},
+    }
+    expanded = expand_bucket_strategy(bucket_strategy, pool)
+
+    assert expanded[str(combo_b)] == {"fold": 1.0, "call": 0.0}
+    assert expanded[str(combo_a)] == {"fold": 0.1, "call": 0.9}
+    assert expanded[str(combo_c)] == {"fold": 0.1, "call": 0.9}
+
+
+def test_expand_bucket_strategy_raises_on_a_mismatched_pool():
+    combo_a = HandCombo(Card("7", "s"), Card("7", "c"))
+    bucket = HandBucket(bucket_id=0, members=(combo_a,), weight=1.0, strength=0.5)
+    pool = BucketedPool(
+        buckets=(bucket,),
+        combo_to_bucket={combo_a: 0},
+        source_combos=(combo_a,),
+        equity_table=np.full((1, 1), np.nan),
+    )
+    # bucket_strategy keyed by a str() that doesn't match this pool's own
+    # bucket at all — simulates passing a strategy dict from a different
+    # solve_flop_abstracted call/pool.
+    with pytest.raises(ValueError):
+        expand_bucket_strategy({"bucket99(n=1, strength=0.500)": {"fold": 1.0}}, pool)
+
+
+def test_solve_flop_abstracted_expanded_strategy_is_a_coarse_regression_guard_against_the_real_solve(
+    small_flop_result, small_flop_abstracted_result
+):
+    # A coarse regression guard, not the real accuracy measurement (see
+    # the M18 PR/CLAUDE.md for that) — num_buckets=2 on this fixture's 4
+    # combos is deliberately lossy, so a generous bound is the point:
+    # this only needs to catch a wiring bug (e.g. reach vectors swapped,
+    # wrong bucket used), not assert tight numerical accuracy.
+    real_opening = small_flop_result.opening_range()
+    # Rebuild the same bucketed pool solve_flop_abstracted used internally
+    # so expand_bucket_strategy has something to fan out against — the
+    # fixture only exposes the already-bucket-keyed StrategyResult, not
+    # the BucketedPool itself.
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    hero_range = {
+        HandCombo(Card("7", "s"), Card("7", "c")): 1.0,
+        HandCombo(Card("K", "s"), Card("Q", "d")): 1.0,
+    }
+    villain_range = {
+        HandCombo(Card("9", "d"), Card("8", "d")): 1.0,
+        HandCombo(Card("Q", "c"), Card("5", "c")): 1.0,
+    }
+    combined_weights = {c: hero_range.get(c, 0.0) + villain_range.get(c, 0.0) for c in set(hero_range) | set(villain_range)}
+    bucketed_pool = build_hand_buckets(board, combined_weights, num_buckets=2, samples=300, rng=random.Random(1))
+
+    abstracted_opening = small_flop_abstracted_result.opening_range()
+    expanded = expand_bucket_strategy(abstracted_opening, bucketed_pool)
+
+    for combo_key in real_opening:
+        real_freqs = real_opening[combo_key]
+        approx_freqs = expanded[combo_key]
+        actions = set(real_freqs) | set(approx_freqs)
+        total_variation = 0.5 * sum(abs(real_freqs.get(a, 0.0) - approx_freqs.get(a, 0.0)) for a in actions)
+        assert total_variation <= 0.9  # generous — a wiring-bug guard, not an accuracy bound
 
 
 # ---------------------------------------------------------------------------

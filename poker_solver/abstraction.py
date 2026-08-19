@@ -78,6 +78,15 @@ class HandBucket:
     weight: float
     strength: float
 
+    def __str__(self) -> str:
+        # str(hand) is the load-bearing contract cfr.solve()/
+        # StrategyResult.strategy_at already rely on for every hand type
+        # (HandCombo, StartingHand) as their output-dict key — a bucket
+        # needs the same. bucket_id alone guarantees uniqueness within
+        # one BucketedPool (hence within one StrategyResult.hands); n=/
+        # strength= make it actually legible, not just unique.
+        return f"bucket{self.bucket_id}(n={len(self.members)}, strength={self.strength:.3f})"
+
 
 @dataclass(frozen=True)
 class BucketedPool:
@@ -293,3 +302,28 @@ def bucket_equity_error(bucketed_pool: BucketedPool, bucket_equity_table: np.nda
         "max_absolute_error": float(errors_array.max()),
         "pairs_compared": len(errors),
     }
+
+
+def bucket_reach_vector(bucketed_pool: BucketedPool, range_dict: dict) -> np.ndarray:
+    """Per-bucket reach weight, in `bucketed_pool.buckets` order —
+    bucket i's value is `sum(range_dict.get(combo, 0.0) for combo in
+    bucket.members)`.
+
+    Deliberately NOT `HandBucket.weight` (built from whatever single
+    `combo_weights` dict `build_hand_buckets` was called with — see
+    solver.py's `solve_flop_abstracted` for why that's a different,
+    independent number: a bucket built over a *combined* hero+villain
+    pool can contain combos that are "mostly hero's" and combos that
+    are "mostly villain's," so one aggregate weight can't serve as
+    either side's own reach vector).
+
+    Uses `.get(combo, 0.0)`, not `range_dict[combo]` — a bucket's
+    members can include combos entirely absent from this specific
+    `range_dict` (e.g. villain's own combos, when computing hero's own
+    reach vector over their combined pool) — the same "missing combo
+    gets 0 weight for that position, not an error" convention
+    `solve_flop` already established.
+    """
+    return np.array(
+        [sum(range_dict.get(combo, 0.0) for combo in bucket.members) for bucket in bucketed_pool.buckets]
+    )
