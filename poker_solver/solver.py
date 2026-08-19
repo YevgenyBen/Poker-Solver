@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from .abstraction import BucketedPool, bucket_reach_vector, build_bucket_equity_table, build_hand_buckets
 from .board_equity import DEFAULT_SEED as DEFAULT_EQUITY_SEED
 from .board_equity import build_board_equity_table
 from .chance import build_chance_node
@@ -554,6 +555,113 @@ def solve_flop(
         iterations=actual_iterations,
         elapsed_seconds=elapsed,
     )
+
+
+def solve_flop_abstracted(
+    board: tuple,
+    hero_range: dict,
+    villain_range: dict,
+    pot: float,
+    effective_stack_bb: float,
+    num_buckets: int,
+    positions: tuple = ("OOP", "IP"),
+    raise_sizes: tuple = (2.5, 3.0, 2.2),
+    max_raises: int = 4,
+    iterations: int = None,
+    equity_samples: int = None,
+    equity_seed: int = DEFAULT_EQUITY_SEED,
+) -> StrategyResult:
+    """Solve a flop betting round over `num_buckets` hand-strength buckets
+    instead of solve_flop's real combos — same betting tree/parameters,
+    only hand granularity changes, trading exactness for a CFR solve
+    running its tensor operations over B buckets instead of N combos.
+
+    `hero_range`/`villain_range` are combined into one shared combo pool
+    the same way solve_flop does, then that pool is bucketed via
+    abstraction.build_hand_buckets, weighted by each combo's *combined*
+    (hero + villain) weight — inert for build_hand_buckets itself (bucket
+    membership only depends on the combo list, not weights), but
+    load-bearing for build_bucket_equity_table, whose combo_weights
+    argument weights the B x B aggregate toward whichever combos either
+    range actually has real reach behind.
+
+    A bucket built over that combined pool can end up containing combos
+    that are "mostly hero's" and combos that are "mostly villain's" — so,
+    unlike solve_flop's hero_reach/villain_reach (each a straight
+    per-combo lookup), each side's own per-bucket reach vector is
+    computed independently via abstraction.bucket_reach_vector, summing
+    *that side's own* range_dict over each bucket's members. HandBucket's
+    own aggregate `.weight` (built from the combined dict) is deliberately
+    not reused here — it can't serve as either side's real reach.
+
+    Returns a StrategyResult whose `hands` are abstraction.HandBucket
+    instances, not combos.HandCombo — use expand_bucket_strategy to fan
+    a bucket-level strategy dict back out to real combos.
+    """
+    hero_position, villain_position = positions
+    combos = sorted(set(hero_range) | set(villain_range), key=str)
+    bucket_weights = {c: hero_range.get(c, 0.0) + villain_range.get(c, 0.0) for c in combos}
+
+    equity_kwargs = {"rng": random.Random(equity_seed)}
+    if equity_samples is not None:
+        equity_kwargs["samples"] = equity_samples
+    bucketed_pool = build_hand_buckets(board, bucket_weights, num_buckets, **equity_kwargs)
+    bucket_equity_table = np.nan_to_num(build_bucket_equity_table(bucketed_pool, bucket_weights), nan=0.5)
+
+    hero_bucket_reach = bucket_reach_vector(bucketed_pool, hero_range)
+    villain_bucket_reach = bucket_reach_vector(bucketed_pool, villain_range)
+
+    config = StreetConfig(
+        positions=positions,
+        pot=pot,
+        stack_bb=effective_stack_bb,
+        raise_sizes=raise_sizes,
+        max_raises=max_raises,
+    )
+    root = build_street_tree(config)
+
+    actual_iterations = iterations if iterations is not None else DEFAULT_FLOP_ITERATIONS
+    start = time.perf_counter()
+    node_data = solve(
+        root,
+        bucketed_pool.buckets,
+        bucket_equity_table,
+        iterations=actual_iterations,
+        positions=positions,
+        initial_reach={hero_position: hero_bucket_reach, villain_position: villain_bucket_reach},
+    )
+    elapsed = time.perf_counter() - start
+
+    return StrategyResult(
+        config=config,
+        root=root,
+        hands=bucketed_pool.buckets,
+        node_data=node_data,
+        iterations=actual_iterations,
+        elapsed_seconds=elapsed,
+    )
+
+
+def expand_bucket_strategy(bucket_strategy: dict, bucketed_pool: BucketedPool) -> dict:
+    """Fans a bucket-level strategy dict (strategy_at/opening_range/
+    strategy_for_position's output on a solve_flop_abstracted result,
+    keyed by str(HandBucket)) out to a combo-level dict keyed by
+    str(HandCombo) — every combo in a bucket inherits its bucket's
+    converged strategy verbatim, since a real caller wants advice for
+    their exact combo, not "bucket 5". Reuses strategy_at's own per-node
+    lookup entirely unchanged (bucket_strategy is its output) — the only
+    new logic is this bucket -> combo fan-out. Raises ValueError if a
+    bucket's str() key is missing from bucket_strategy (a mismatched
+    result/pool pairing).
+    """
+    expanded = {}
+    for bucket in bucketed_pool.buckets:
+        key = str(bucket)
+        if key not in bucket_strategy:
+            raise ValueError(f"bucket_strategy has no entry for {key!r} — mismatched BucketedPool?")
+        for combo in bucket.members:
+            expanded[str(combo)] = bucket_strategy[key]
+    return expanded
 
 
 # Flop->turn chaining (M12) walks a real exact-CFR tree ~47x wider at

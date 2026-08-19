@@ -7,6 +7,7 @@ from poker_solver.abstraction import (
     build_bucket_equity_table,
     build_hand_buckets,
     bucket_equity_error,
+    bucket_reach_vector,
     compute_combo_strengths,
 )
 from poker_solver.board_equity import build_board_equity_table
@@ -290,3 +291,53 @@ def test_bucket_equity_error_is_nonzero_for_a_genuinely_lossy_bucketing():
     error = bucket_equity_error(pool, bucket_table)
     assert error["mean_absolute_error"] > 0.0
     assert error["mean_absolute_error"] <= error["max_absolute_error"]
+
+
+# ---------------------------------------------------------------------------
+# HandBucket.__str__
+# ---------------------------------------------------------------------------
+
+
+def test_hand_bucket_str_includes_bucket_id_and_is_unique_within_a_pool():
+    weights = {combo: 1.0 for combo in _KNOWN_COMBOS}
+    pool = build_hand_buckets(_BOARD, weights, num_buckets=2)
+
+    keys = [str(bucket) for bucket in pool.buckets]
+    for bucket, key in zip(pool.buckets, keys):
+        assert f"bucket{bucket.bucket_id}" in key
+    # str(hand) is the dict key cfr.solve()/StrategyResult rely on for
+    # every hand type — must be unique within one pool, same contract
+    # HandCombo/StartingHand's own str() already satisfy.
+    assert len(set(keys)) == len(keys)
+
+
+# ---------------------------------------------------------------------------
+# bucket_reach_vector
+# ---------------------------------------------------------------------------
+
+
+def test_bucket_reach_vector_hand_verifiable_against_known_two_bucket_split():
+    weights = {combo: 1.0 for combo in _KNOWN_COMBOS}
+    pool = build_hand_buckets(_BOARD, weights, num_buckets=2)
+    weak_bucket, strong_bucket = pool.buckets  # ordered ascending by strength
+
+    # _TRIPS deliberately absent from range_dict — exercises the
+    # .get(combo, 0.0) default rather than a KeyError.
+    range_dict = {_HIGH_CARD: 0.5, _PAIR: 1.0, _TWO_PAIR: 0.25}
+    reach = bucket_reach_vector(pool, range_dict)
+
+    assert reach.shape == (2,)
+    assert reach[0] == pytest.approx(0.5 + 1.0)  # weak bucket: _HIGH_CARD + _PAIR
+    assert reach[1] == pytest.approx(0.25 + 0.0)  # strong bucket: _TWO_PAIR + missing _TRIPS
+
+
+def test_bucket_reach_vector_is_all_zero_for_an_entirely_disjoint_range_dict():
+    weights = {combo: 1.0 for combo in _KNOWN_COMBOS}
+    pool = build_hand_buckets(_BOARD, weights, num_buckets=2)
+
+    other_combo = HandCombo(*cards("As Ad"))
+    range_dict = {other_combo: 1.0}
+    reach = bucket_reach_vector(pool, range_dict)
+
+    assert reach.shape == (2,)
+    assert np.all(reach == 0.0)
