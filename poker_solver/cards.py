@@ -47,6 +47,20 @@ class Card:
         return cls(text[0], text[1])
 
 
+def remaining_deck(excluded) -> list:
+    """Every card not in `excluded` (e.g. a board, or a board plus some
+    already-dealt hole cards), in a fixed rank-then-suit order.
+
+    A single shared enumeration for anything that needs "the rest of the
+    deck" — board_equity.py's Monte Carlo runout sampling and chance.py's
+    next-card branching both used to duplicate this loop; kept here
+    instead so there's exactly one place that defines "the deck minus
+    some known cards."
+    """
+    excluded_set = set(excluded)
+    return [Card(rank, suit) for rank in RANK_ORDER for suit in SUITS if Card(rank, suit) not in excluded_set]
+
+
 def parse_cards(text: str) -> list:
     """Parse a string of concatenated two-character card codes, e.g.
     'AhKh' (2 cards) or 'Ts9h2c' (3 cards, a flop board), into a list of

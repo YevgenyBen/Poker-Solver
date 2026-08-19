@@ -14,12 +14,13 @@ StrategyResult doesn't need to know which path produced it.
 
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
 from .board_equity import DEFAULT_SEED as DEFAULT_EQUITY_SEED
 from .board_equity import build_board_equity_table
+from .chance import build_chance_node
 from .cfr import InfoSetTable, mccfr_solve, solve
 from .equity import MultiwayEquityCache, get_equity_table
 from .game_tree import CALL_OR_CHECK, DecisionNode, GameConfig, StreetConfig, build_game_tree, build_street_tree
@@ -50,6 +51,12 @@ class StrategyResult:
     node_data: dict
     iterations: int
     elapsed_seconds: float
+    # M12: {id(flop showdown terminal): chance.ChanceNode} — empty for
+    # every pre-M12 result (solve_preflop/solve_flop never touch it),
+    # populated only by solve_flop_turn. Lets a caller walk into a
+    # specific next-card branch's subtree, e.g.
+    # `result.chance_data[id(some_terminal)].branches[some_card].root`.
+    chance_data: dict = field(default_factory=dict)
 
     def strategy_at(self, node: DecisionNode) -> dict:
         """hand label -> {action label -> frequency} at any node in the
@@ -261,6 +268,95 @@ def solve_flop(
         node_data=node_data,
         iterations=actual_iterations,
         elapsed_seconds=elapsed,
+    )
+
+
+# Flop->turn chaining (M12) walks a real exact-CFR tree ~47x wider at
+# every showdown-eligible terminal (one branch per undealt card) than
+# solve_flop's — see chance.py's module docstring. DEFAULT_FLOP_TURN_ITERATIONS
+# is set from real measurement (see the M12 PR), not copied from
+# DEFAULT_FLOP_ITERATIONS.
+DEFAULT_FLOP_TURN_ITERATIONS = 200
+
+
+def solve_flop_turn(
+    board: tuple,
+    hero_range: dict,
+    villain_range: dict,
+    pot: float,
+    effective_stack_bb: float,
+    positions: tuple = ("OOP", "IP"),
+    raise_sizes: tuple = (2.5, 3.0, 2.2),
+    max_raises: int = 4,
+    iterations: int = None,
+    equity_seed: int = DEFAULT_EQUITY_SEED,
+) -> StrategyResult:
+    """Solve a flop betting round that, whenever action is capped without
+    a fold, chains into a real turn betting round (dealt via a real
+    chance node) instead of solve_flop's "average every remaining runout
+    immediately" shortcut — the river is still handled that way, one
+    street further out, at each *turn* terminal. See chance.py's and
+    cfr.py's module docstrings for the full chance-node design.
+
+    Same parameters as `solve_flop`, minus `equity_samples` (board_equity
+    tables built here are all turn-board tables — remaining_needed==1 —
+    which are resolved exactly, not sampled, so there's nothing to tune).
+    `raise_sizes`/`max_raises` apply to both the flop and turn streets —
+    a deliberate M12 scope cut, not a separate turn-specific sizing menu.
+
+    The returned StrategyResult's `chance_data` maps each showdown-
+    eligible flop terminal actually reached during solving to its
+    `chance.ChanceNode` — the only way to reach turn-street strategy,
+    since `StrategyResult`'s own convenience walkers
+    (`node_for_position`/`strategy_for_position`) only ever walk `root`'s
+    own street.
+    """
+    hero_position, villain_position = positions
+    combos = sorted(set(hero_range) | set(villain_range), key=str)
+    hero_reach = np.array([hero_range.get(combo, 0.0) for combo in combos])
+    villain_reach = np.array([villain_range.get(combo, 0.0) for combo in combos])
+
+    config = StreetConfig(
+        positions=positions,
+        pot=pot,
+        stack_bb=effective_stack_bb,
+        raise_sizes=raise_sizes,
+        max_raises=max_raises,
+    )
+    root = build_street_tree(config)
+
+    equity_table = build_board_equity_table(board, combos, rng=random.Random(equity_seed))
+    equity_table = np.nan_to_num(equity_table, nan=0.5)
+
+    def chance_fn(terminal):
+        return build_chance_node(
+            terminal, board=board, combos=combos, positions=positions,
+            effective_stack_bb=effective_stack_bb, raise_sizes=raise_sizes, max_raises=max_raises,
+        )
+
+    chance_data: dict = {}
+    actual_iterations = iterations if iterations is not None else DEFAULT_FLOP_TURN_ITERATIONS
+    start = time.perf_counter()
+    node_data = solve(
+        root,
+        combos,
+        equity_table,
+        iterations=actual_iterations,
+        positions=positions,
+        initial_reach={hero_position: hero_reach, villain_position: villain_reach},
+        chance_fn=chance_fn,
+        chance_data=chance_data,
+    )
+    elapsed = time.perf_counter() - start
+
+    return StrategyResult(
+        config=config,
+        root=root,
+        hands=combos,
+        node_data=node_data,
+        iterations=actual_iterations,
+        elapsed_seconds=elapsed,
+        chance_data=chance_data,
     )
 
 

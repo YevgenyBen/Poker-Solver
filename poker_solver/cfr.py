@@ -60,6 +60,16 @@ Two solving paths live here, sharing InfoSetTable:
    a precomputed table, since a full N-way equity table is never viable
    to build eagerly.
 
+3. `solve()`'s exact path also optionally walks through `chance.ChanceNode`s
+   (M12) — a "deal the next community card" point, e.g. flop->turn — via
+   the `chance_fn`/`chance_data` parameters. See `_solve_recurse`'s
+   ChanceNode branch below and `chance.py`'s module docstring for the
+   full design (why dispatch has to turn itself off per-branch rather
+   than thread unconditionally, and the approximation this introduces).
+   Both parameters default to `None`, and every pre-M12 call site omits
+   them — `chance_fn is None` short-circuits the new logic entirely, so
+   this is purely additive to the existing exact-CFR behavior.
+
 Reach probabilities are seeded with each hand's combo_weight (its prior
 probability of being dealt) in both paths — see the project plan for why
 card-removal/blocker effects are still ignored (each class is treated as
@@ -68,9 +78,11 @@ an independent unit) at any N.
 
 import random
 from dataclasses import dataclass
+from typing import Callable, Optional
 
 import numpy as np
 
+from .chance import ChanceNode
 from .equity import MultiwayEquityCache
 from .game_tree import BB, BTN, DecisionNode, TerminalNode
 
@@ -148,9 +160,51 @@ def _solve_recurse(
     equity_table: np.ndarray,
     position_a: str,
     position_b: str,
+    chance_fn: Optional[Callable] = None,
+    chance_data: Optional[dict] = None,
 ) -> np.ndarray:
-    """Returns this node's value matrix (`position_a`'s payoff, shape NxN)."""
+    """Returns this node's value matrix (`position_a`'s payoff, shape NxN).
+
+    `chance_fn`/`chance_data` (M12): if `chance_fn` is set, a
+    showdown-eligible `TerminalNode` (`is_showdown`, i.e. capped action
+    without a fold) is treated not as a true showdown but as the point
+    where the next street's chance node gets built (once, then memoized
+    in `chance_data` by `id(node)` — the tree structure is stable across
+    iterations, same assumption `node_data`'s own id-keying already
+    relies on) and recursed into instead. A `ChanceNode`'s value is the
+    uniform average of its branches' values — no regret/strategy update
+    happens at a chance node itself, it isn't a decision point.
+
+    Critically, each branch recurses with `chance_fn=branch.chance_fn`
+    (not the ambient `chance_fn`), which is `None` for every M12 branch
+    — so a turn-level showdown terminal correctly falls through to
+    `_terminal_value_matrix` using that branch's own (already
+    river-averaged) equity table, instead of being handed back to the
+    flop-scoped `chance_fn` and having a card dealt off the wrong (3-card)
+    board. See chance.py's module docstring for why this per-branch
+    on/off switch is the correct design, not an unconditional thread-through.
+    """
+    if isinstance(node, ChanceNode):
+        branch_values = [
+            _solve_recurse(
+                branch.root, reach_a, reach_b, updating_player, node_data,
+                branch.equity_table, position_a, position_b,
+                chance_fn=branch.chance_fn, chance_data=chance_data,
+            )
+            for branch in node.branches.values()
+        ]
+        return sum(branch_values) / len(branch_values)
+
     if isinstance(node, TerminalNode):
+        if chance_fn is not None and node.is_showdown:
+            chance_node = chance_data.get(id(node))
+            if chance_node is None:
+                chance_node = chance_fn(node)
+                chance_data[id(node)] = chance_node
+            return _solve_recurse(
+                chance_node, reach_a, reach_b, updating_player, node_data,
+                equity_table, position_a, position_b, chance_fn, chance_data,
+            )
         return _terminal_value_matrix(node, equity_table, position_a, position_b)
 
     num_hands = equity_table.shape[0]
@@ -165,12 +219,12 @@ def _solve_recurse(
         if acting_is_a:
             child_value = _solve_recurse(
                 child, reach_a * strategy[:, a_idx], reach_b, updating_player,
-                node_data, equity_table, position_a, position_b,
+                node_data, equity_table, position_a, position_b, chance_fn, chance_data,
             )
         else:
             child_value = _solve_recurse(
                 child, reach_a, reach_b * strategy[:, a_idx], updating_player,
-                node_data, equity_table, position_a, position_b,
+                node_data, equity_table, position_a, position_b, chance_fn, chance_data,
             )
         child_values.append(child_value)
 
@@ -209,6 +263,8 @@ def solve(
     iterations: int = 1000,
     positions: tuple = (BTN, BB),
     initial_reach: dict | None = None,
+    chance_fn: Optional[Callable] = None,
+    chance_data: Optional[dict] = None,
 ) -> dict:
     """Run `iterations` of CFR+ over `root`, for the given `hands`.
 
@@ -232,10 +288,25 @@ def solve(
     `None`, meaning "no overrides at all") still falls back to
     combo_weight, so every pre-existing preflop call site is unaffected.
 
+    `chance_fn` (M12) optionally chains this tree into a *further*
+    street: whenever a showdown-eligible terminal is reached, `chance_fn(
+    terminal)` is called (once per distinct terminal, memoized in
+    `chance_data`) to produce a `chance.ChanceNode`, which is recursed
+    into instead of treating the terminal as an immediate showdown. See
+    `_solve_recurse`'s docstring for exactly how dispatch turns itself
+    off inside a chance branch's own subtree. `chance_data` defaults to a
+    fresh `{}` when `chance_fn` is set and no dict is supplied — pass
+    your own to read it back afterward (e.g. to inspect a specific
+    branch's subtree once solving is done). Both default to `None`,
+    matching every pre-M12 call site's behavior exactly (no dispatch at
+    all — every showdown-eligible terminal is valued directly from
+    `equity_table`, unchanged).
+
     Returns a dict of {id(DecisionNode): InfoSetTable}. There's no
     randomness anywhere in this process (the tree is walked exhaustively,
     not sampled), so results are exactly deterministic for a given
-    (root, hands, equity_table, iterations, positions, initial_reach).
+    (root, hands, equity_table, iterations, positions, initial_reach,
+    chance_fn's own determinism).
     """
     if equity_table.shape != (len(hands), len(hands)):
         raise ValueError(
@@ -244,6 +315,8 @@ def solve(
         )
     position_a, position_b = positions
     initial_reach = initial_reach or {}
+    if chance_fn is not None and chance_data is None:
+        chance_data = {}
 
     def _default_reach():
         # Computed lazily, not eagerly: `hands` may be combos.HandCombo
@@ -269,6 +342,7 @@ def solve(
         _solve_recurse(
             root, reach_a.copy(), reach_b.copy(), updating_player,
             node_data, equity_table, position_a, position_b,
+            chance_fn, chance_data,
         )
     return node_data
 

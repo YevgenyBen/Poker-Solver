@@ -1,6 +1,6 @@
 import pytest
 
-from poker_solver.cards import Card, Deck, SUITS, parse_cards
+from poker_solver.cards import Card, Deck, SUITS, parse_cards, remaining_deck
 
 
 def test_deck_has_52_cards():
@@ -93,3 +93,20 @@ def test_parse_cards_flop_board():
 def test_parse_cards_rejects_odd_length():
     with pytest.raises(ValueError):
         parse_cards("Ah9")
+
+
+def test_remaining_deck_with_no_exclusions_has_all_52():
+    assert len(remaining_deck(frozenset())) == 52
+
+
+def test_remaining_deck_excludes_given_cards():
+    excluded = frozenset({Card("A", "s"), Card("K", "d")})
+    deck = remaining_deck(excluded)
+    assert len(deck) == 50
+    assert Card("A", "s") not in deck
+    assert Card("K", "d") not in deck
+
+
+def test_remaining_deck_accepts_a_plain_list_not_just_a_set():
+    deck = remaining_deck([Card("2", "c")])
+    assert len(deck) == 51

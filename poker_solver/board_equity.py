@@ -18,10 +18,9 @@ import random
 
 import numpy as np
 
-from .cards import SUITS, Card
+from .cards import SUITS, Card, remaining_deck
 from .combos import HandCombo
 from .hand_eval import best_hand_rank_batch
-from .hand_utils import RANK_ORDER
 
 DEFAULT_BOARD_EQUITY_SAMPLES = 200
 DEFAULT_SEED = 42
@@ -44,11 +43,6 @@ DEFAULT_SEED = 42
 _SUIT_INDEX = {suit: i for i, suit in enumerate(SUITS)}
 
 
-def _remaining_deck(used) -> list:
-    used_set = set(used)
-    return [Card(rank, suit) for rank in RANK_ORDER for suit in SUITS if Card(rank, suit) not in used_set]
-
-
 def build_board_equity_table(
     board: tuple,
     combos: list,
@@ -67,6 +61,15 @@ def build_board_equity_table(
     hold a card already on the board). Never read by a valid reach
     vector, but the array still needs a defined fill value rather than
     garbage memory.
+
+    `remaining_needed <= 1` (a river board, or a turn board with only
+    the river left to come) is resolved *exactly* — every possible
+    single-card runout enumerated, not sampled — rather than Monte Carlo
+    averaged like `remaining_needed >= 2` still is; `samples` and `rng`
+    are silently unused in that case (there's nothing left to sample).
+    This is both cheaper and noise-free at the turn level, which matters
+    for chance.py's chained flop->turn solving (M12): every branch table
+    it builds is exactly this remaining_needed==1 case.
     """
     rng = rng if rng is not None else random.Random(DEFAULT_SEED)
     n = len(combos)
@@ -91,10 +94,12 @@ def build_board_equity_table(
                 continue  # share a card with each other — impossible matchup, leave NaN
 
             used = board_set | frozenset(combo_i.cards) | frozenset(combo_j.cards)
-            deck = _remaining_deck(used)
+            deck = remaining_deck(used)
 
             if remaining_needed == 0:
                 runouts = [[]]  # the board is already complete — one exact "runout"
+            elif remaining_needed == 1:
+                runouts = [[card] for card in deck]  # exactly one card left — enumerate, don't sample
             else:
                 runouts = [rng.sample(deck, remaining_needed) for _ in range(samples)]
 
