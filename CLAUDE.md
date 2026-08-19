@@ -305,6 +305,83 @@ street chaining needs.
     tiny fixture scale tests actually use (2 combos, `max_raises=1`), a
     full `solve_flop_turn` runs in ~2.5–3.3s for 20–100 iterations —
     fine for the test suite.
+- **M13 — Turn→river chance-node chaining.**
+  - `poker_solver/chance.py` — `build_chance_node` gained one new
+    parameter, `chain_to_river: bool = False` (default preserves M12's
+    exact behavior for every existing call site/test). When `True`, a
+    branch whose own street still has real betting left (`remaining_stack
+    > 0`) *and* whose own board isn't already a complete 5-card river
+    gets its `chance_fn` populated with a closure that deals *that*
+    branch's next card the same way — passing `chain_to_river=True` on a
+    flop terminal therefore chains flop→turn→river, not just flop→turn,
+    since the recursive call keeps forwarding the flag. This is the last
+    chance-node hop possible starting from a 3-card flop: a complete
+    river board has no cards left to deal. No changes to `cfr.py` or to
+    `ChanceBranch`/`ChanceNode`'s shape were needed — see below.
+  - **A correctness pitfall, prevented structurally, not just tested
+    for:** an all-in-already branch (`remaining_stack == 0`, `root` reused
+    as `terminal`) must never get a populated `chance_fn` — its own
+    equity table (built one card richer than the calling board) already
+    correctly averages over however many community cards remain via
+    `board_equity.py`'s own `remaining_needed` handling, so a second
+    explicit chance dispatch on top of that would double-process the same
+    physical terminal against two inconsistent runout distributions, a
+    real equilibrium-correctness bug, not just wasted work. Fixed by
+    setting `chance_fn = None` *inside the same `if remaining_stack == 0`
+    branch that already decides `root = terminal`* — the same `if/else`,
+    not two independently-maintained decisions that could drift apart —
+    rather than a separate identity check applied after the fact.
+    Covered by a dedicated regression test at both the `chance.py` level
+    (direct `build_chance_node` calls) and the `solver.py` level (the
+    same guard holding through the real `solve_flop_to_river` call path,
+    using this milestone's own tiny fixture's naturally-occurring
+    all-in-at-the-flop line).
+  - **A second, independent pitfall, also caught and covered:** each
+    branch's river-dealing closure captures its own board/remaining-stack
+    via default-argument binding (`lambda t, _b=next_board,
+    _s=remaining_stack: ...`), not a bare closure over the loop variables
+    — without it, every branch's closure would share the *last* loop
+    iteration's board/stack by reference (Python's closure late-binding
+    behavior), so every branch would silently deal its river off the
+    wrong board once actually invoked. Regression-tested by invoking two
+    different branches' own closures and confirming they deal from
+    different, correctly-excluded card sets.
+  - `poker_solver/solver.py` — new `solve_flop_to_river(...)`, identical
+    to `solve_flop_turn` except its `chance_fn` closure passes
+    `chain_to_river=True`. No `StrategyResult` field changes:
+    `chance_data` (added in M12) is already generic, and traced (not
+    assumed) to end up flat but two levels deep — `cfr._solve_recurse`
+    forwards the same `chance_data` dict object unchanged at every
+    recursion depth, so a turn-level showdown terminal's own chance
+    dispatch memoizes into the *same* dict a flop-level one does, keyed
+    by its own `id()`. Reaching the river level from a result is the
+    identical one-hop-further pattern:
+    `chance_data[id(some_turn_terminal)].branches[some_river_card].root`.
+    Confirmed with a dedicated `cfr.py` test that hand-builds a chance
+    node nested two levels deep (pure dataclasses, no `chance.py`
+    involved) and checks both levels land in one dict — proving `cfr.py`
+    needed zero changes, not just asserting it.
+  - **Measured, not assumed:** the tiny fixture (same one `solve_flop_
+    turn` uses — 1 hero combo × 1 villain combo, `max_raises=1`) runs a
+    full `solve_flop_to_river` in ~4.3s at 20 iterations — fine for the
+    test suite, so `DEFAULT_FLOP_TO_RIVER_ITERATIONS` is kept at 20
+    rather than mirroring `DEFAULT_FLOP_TURN_ITERATIONS`'s 200 (measured:
+    100 iterations here cost ~55s — chance-node construction cost doesn't
+    scale linearly with iteration count the way that default assumed, so
+    there's no reason to pay for a larger number nothing is tuned
+    against). At demo scale (~33 combos, `max_raises=3`), real
+    (not extrapolated) component measurements — one flop-level
+    `build_chance_node(chain_to_river=True)` call: ~20.9s; one single
+    river-level hop (one branch's populated `chance_fn`, invoked once):
+    ~3.4s — combined with the realistic count of distinct turn-level
+    showdown terminals a full flop tree would actually visit (~2,400,
+    reasoning from M12's own 7-flop-terminal/49-branch numbers) imply a
+    full demo-scale solve would cost **on the order of two-plus hours**
+    just for river-level chance-node construction — even more decisively
+    ruling out a live endpoint than M12's own 183-second flop→turn
+    finding one milestone earlier. **Ships engine + tests only, no
+    API/frontend slice, same as M12** — not a deferred-pending-
+    measurement question this time, a confirmed one.
 
 ## Engine is standalone
 

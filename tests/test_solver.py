@@ -10,6 +10,7 @@ from poker_solver.solver import (
     StrategyResult,
     format_opening_range_grid,
     solve_flop,
+    solve_flop_to_river,
     solve_flop_turn,
     solve_preflop,
 )
@@ -637,6 +638,162 @@ def test_solve_flop_turn_uses_default_iterations_when_omitted():
     hero_range = {HandCombo(Card("7", "s"), Card("7", "c")): 1.0}
     villain_range = {HandCombo(Card("9", "d"), Card("8", "d")): 1.0}
     result = solve_flop_turn(
+        board=board,
+        hero_range=hero_range,
+        villain_range=villain_range,
+        pot=10.0,
+        effective_stack_bb=15.0,
+        positions=("OOP", "IP"),
+        raise_sizes=(),
+        max_raises=1,
+    )
+    assert result.iterations > 0
+    assert result.elapsed_seconds >= 0.0
+
+
+# ---------------------------------------------------------------------------
+# M13 deliverable: solve_flop_to_river — a turn showdown-eligible terminal
+# also chains into a real river betting round (chance.build_chance_node's
+# chain_to_river), not just flop->turn. Same tiny fixture as
+# tiny_flop_turn_result (real-measured cost ~4.3s at these params, see the
+# M13 PR) — a full demo-scale (~33 combos) solve was reasoned, not
+# separately re-measured, to be far past viable for a live request, same
+# conclusion M12 already reached one milestone earlier — so, same as
+# solve_flop_turn, this ships engine + tests only, no API/frontend slice.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def tiny_flop_to_river_result():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    hero_range = {HandCombo(Card("7", "s"), Card("7", "c")): 1.0}
+    villain_range = {HandCombo(Card("9", "d"), Card("8", "d")): 1.0}
+    return solve_flop_to_river(
+        board=board,
+        hero_range=hero_range,
+        villain_range=villain_range,
+        pot=10.0,
+        effective_stack_bb=15.0,
+        positions=("OOP", "IP"),
+        raise_sizes=(),
+        max_raises=1,
+        iterations=20,
+    )
+
+
+def test_solve_flop_to_river_covers_the_union_of_both_ranges(tiny_flop_to_river_result):
+    opening = tiny_flop_to_river_result.opening_range()
+    assert set(opening.keys()) == {"7s7c", "9d8d"}
+
+
+def test_solve_flop_to_river_frequencies_sum_to_one(tiny_flop_to_river_result):
+    opening = tiny_flop_to_river_result.opening_range()
+    for freqs in opening.values():
+        assert not any(np.isnan(freq) for freq in freqs.values())
+        assert pytest.approx(sum(freqs.values()), abs=1e-6) == 1.0
+
+
+def test_solve_flop_to_river_root_is_the_flop_root(tiny_flop_to_river_result):
+    root = tiny_flop_to_river_result.root
+    assert isinstance(root, DecisionNode)
+    assert root.player_to_act == "OOP"
+    assert root.pot == pytest.approx(10.0)
+
+
+def test_solve_flop_to_river_chance_data_reaches_a_real_turn_decision_node(tiny_flop_to_river_result):
+    # Confirms the first (flop->turn) leg still works exactly as it does
+    # for solve_flop_turn — unaffected by the new river hop.
+    terminal = _find_a_showdown_terminal(tiny_flop_to_river_result.root)
+    assert terminal.is_showdown
+    assert id(terminal) in tiny_flop_to_river_result.chance_data
+
+    chance_node = tiny_flop_to_river_result.chance_data[id(terminal)]
+    any_branch = next(iter(chance_node.branches.values()))
+    assert isinstance(any_branch.root, DecisionNode)
+    assert any_branch.root.player_to_act == "OOP"
+
+
+def test_solve_flop_to_river_chance_data_reaches_a_real_river_level(tiny_flop_to_river_result):
+    # This is the test that actually proves the *second* hop happened:
+    # walk flop showdown terminal -> its ChanceNode -> a branch with a
+    # real turn DecisionNode -> call-or-check-walk to a turn showdown
+    # terminal -> confirm that terminal is *also* in chance_data (the
+    # same flat dict, one level deeper) -> confirm its own branches lead
+    # to well-formed river structure.
+    flop_terminal = _find_a_showdown_terminal(tiny_flop_to_river_result.root)
+    flop_chance_node = tiny_flop_to_river_result.chance_data[id(flop_terminal)]
+    turn_branch = next(b for b in flop_chance_node.branches.values() if isinstance(b.root, DecisionNode))
+
+    turn_terminal = _find_a_showdown_terminal(turn_branch.root)
+    assert turn_terminal.is_showdown
+    assert id(turn_terminal) in tiny_flop_to_river_result.chance_data
+
+    river_chance_node = tiny_flop_to_river_result.chance_data[id(turn_terminal)]
+    any_river_branch = next(iter(river_chance_node.branches.values()))
+    # Either a real river DecisionNode (stack remained) or the turn
+    # terminal reused (all-in by the turn) — both are valid, well-formed
+    # outcomes; strategy_at handles either via its own uniform fallback
+    # for nodes solving never visited (unrelated to chance dispatch, see
+    # StrategyResult.strategy_at's own docstring).
+    if isinstance(any_river_branch.root, DecisionNode):
+        strategy = tiny_flop_to_river_result.strategy_at(any_river_branch.root)
+        for freqs in strategy.values():
+            assert not any(np.isnan(freq) for freq in freqs.values())
+            assert pytest.approx(sum(freqs.values()), abs=1e-6) == 1.0
+
+
+def test_solve_flop_to_river_all_in_flop_terminal_branches_never_get_a_populated_chance_fn(
+    tiny_flop_to_river_result,
+):
+    # Solver-level version of chance.py's own regression guard: proves
+    # the "all-in branch must never get a chance_fn" rule holds through
+    # the real solve_flop_to_river call path, not just direct
+    # build_chance_node calls. This fixture naturally has an all-in-at-
+    # the-flop line (OOP jams, IP calls) — find it and check every one
+    # of its branches.
+    root = tiny_flop_to_river_result.root
+    allin_action = next(a for a in root.legal_actions if a.kind == "all_in")
+    after_allin = root.children[allin_action]
+    call_action = next(a for a in after_allin.legal_actions if a.kind == CALL_OR_CHECK)
+    allin_terminal = after_allin.children[call_action]
+    assert allin_terminal.invested == {"OOP": 15.0, "IP": 15.0}
+
+    chance_node = tiny_flop_to_river_result.chance_data[id(allin_terminal)]
+    for branch in chance_node.branches.values():
+        assert branch.root is allin_terminal
+        assert branch.chance_fn is None
+
+
+def test_solve_flop_to_river_deterministic_given_the_same_inputs():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    hero_range = {HandCombo(Card("7", "s"), Card("7", "c")): 1.0}
+    villain_range = {HandCombo(Card("9", "d"), Card("8", "d")): 1.0}
+    kwargs = dict(
+        board=board,
+        hero_range=hero_range,
+        villain_range=villain_range,
+        pot=10.0,
+        effective_stack_bb=15.0,
+        positions=("OOP", "IP"),
+        raise_sizes=(),
+        max_raises=1,
+        iterations=20,
+    )
+    # Every board_equity table this builds — flop, turn, and now river —
+    # is either exact (turn/river, per M12's fix) or, for the flop
+    # equity_table itself, unused for showdown valuation (every showdown
+    # terminal routes through chance dispatch instead) — so there's no
+    # sampling randomness left to control here either.
+    result_1 = solve_flop_to_river(**kwargs)
+    result_2 = solve_flop_to_river(**kwargs)
+    assert result_1.opening_range() == result_2.opening_range()
+
+
+def test_solve_flop_to_river_uses_default_iterations_when_omitted():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    hero_range = {HandCombo(Card("7", "s"), Card("7", "c")): 1.0}
+    villain_range = {HandCombo(Card("9", "d"), Card("8", "d")): 1.0}
+    result = solve_flop_to_river(
         board=board,
         hero_range=hero_range,
         villain_range=villain_range,

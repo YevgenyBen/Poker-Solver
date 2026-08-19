@@ -62,6 +62,11 @@ class ChanceBranch:
     for why this has to be a per-branch field, not just threaded through
     unconditionally: doing that would double-deal a card off the wrong
     board once a branch's own subtree reaches its own showdown terminal.
+
+    M13: `build_chance_node`'s own `chain_to_river` parameter is what
+    actually populates this field now (a real turn branch's `chance_fn`,
+    when set, deals the river) — this docstring's "future milestone"
+    became this one; nothing about the field itself needed to change.
     """
 
     card: Card
@@ -92,19 +97,33 @@ def build_chance_node(
     effective_stack_bb: float,
     raise_sizes: tuple = (2.5, 3.0, 2.2),
     max_raises: int = 4,
+    chain_to_river: bool = False,
 ) -> ChanceNode:
     """Build the chance node that follows a showdown-eligible `terminal`
-    (flop action capped without a fold) — one branch per card not
-    already on `board`.
+    (action capped without a fold on whatever street `terminal` belongs
+    to) — one branch per card not already on `board`.
 
     `combos` is the same combo pool `terminal`'s own tree was solved
     with (the union of both positions' ranges) — every branch's equity
     table is built over that identical pool/ordering, so hand-index
     alignment with the outer solve's reach vectors is preserved all the
-    way down. `effective_stack_bb` is the *original* entering-the-flop
-    stack (same meaning as `solver.solve_flop`'s own parameter of that
-    name) — the remaining stack for the next street is derived from it
-    here, not re-supplied by the caller.
+    way down. `effective_stack_bb` is the *entering* stack for whatever
+    street `terminal` belongs to (same meaning as `solver.solve_flop`'s
+    own parameter of that name when called from the flop level) — the
+    remaining stack for the *next* street is derived from it here, not
+    re-supplied by the caller.
+
+    `chain_to_river` (M13, default False — every M12 call site is
+    unaffected): when True, a branch whose own street still has real
+    betting left (`remaining_stack > 0`) AND whose own board isn't
+    already a complete 5-card river gets its `chance_fn` populated with
+    a closure that deals *that* branch's next card the same way — i.e.
+    calling this with `chain_to_river=True` on a flop terminal chains
+    flop->turn->river, not just flop->turn, since the recursive call
+    keeps passing `chain_to_river=True` forward. A branch whose stack is
+    already `0` (both players all-in) never gets a populated `chance_fn`
+    regardless of `chain_to_river` — see the loop below for why that's
+    structural, not a separate check that could drift out of sync.
 
     Raises ValueError if `terminal` is a fold-out (nothing to deal a
     card for) or if the derived remaining stack would be negative (an
@@ -131,8 +150,19 @@ def build_chance_node(
             # Both players are already all-in — no more betting is
             # possible, `terminal` is already a valid showdown leaf for
             # this branch too, only its equity table (one card richer)
-            # changes.
+            # changes. Deliberately no `chance_fn` here regardless of
+            # `chain_to_river`: this branch's equity_table (built for
+            # `next_board`, one card richer than `board`) already
+            # correctly averages over however many community cards
+            # remain via build_board_equity_table's own remaining_needed
+            # handling — a further explicit chance dispatch on top of
+            # that would double-process this same physical terminal
+            # against two inconsistent runout distributions. Putting
+            # `chance_fn = None` in this branch of the if/else (rather
+            # than as a separate check applied afterward) is what makes
+            # that structurally impossible, not just tested-for.
             root = terminal
+            chance_fn = None
         else:
             root = build_street_tree(
                 StreetConfig(
@@ -143,7 +173,23 @@ def build_chance_node(
                     max_raises=max_raises,
                 )
             )
+            if chain_to_river and len(next_board) < 5:
+                # Default-arg binding (`_b=next_board, _s=remaining_stack`)
+                # is required, not stylistic: without it every branch's
+                # closure would share the *loop variables* next_board/
+                # remaining_stack by reference, so by the time any of
+                # them actually got called (lazily, during solving) they'd
+                # all see whichever values the loop last left behind —
+                # every branch would silently deal its river off the last
+                # branch's board instead of its own.
+                chance_fn = lambda t, _b=next_board, _s=remaining_stack: build_chance_node(
+                    t, board=_b, combos=combos, positions=positions,
+                    effective_stack_bb=_s, raise_sizes=raise_sizes, max_raises=max_raises,
+                    chain_to_river=True,
+                )
+            else:
+                chance_fn = None
 
-        branches[card] = ChanceBranch(card=card, equity_table=equity_table, root=root, chance_fn=None)
+        branches[card] = ChanceBranch(card=card, equity_table=equity_table, root=root, chance_fn=chance_fn)
 
     return ChanceNode(pot=terminal.pot, invested=dict(terminal.invested), branches=branches)

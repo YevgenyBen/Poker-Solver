@@ -103,3 +103,116 @@ def test_chance_node_pot_and_invested_carry_over_from_the_terminal():
     )
     assert node.pot == pytest.approx(12.5)
     assert node.invested == {"OOP": 6.25, "IP": 6.25}
+
+
+# ---------------------------------------------------------------------------
+# M13: chain_to_river — a real turn branch's own chance_fn, when set, deals
+# the river. See chance.py's module docstring for the full design and the
+# correctness reason an all-in-already branch must never get one.
+# ---------------------------------------------------------------------------
+
+
+def test_build_chance_node_chain_to_river_defaults_to_false():
+    # Byte-for-byte the same as omitting the kwarg entirely — the M12
+    # backward-compat guarantee, restated for the new parameter.
+    node_omitted = build_chance_node(
+        _showdown_terminal(), board=_BOARD, combos=_COMBOS, positions=_POSITIONS, effective_stack_bb=15.0
+    )
+    node_explicit_false = build_chance_node(
+        _showdown_terminal(), board=_BOARD, combos=_COMBOS, positions=_POSITIONS,
+        effective_stack_bb=15.0, chain_to_river=False,
+    )
+    assert all(branch.chance_fn is None for branch in node_omitted.branches.values())
+    assert all(branch.chance_fn is None for branch in node_explicit_false.branches.values())
+
+
+def test_build_chance_node_chain_to_river_populates_chance_fn_when_a_real_tree_remains():
+    terminal = _showdown_terminal(pot=10.0, invested=5.0)  # 10bb behind at a 15bb stack
+    node = build_chance_node(
+        terminal, board=_BOARD, combos=_COMBOS, positions=_POSITIONS,
+        effective_stack_bb=15.0, chain_to_river=True,
+    )
+    for branch in node.branches.values():
+        assert isinstance(branch.root, DecisionNode)
+        assert callable(branch.chance_fn)
+
+
+def test_build_chance_node_chain_to_river_never_populates_chance_fn_for_a_reused_terminal_branch():
+    # The direct regression guard for the correctness pitfall: an
+    # all-in-already branch's own equity table already averages over
+    # every remaining community card, so it must never also get a
+    # chance_fn — enforced structurally (same if/else that decides
+    # `root = terminal`), not by a separate check that could drift.
+    terminal = _showdown_terminal(pot=30.0, invested=15.0)  # both already all-in at 15bb
+    node = build_chance_node(
+        terminal, board=_BOARD, combos=_COMBOS, positions=_POSITIONS,
+        effective_stack_bb=15.0, chain_to_river=True,
+    )
+    for branch in node.branches.values():
+        assert branch.root is terminal
+        assert branch.chance_fn is None
+
+
+def test_build_chance_node_chain_to_river_river_branch_chance_fn_is_none_even_with_stack_remaining():
+    # Isolates the "board already complete" half of the guard from the
+    # "no stack left" half above: plenty of stack remains, but the board
+    # passed in is already a turn board (4 cards) — every branch this
+    # produces is a complete 5-card river board, so there's nothing left
+    # to chain regardless of how much stack is behind.
+    turn_board = _BOARD + (Card("K", "s"),)
+    terminal = _showdown_terminal(pot=10.0, invested=5.0)
+    node = build_chance_node(
+        terminal, board=turn_board, combos=_COMBOS, positions=_POSITIONS,
+        effective_stack_bb=15.0, chain_to_river=True,
+    )
+    for branch in node.branches.values():
+        assert isinstance(branch.root, DecisionNode)  # real stack remained
+        assert branch.chance_fn is None  # but nothing left to deal
+
+
+def test_build_chance_node_chain_to_river_closure_is_correctly_scoped_per_branch():
+    # Regression guard for the late-binding closure bug the _b=/_s=
+    # default-arg trick prevents: two different branches' own chance_fn
+    # closures must deal from their *own* board, not whichever board the
+    # loop happened to leave behind last.
+    terminal = _showdown_terminal(pot=10.0, invested=5.0)
+    node = build_chance_node(
+        terminal, board=_BOARD, combos=_COMBOS, positions=_POSITIONS,
+        effective_stack_bb=15.0, chain_to_river=True,
+    )
+    branch_iter = iter(node.branches.values())
+    branch_a = next(branch_iter)
+    branch_b = next(branch_iter)
+
+    # Each branch's own root is itself a showdown-eligible terminal we
+    # can hand straight back to that branch's own chance_fn — mirroring
+    # how cfr.py actually drives this (calling chance_fn on a real
+    # showdown terminal reached inside the branch's own subtree).
+    stub_terminal_a = TerminalNode(pot=branch_a.root.pot, invested={"OOP": 5.0, "IP": 5.0}, folded=frozenset())
+    stub_terminal_b = TerminalNode(pot=branch_b.root.pot, invested={"OOP": 5.0, "IP": 5.0}, folded=frozenset())
+
+    river_node_a = branch_a.chance_fn(stub_terminal_a)
+    river_node_b = branch_b.chance_fn(stub_terminal_b)
+
+    # Branch A's own dealt card must be excluded from its river deck (and
+    # vice versa) — if the closures shared the loop's last board instead
+    # of their own, both would exclude the *same* (wrong) card.
+    assert branch_a.card not in river_node_a.branches
+    assert branch_b.card not in river_node_b.branches
+    assert branch_b.card in river_node_a.branches  # A's river deck still has B's card available
+    assert branch_a.card in river_node_b.branches  # and vice versa
+
+
+def test_build_chance_node_chain_to_river_is_deterministic_across_calls():
+    kwargs = dict(
+        terminal=_showdown_terminal(pot=10.0, invested=5.0), board=_BOARD, combos=_COMBOS,
+        positions=_POSITIONS, effective_stack_bb=15.0, chain_to_river=True,
+    )
+    node_1 = build_chance_node(**kwargs)
+    node_2 = build_chance_node(**kwargs)
+    any_card = next(iter(node_1.branches))
+    river_terminal = TerminalNode(pot=node_1.branches[any_card].root.pot, invested={"OOP": 5.0, "IP": 5.0}, folded=frozenset())
+    river_1 = node_1.branches[any_card].chance_fn(river_terminal)
+    river_2 = node_2.branches[any_card].chance_fn(river_terminal)
+    for card, branch_1 in river_1.branches.items():
+        assert np.array_equal(branch_1.equity_table, river_2.branches[card].equity_table)

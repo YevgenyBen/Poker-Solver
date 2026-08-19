@@ -51,11 +51,18 @@ class StrategyResult:
     node_data: dict
     iterations: int
     elapsed_seconds: float
-    # M12: {id(flop showdown terminal): chance.ChanceNode} — empty for
-    # every pre-M12 result (solve_preflop/solve_flop never touch it),
-    # populated only by solve_flop_turn. Lets a caller walk into a
+    # M12: {id(showdown terminal): chance.ChanceNode} — empty for every
+    # pre-M12 result (solve_preflop/solve_flop never touch it), populated
+    # by solve_flop_turn/solve_flop_to_river. Lets a caller walk into a
     # specific next-card branch's subtree, e.g.
     # `result.chance_data[id(some_terminal)].branches[some_card].root`.
+    # M13: for a solve_flop_to_river result, this dict is flat but
+    # two-level deep — it holds *both* flop-terminal -> turn-ChanceNode
+    # entries *and* turn-terminal -> river-ChanceNode entries (every
+    # chance dispatch, at any depth, memoizes into this same dict, keyed
+    # by whichever terminal triggered it), so reaching the river level is
+    # the identical pattern one hop further:
+    # `result.chance_data[id(some_turn_terminal)].branches[some_river_card].root`.
     chance_data: dict = field(default_factory=dict)
 
     def strategy_at(self, node: DecisionNode) -> dict:
@@ -336,6 +343,115 @@ def solve_flop_turn(
 
     chance_data: dict = {}
     actual_iterations = iterations if iterations is not None else DEFAULT_FLOP_TURN_ITERATIONS
+    start = time.perf_counter()
+    node_data = solve(
+        root,
+        combos,
+        equity_table,
+        iterations=actual_iterations,
+        positions=positions,
+        initial_reach={hero_position: hero_reach, villain_position: villain_reach},
+        chance_fn=chance_fn,
+        chance_data=chance_data,
+    )
+    elapsed = time.perf_counter() - start
+
+    return StrategyResult(
+        config=config,
+        root=root,
+        hands=combos,
+        node_data=node_data,
+        iterations=actual_iterations,
+        elapsed_seconds=elapsed,
+        chance_data=chance_data,
+    )
+
+
+# Flop->turn->river chaining (M13) adds a *second* chance-node hop on top
+# of solve_flop_turn's already-expensive first one — see solve_flop_to_
+# river's own docstring and the M13 PR for the real measured numbers.
+# Deliberately untuned against any live endpoint (none is planned — see
+# the M13 PR's cost section), unlike DEFAULT_FLOP_TURN_ITERATIONS, which
+# was at least in the same conversation as a (rejected) live-endpoint
+# question. Kept equal to the test suite's own tiny fixture's iteration
+# count (measured ~4.3s there) rather than DEFAULT_FLOP_TURN_ITERATIONS's
+# 200 — measured directly: 100 iterations here cost ~55s on that same
+# tiny fixture (chance-node construction cost doesn't scale linearly with
+# iterations the way M12's own default assumed), which is unnecessarily
+# slow for a value nothing is actually tuned against.
+DEFAULT_FLOP_TO_RIVER_ITERATIONS = 20
+
+
+def solve_flop_to_river(
+    board: tuple,
+    hero_range: dict,
+    villain_range: dict,
+    pot: float,
+    effective_stack_bb: float,
+    positions: tuple = ("OOP", "IP"),
+    raise_sizes: tuple = (2.5, 3.0, 2.2),
+    max_raises: int = 4,
+    iterations: int = None,
+    equity_seed: int = DEFAULT_EQUITY_SEED,
+) -> StrategyResult:
+    """Solve a flop betting round that chains all the way to a real river
+    showdown — flop->turn via a real chance node (see solve_flop_turn),
+    and now turn->river via a second one (see chance.build_chance_node's
+    `chain_to_river`), instead of solve_flop_turn's own "average the
+    river inside the turn branch's equity table" shortcut. This is the
+    last chance-node hop possible starting from a 3-card flop board — a
+    complete 5-card river board has no more cards left to deal.
+
+    Identical parameters to `solve_flop_turn` — the only difference is
+    the single `chain_to_river=True` passed to `build_chance_node`
+    inside this function's own `chance_fn` closure; see chance.py's
+    module docstring for how that one flag lets the *same*
+    `build_chance_node` call recursively populate a second level of
+    `ChanceBranch.chance_fn` (the river hop) instead of leaving every
+    branch's `chance_fn` at `None` the way solve_flop_turn's call does.
+    No `cfr.py` changes were needed for this — see `chance_data`'s
+    resulting shape below.
+
+    The returned StrategyResult's `chance_data` ends up flat but two
+    levels deep: `chance_data[id(some_flop_terminal)]` still gives the
+    turn-level ChanceNode exactly like solve_flop_turn (every chance
+    dispatch, at any depth, memoizes into the same dict — see
+    StrategyResult's own docstring) — and
+    `chance_data[id(some_turn_terminal)]` (once that turn terminal has
+    actually been reached during solving) gives the *river*-level
+    ChanceNode one hop further.
+
+    Not exposed via the API/frontend — see the M13 PR for the measured
+    tiny-fixture cost and the reasoned (not separately re-measured)
+    demo-scale cost estimate that ruled it out, same as
+    solve_flop_turn's own finding one milestone earlier.
+    """
+    hero_position, villain_position = positions
+    combos = sorted(set(hero_range) | set(villain_range), key=str)
+    hero_reach = np.array([hero_range.get(combo, 0.0) for combo in combos])
+    villain_reach = np.array([villain_range.get(combo, 0.0) for combo in combos])
+
+    config = StreetConfig(
+        positions=positions,
+        pot=pot,
+        stack_bb=effective_stack_bb,
+        raise_sizes=raise_sizes,
+        max_raises=max_raises,
+    )
+    root = build_street_tree(config)
+
+    equity_table = build_board_equity_table(board, combos, rng=random.Random(equity_seed))
+    equity_table = np.nan_to_num(equity_table, nan=0.5)
+
+    def chance_fn(terminal):
+        return build_chance_node(
+            terminal, board=board, combos=combos, positions=positions,
+            effective_stack_bb=effective_stack_bb, raise_sizes=raise_sizes, max_raises=max_raises,
+            chain_to_river=True,
+        )
+
+    chance_data: dict = {}
+    actual_iterations = iterations if iterations is not None else DEFAULT_FLOP_TO_RIVER_ITERATIONS
     start = time.perf_counter()
     node_data = solve(
         root,
