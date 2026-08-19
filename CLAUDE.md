@@ -526,6 +526,108 @@ street chaining needs.
     AA's combos carry far more weight than 72o's in the resulting range
     — proving real numbers flow through every stage, not that a
     hardcoded range still happens to work.
+- **M16 — Arbitrary action-path range derivation.** `derive_flop_
+  scenario` (M15) only modeled one fixed 2-step line (raiser opens,
+  caller calls). M16 generalizes it: given an **arbitrary sequence of
+  actions** from a tree's root, correctly derive every still-live
+  position's range at the resulting node, plus pot/stack state — the
+  foundational piece for the v3 vision above (a real hand can reach any
+  node via any sequence of actions, and a player can act more than once
+  along the way).
+  - `poker_solver/solver.py` — `PathScenario` (dataclass: `node`,
+    `live_positions`, `ranges`, `pot`, `stacks`) + `derive_ranges_from_
+    path(result, action_path)`. Walks `result.root` applying each
+    `Action` in `action_path` via `node.children[action]`, same
+    `LazyChildren` single-step access `derive_flop_scenario` already
+    used — no new tree-walking mechanism. Raises `ValueError` for: an
+    action not actually legal at the step it's applied to (`Action`
+    equality is exact on `kind` *and* `size`, not fuzzy-matched by kind
+    alone); the path continuing past a `TerminalNode`; fewer than 2 live
+    positions at the end. **Not** an error: the path ending at a
+    `DecisionNode` (someone else's turn still to come) — a real feature,
+    not a gap, since it lets a caller ask "what does this look like
+    right here, mid-round," not just at a fully-resolved endpoint.
+  - **The core mechanism, verified against `cfr.py`'s real reach-
+    accumulation code, not assumed:** a position that acts more than
+    once along a path needs the *product*, in order, of `continuing_
+    frequencies(node, action_kind=<action taken>)` across each of their
+    own nodes — not a single node's reading. This is exactly how
+    `cfr._solve_recurse`'s own `reach_a`/`reach_b` tensors accumulate
+    during real solving (`reach_a * strategy[:, a_idx]` only at
+    `position_a`'s own nodes, chained down the tree) — `continuing_
+    frequencies` at any one node is a *conditional* frequency (given the
+    range already reached that node), so multiple such nodes compose
+    multiplicatively, the same way conditional probabilities always do.
+    Confirmed with a hand-built-`node_data` test at a config where BTN
+    opens, BB 3-bets, BTN calls (BTN acts twice): the derived range for
+    one hand equals the *product* of two independently-chosen per-node
+    frequencies, not either one alone.
+  - **Built fully N-player-general**, even though today's only real
+    consumer (`solve_flop`/`solve_flop_turn`/`solve_flop_to_river`)
+    stays 2-position-hardcoded — deliberately different from M8/M9's own
+    "multiway only when actually needed" discipline, which was about not
+    paying for genuinely expensive new solving infrastructure
+    speculatively. Nothing here is expensive or new: every piece this
+    function touches (`game_tree.py`, `continuing_frequencies`,
+    `node.folded`/`node.invested`) is already N-general, so restricting
+    it to 2 players would have been an artificial regression relative to
+    what it's built on, not a "don't build what nothing consumes" call.
+    Proven, not just asserted: reuses the existing `three_max_result`
+    fixture (no new slow solve) for a 3-handed path where all three stay
+    live, and one where a position folds mid-path.
+  - `derive_flop_scenario` is now a thin wrapper around `derive_ranges_
+    from_path` — all five of its existing `ValueError` checks stay
+    unchanged (they're `FlopScenario`-specific semantic constraints,
+    e.g. "caller must be the very next actor," not generic path
+    illegality), then the mechanical walk itself is delegated rather
+    than reimplemented. Every M15 test re-runs unmodified against this
+    refactor — the reuse-safety net the refactor call depended on.
+  - **Tested end to end at the new, longer path length**: real (small,
+    fast) `solve_preflop` → a genuine 3-step path (open, 3-bet, call) →
+    real combo expansion → real `solve_flop`. One more real, honestly-
+    reported surprise along the way: the naive "premium hand continues
+    most" comparison doesn't hold for BTN's *compound* (open-and-call-
+    the-3-bet) range specifically — AA's own weight there is tiny,
+    because facing a 3-bet, AA prefers to jam rather than flat-call
+    (the same "premium hands don't just call" pattern M15 already found,
+    one street of aggression deeper). The robust check instead compares
+    KK (a real flatting hand in this spot) against trash.
+
+## v3 vision (future) — live-table advisor
+
+Discussed with the user while scoping M16, recorded here rather than
+left implicit: the longer-term goal beyond v2's demo/range-chart
+tooling is a live-table advisor — a user mid-hand describes what
+actually happened (any action sequence, any street, eventually
+multiway) and gets advice grounded in a real solve for that exact
+situation, not a curated demo range.
+
+Two gaps identified when scoping this, pulling in different directions:
+**flexible situation input** (`solve_flop*` only ever consumed curated
+hardcoded ranges or, as of M15, one fixed preflop line — M16 is the
+first general step past that) and **real-time speed** (measured solve
+times, M12-M14, run ~20s to several minutes even for small ranges — not
+attempted yet; likely needs precomputed/cached common spots, a real
+database of solved situations indexed by canonicalized game state,
+and/or narrowing scope to one decision rather than a full range
+strategy at every node). The user chose flexible input first, since
+speed work is easier to scope once the shape of query it needs to serve
+fast is known.
+
+Where an LLM fits, and deliberately doesn't: translating a player's
+natural-language hand description into the structured input the engine
+needs, and narrating the engine's own computed frequencies back in
+plain language — an input/output layer around the solver, never a
+replacement for it. Feeding an LLM general poker strategy content and
+letting it generate advice directly, bypassing the solver, was
+considered and rejected: it would trade a mathematically grounded GTO
+computation for LLM pattern-matching that can sound just as confident
+when wrong — exactly what a real solver exists to avoid.
+
+Not scoped yet, deliberately: multiway postflop solving, the LLM layer
+itself, any precomputed-spot caching system. M16 (arbitrary action-path
+range derivation) is the first concrete bridge piece — everything else
+here depends on a general way to describe "the current situation" first.
 
 ## Engine is standalone
 

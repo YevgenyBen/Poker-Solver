@@ -23,7 +23,18 @@ from .board_equity import build_board_equity_table
 from .chance import build_chance_node
 from .cfr import InfoSetTable, mccfr_solve, solve
 from .equity import MultiwayEquityCache, get_equity_table
-from .game_tree import CALL_OR_CHECK, FOLD, RAISE, DecisionNode, GameConfig, StreetConfig, build_game_tree, build_street_tree
+from .game_tree import (
+    CALL_OR_CHECK,
+    FOLD,
+    RAISE,
+    Action,
+    DecisionNode,
+    GameConfig,
+    StreetConfig,
+    TerminalNode,
+    build_game_tree,
+    build_street_tree,
+)
 from .starting_hands import all_starting_hands
 
 # Exact path (heads-up): measured ~3-4ms/iteration at full 169-hand
@@ -244,6 +255,123 @@ class FlopScenario:
     effective_stack_bb: float
 
 
+@dataclass(frozen=True)
+class PathScenario:
+    """Ranges + pot/stack state after walking an arbitrary `action_path`
+    from `result.root` (M16) — generalizes `FlopScenario` beyond its
+    fixed 2-step "raiser opens, caller calls" shape to any legal
+    sequence of actions, at any street's tree, with any position acting
+    any number of times along the way. See `derive_ranges_from_path`.
+
+    `node` is the DecisionNode or TerminalNode `action_path` leads to —
+    exposed (unlike `FlopScenario`, which only ever exposes pot/stack)
+    since a general-purpose caller may need to keep exploring from
+    there (what actions remain legal, is it a showdown, etc.).
+
+    `live_positions` is every position still in the hand at `node`, in
+    table order. `ranges` maps each live position -> {hand: frequency}
+    (StartingHand/HandCombo-keyed, like `continuing_frequencies`) — that
+    position's per-hand probability of taking *this exact* path, not
+    their overall continue frequency. A position that never acted along
+    the path (still waiting their turn at `node`) gets frequency 1.0 for
+    every hand — unconditioned, since nothing has happened yet to filter
+    their range.
+
+    `pot`/`stacks` are `node.pot` and, per live position, `result.
+    config.stack_bb - node.invested[position]` — a dict, not a single
+    float like `FlopScenario.effective_stack_bb`, since an arbitrary
+    path can leave live positions with unequal investments (e.g. a
+    3-way pot reached mid-round, action not yet closed).
+    """
+
+    node: object  # DecisionNode | TerminalNode
+    live_positions: tuple
+    ranges: dict  # position -> {hand: frequency}
+    pot: float
+    stacks: dict  # position -> remaining effective stack
+
+
+def derive_ranges_from_path(result: StrategyResult, action_path: list) -> PathScenario:
+    """Walk `action_path` (a list of `game_tree.Action`s) from `result.
+    root`, deriving every still-live position's range at the resulting
+    node plus pot/stack state (M16) — the general mechanism
+    `derive_flop_scenario` is now a thin, backward-compatible wrapper
+    around (see below).
+
+    Each `Action` must be obtained from the node it applies to's own
+    `legal_actions` (e.g. `next(a for a in node.legal_actions if a.kind
+    == RAISE)`), not hand-constructed — `Action` equality is exact on
+    both `kind` and `size`, so a hand-built `Action(RAISE, 17.3)` that's
+    off by float precision from the tree's own sized raise would be
+    (correctly) rejected as illegal rather than silently matched. This
+    matters more here than it did for `derive_flop_scenario` (which
+    always looked actions up this way already): a general-purpose
+    caller assembling a path from scratch — e.g. a future natural-
+    language-to-action-path translation layer — is more likely to
+    construct one by hand.
+
+    For a position that acts more than once along the path (e.g. opens,
+    faces a 3-bet, calls), their derived range is the *product*, in
+    order, of `continuing_frequencies(node, action_kind=<the kind of
+    the action they took at that node>)` across every one of their own
+    decision nodes along the way — not just a single node's reading.
+    This mirrors exactly how `cfr.py`'s own `reach_a`/`reach_b` tensors
+    accumulate reach probability during real CFR solving (multiplying
+    in that position's `current_strategy()` column at each of their own
+    nodes, chained down the tree) — `continuing_frequencies` at any one
+    node is a *conditional* frequency (given the range already reached
+    that node), so multiple such nodes compose multiplicatively, the
+    same way conditional probabilities always do.
+
+    A path doesn't need to fully close the betting round — ending at a
+    DecisionNode (someone else's turn still to come) is a valid result,
+    not an error; any position who hasn't yet acted along the path is
+    included in `live_positions`/`ranges` with an unconditioned (1.0)
+    range. This lets a caller ask "what does this look like right here,
+    mid-round," not just at a fully-resolved endpoint.
+
+    Raises ValueError if: an action in `action_path` isn't actually
+    legal at the node it's applied to; `action_path` has steps left
+    after the walk has already reached a TerminalNode (the hand ended
+    before the path did); fewer than 2 positions are still live at the
+    resulting node (a fold-out, or an N-1-folded multiway remainder —
+    not a postflop scenario either way).
+    """
+    node = result.root
+    reach = {position: {hand: 1.0 for hand in result.hands} for position in result.config.positions}
+
+    for step_idx, action in enumerate(action_path):
+        if not isinstance(node, DecisionNode):
+            raise ValueError(
+                f"action_path continues past a terminal node after step {step_idx} "
+                f"({len(action_path) - step_idx} action(s) left, but the hand already ended)"
+            )
+        if action not in node.legal_actions:
+            raise ValueError(
+                f"step {step_idx}: {action} is not legal for {node.player_to_act!r} "
+                f"at this node (legal actions: {node.legal_actions!r})"
+            )
+        actor = node.player_to_act
+        freqs = result.continuing_frequencies(node, action_kind=action.kind)
+        reach[actor] = {hand: reach[actor][hand] * freqs[hand] for hand in result.hands}
+        node = node.children[action]
+
+    live_positions = tuple(p for p in result.config.positions if p not in node.folded)
+    if len(live_positions) < 2:
+        raise ValueError(
+            f"action_path ends with {len(live_positions)} live position(s) "
+            "— not a postflop scenario (need at least 2)"
+        )
+
+    return PathScenario(
+        node=node,
+        live_positions=live_positions,
+        ranges={p: reach[p] for p in live_positions},
+        pot=node.pot,
+        stacks={p: result.config.stack_bb - node.invested[p] for p in live_positions},
+    )
+
+
 def derive_flop_scenario(result: StrategyResult, raiser_position: str, caller_position: str) -> FlopScenario:
     """Derive a FlopScenario from a preflop StrategyResult's "raiser
     opens, caller calls" line.
@@ -263,20 +391,26 @@ def derive_flop_scenario(result: StrategyResult, raiser_position: str, caller_po
     a materially different, out-of-scope line, not the immediate-open
     this function is documented to model.
 
-    `raiser_range`/`caller_range` use `continuing_frequencies(...,
-    action_kind=RAISE)` / `(..., action_kind=CALL_OR_CHECK)`, not the
-    simpler default (`action_kind=None`, "1 - fold") — load-bearing, not
-    stylistic: a single node can have both a sized RAISE and an ALL_IN,
-    each leading to a different pot, and `pot`/`effective_stack_bb` below
-    are read off the *specific* raise-then-call child, not an average
-    over every non-fold line. Using the "1-fold" default for either
-    range would silently weight in hands that actually took a different
-    (jam, or 3-bet) line into a (pot, stack) pair that isn't theirs.
+    `raiser_range`/`caller_range` end up specific to the raise-then-call
+    line (via `derive_ranges_from_path`'s reach-product mechanism, M16),
+    not the simpler "1 - fold" default — load-bearing, not stylistic: a
+    single node can have both a sized RAISE and an ALL_IN, each leading
+    to a different pot, and `pot`/`effective_stack_bb` below are read
+    off the *specific* raise-then-call child, not an average over every
+    non-fold line. Using the "1-fold" default for either range would
+    silently weight in hands that actually took a different (jam, or
+    3-bet) line into a (pot, stack) pair that isn't theirs.
 
     Raises ValueError for: a 3+ player `result`; either position not in
     `result.config.positions`; `raiser_position` not first to act; no
     sized raise available at the raiser's node; `caller_position` not
     the position that actually acts right after the raise.
+
+    M16: implemented as a thin wrapper around `derive_ranges_from_path`
+    (the general path-walking mechanism) — everything above this point
+    stays as `FlopScenario`-specific semantic validation (stricter than
+    a general path needs, e.g. "caller must be the very next actor"),
+    then the mechanical walk itself is delegated, not reimplemented.
     """
     if result.config.num_players != 2:
         raise ValueError("derive_flop_scenario only models a heads-up raiser/caller pair, not a multiway pot")
@@ -308,15 +442,15 @@ def derive_flop_scenario(result: StrategyResult, raiser_position: str, caller_po
         # than letting a future game_tree.py change surface as a bare
         # StopIteration here instead of a clear error.
         raise ValueError(f"no call action found at {caller_position!r}'s node")
-    after_call = caller_node.children[call_action]
 
+    scenario = derive_ranges_from_path(result, [raise_action, call_action])
     return FlopScenario(
         raiser_position=raiser_position,
         caller_position=caller_position,
-        raiser_range=result.continuing_frequencies(raiser_node, action_kind=RAISE),
-        caller_range=result.continuing_frequencies(caller_node, action_kind=CALL_OR_CHECK),
-        pot=after_call.pot,
-        effective_stack_bb=result.config.stack_bb - after_call.invested[raiser_position],
+        raiser_range=scenario.ranges[raiser_position],
+        caller_range=scenario.ranges[caller_position],
+        pot=scenario.pot,
+        effective_stack_bb=scenario.stacks[raiser_position],
     )
 
 

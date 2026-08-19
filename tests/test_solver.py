@@ -2,14 +2,17 @@ import numpy as np
 import pytest
 
 from poker_solver.cards import Card
+from poker_solver.cfr import InfoSetTable
 from poker_solver.combos import HandCombo, combos_for_class, range_from_class_frequencies
 from poker_solver.equity import MultiwayEquityCache, build_equity_table
-from poker_solver.game_tree import CALL_OR_CHECK, RAISE, DecisionNode, GameConfig, build_game_tree
+from poker_solver.game_tree import CALL_OR_CHECK, FOLD, RAISE, Action, DecisionNode, GameConfig, build_game_tree
 from poker_solver.solver import (
     DEFAULT_ITERATIONS,
     FlopScenario,
+    PathScenario,
     StrategyResult,
     derive_flop_scenario,
+    derive_ranges_from_path,
     format_opening_range_grid,
     solve_flop,
     solve_flop_to_river,
@@ -997,3 +1000,191 @@ def test_derive_flop_scenario_pipeline_a_premium_hand_continues_far_more_than_tr
     aa_weight = sum(hero_combos.get(c, 0.0) for c in aa_combos)
     trash_weight = sum(hero_combos.get(c, 0.0) for c in trash_combos)
     assert aa_weight > trash_weight
+
+
+# ---------------------------------------------------------------------------
+# M16 deliverable: derive_ranges_from_path — generalizes derive_flop_
+# scenario (M15) beyond its fixed 2-step "raiser opens, caller calls"
+# line to an arbitrary sequence of actions, with any position acting any
+# number of times along the way. derive_flop_scenario is now a thin
+# wrapper around this (see solver.py); the M15 tests above already prove
+# that refactor didn't change its behavior.
+# ---------------------------------------------------------------------------
+
+
+def test_derive_ranges_from_path_rejects_an_action_with_the_wrong_size():
+    # Right kind, wrong size — must not be fuzzy-matched by kind alone.
+    config = GameConfig()  # default raise_sizes -> root has a real sized RAISE
+    result = _stub_preflop_result(config)
+    bogus_raise = Action(RAISE, 999.0)
+    with pytest.raises(ValueError):
+        derive_ranges_from_path(result, [bogus_raise])
+
+
+def test_derive_ranges_from_path_rejects_continuing_past_a_terminal_node():
+    config = GameConfig()
+    result = _stub_preflop_result(config)
+    fold_action = next(a for a in result.root.legal_actions if a.kind == FOLD)
+    with pytest.raises(ValueError):
+        derive_ranges_from_path(result, [fold_action, Action(CALL_OR_CHECK)])
+
+
+def test_derive_ranges_from_path_rejects_fewer_than_two_live_positions():
+    config = GameConfig()
+    result = _stub_preflop_result(config)
+    fold_action = next(a for a in result.root.legal_actions if a.kind == FOLD)
+    with pytest.raises(ValueError):
+        derive_ranges_from_path(result, [fold_action])
+
+
+def test_derive_ranges_from_path_three_handed_rejects_a_fold_down_to_one(three_max_result):
+    root = three_max_result.root
+    raise_action = next(a for a in root.legal_actions if a.kind == RAISE)
+    sb_node = root.children[raise_action]
+    sb_fold = next(a for a in sb_node.legal_actions if a.kind == FOLD)
+    bb_node = sb_node.children[sb_fold]
+    bb_fold = next(a for a in bb_node.legal_actions if a.kind == FOLD)
+    with pytest.raises(ValueError):
+        derive_ranges_from_path(three_max_result, [raise_action, sb_fold, bb_fold])
+
+
+def test_derive_ranges_from_path_three_handed_all_stay_live(three_max_result):
+    root = three_max_result.root
+    raise_action = next(a for a in root.legal_actions if a.kind == RAISE)
+    sb_node = root.children[raise_action]
+    sb_call = next(a for a in sb_node.legal_actions if a.kind == CALL_OR_CHECK)
+    bb_node = sb_node.children[sb_call]
+    bb_call = next(a for a in bb_node.legal_actions if a.kind == CALL_OR_CHECK)
+
+    scenario = derive_ranges_from_path(three_max_result, [raise_action, sb_call, bb_call])
+    assert scenario.live_positions == ("BTN", "SB", "BB")
+    assert set(scenario.ranges.keys()) == {"BTN", "SB", "BB"}
+    for position in scenario.live_positions:
+        assert scenario.stacks[position] == pytest.approx(
+            three_max_result.config.stack_bb - scenario.node.invested[position]
+        )
+
+
+def test_derive_ranges_from_path_three_handed_a_fold_reduces_live_positions(three_max_result):
+    root = three_max_result.root
+    raise_action = next(a for a in root.legal_actions if a.kind == RAISE)
+    sb_node = root.children[raise_action]
+    sb_fold = next(a for a in sb_node.legal_actions if a.kind == FOLD)
+    bb_node = sb_node.children[sb_fold]
+    bb_call = next(a for a in bb_node.legal_actions if a.kind == CALL_OR_CHECK)
+
+    scenario = derive_ranges_from_path(three_max_result, [raise_action, sb_fold, bb_call])
+    assert scenario.live_positions == ("BTN", "BB")
+    assert "SB" not in scenario.ranges
+
+
+def test_derive_ranges_from_path_multiplies_reach_across_a_positions_own_nodes():
+    # BTN opens, BB 3-bets, BTN calls the 3-bet — BTN acts *twice* along
+    # this path. Hand-built node_data (not a real solve) with chosen
+    # strategy_sum values at both of BTN's own nodes, so the expected
+    # answer is exactly hand-computable: this is the direct proof that
+    # derive_ranges_from_path multiplies BTN's per-node frequencies
+    # together, rather than just reading the last node BTN acted at.
+    config = GameConfig(raise_sizes=(2.5, 2.5), max_raises=3)
+    root = build_game_tree(config)
+
+    open_raise = next(a for a in root.legal_actions if a.kind == RAISE)
+    bb_node = root.children[open_raise]
+    three_bet_raise = next(a for a in bb_node.legal_actions if a.kind == RAISE)
+    btn_node = bb_node.children[three_bet_raise]
+    call_action = next(a for a in btn_node.legal_actions if a.kind == CALL_OR_CHECK)
+
+    def _table_with_one_hand_set(node, action, freq):
+        table = InfoSetTable.zeros(len(_SMALL_HANDS), len(node.legal_actions))
+        target_idx = node.legal_actions.index(action)
+        table.strategy_sum[0, target_idx] = freq
+        remaining_actions = len(node.legal_actions) - 1
+        for a_idx in range(len(node.legal_actions)):
+            if a_idx != target_idx:
+                table.strategy_sum[0, a_idx] = (1.0 - freq) / remaining_actions
+        return table
+
+    node_data = {
+        id(root): _table_with_one_hand_set(root, open_raise, 0.6),
+        id(btn_node): _table_with_one_hand_set(btn_node, call_action, 0.5),
+        id(bb_node): _table_with_one_hand_set(bb_node, three_bet_raise, 0.7),
+    }
+    result = StrategyResult(
+        config=config, root=root, hands=_SMALL_HANDS, node_data=node_data, iterations=0, elapsed_seconds=0.0
+    )
+
+    scenario = derive_ranges_from_path(result, [open_raise, three_bet_raise, call_action])
+    aa = _SMALL_HANDS[0]
+
+    # The product (0.6 * 0.5), not either node's reading alone, drives
+    # BTN's range for a hand that acted at both of its own nodes.
+    assert scenario.ranges["BTN"][aa] == pytest.approx(0.6 * 0.5)
+
+    # BB's range is the single-step control case: BB only acts once
+    # along this path, so it must equal continuing_frequencies read
+    # directly at BB's own node — no accidental double-multiplication
+    # for a position that only acted once.
+    direct_bb_freqs = result.continuing_frequencies(bb_node, action_kind=RAISE)
+    assert scenario.ranges["BB"][aa] == pytest.approx(direct_bb_freqs[aa])
+    assert scenario.ranges["BB"][aa] == pytest.approx(0.7)
+
+
+def test_derive_ranges_from_path_pipeline_open_3bet_call_feeds_solve_flop():
+    # Real (small, fast) preflop solve -> a genuine 3-step path (open,
+    # 3-bet, call — one step longer than M15's own 2-step pipeline
+    # test, exercising a position, BTN, that acts twice) -> real combo
+    # expansion -> real solve_flop.
+    config = GameConfig(raise_sizes=(2.5, 2.5), max_raises=3)
+    preflop_result = solve_preflop(iterations=300, config=config, hands=_SMALL_HANDS, equity_table=_SMALL_EQUITY_TABLE)
+
+    root = preflop_result.root
+    open_raise = next(a for a in root.legal_actions if a.kind == RAISE)
+    bb_node = root.children[open_raise]
+    three_bet_raise = next(a for a in bb_node.legal_actions if a.kind == RAISE)
+    btn_node = bb_node.children[three_bet_raise]
+    call_action = next(a for a in btn_node.legal_actions if a.kind == CALL_OR_CHECK)
+
+    scenario = derive_ranges_from_path(preflop_result, [open_raise, three_bet_raise, call_action])
+    assert scenario.live_positions == ("BTN", "BB")
+
+    aa = StartingHand("A", "A")
+    kk = StartingHand("K", "K")
+    trash = StartingHand("7", "2", suited=False)
+
+    # BB's range here is a single-step read (BB's own 3-betting
+    # frequency facing the open) — the same directional fact M15 already
+    # established: a premium hand 3-bets far more than trash.
+    assert scenario.ranges["BB"][aa] > scenario.ranges["BB"][trash]
+
+    # BTN's range here is the *compound* (open AND call-the-3-bet)
+    # frequency — NOT simply "premium continues most": measured
+    # directly, AA's own weight here is actually tiny (facing a 3-bet
+    # with the nuts, AA prefers to 4-bet/jam rather than flat-call — the
+    # same "premium hands don't just call" pattern M15's own writeup
+    # already found, now showing up again one street of aggression
+    # deeper). KK, a strong-but-not-the-nuts hand, is the one that
+    # actually wants to flat-call a 3-bet here — so the robust
+    # directional check compares KK to trash instead of AA to trash.
+    assert scenario.ranges["BTN"][kk] > scenario.ranges["BTN"][trash]
+
+    board = (Card("2", "h"), Card("6", "d"), Card("9", "c"))
+    exclude = frozenset(board)
+    btn_combos = range_from_class_frequencies(scenario.ranges["BTN"], exclude=exclude)
+    bb_combos = range_from_class_frequencies(scenario.ranges["BB"], exclude=exclude)
+
+    flop_result = solve_flop(
+        board=board,
+        hero_range=btn_combos,
+        villain_range=bb_combos,
+        pot=scenario.pot,
+        effective_stack_bb=scenario.stacks["BTN"],
+        positions=("OOP", "IP"),
+        max_raises=1,
+        raise_sizes=(),
+        iterations=50,
+        equity_samples=50,
+    )
+    opening = flop_result.opening_range()
+    assert len(opening) > 0
+    for freqs in opening.values():
+        assert pytest.approx(sum(freqs.values()), abs=1e-6) == 1.0
