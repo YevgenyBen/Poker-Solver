@@ -31,9 +31,11 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
     monkeypatch.setattr(api_main, "MULTIWAY_TABLE_CONFIGS", fast_table_configs)
     _cache.clear()
     _multiway_cache.clear()
+    api_main._flop_cache.clear()
     yield
     _cache.clear()
     _multiway_cache.clear()
+    api_main._flop_cache.clear()
 
 
 @pytest.fixture()
@@ -247,3 +249,106 @@ def test_equity_rejects_hands_sharing_a_card(client):
 def test_equity_rejects_hand_blocked_by_the_board(client):
     response = client.get("/equity?hand_a=AhAd&hand_b=KhKd&board=Ah7d9h")
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# M11: GET /solve_flop — a real heads-up (OOP/IP) flop betting round over
+# DEMO_FLOP_HERO_CLASSES/DEMO_FLOP_VILLAIN_CLASSES's board-legal combo
+# expansion (see api/main.py's module docstring).
+# ---------------------------------------------------------------------------
+
+# Small iteration count keeps these tests fast — convergence itself is
+# already covered by test_solver.py's solve_flop fixture/tests; these
+# only need the HTTP plumbing to work.
+FAST_FLOP_ITERATIONS = 20
+
+
+def test_solve_flop_returns_200_with_well_formed_response(client):
+    response = client.get(f"/solve_flop?board=Jh7d2c&pot=10&stack_bb=40&iterations={FAST_FLOP_ITERATIONS}")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["board"] == "Jh7d2c"
+    assert body["pot"] == 10.0
+    assert body["stack_bb"] == 40.0
+    assert body["iterations"] == FAST_FLOP_ITERATIONS
+    assert body["elapsed_seconds"] >= 0.0
+    assert body["position"] == "OOP"
+    assert body["positions"] == ["OOP", "IP"]
+    assert len(body["strategy"]) > 0
+
+
+def test_solve_flop_frequencies_sum_to_one_per_combo(client):
+    response = client.get(f"/solve_flop?board=Jh7d2c&pot=10&stack_bb=40&iterations={FAST_FLOP_ITERATIONS}")
+    for freqs in response.json()["strategy"].values():
+        assert sum(freqs.values()) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_solve_flop_rejects_a_board_that_isnt_exactly_three_cards(client):
+    too_few = client.get(f"/solve_flop?board=Jh7d&pot=10&stack_bb=40&iterations={FAST_FLOP_ITERATIONS}")
+    assert too_few.status_code == 422
+
+    too_many = client.get(f"/solve_flop?board=Jh7d2c9h&pot=10&stack_bb=40&iterations={FAST_FLOP_ITERATIONS}")
+    assert too_many.status_code == 422
+
+
+def test_solve_flop_rejects_nonpositive_pot_or_stack(client):
+    bad_pot = client.get(f"/solve_flop?board=Jh7d2c&pot=0&stack_bb=40&iterations={FAST_FLOP_ITERATIONS}")
+    assert bad_pot.status_code == 422
+
+    bad_stack = client.get(f"/solve_flop?board=Jh7d2c&pot=10&stack_bb=0&iterations={FAST_FLOP_ITERATIONS}")
+    assert bad_stack.status_code == 422
+
+
+def test_solve_flop_rejects_unknown_position(client):
+    response = client.get(
+        f"/solve_flop?board=Jh7d2c&pot=10&stack_bb=40&iterations={FAST_FLOP_ITERATIONS}&position=NOTAPOSITION"
+    )
+    assert response.status_code == 422
+
+
+def test_solve_flop_defaults_to_oop_the_first_to_act_position(client):
+    default_body = client.get(f"/solve_flop?board=Jh7d2c&pot=10&stack_bb=40&iterations={FAST_FLOP_ITERATIONS}").json()
+    oop_body = client.get(
+        f"/solve_flop?board=Jh7d2c&pot=10&stack_bb=40&iterations={FAST_FLOP_ITERATIONS}&position=OOP"
+    ).json()
+    assert default_body["strategy"] == oop_body["strategy"]
+
+
+def test_solve_flop_position_selects_a_different_strategy(client):
+    oop_body = client.get(
+        f"/solve_flop?board=Jh7d2c&pot=10&stack_bb=40&iterations={FAST_FLOP_ITERATIONS}&position=OOP"
+    ).json()
+    ip_body = client.get(
+        f"/solve_flop?board=Jh7d2c&pot=10&stack_bb=40&iterations={FAST_FLOP_ITERATIONS}&position=IP"
+    ).json()
+    assert ip_body["position"] == "IP"
+    assert oop_body["strategy"] != ip_body["strategy"]
+
+
+def test_solve_flop_is_cached_across_positions(client):
+    first = client.get(
+        f"/solve_flop?board=Jh7d2c&pot=10&stack_bb=40&iterations={FAST_FLOP_ITERATIONS}&position=OOP"
+    ).json()
+    second = client.get(
+        f"/solve_flop?board=Jh7d2c&pot=10&stack_bb=40&iterations={FAST_FLOP_ITERATIONS}&position=IP"
+    ).json()
+    assert first["elapsed_seconds"] == second["elapsed_seconds"]
+
+
+def test_solve_flop_different_boards_are_cached_separately(client):
+    dry = client.get(f"/solve_flop?board=Jh7d2c&pot=10&stack_bb=40&iterations={FAST_FLOP_ITERATIONS}").json()
+    wet = client.get(f"/solve_flop?board=9h8h7h&pot=10&stack_bb=40&iterations={FAST_FLOP_ITERATIONS}").json()
+    assert dry["board"] != wet["board"]
+    assert dry["strategy"] != wet["strategy"]
+
+
+def test_solve_flop_rejects_a_board_that_blocks_the_entire_demo_range(client):
+    # Three of a kind on the board (needs all 3 aces from the deck)
+    # leaves only one ace behind — not enough left to form AA, one of
+    # DEMO_FLOP_HERO_CLASSES's classes, but the *other* hero/villain
+    # classes stay legal, so this isn't actually the "every combo
+    # blocked" edge case _get_or_solve_flop guards — it's here to prove
+    # a partially-blocked board is still handled fine (200, not a
+    # crash), the more realistic case.
+    response = client.get(f"/solve_flop?board=AhAdAc&pot=10&stack_bb=40&iterations={FAST_FLOP_ITERATIONS}")
+    assert response.status_code == 200

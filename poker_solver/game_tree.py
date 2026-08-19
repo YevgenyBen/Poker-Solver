@@ -1,28 +1,39 @@
-"""N-player preflop betting-action tree.
+"""N-player betting-action tree, for one betting round at a time.
 
-This module models the sequence of preflop actions (fold / call or check
-/ raise / all-in) around a table of N players, in a fixed table order
-given by `GameConfig.positions`. Heads-up (2 players, e.g.
-`positions=("BTN", "BB")`) is just the N=2 special case — this module
-makes no HU-specific assumptions.
+This module models the sequence of actions (fold / call or check / raise
+/ all-in) around a table of N players for a single betting round, in a
+fixed table order. Two configs seed that same underlying algorithm
+differently: `GameConfig` for preflop (`positions`' last two entries post
+blinds, the first raise is sized off the big blind) and `StreetConfig`
+for postflop (nobody posts anything — the pot already exists from prior
+streets — and the first raise is sized off the pot). Heads-up (2
+players) is just the N=2 special case of either — this module makes no
+HU-specific assumptions.
 
 It deliberately does not branch on hole cards or hand classes anywhere —
 the same tree is reused for every combination of hands across all N
 players during CFR solving. Terminal nodes instead expose a generic
 `payoff_fn` seam: whoever solves the tree supplies a function mapping
 (a list of the live players' hands, pot) to their raw shares of the pot,
-so this module has no dependency on cards/equity concepts at all. Today
-that payoff_fn is backed by the preflop equity table; if postflop
-streets are added later, it could be backed by a full postflop subgame
-value instead, without changing anything here.
+so this module has no dependency on cards/equity concepts at all.
+Preflop's payoff_fn is backed by the preflop equity table
+(poker_solver/equity.py); a flop-only tree's is backed by
+poker_solver/board_equity.py's board-aware combo equity instead — same
+seam, different value source, no changes needed here either way.
 
-This is a preflop-only model: any action sequence that isn't a fold (a
+This is a single-street model: any action sequence that isn't a fold (a
 limp-and-check, a raise that gets called, a jam that gets called) ends
 immediately at a "showdown" terminal valued via the injected payoff
-function, standing in for "then the rest of the hand gets played out."
+function, standing in for "then the rest of the hand gets played out" —
+for a flop-only tree (M11), that means averaging over the remaining
+turn+river runouts, not modeling them as explicit further action; a
+later milestone can chain multiple street-trees together through chance
+nodes for that, without needing to change this module.
 
-No side pots, at any N: `GameConfig` requires one shared `stack_bb` for
-every player, and the raise-sizing logic below guarantees no one is ever
+No side pots, at any N: both configs require one shared `stack_bb` for
+every player (GameConfig: the whole hand's effective stack; StreetConfig:
+whatever's left behind entering this street — see StreetConfig's
+docstring), and the raise-sizing logic below guarantees no one is ever
 asked to commit more than that — so calling an all-in always brings the
 caller's own total investment up to exactly the same ceiling.
 """
@@ -90,6 +101,87 @@ class GameConfig:
     def num_players(self) -> int:
         return len(self.positions)
 
+    @property
+    def open_size_reference(self) -> float:
+        """What the very first raise of the tree is sized relative to —
+        the big blind, preflop's standard reference point. StreetConfig
+        (postflop) supplies the same property differently (the pot),
+        so `_build`/`_raise_total_size` stay one shared implementation
+        rather than needing a preflop-vs-postflop branch."""
+        return self.big_blind
+
+    @property
+    def pot_offset(self) -> float:
+        """Chips already in the pot before this tree's own action, not
+        attributable to any tracked `invested` entry. Zero for preflop —
+        the whole pot is built from blinds/action all tracked via
+        `invested` itself, so `_build` doesn't need anything added on
+        top. StreetConfig (postflop) supplies this differently (the pot
+        already built on earlier streets, which *isn't* attributable to
+        any position's *this-street* `invested`)."""
+        return 0.0
+
+
+@dataclass(frozen=True)
+class StreetConfig:
+    """Parameters for one postflop betting round.
+
+    Unlike GameConfig, nobody posts blinds — the pot already exists from
+    prior streets — and the *first* raise is conventionally sized off
+    the pot, not a blind (postflop's standard reference point, where
+    preflop's is the big blind). `positions` is this street's acting
+    order (earliest position first — postflop that's determined by
+    table position, not blinds, so there's no "last two post something"
+    convention the way GameConfig has). Every position starts the
+    street with 0 already invested — `pot` is what's already there from
+    earlier streets, not something any one position contributed *this*
+    street.
+
+    `stack_bb` is the *remaining* effective stack entering this street
+    (each player's original stack minus whatever they already committed
+    on earlier streets) — not the hand's original starting stack. `_build`
+    reuses exactly the same accounting either way: it only ever compares
+    a position's *this-street* `invested` against `stack_bb`, so as long
+    as both `invested` (seeded at 0 below) and `stack_bb` consistently
+    mean "for this street," GameConfig's and StreetConfig's math is
+    identical without either needing to know about the other.
+    """
+
+    positions: tuple
+    pot: float
+    stack_bb: float
+    raise_sizes: tuple = (2.5, 3.0, 2.2)
+    max_raises: int = 4
+
+    def __post_init__(self):
+        if len(self.positions) < 2:
+            raise ValueError("positions must have at least 2 entries")
+        if len(set(self.positions)) != len(self.positions):
+            raise ValueError(f"positions must be unique, got {self.positions!r}")
+        if self.max_raises < 1:
+            raise ValueError("max_raises must be at least 1")
+        if len(self.raise_sizes) != self.max_raises - 1:
+            raise ValueError(
+                "raise_sizes must have exactly max_raises - 1 "
+                f"({self.max_raises - 1}) entries, got {len(self.raise_sizes)}"
+            )
+        if self.pot <= 0:
+            raise ValueError("pot must be positive")
+        if self.stack_bb <= 0:
+            raise ValueError("stack_bb must be positive")
+
+    @property
+    def num_players(self) -> int:
+        return len(self.positions)
+
+    @property
+    def open_size_reference(self) -> float:
+        return self.pot
+
+    @property
+    def pot_offset(self) -> float:
+        return self.pot
+
 
 @dataclass(frozen=True)
 class Action:
@@ -110,10 +202,10 @@ class Action:
 
 @dataclass(frozen=True)
 class TerminalNode:
-    """A leaf of the betting tree: either a fold-out or a (preflop) showdown."""
+    """A leaf of the betting tree: either a fold-out or a showdown."""
 
     pot: float
-    invested: dict  # position -> total chips committed
+    invested: dict  # position -> chips committed *in this tree* (see payoff's note on pot_offset)
     folded: frozenset  # positions that folded
 
     @property
@@ -121,7 +213,20 @@ class TerminalNode:
         return len(self.invested) - len(self.folded) > 1
 
     def payoff(self, hands: dict, payoff_fn: Optional[Callable] = None) -> dict:
-        """Net payoff per position; always zero-sum (sums to 0).
+        """Net payoff per position.
+
+        Zero-sum (sums to 0) for a tree built from GameConfig (preflop)
+        — the whole pot is accounted for via `invested`, blinds
+        included. For a tree built from StreetConfig (postflop), `pot`
+        also includes `config.pot_offset` (the pot already built on
+        earlier streets), which isn't attributable to any position's
+        `invested` here — so payoffs sum to `pot_offset` instead of 0 in
+        that case, not a bug: this method returns each player's net
+        result *from this street's own action*, treating the entering
+        pot as already at stake rather than freshly contributed by
+        anyone this street. `node.pot` itself (used by the actual
+        solving code in cfr.py, which doesn't call this method) is
+        unaffected either way — it's always the true total pot.
 
         `hands` maps position -> that position's hand. For a showdown,
         `payoff_fn(live_hands, pot)` must return a list of *raw* pot
@@ -218,11 +323,18 @@ class DecisionNode:
         return list(self.children.keys())
 
 
-def _raise_total_size(raise_number: int, big_blind: float, previous_bet: float, raise_sizes: tuple) -> float:
-    """Total committed size for raise number `raise_number` (1-indexed)."""
+def _raise_total_size(raise_number: int, open_size_reference: float, previous_bet: float, raise_sizes: tuple) -> float:
+    """Total committed size for raise number `raise_number` (1-indexed).
+
+    `open_size_reference` is what the *first* raise is sized relative to
+    — GameConfig.open_size_reference (the big blind) for preflop,
+    StreetConfig.open_size_reference (the pot) for postflop; every raise
+    after the first is always sized relative to the previous bet,
+    regardless of which kind of config this is.
+    """
     multiplier = raise_sizes[raise_number - 1]
     if raise_number == 1:
-        return multiplier * big_blind
+        return multiplier * open_size_reference
     return multiplier * previous_bet
 
 
@@ -236,22 +348,34 @@ def _reopened_order(config: GameConfig, raiser: str, invested: dict, folded: fro
 
 
 def _build(
-    config: GameConfig,
+    config,
     invested: dict,
     folded: frozenset,
     raises_so_far: int,
     previous_bet: float,
     to_act: list,
 ):
-    """Builds one node. For a DecisionNode, `children` is populated with
-    zero-arg *builders* (closures), not already-built child nodes — see
-    LazyChildren. Each closure captures its own branch's state (the
-    `dict(invested)` copies etc.) exactly as before; the only change from
-    the old eager version is that the recursive `_build(...)` call is
-    deferred into a lambda instead of being made immediately.
+    """Builds one node. `config` is either a GameConfig (preflop) or a
+    StreetConfig (postflop) — this function reads only the properties
+    they share (`positions`, `stack_bb`, `raise_sizes`, `max_raises`,
+    `open_size_reference`, `pot_offset`), so the same tree-construction
+    algorithm serves both without needing to know which kind of config
+    it has.
+
+    For a DecisionNode, `children` is populated with zero-arg *builders*
+    (closures), not already-built child nodes — see LazyChildren. Each
+    closure captures its own branch's state (the `dict(invested)` copies
+    etc.) exactly as before; the only change from the old eager version
+    is that the recursive `_build(...)` call is deferred into a lambda
+    instead of being made immediately.
     """
     live = [p for p in config.positions if p not in folded]
-    pot = sum(invested.values())
+    # `pot_offset` is 0 for preflop (the whole pot is built from
+    # `invested` itself, blinds included) and the entering pot for a
+    # postflop street (built on earlier streets, not attributable to any
+    # one position's *this-street* `invested`, which starts at 0) — see
+    # GameConfig.pot_offset / StreetConfig.pot_offset.
+    pot = config.pot_offset + sum(invested.values())
 
     if len(live) == 1 or not to_act:
         return TerminalNode(pot=pot, invested=dict(invested), folded=folded)
@@ -275,7 +399,7 @@ def _build(
     if next_raise_number <= config.max_raises and remaining_stack > to_call:
         reopened = _reopened_order(config, player, invested, folded)
         if next_raise_number < config.max_raises:
-            size = _raise_total_size(next_raise_number, config.big_blind, previous_bet, config.raise_sizes)
+            size = _raise_total_size(next_raise_number, config.open_size_reference, previous_bet, config.raise_sizes)
             if size < config.stack_bb:
                 raise_invested = dict(invested)
                 raise_invested[player] = size
@@ -316,7 +440,22 @@ def build_game_tree(config: GameConfig) -> DecisionNode:
     invested = {position: 0.0 for position in config.positions}
     invested[config.positions[-2]] = config.small_blind
     invested[config.positions[-1]] = config.big_blind
-    return _build(config, invested, frozenset(), 0, config.big_blind, list(config.positions))
+    return _build(config, invested, frozenset(), 0, config.open_size_reference, list(config.positions))
+
+
+def build_street_tree(config: StreetConfig) -> DecisionNode:
+    """Build the root of a single postflop betting round for `config` —
+    reuses the exact same `_build` algorithm as build_game_tree (see
+    StreetConfig's docstring for why no changes to `_build` itself were
+    needed), just seeded differently: every position starts this street
+    with 0 invested (StreetConfig.pot already accounts for everything
+    committed on earlier streets — nobody posts anything fresh here the
+    way preflop's blinds do), acting in `config.positions`' order
+    starting from its first entry (postflop's action order is
+    positional, not blind-determined).
+    """
+    invested = {position: 0.0 for position in config.positions}
+    return _build(config, invested, frozenset(), 0, config.open_size_reference, list(config.positions))
 
 
 def walk(node):

@@ -19,3 +19,15 @@ export interface EquityResponse {
   equity_a: number;
   equity_b: number;
 }
+
+// Mirrors api/schemas.py's FlopSolveResponse.
+export interface FlopSolveResponse {
+  board: string;
+  pot: number;
+  stack_bb: number;
+  iterations: number;
+  elapsed_seconds: number;
+  strategy: OpeningRange;
+  position: string;
+  positions: string[];
+}

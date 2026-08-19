@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchEquity, fetchOpeningRange, SolveError } from './api';
+import { fetchEquity, fetchFlopStrategy, fetchOpeningRange, SolveError } from './api';
 
 describe('fetchOpeningRange', () => {
   afterEach(() => {
@@ -119,5 +119,49 @@ describe('fetchEquity', () => {
 
     await expect(fetchEquity('AhAd', 'AhKd', '')).rejects.toThrow(SolveError);
     await expect(fetchEquity('AhAd', 'AhKd', '')).rejects.toThrow('hand_a and hand_b share a card');
+  });
+});
+
+describe('fetchFlopStrategy', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('returns the parsed response and builds the query string correctly', async () => {
+    const payload = {
+      board: 'Jh7d2c',
+      pot: 10,
+      stack_bb: 40,
+      iterations: 1000,
+      elapsed_seconds: 2.5,
+      strategy: {},
+      position: 'OOP',
+      positions: ['OOP', 'IP'],
+    };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(payload) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await fetchFlopStrategy('Jh7d2c', 10, 40, 'OOP');
+    expect(result).toEqual(payload);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/solve_flop?board=Jh7d2c&pot=10&stack_bb=40&position=OOP',
+      { signal: undefined },
+    );
+  });
+
+  it('throws SolveError with the server-provided detail on failure', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 422,
+        json: () => Promise.resolve({ detail: 'board must have exactly 3 cards for a flop, got 2' }),
+      }),
+    );
+
+    await expect(fetchFlopStrategy('Jh7d', 10, 40, 'OOP')).rejects.toThrow(SolveError);
+    await expect(fetchFlopStrategy('Jh7d', 10, 40, 'OOP')).rejects.toThrow(
+      'board must have exactly 3 cards for a flop, got 2',
+    );
   });
 });

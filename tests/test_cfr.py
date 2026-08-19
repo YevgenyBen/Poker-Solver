@@ -114,6 +114,64 @@ def test_equity_table_shape_mismatch_raises():
 
 
 # ---------------------------------------------------------------------------
+# M11: solve()'s two generalizations — custom position labels (for a
+# postflop tree, whose player_to_act values aren't BTN/BB) and custom
+# initial_reach (a real range from earlier action, not combo_weight).
+# Both must default to exactly today's preflop behavior when omitted.
+# ---------------------------------------------------------------------------
+
+
+def test_solve_accepts_custom_position_labels():
+    # Same math/shape as test_cfr_converges_to_dominant_raise, just with
+    # postflop-style labels instead of BTN/BB — proves solve() doesn't
+    # secretly depend on the module's BTN/BB constants anywhere.
+    fold_terminal = TerminalNode(pot=1.5, invested={"OOP": 0.5, "IP": 1.0}, folded=frozenset({"OOP"}))
+    showdown_terminal = TerminalNode(pot=10.0, invested={"OOP": 1.0, "IP": 1.0}, folded=frozenset())
+    root = DecisionNode(
+        player_to_act="OOP",
+        pot=1.5,
+        invested={"OOP": 0.5, "IP": 1.0},
+        folded=frozenset(),
+        raises_so_far=0,
+        children={Action(FOLD): fold_terminal, Action(RAISE, 1.0): showdown_terminal},
+    )
+    hands = [StartingHand("A", "A"), StartingHand("7", "2", suited=False)]
+    equity_table = np.full((2, 2), 0.9)  # raise nets 0.9*10-1=8.0 vs fold's -0.5 — strictly dominates
+    node_data = solve(root, hands, equity_table, iterations=200, positions=("OOP", "IP"))
+    avg = node_data[id(root)].average_strategy()
+    raise_idx = root.legal_actions.index(Action(RAISE, 1.0))
+    assert np.all(avg[:, raise_idx] > 0.95)
+
+
+def test_solve_initial_reach_overrides_default_combo_weight():
+    root, hands, equity_table = _toy_game(showdown_pot=10.0, showdown_btn_invested=1.0, equity_value=0.6)
+    zero_then_one = np.array([0.0, 1.0])  # AA (index 0) gets zero reach as BTN
+    node_data = solve(root, hands, equity_table, iterations=50, initial_reach={BTN: zero_then_one})
+    # AA never contributes to strategy_sum accumulation with zero reach —
+    # a directly verifiable consequence of the override actually taking
+    # effect, not just "it ran without crashing."
+    assert np.all(node_data[id(root)].strategy_sum[0, :] == 0.0)
+
+
+def test_solve_initial_reach_none_matches_omitting_it_entirely():
+    root, hands, equity_table = _toy_game(showdown_pot=10.0, showdown_btn_invested=1.0, equity_value=0.6)
+    omitted = solve(root, hands, equity_table, iterations=50)
+    explicit_none = solve(root, hands, equity_table, iterations=50, initial_reach=None)
+    assert np.array_equal(omitted[id(root)].strategy_sum, explicit_none[id(root)].strategy_sum)
+    assert np.array_equal(omitted[id(root)].regret_sum, explicit_none[id(root)].regret_sum)
+
+
+def test_solve_initial_reach_partial_override_still_produces_well_formed_output():
+    # Only BTN is overridden — BB should transparently fall back to its
+    # default combo_weight-derived reach, not crash or produce NaNs.
+    root, hands, equity_table = _toy_game(showdown_pot=10.0, showdown_btn_invested=1.0, equity_value=0.6)
+    node_data = solve(root, hands, equity_table, iterations=50, initial_reach={BTN: np.array([1.0, 1.0])})
+    avg = node_data[id(root)].average_strategy()
+    assert not np.any(np.isnan(avg))
+    assert np.allclose(avg.sum(axis=1), 1.0)
+
+
+# ---------------------------------------------------------------------------
 # A real (tiny) tree using the actual equity table: directional sanity.
 # ---------------------------------------------------------------------------
 
