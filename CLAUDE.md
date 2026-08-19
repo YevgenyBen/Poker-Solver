@@ -592,6 +592,61 @@ street chaining needs.
     (the same "premium hands don't just call" pattern M15 already found,
     one street of aggression deeper). The robust check instead compares
     KK (a real flatting hand in this spot) against trash.
+- **M17 — Card abstraction primitive (Phase 1 of the real-time-speed
+  roadmap).** See "The real-time-speed roadmap" below for why this
+  exists and what it's the first step toward — recorded here in the
+  usual per-milestone format for the mechanics of what shipped.
+  - `poker_solver/abstraction.py` (new) — `HandBucket`/`BucketedPool` +
+    `compute_combo_strengths`/`build_hand_buckets`/`build_bucket_
+    equity_table`/`bucket_equity_error`. The bucketing signal is each
+    combo's mean same-board equity against the rest of its own pool
+    (`build_board_equity_table`'s row, `nanmean`'d), binned into
+    equal-frequency buckets — the same pool doubling as its own
+    reference range is deliberate (see the module docstring), not an
+    approximation to fix: what matters for bucketing one hero/villain
+    matchup is relative strength *within that matchup's own pool*.
+    **Deliberately not wired into `solve_flop`/`solve_flop_turn`/
+    `solve_flop_to_river`/`cfr.solve()` yet** — ships as a measured
+    primitive first (mirrors M10's `combos.py`/`board_equity.py`
+    shipping before M11 wired them into a real solve), since wiring
+    straight into live solving would stack three unmeasured unknowns
+    at once (signal fidelity, bucket-count/accuracy tradeoff, whether
+    CFR behaves sanely over lossy bucket-aggregated input) with no
+    checkpoint between them — the same mistake the discarded batching
+    attempt made, just with a silent-wrong-strategy-output failure mode
+    instead of a cheaply-discovered slow one.
+  - A real efficiency bug caught during implementation, not code
+    review: the first version of `build_hand_buckets` computed and
+    then discarded its internal equity table, forcing any caller who
+    also needed it (e.g. for `build_bucket_equity_table`/`bucket_
+    equity_error` — the overwhelmingly common case, since accuracy
+    measurement is half the point of this module) to rebuild the same
+    N×N table a second time at real cost. Fixed by having `BucketedPool`
+    itself carry `source_combos`/`equity_table` — the exact pairing
+    `compute_combo_strengths` already produced internally — so
+    `build_bucket_equity_table`/`bucket_equity_error` read them off the
+    pool instead of taking them as separate (and separately-payable, or
+    accidentally mismatched) parameters.
+  - **Measured, not assumed — and this measurement itself is the real
+    finding of this milestone:** at the same 23/~85/300-combo
+    checkpoints established this session, bucketing landed at roughly
+    **break-even** with the plain `build_board_equity_table` baseline
+    (23 combos: ~1.0s baseline vs ~1.0-1.0s bucketed; ~85 combos:
+    ~23.9s vs ~28.0-28.2s, i.e. *slower*; 300 combos: ~327s vs
+    ~339-341s, also slower) — not the speedup this phase's own name
+    suggests. This is expected once traced through, not a failure:
+    `build_hand_buckets` still has to build the *full* N×N equity table
+    first, to derive the per-combo bucketing signal itself — bucketing
+    cannot skip that step, only add to it. The real payoff this
+    milestone sets up but doesn't yet deliver is downstream: a future
+    CFR solve running its own O(N²)/O(N) tensor operations over B
+    buckets instead of N combos, a real `(N/B)²`-shaped reduction in
+    *that* cost — not measurable until the wiring milestone this one
+    deliberately defers. Accuracy, measured at the same checkpoints:
+    mean absolute error stays low even at modest bucket counts (e.g.
+    ~85 combos at B=16: MAE≈0.041, max AE≈0.42) and falls further as B
+    grows, giving the next milestone real numbers to size a bucket
+    count against instead of guessing.
 
 ## v3 vision (future) — live-table advisor
 
@@ -628,6 +683,47 @@ Not scoped yet, deliberately: multiway postflop solving, the LLM layer
 itself, any precomputed-spot caching system. M16 (arbitrary action-path
 range derivation) is the first concrete bridge piece — everything else
 here depends on a general way to describe "the current situation" first.
+
+### The real-time-speed roadmap
+
+Picked up after M16: real-time speed splits into genuinely different
+levers, and the first one tried didn't pan out. A "batch board-equity
+computation across matchups" attempt (chunking `build_board_equity_
+table`'s per-pair `hand_eval.best_hand_rank_batch` calls into fewer,
+larger ones — exactly what that module's own M10-era comment had
+flagged as "the natural next optimization") was implemented and
+measured before being trusted: at the same 23/~85-combo checkpoints
+M10 used, it delivered only ~0-13% speedup, not the assumed win.
+Profiling why: `best_hand_rank_batch`'s own vectorized computation
+already accounted for ~81% of total time even in the *original*
+per-pair implementation, and that cost scales with total data volume
+(N² combo pairs × runout samples), not with how many separate Python
+calls it's split across — so consolidating calls removed overhead that
+was never the dominant cost. Discarded (never committed) once measured
+— a real, cheap-to-discover dead end, not a hidden failure.
+
+Given that ceiling, the deepest available path is a 4-phase program,
+each phase depending on the one before it:
+
+1. **Card abstraction (M17)** — bucket strategically-similar combos
+   together, shrinking N directly. Attacks the O(N²)/O(N) cost at its
+   root, the thing the failed batching attempt structurally couldn't do
+   (it only ever reduced the constant factor around a fixed N).
+2. **Canonicalization** — recognizing when two situations (board,
+   action-history shape, stack depth) are strategically the same, so a
+   library lookup can hit instead of every situation being unique.
+3. **Offline precomputed spot library** — batch-solve a broad set of
+   canonical situations ahead of time, no live time pressure, stored
+   indexed by phase 2's canonicalization.
+4. **Live query path** — a real situation (via M16's `derive_ranges_
+   from_path` for the action history, hero's real hand, the actual
+   board) gets canonicalized and looked up; a hit is instant, a miss
+   falls back to an on-demand solve — now cheaper than today because it
+   runs over abstracted buckets (phase 1), not exact combos, even
+   without a library hit.
+
+Card abstraction has to come first: precomputing exact-combo spots
+doesn't achieve enough compactness to build a real library against.
 
 ## Engine is standalone
 
