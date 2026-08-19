@@ -12,12 +12,17 @@ project plan). Both return the same {id(node): InfoSetTable} shape, so
 StrategyResult doesn't need to know which path produced it.
 """
 
+import random
 import time
 from dataclasses import dataclass
 
+import numpy as np
+
+from .board_equity import DEFAULT_SEED as DEFAULT_EQUITY_SEED
+from .board_equity import build_board_equity_table
 from .cfr import InfoSetTable, mccfr_solve, solve
 from .equity import MultiwayEquityCache, get_equity_table
-from .game_tree import CALL_OR_CHECK, DecisionNode, GameConfig, build_game_tree
+from .game_tree import CALL_OR_CHECK, DecisionNode, GameConfig, StreetConfig, build_game_tree, build_street_tree
 from .starting_hands import all_starting_hands
 
 # Exact path (heads-up): measured ~3-4ms/iteration at full 169-hand
@@ -33,9 +38,13 @@ DEFAULT_MCCFR_ITERATIONS = 50_000
 
 @dataclass
 class StrategyResult:
-    """The outcome of solving one GameConfig."""
+    """The outcome of solving one GameConfig (preflop) or StreetConfig
+    (a single postflop street, e.g. M11's flop-only tree) — this class
+    only ever reads `config.positions`, which both configs provide, so
+    one result type serves either without needing to know which kind of
+    config actually produced it."""
 
-    config: GameConfig
+    config: object  # GameConfig | StreetConfig
     root: DecisionNode
     hands: list
     node_data: dict
@@ -69,8 +78,9 @@ class StrategyResult:
 
     def opening_range(self) -> dict:
         """The first-to-act position's strategy at their very first
-        decision (BTN's RFI spot, for the standard heads-up/positions
-        convention)."""
+        decision — preflop, that's BTN's RFI spot; for a flop-only
+        result (M11), it's whichever position acts first on that
+        street's `positions` (OOP, by convention)."""
         return self.strategy_at(self.root)
 
     def node_for_position(self, position: str) -> DecisionNode:
@@ -146,6 +156,108 @@ def solve_preflop(
         config=config,
         root=root,
         hands=hands,
+        node_data=node_data,
+        iterations=actual_iterations,
+        elapsed_seconds=elapsed,
+    )
+
+
+# Flop tree is heads-up (2 positions), same shape as preflop's exact
+# fast path — same default as DEFAULT_ITERATIONS, tuned for M11's
+# curated-range demo scale, not the full ~1176-combo case (see
+# board_equity.py's module-level comment for the measured reason a wide
+# range isn't there yet).
+DEFAULT_FLOP_ITERATIONS = 1000
+
+
+def solve_flop(
+    board: tuple,
+    hero_range: dict,
+    villain_range: dict,
+    pot: float,
+    effective_stack_bb: float,
+    positions: tuple = ("OOP", "IP"),
+    raise_sizes: tuple = (2.5, 3.0, 2.2),
+    max_raises: int = 4,
+    iterations: int = None,
+    equity_samples: int = None,
+    equity_seed: int = DEFAULT_EQUITY_SEED,
+) -> StrategyResult:
+    """Solve a single flop betting round and return its strategy.
+
+    `board` is the flop (3 Cards). `hero_range`/`villain_range` map
+    combos.HandCombo -> weight — see combos.range_from_class_frequencies
+    for the natural way to build one from a preflop solve's per-class
+    continue-frequency output. They become `positions`' two combo pools
+    *and* their starting reach weights, in `positions` order
+    (`hero_range` for `positions[0]`, `villain_range` for `positions[1]`)
+    — a combo missing from a range gets 0 weight for that position, not
+    an error, exactly like a class the preflop solve folded 100% of the
+    time contributes nothing to a range built via
+    range_from_class_frequencies.
+
+    `pot`/`effective_stack_bb` describe the state entering the flop —
+    see StreetConfig for exactly what each means (`effective_stack_bb`
+    is what's left *behind*, not the hand's original starting stack).
+
+    Reuses cfr.solve()'s exact tensor CFR — this is a heads-up (2
+    position), single-street tree, the same shape as preflop's exact
+    fast path, not a new solving loop (see cfr.py's module docstring for
+    the generalizations — custom position labels, custom starting reach
+    — that make this direct reuse possible).
+
+    Hero's and villain's ranges are combined into one shared combo pool
+    (the union of both, matching cfr.solve()'s single `hands` list/NxN
+    equity_table design) — some (hero combo, villain combo) pairs in
+    that pool inevitably share a physical card (e.g. hero's AhKh and
+    villain's AhQc both need the Ah), which board_equity.
+    build_board_equity_table correctly reports as an undefined (NaN)
+    matchup. Those NaN entries are replaced with a neutral 0.5 before
+    solving — the same "true probability is ~0 anyway, so any neutral
+    placeholder is fine, it just must not poison the computation"
+    reasoning equity.MultiwayEquityCache already uses for the analogous
+    N>=3 preflop case (see its docstring) — cfr.solve()'s reach vectors
+    don't account for *cross-position* card removal either (each
+    position's range is supplied independently), the same "ignore
+    blockers between players' hands" approximation carried since M1,
+    just now also visible at combo (not just class) granularity.
+    """
+    hero_position, villain_position = positions
+    combos = sorted(set(hero_range) | set(villain_range), key=str)
+    hero_reach = np.array([hero_range.get(combo, 0.0) for combo in combos])
+    villain_reach = np.array([villain_range.get(combo, 0.0) for combo in combos])
+
+    config = StreetConfig(
+        positions=positions,
+        pot=pot,
+        stack_bb=effective_stack_bb,
+        raise_sizes=raise_sizes,
+        max_raises=max_raises,
+    )
+    root = build_street_tree(config)
+
+    equity_kwargs = {"rng": random.Random(equity_seed)}
+    if equity_samples is not None:
+        equity_kwargs["samples"] = equity_samples
+    equity_table = build_board_equity_table(board, combos, **equity_kwargs)
+    equity_table = np.nan_to_num(equity_table, nan=0.5)
+
+    actual_iterations = iterations if iterations is not None else DEFAULT_FLOP_ITERATIONS
+    start = time.perf_counter()
+    node_data = solve(
+        root,
+        combos,
+        equity_table,
+        iterations=actual_iterations,
+        positions=positions,
+        initial_reach={hero_position: hero_reach, villain_position: villain_reach},
+    )
+    elapsed = time.perf_counter() - start
+
+    return StrategyResult(
+        config=config,
+        root=root,
+        hands=combos,
         node_data=node_data,
         iterations=actual_iterations,
         elapsed_seconds=elapsed,

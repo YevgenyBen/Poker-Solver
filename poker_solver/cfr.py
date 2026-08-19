@@ -3,18 +3,25 @@
 Two solving paths live here, sharing InfoSetTable:
 
 1. `solve()` — exact, exhaustive CFR+, kept as a deliberate fast path
-   for heads-up (N=2) only. The betting tree (game_tree.py) has no
-   knowledge of hole cards — the same tree is shared by every (BTN hand,
-   BB hand) pair. A naive implementation would loop over all 169x169
-   hand pairs and re-walk the tree for each one; for a tree with ~100
-   nodes and thousands of iterations that's on the order of tens of
-   billions of Python-level operations, far too slow. Instead this
-   walks the tree exactly once per iteration, carrying whole hand-class
-   distributions through it as NumPy arrays: `reach_btn`/`reach_bb` are
-   length-N vectors propagated *down* the tree, and node "values" are
-   NxN matrices propagated *up* it (value[i, j] = BTN's payoff given BTN
-   holds hand i, BB holds hand j). This turns each iteration into a
-   handful of NxN array ops instead of N*N per-pair recursions.
+   for any two-position tree (heads-up preflop, or a flop-only tree —
+   see M11). The betting tree (game_tree.py) has no knowledge of hole
+   cards — the same tree is shared by every (position_a hand, position_b
+   hand) pair. A naive implementation would loop over all 169x169 hand
+   pairs and re-walk the tree for each one; for a tree with ~100 nodes
+   and thousands of iterations that's on the order of tens of billions
+   of Python-level operations, far too slow. Instead this walks the tree
+   exactly once per iteration, carrying whole hand-class distributions
+   through it as NumPy arrays: `reach_a`/`reach_b` are length-N vectors
+   propagated *down* the tree, and node "values" are NxN matrices
+   propagated *up* it (value[i, j] = position_a's payoff given they hold
+   hand i and position_b holds hand j). This turns each iteration into a
+   handful of NxN array ops instead of N*N per-pair recursions. Position
+   labels default to `(BTN, BB)` and reach defaults to `combo_weight`
+   (preflop's original behavior, unchanged); both are overridable — see
+   `solve()`'s own docstring — so a postflop tree can supply its own
+   labels (`("OOP", "IP")`) and starting ranges (a real range from
+   earlier action, not "every hand equally likely") without a second
+   implementation.
 
 2. `mccfr_solve()` — External-Sampling MCCFR (traverser-vectorized),
    for N>=2 players generally (used for N>=3 in practice). Exhaustive
@@ -121,65 +128,71 @@ class InfoSetTable:
         return np.where(totals > 0, normalized, uniform)
 
 
-def _terminal_value_matrix(node: TerminalNode, equity_table: np.ndarray) -> np.ndarray:
-    """BTN's net payoff matrix (shape num_hands x num_hands) at a leaf."""
-    if BTN in node.folded:
-        return np.full(equity_table.shape, -node.invested[BTN])
-    if BB in node.folded:
-        return np.full(equity_table.shape, node.pot - node.invested[BTN])
-    return equity_table * node.pot - node.invested[BTN]
+def _terminal_value_matrix(
+    node: TerminalNode, equity_table: np.ndarray, position_a: str, position_b: str
+) -> np.ndarray:
+    """`position_a`'s net payoff matrix (shape num_hands x num_hands) at a leaf."""
+    if position_a in node.folded:
+        return np.full(equity_table.shape, -node.invested[position_a])
+    if position_b in node.folded:
+        return np.full(equity_table.shape, node.pot - node.invested[position_a])
+    return equity_table * node.pot - node.invested[position_a]
 
 
 def _solve_recurse(
     node,
-    reach_btn: np.ndarray,
-    reach_bb: np.ndarray,
+    reach_a: np.ndarray,
+    reach_b: np.ndarray,
     updating_player: str,
     node_data: dict,
     equity_table: np.ndarray,
+    position_a: str,
+    position_b: str,
 ) -> np.ndarray:
-    """Returns this node's value matrix (BTN's payoff, shape NxN)."""
+    """Returns this node's value matrix (`position_a`'s payoff, shape NxN)."""
     if isinstance(node, TerminalNode):
-        return _terminal_value_matrix(node, equity_table)
+        return _terminal_value_matrix(node, equity_table, position_a, position_b)
 
     num_hands = equity_table.shape[0]
     actions = node.legal_actions
     table = node_data.setdefault(id(node), InfoSetTable.zeros(num_hands, len(actions)))
     strategy = table.current_strategy()
-    acting_is_btn = node.player_to_act == BTN
+    acting_is_a = node.player_to_act == position_a
 
     child_values = []
     for a_idx, action in enumerate(actions):
         child = node.children[action]
-        if acting_is_btn:
+        if acting_is_a:
             child_value = _solve_recurse(
-                child, reach_btn * strategy[:, a_idx], reach_bb, updating_player, node_data, equity_table
+                child, reach_a * strategy[:, a_idx], reach_b, updating_player,
+                node_data, equity_table, position_a, position_b,
             )
         else:
             child_value = _solve_recurse(
-                child, reach_btn, reach_bb * strategy[:, a_idx], updating_player, node_data, equity_table
+                child, reach_a, reach_b * strategy[:, a_idx], updating_player,
+                node_data, equity_table, position_a, position_b,
             )
         child_values.append(child_value)
 
     node_value = np.zeros((num_hands, num_hands))
     for a_idx, child_value in enumerate(child_values):
-        if acting_is_btn:
+        if acting_is_a:
             node_value += strategy[:, a_idx][:, None] * child_value
         else:
             node_value += strategy[:, a_idx][None, :] * child_value
 
     if node.player_to_act == updating_player:
-        acting_reach = reach_btn if acting_is_btn else reach_bb
-        opponent_reach = reach_bb if acting_is_btn else reach_btn
+        acting_reach = reach_a if acting_is_a else reach_b
+        opponent_reach = reach_b if acting_is_a else reach_a
 
         cf_action_values = np.zeros((num_hands, len(actions)))
         for a_idx, child_value in enumerate(child_values):
-            if acting_is_btn:
+            if acting_is_a:
                 cf_action_values[:, a_idx] = child_value @ opponent_reach
             else:
                 cf_action_values[:, a_idx] = (-child_value).T @ opponent_reach
         cf_node_value = (
-            node_value @ opponent_reach if acting_is_btn else (-node_value).T @ opponent_reach
+            node_value @ opponent_reach if acting_is_a else (-node_value).T @ opponent_reach
         )
 
         regret = cf_action_values - cf_node_value[:, None]
@@ -194,28 +207,68 @@ def solve(
     hands: list,
     equity_table: np.ndarray,
     iterations: int = 1000,
+    positions: tuple = (BTN, BB),
+    initial_reach: dict | None = None,
 ) -> dict:
     """Run `iterations` of CFR+ over `root`, for the given `hands`.
 
     `equity_table` must be shaped (len(hands), len(hands)) with rows/cols
     in the same order as `hands` (see equity.get_equity_table).
 
+    `positions` is the (first, second) position labels this tree uses —
+    defaults to `(BTN, BB)`, preflop's convention, unchanged from before
+    this parameter existed. A flop-only tree (M11) passes its own two
+    position labels instead (e.g. `("OOP", "IP")` — postflop's natural
+    labels, not blinds) since `root.player_to_act` values come from
+    whatever `GameConfig`/`StreetConfig` built the tree, not from this
+    module.
+
+    `initial_reach` optionally maps position -> starting reach-weight
+    array (same length/order as `hands`), overriding the default
+    combo_weight-derived prior (each hand's raw prior probability of
+    being dealt) for that position — e.g. a real range carried over from
+    an earlier street's action, not "every hand equally likely to have
+    continued." A position missing from `initial_reach` (or the default
+    `None`, meaning "no overrides at all") still falls back to
+    combo_weight, so every pre-existing preflop call site is unaffected.
+
     Returns a dict of {id(DecisionNode): InfoSetTable}. There's no
     randomness anywhere in this process (the tree is walked exhaustively,
     not sampled), so results are exactly deterministic for a given
-    (root, hands, equity_table, iterations).
+    (root, hands, equity_table, iterations, positions, initial_reach).
     """
     if equity_table.shape != (len(hands), len(hands)):
         raise ValueError(
             f"equity_table shape {equity_table.shape} doesn't match "
             f"len(hands)={len(hands)}"
         )
-    reach_weights = np.array([hand.combo_weight for hand in hands])
+    position_a, position_b = positions
+    initial_reach = initial_reach or {}
+
+    def _default_reach():
+        # Computed lazily, not eagerly: `hands` may be combos.HandCombo
+        # (M11's flop tree), which has no combo_weight at all — fine, as
+        # long as every position is actually overridden by initial_reach
+        # in that case, which solve_flop always does. Only preflop's
+        # StartingHand-keyed calls (where combo_weight exists) ever fall
+        # through to this.
+        return np.array([hand.combo_weight for hand in hands])
+
+    reach_a = np.array(
+        initial_reach[position_a] if position_a in initial_reach else _default_reach(),
+        dtype=float,
+    )
+    reach_b = np.array(
+        initial_reach[position_b] if position_b in initial_reach else _default_reach(),
+        dtype=float,
+    )
+
     node_data: dict = {}
     for iteration in range(iterations):
-        updating_player = BTN if iteration % 2 == 0 else BB
+        updating_player = position_a if iteration % 2 == 0 else position_b
         _solve_recurse(
-            root, reach_weights.copy(), reach_weights.copy(), updating_player, node_data, equity_table
+            root, reach_a.copy(), reach_b.copy(), updating_player,
+            node_data, equity_table, position_a, position_b,
         )
     return node_data
 

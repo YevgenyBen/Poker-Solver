@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { DetailPanel } from './components/DetailPanel';
 import { EquityCalculator } from './components/EquityCalculator';
+import { FlopSolver } from './components/FlopSolver';
 import { Legend } from './components/Legend';
 import { RangeGrid } from './components/RangeGrid';
 import { StackControl } from './components/StackControl';
@@ -73,6 +74,7 @@ export function App() {
       </main>
 
       <EquityCalculator />
+      <FlopSolver />
     </>
   );
 }

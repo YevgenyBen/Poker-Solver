@@ -51,6 +51,22 @@ a single matchup is fast enough to compute live (poker_solver/
 board_equity.py's module-level comment has the measured numbers for why
 a *whole range* isn't, which is exactly why this endpoint takes two
 hands, not two ranges).
+
+GET /solve_flop is M11's deliverable: a real heads-up (OOP/IP) flop
+betting round, board + pot + stack in, hero's per-combo strategy out
+(poker_solver/solver.py's solve_flop). Like /equity but unlike /solve's
+multiway demo, this can't just reuse a fixed hand *pool* the way
+DEMO_MULTIWAY_HANDS does — a flop combo range has to exclude whatever
+the board itself blocks, which varies per request. So the curated input
+here (DEMO_FLOP_HERO_CLASSES/DEMO_FLOP_VILLAIN_CLASSES) is one level up:
+small hand-class sets, expanded into the actual board-legal combo range
+per request via combos.range_from_class_frequencies — exactly the
+bridge function that module exists for. Measured wall-clock for this
+pool size (3 hero classes / 4 villain classes, ~30-ish combos after
+expansion): ~2.6s end to end, the large majority of it board_equity's
+Monte Carlo table build, not the CFR solve itself (~0.2s) — comfortably
+fine for a live request, cached per (board, pot, stack_bb, iterations)
+the same way multiway solves are cached per (stack_bb, players).
 """
 
 import logging
@@ -65,14 +81,14 @@ from starlette.concurrency import run_in_threadpool
 
 from poker_solver.board_equity import two_combo_equity
 from poker_solver.cards import parse_cards
-from poker_solver.combos import HandCombo
+from poker_solver.combos import HandCombo, range_from_class_frequencies
 from poker_solver.equity import MultiwayEquityCache
 from poker_solver.game_tree import GameConfig
-from poker_solver.solver import DEFAULT_ITERATIONS, StrategyResult, solve_preflop
+from poker_solver.solver import DEFAULT_FLOP_ITERATIONS, DEFAULT_ITERATIONS, StrategyResult, solve_flop, solve_preflop
 from poker_solver.starting_hands import StartingHand
-from poker_solver.strategy_format import format_solve_response
+from poker_solver.strategy_format import format_flop_response, format_solve_response
 
-from .schemas import EquityResponse, SolveResponse
+from .schemas import EquityResponse, FlopSolveResponse, SolveResponse
 
 # The React app's production build (see frontend/, `npm run build`). Not
 # committed to git — build it locally or in CI before serving for real.
@@ -116,10 +132,36 @@ MULTIWAY_TABLE_CONFIGS = {
     9: {"positions": ("UTG", "UTG1", "MP1", "MP2", "MP3", "CO", "BTN", "SB", "BB"), "iterations": 300},
 }
 
+# /solve_flop's curated demo ranges — small hand-*class* sets (not
+# combo lists, unlike DEMO_MULTIWAY_HANDS), expanded into actual
+# board-legal combos per request via combos.range_from_class_frequencies
+# (see the module docstring above for why: a fixed combo list can't
+# account for whatever a given board blocks). Hero's a tight
+# value-leaning range, villain's a bit wider including one clearly
+# air-ish class (84s) so a request can show a real fold-vs-continue
+# spread, not just "everything strong". Kept deliberately small — see
+# the module docstring for the measured ~2.6s wall-clock this pool size
+# costs, dominated by board_equity's table build, not the CFR solve.
+MAX_FLOP_ITERATIONS = 20_000
+
+DEMO_FLOP_HERO_CLASSES = {
+    StartingHand("A", "A"): 1.0,
+    StartingHand("K", "K"): 1.0,
+    StartingHand("A", "K", suited=True): 1.0,
+}
+DEMO_FLOP_VILLAIN_CLASSES = {
+    StartingHand("Q", "Q"): 1.0,
+    StartingHand("A", "Q", suited=True): 1.0,
+    StartingHand("T", "9", suited=True): 1.0,
+    StartingHand("8", "4", suited=True): 1.0,
+}
+
 _cache: dict = {}
 _cache_lock = threading.Lock()
 _multiway_cache: dict = {}
 _multiway_lock = threading.Lock()
+_flop_cache: dict = {}
+_flop_lock = threading.Lock()
 
 
 def _prewarm_enabled() -> bool:
@@ -172,6 +214,40 @@ def _get_or_solve_multiway(stack_bb: float, players: int) -> StrategyResult:
 
     with _multiway_lock:
         _multiway_cache[key] = result
+    return result
+
+
+def _get_or_solve_flop(board_cards: tuple, pot: float, stack_bb: float, iterations: int) -> StrategyResult:
+    """Solves (or returns the cached result of solving) DEMO_FLOP_HERO/
+    VILLAIN_CLASSES' board-legal expansion for one (board, pot, stack_bb,
+    iterations) request — cached the same way multiway solves are, so
+    switching `position` in the API/UI never triggers a re-solve."""
+    key = (board_cards, round(pot, 2), round(stack_bb), iterations)
+    with _flop_lock:
+        cached = _flop_cache.get(key)
+    if cached is not None:
+        return cached
+
+    exclude = frozenset(board_cards)
+    hero_range = range_from_class_frequencies(DEMO_FLOP_HERO_CLASSES, exclude=exclude)
+    villain_range = range_from_class_frequencies(DEMO_FLOP_VILLAIN_CLASSES, exclude=exclude)
+    if not hero_range or not villain_range:
+        # Only possible with a contrived board (e.g. 3 cards of the same
+        # rank blocking a pair class down to nothing) — a real error for
+        # the caller, not a crash.
+        raise ValueError(f"board {''.join(str(c) for c in board_cards)!r} blocks every demo-range combo")
+
+    result = solve_flop(
+        board=board_cards,
+        hero_range=hero_range,
+        villain_range=villain_range,
+        pot=pot,
+        effective_stack_bb=stack_bb,
+        iterations=iterations,
+    )
+
+    with _flop_lock:
+        _flop_cache[key] = result
     return result
 
 
@@ -242,6 +318,24 @@ async def equity(
         equity_a=equity_a,
         equity_b=equity_b,
     )
+
+
+@app.get("/solve_flop", response_model=FlopSolveResponse)
+async def solve_flop_endpoint(
+    board: str = Query(..., description="Exactly 3 cards, e.g. Jh7d2c"),
+    pot: float = Query(10.0, gt=0, description="Pot entering the flop"),
+    stack_bb: float = Query(40.0, gt=0, description="Effective stack behind, in big blinds"),
+    iterations: int = Query(DEFAULT_FLOP_ITERATIONS, gt=0, le=MAX_FLOP_ITERATIONS),
+    position: str | None = Query(None, description="OOP or IP — defaults to OOP, the first to act"),
+):
+    try:
+        board_cards = tuple(parse_cards(board))
+        if len(board_cards) != 3:
+            raise ValueError(f"board must have exactly 3 cards for a flop, got {len(board_cards)}")
+        result = await run_in_threadpool(_get_or_solve_flop, board_cards, pot, stack_bb, iterations)
+        return format_flop_response(result, board="".join(str(c) for c in board_cards), position=position)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 # Registered last so it only catches requests /solve doesn't match —

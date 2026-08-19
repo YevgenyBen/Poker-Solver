@@ -1,4 +1,4 @@
-import type { EquityResponse, SolveResponse } from './types';
+import type { EquityResponse, FlopSolveResponse, SolveResponse } from './types';
 
 /** Thrown for any non-2xx API response, wrapping the server's `detail`
  * message when there is one (used for both /solve and /equity — the
@@ -47,4 +47,20 @@ export async function fetchEquity(
 ): Promise<EquityResponse> {
   const query = new URLSearchParams({ hand_a: handA, hand_b: handB, board });
   return fetchJson<EquityResponse>(`/equity?${query.toString()}`, signal);
+}
+
+export async function fetchFlopStrategy(
+  board: string,
+  pot: number,
+  stackBb: number,
+  position: string,
+  signal?: AbortSignal,
+): Promise<FlopSolveResponse> {
+  const query = new URLSearchParams({
+    board,
+    pot: String(pot),
+    stack_bb: String(stackBb),
+    position,
+  });
+  return fetchJson<FlopSolveResponse>(`/solve_flop?${query.toString()}`, signal);
 }

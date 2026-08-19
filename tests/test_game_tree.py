@@ -10,8 +10,10 @@ from poker_solver.game_tree import (
     Action,
     DecisionNode,
     GameConfig,
+    StreetConfig,
     TerminalNode,
     build_game_tree,
+    build_street_tree,
     count_terminal_nodes,
     tree_depth,
     walk,
@@ -512,3 +514,158 @@ def test_action_equality_and_hash():
 def test_action_str():
     assert str(Action(FOLD)) == "fold"
     assert str(Action(RAISE, 2.5)) == "raise:2.50"
+
+
+# ---------------------------------------------------------------------------
+# StreetConfig / build_street_tree — M11: a single postflop betting round.
+# Reuses _build/_reopened_order/LazyChildren unchanged (see game_tree.py's
+# module docstring), so these tests focus on what's actually different —
+# no blinds posted, pot-relative (not big-blind-relative) opening sizing —
+# not on re-proving round-closing logic test_game_tree.py already covers.
+# ---------------------------------------------------------------------------
+
+
+def test_street_config_is_valid():
+    StreetConfig(positions=("OOP", "IP"), pot=10.0, stack_bb=97.0)  # should not raise
+
+
+def test_street_config_rejects_wrong_raise_sizes_length():
+    with pytest.raises(ValueError):
+        StreetConfig(positions=("OOP", "IP"), pot=10.0, stack_bb=97.0, max_raises=4, raise_sizes=(2.5, 3.0))
+
+
+def test_street_config_rejects_max_raises_below_one():
+    with pytest.raises(ValueError):
+        StreetConfig(positions=("OOP", "IP"), pot=10.0, stack_bb=97.0, max_raises=0, raise_sizes=())
+
+
+def test_street_config_rejects_nonpositive_pot():
+    with pytest.raises(ValueError):
+        StreetConfig(positions=("OOP", "IP"), pot=0.0, stack_bb=97.0, max_raises=1, raise_sizes=())
+
+
+def test_street_config_rejects_nonpositive_stack():
+    with pytest.raises(ValueError):
+        StreetConfig(positions=("OOP", "IP"), pot=10.0, stack_bb=0.0, max_raises=1, raise_sizes=())
+
+
+def test_street_config_rejects_fewer_than_two_positions():
+    with pytest.raises(ValueError):
+        StreetConfig(positions=("OOP",), pot=10.0, stack_bb=97.0, max_raises=1, raise_sizes=())
+
+
+def test_street_config_rejects_duplicate_positions():
+    with pytest.raises(ValueError):
+        StreetConfig(positions=("OOP", "OOP"), pot=10.0, stack_bb=97.0, max_raises=1, raise_sizes=())
+
+
+def test_street_tree_root_is_first_position_with_nothing_invested():
+    config = StreetConfig(positions=("OOP", "IP"), pot=10.0, stack_bb=97.0, max_raises=1, raise_sizes=())
+    root = build_street_tree(config)
+    assert root.player_to_act == "OOP"
+    assert root.invested == {"OOP": 0.0, "IP": 0.0}
+    assert root.pot == 10.0
+
+
+def test_street_tree_root_has_no_fold_option():
+    # Nobody has bet anything yet this street — checking is always free,
+    # so folding isn't a legal action at the very first decision (mirrors
+    # BB-facing-no-raise's existing preflop behavior, not new logic).
+    config = StreetConfig(positions=("OOP", "IP"), pot=10.0, stack_bb=97.0, max_raises=1, raise_sizes=())
+    root = build_street_tree(config)
+    assert FOLD not in {action.kind for action in root.legal_actions}
+    assert CALL_OR_CHECK in {action.kind for action in root.legal_actions}
+
+
+def test_street_tree_open_raise_is_sized_off_the_pot_not_a_blind():
+    config = StreetConfig(
+        positions=("OOP", "IP"), pot=10.0, stack_bb=97.0, max_raises=2, raise_sizes=(0.75,)
+    )
+    root = build_street_tree(config)
+    open_action = next(a for a in root.legal_actions if a.kind == RAISE)
+    assert open_action.size == pytest.approx(0.75 * 10.0)  # 0.75x pot, not 0.75x a big blind
+
+
+def test_street_tree_second_raise_is_sized_off_the_previous_bet():
+    config = StreetConfig(
+        positions=("OOP", "IP"), pot=10.0, stack_bb=97.0, max_raises=3, raise_sizes=(0.75, 2.0)
+    )
+    root = build_street_tree(config)
+    open_action = next(a for a in root.legal_actions if a.kind == RAISE)
+    open_size = open_action.size
+    after_open = root.children[open_action]
+    reraise_action = next(a for a in after_open.legal_actions if a.kind == RAISE)
+    assert reraise_action.size == pytest.approx(2.0 * open_size)
+
+
+def test_street_tree_facing_a_raise_has_a_fold_option():
+    config = StreetConfig(positions=("OOP", "IP"), pot=10.0, stack_bb=97.0, max_raises=2, raise_sizes=(0.75,))
+    root = build_street_tree(config)
+    open_action = next(a for a in root.legal_actions if a.kind == RAISE)
+    after_open = root.children[open_action]
+    assert after_open.player_to_act == "IP"
+    assert FOLD in {action.kind for action in after_open.legal_actions}
+
+
+def test_street_tree_all_in_never_exceeds_the_streets_remaining_stack():
+    config = StreetConfig(positions=("OOP", "IP"), pot=10.0, stack_bb=15.0, max_raises=4)
+    root = build_street_tree(config)
+    for node in walk(root):
+        if isinstance(node, DecisionNode):
+            for action in node.legal_actions:
+                if action.size is not None:
+                    assert action.size <= config.stack_bb
+
+
+def test_street_tree_terminal_pot_includes_the_entering_pot():
+    # Both players check through — 0 this-street invested from either —
+    # the resulting showdown terminal's pot must still reflect the
+    # entering pot (StreetConfig.pot_offset), not just this street's own
+    # action, or every downstream equity*pot payoff would be wrong.
+    config = StreetConfig(positions=("OOP", "IP"), pot=10.0, stack_bb=97.0, max_raises=1, raise_sizes=())
+    root = build_street_tree(config)
+    check_action = next(a for a in root.legal_actions if a.kind == CALL_OR_CHECK)
+    after_oop_checks = root.children[check_action]
+    ip_check = next(a for a in after_oop_checks.legal_actions if a.kind == CALL_OR_CHECK)
+    showdown = after_oop_checks.children[ip_check]
+    assert isinstance(showdown, TerminalNode)
+    assert showdown.pot == pytest.approx(10.0)
+
+
+def test_street_tree_payoff_sums_to_the_entering_pot_not_zero():
+    # See TerminalNode.payoff's docstring: with a nonzero pot_offset
+    # (postflop), payoffs sum to that offset, not 0 — the entering pot
+    # is already at stake, not contributed by anyone this street. This
+    # is expected, documented behavior, not a bug — pinned here so a
+    # future change can't silently break the (different) preflop
+    # zero-sum invariant without this test catching it.
+    node = TerminalNode(pot=10.0, invested={"OOP": 0.0, "IP": 0.0}, folded=frozenset({"IP"}))
+    payoffs = node.payoff({})
+    assert sum(payoffs.values()) == pytest.approx(10.0)
+    assert payoffs["OOP"] == pytest.approx(10.0)
+    assert payoffs["IP"] == pytest.approx(0.0)
+
+
+def test_game_tree_terminal_payoff_still_sums_to_zero():
+    # The original preflop invariant, unaffected by pot_offset (which is
+    # 0 for GameConfig) — a regression guard for the docstring's claim.
+    node = TerminalNode(pot=1.5, invested={"BTN": 0.5, "BB": 1.0}, folded=frozenset({"BTN"}))
+    assert sum(node.payoff({}).values()) == pytest.approx(0.0)
+
+
+def test_street_tree_reopens_action_after_a_raise_multiway():
+    config = StreetConfig(positions=("OOP", "MID", "IP"), pot=15.0, stack_bb=97.0, max_raises=2, raise_sizes=(0.75,))
+    root = build_street_tree(config)
+    check_action = next(a for a in root.legal_actions if a.kind == CALL_OR_CHECK)
+    after_oop_checks = root.children[check_action]
+    assert after_oop_checks.player_to_act == "MID"
+    raise_action = next(a for a in after_oop_checks.legal_actions if a.kind == RAISE)
+    after_mid_raises = after_oop_checks.children[raise_action]
+    assert after_mid_raises.player_to_act == "IP"
+    # OOP already acted (checked) but must get a chance to respond to
+    # MID's raise — the same "reopen for every other live player" logic
+    # build_game_tree already relies on, exercised here for a street tree.
+    ip_call = next(a for a in after_mid_raises.legal_actions if a.kind == CALL_OR_CHECK)
+    after_ip_calls = after_mid_raises.children[ip_call]
+    assert after_ip_calls.player_to_act == "OOP"
+    assert FOLD in {action.kind for action in after_ip_calls.legal_actions}

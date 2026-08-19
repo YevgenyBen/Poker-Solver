@@ -149,7 +149,71 @@ street chaining needs.
     only forwarded `/solve`, so `/equity` silently fell through to
     Vite's SPA-fallback `index.html` instead of reaching FastAPI —
     fixed by adding `/equity` to the proxy list.
-- **M11 — Flop-only game tree + exact CFR solve.** Not started yet.
+- **M11 — Flop-only game tree + exact CFR solve.**
+  - `poker_solver/game_tree.py` — new `StreetConfig` (positions, entering
+    `pot`, remaining `stack_bb`, `raise_sizes`, `max_raises` — no blinds,
+    no `positions[-2]`/`[-1]` posting semantics, unlike `GameConfig`) and
+    `build_street_tree`, reusing `_build` almost unchanged via two small
+    shared abstractions added to both configs: `open_size_reference`
+    (what the *first* raise is sized off — `big_blind` for `GameConfig`,
+    `pot` for `StreetConfig`) and `pot_offset` (the entering pot not
+    attributable to any tracked position's `invested`, which starts at 0
+    fresh each street — 0.0 for `GameConfig`, `self.pot` for
+    `StreetConfig`). One real, documented consequence:
+    `TerminalNode.payoff()`'s "always zero-sum" guarantee only holds for
+    `pot_offset=0` (preflop) — a postflop street's payoffs correctly sum
+    to `pot_offset`, not 0 (the entering pot was already at stake, not
+    contributed this street). Confirmed via `grep` that `.payoff()` is
+    never actually called by the real solving code (`cfr.py` reads
+    `node.pot`/`node.invested` directly), so this was a documentation/
+    test-correctness fix, not a solving-correctness one.
+  - `poker_solver/cfr.py` — `solve()` gained optional `positions` (default
+    `(BTN, BB)`, unchanged) and `initial_reach` params, letting the same
+    exact-tensor fast path serve a flop tree (`positions=("OOP","IP")`,
+    real ranges as `initial_reach`) with zero new solving code. Internal
+    helpers renamed from BTN/BB-specific to generic (`reach_a`/`reach_b`,
+    `position_a`/`position_b`). `initial_reach`'s fallback to each hand's
+    `combo_weight` is computed lazily, only for a position actually
+    missing from `initial_reach` — needed since `combos.HandCombo` (M11's
+    hand type) has no `combo_weight` at all, unlike `StartingHand`, and
+    `solve_flop` always supplies both positions' real reach anyway.
+  - `poker_solver/solver.py` — new `solve_flop(board, hero_range,
+    villain_range, pot, effective_stack_bb, ...)`. Hero's and villain's
+    ranges are combined into one shared combo pool (required by
+    `cfr.solve()`'s single-`hands`/NxN-`equity_table` design); some
+    (hero-combo, villain-combo) pairs in that pool inevitably share a
+    physical card, which `build_board_equity_table` correctly reports as
+    NaN — replaced with a neutral 0.5 before solving, the same "ignore
+    blockers between players' hands" approximation the project has
+    carried since M1, now also visible at combo (not just class)
+    granularity.
+  - **Directional sanity, verified, not assumed:** a hero range that's
+    purely polarized (nuts + air, nothing in between) can legitimately
+    bet/shove *both* extremes at similar rates under real Nash
+    equilibrium — confirmed empirically while writing M11's tests, not a
+    bug. The robust "value continues, air folds" check instead lives one
+    node deeper: facing a bet, a real made hand (top pair + a straight
+    draw) folds far less than complete air, at a realistic (not
+    deep-stacked-overbet) stack-to-pot ratio — deep stacks relative to
+    the pot were measured to collapse *any* hand's facing-a-shove
+    decision to "fold almost always," regardless of relative strength,
+    which is a real pot-odds fact, not a solver defect, but the wrong
+    scenario to assert directional sanity in.
+  - **Frontend/API:** `GET /solve_flop?board=...&pot=...&stack_bb=...&
+    position=...` — a curated demo hero/villain range, expressed as small
+    *hand-class* sets (`DEMO_FLOP_HERO_CLASSES`/`DEMO_FLOP_VILLAIN_CLASSES`,
+    unlike `DEMO_MULTIWAY_HANDS`'s fixed combo pool) expanded per-request
+    into board-legal combos via `combos.range_from_class_frequencies` —
+    necessary since which combos a fixed pool would even mean varies with
+    what the board itself blocks. Measured, not assumed: ~2.6s end to end
+    for this pool size (3 hero / 4 villain classes, ~30ish combos after
+    expansion), dominated by `board_equity`'s table build (~2.5s), not the
+    CFR solve (~0.2s) — fine for a live request, cached per (board, pot,
+    stack_bb, iterations) the same way multiway solves are cached per
+    (stack_bb, players). `FlopSolver.tsx` — a board/pot/stack/position
+    form and a sorted per-combo strategy list (not `RangeGrid`'s 169-cell
+    layout — a flop combo range is a much smaller, variable-size,
+    board-dependent set, ill-suited to that fixed grid).
 
 ## Engine is standalone
 

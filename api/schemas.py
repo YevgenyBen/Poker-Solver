@@ -18,3 +18,14 @@ class EquityResponse(BaseModel):
     board: str
     equity_a: float
     equity_b: float
+
+
+class FlopSolveResponse(BaseModel):
+    board: str
+    pot: float
+    stack_bb: float
+    iterations: int
+    elapsed_seconds: float
+    strategy: dict[str, dict[str, float]]
+    position: str
+    positions: list[str]
