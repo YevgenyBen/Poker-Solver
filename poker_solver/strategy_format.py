@@ -38,6 +38,17 @@ def format_flop_response(result: StrategyResult, board: str, position: str | Non
     a flop result's "opening_range" is one street's combo-level strategy,
     not a class-level RFI range).
 
+    Shape-agnostic across solve *depth*, not just usable for M11's
+    flop-only solve_flop: works identically for solve_flop_turn (M12)
+    and solve_flop_to_river (M13) results too (M14 wires both up live)
+    — every field this function reads (config.pot/.stack_bb,
+    strategy_for_position(), root.player_to_act, config.positions) is
+    present the same way on any of the three, since all three still
+    only ever expose the *flop*-level strategy through this function.
+    A deeper solve's chance_data (the turn/river tree) is simply
+    invisible here — the response never reveals which of the three
+    depths actually produced it.
+
     `board` is passed in as the caller's own display string rather than
     re-derived from `result` — `StreetConfig` doesn't carry the actual
     board cards (only combos.py/board_equity.py ever see them, to solve
