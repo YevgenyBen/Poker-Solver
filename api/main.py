@@ -117,6 +117,30 @@ to generalize, MAX_FLOP_TO_RIVER_ITERATIONS is set equal to its own
 default — no headroom above it at all — so `iterations` can only ever
 be used to get a faster, noisier result on this endpoint, never a
 slower one.
+
+GET /solve_flop_cached is M22's deliverable, closing the real-time-
+speed roadmap's own explicitly-deferred "wire it into a live endpoint"
+follow-on (poker_solver/library.py's module docstring and CLAUDE.md's
+"The real-time-speed roadmap" section): board + stack in, hero's
+per-combo strategy out, same as /solve_flop, but backed by
+poker_solver.library.query_strategy (M21) instead of a plain per-
+request cache dict. A hit costs a canonicalize_board call, a dict
+.get(), and a handful of translate_combo calls — no CFR, no equity-
+table build; a miss falls back to a real solve (via query_strategy's
+own build_library call) and caches the canonical result so a later hit
+on that spot, or on any real board merely suit-isomorphic to it, is
+instant. Only `board`/`stack_bb` are exposed as query params — every
+other input (pot, the demo range, raise sizing, iterations) is a fixed
+server constant, not because it can't vary in principle but because
+none of it is part of query_strategy's canonical (board, bucketed-
+stack) cache key: letting any of it vary per request would mean a
+later request's stated value could silently describe a *different*
+spot than the one actually served on a cache hit, which the response
+would then echo back as if it had been honored. Deliberately not
+pre-warmed, unlike /solve_flop_turn and /solve_flop_to_river — pre-
+warming the frontend's own default board would mean a user's very
+first, unmodified click already showed a cache hit, undercutting the
+one thing this endpoint exists to demonstrate.
 """
 
 import logging
@@ -130,10 +154,12 @@ from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from poker_solver.board_equity import two_combo_equity
+from poker_solver.canonicalize import canonical_stack_depth, canonicalize_board
 from poker_solver.cards import parse_cards
 from poker_solver.combos import HandCombo, range_from_class_frequencies
 from poker_solver.equity import MultiwayEquityCache
 from poker_solver.game_tree import GameConfig
+from poker_solver.library import query_strategy
 from poker_solver.solver import (
     DEFAULT_FLOP_ITERATIONS,
     DEFAULT_FLOP_TO_RIVER_ITERATIONS,
@@ -148,7 +174,7 @@ from poker_solver.solver import (
 from poker_solver.starting_hands import StartingHand
 from poker_solver.strategy_format import format_flop_response, format_solve_response
 
-from .schemas import EquityResponse, FlopSolveResponse, SolveResponse
+from .schemas import EquityResponse, FlopQueryResponse, FlopSolveResponse, SolveResponse
 
 # The React app's production build (see frontend/, `npm run build`). Not
 # committed to git — build it locally or in CI before serving for real.
@@ -238,6 +264,30 @@ DEMO_CHAINED_FLOP_VILLAIN_CLASSES = {
 # common case, not a correctness bug).
 DEFAULT_CHAINED_FLOP_BOARD = "Jh7d2c"
 
+# /solve_flop_cached's curated demo pool (M22) — deliberately separate
+# from every other endpoint's own pool, same "each endpoint gets its
+# own" precedent DEMO_FLOP_HERO_/VILLAIN_CLASSES and DEMO_CHAINED_
+# FLOP_HERO_/VILLAIN_CLASSES above already establish. Sized to the same
+# ~23-combo scale CLAUDE.md's M17/M18/M20/M21 entries measured against
+# (2 hero classes / 2 villain classes) — see CLAUDE.md's M22 entry for
+# this endpoint's own fresh measurement.
+FLOP_QUERY_HERO_CLASSES = {
+    StartingHand("A", "A"): 1.0,
+    StartingHand("A", "K", suited=True): 1.0,
+}
+FLOP_QUERY_VILLAIN_CLASSES = {
+    StartingHand("K", "K"): 1.0,
+    StartingHand("7", "2", suited=False): 1.0,
+}
+
+# Fixed, not query params — see the module docstring's /solve_flop_
+# cached paragraph for why: neither is part of query_strategy's
+# canonical (board, bucketed-stack) cache key, so letting either vary
+# per request would risk a later request's stated value silently not
+# matching what a cache hit actually returns.
+FLOP_QUERY_POT = 10.0
+FLOP_QUERY_ITERATIONS = DEFAULT_FLOP_ITERATIONS
+
 # Fixed server-side constants, not query params — same reasoning
 # DEMO_FLOP_HERO_/VILLAIN_CLASSES already establish (letting a client
 # control tree size/range directly is an unbounded-cost door). Different
@@ -281,6 +331,16 @@ _flop_turn_cache: dict = {}
 _flop_turn_lock = threading.Lock()
 _flop_to_river_cache: dict = {}
 _flop_to_river_lock = threading.Lock()
+# Not "_flop_query_cache" — this dict IS query_strategy's own `library`
+# parameter (poker_solver/library.py), held at module scope across
+# requests, a different granularity than the four dicts above (which
+# each cache one formatted response/StrategyResult, not a canonical-
+# key -> LibraryEntry mapping). _flop_query_lock is held for query_
+# strategy's ENTIRE call in _query_flop below, not just around a dict
+# read/write the way the four helpers above do — see _query_flop's own
+# docstring for why that's a deliberate, stricter departure.
+_flop_query_library: dict = {}
+_flop_query_lock = threading.Lock()
 
 
 def _prewarm_enabled() -> bool:
@@ -434,6 +494,76 @@ def _get_or_solve_flop_to_river(board_cards: tuple, pot: float, stack_bb: float,
     return result
 
 
+def _query_flop(board_cards: tuple, stack_bb: float) -> dict:
+    """Canonicalize-then-lookup-then-fallback-to-solve (M21's query_
+    strategy) over FLOP_QUERY_HERO_/VILLAIN_CLASSES' board-legal
+    expansion. Named _query_flop, not _get_or_solve_flop_X — the
+    check-or-solve duality those helpers hand-roll around their own
+    cache dict already lives inside query_strategy itself here.
+
+    Holds _flop_query_lock for query_strategy's ENTIRE call, not just
+    around a dict read/write the way every _get_or_solve_X helper above
+    does — a deliberate, stricter departure. query_strategy is an
+    atomic check-then-maybe-solve-then-insert primitive with no
+    concurrency control of its own (see its own docstring's "Known,
+    deliberate limitations"); unlike the hand-rolled helpers above, it
+    can't be decomposed into a separate check step and solve step
+    without reimplementing its internals here. This closes that
+    documented gap for this one live entry point: no concurrent-miss
+    double-solve, period. Real cost, not hidden: two unrelated
+    concurrent misses (different, non-isomorphic boards) now queue
+    behind each other rather than solving in parallel — the mirror-
+    image tradeoff of every other endpoint's own looser locking (no
+    serialization at all, so a concurrent identical-key miss there
+    really can double-solve). _flop_query_lock is its own independent
+    threading.Lock() object, and every request is dispatched via
+    run_in_threadpool onto its own worker thread regardless of
+    endpoint, so this only serializes requests to this one endpoint.
+    """
+    exclude = frozenset(board_cards)
+    hero_range = range_from_class_frequencies(FLOP_QUERY_HERO_CLASSES, exclude=exclude)
+    villain_range = range_from_class_frequencies(FLOP_QUERY_VILLAIN_CLASSES, exclude=exclude)
+    if not hero_range or not villain_range:
+        # query_strategy/build_library don't guard this themselves (see
+        # poker_solver/library.py) — mirrors _get_or_solve_flop's own
+        # guard, but is a genuine second computation, not a reused one:
+        # build_library takes raw classes, not pre-computed ranges, so
+        # it re-derives these internally regardless. Still cheap: no
+        # solve, no equity table, just combo enumeration.
+        raise ValueError(f"board {''.join(str(c) for c in board_cards)!r} blocks every demo-range combo")
+
+    with _flop_query_lock:
+        result = query_strategy(
+            _flop_query_library,
+            board=board_cards,
+            hero_classes=FLOP_QUERY_HERO_CLASSES,
+            villain_classes=FLOP_QUERY_VILLAIN_CLASSES,
+            pot=FLOP_QUERY_POT,
+            effective_stack_bb=stack_bb,
+            iterations=FLOP_QUERY_ITERATIONS,
+        )
+
+    # Pure functions of (board_cards, stack_bb) alone, safe to compute
+    # outside the lock — guaranteed to agree with whatever key query_
+    # strategy just looked up or inserted under (see its own docstring's
+    # determinism argument for why).
+    canonical_board, _ = canonicalize_board(board_cards)
+    canonical_stack_bb = canonical_stack_depth(stack_bb)
+
+    return {
+        "board": "".join(str(c) for c in board_cards),
+        "canonical_board": "".join(str(c) for c in canonical_board),
+        "pot": FLOP_QUERY_POT,
+        "stack_bb": stack_bb,
+        "canonical_stack_bb": canonical_stack_bb,
+        "hit": result.hit,
+        "elapsed_seconds": result.elapsed_seconds,
+        "strategy": result.strategy,
+        "position": "OOP",
+        "positions": ["OOP", "IP"],
+    }
+
+
 def _prewarm_common_depths() -> None:
     for depth in PREWARM_STACK_DEPTHS:
         try:
@@ -576,6 +706,20 @@ async def solve_flop_to_river_endpoint(
             raise ValueError(f"board must have exactly 3 cards for a flop, got {len(board_cards)}")
         result = await run_in_threadpool(_get_or_solve_flop_to_river, board_cards, pot, stack_bb, iterations)
         return format_flop_response(result, board="".join(str(c) for c in board_cards), position=position)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/solve_flop_cached", response_model=FlopQueryResponse)
+async def solve_flop_cached_endpoint(
+    board: str = Query(..., description="Exactly 3 cards, e.g. Jh7d2c"),
+    stack_bb: float = Query(40.0, gt=0, description="Effective stack behind, in big blinds"),
+):
+    try:
+        board_cards = tuple(parse_cards(board))
+        if len(board_cards) != 3:
+            raise ValueError(f"board must have exactly 3 cards for a flop, got {len(board_cards)}")
+        return await run_in_threadpool(_query_flop, board_cards, stack_bb)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

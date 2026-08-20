@@ -1000,6 +1000,116 @@ street chaining needs.
     milestone didn't need to make), and no `derive_ranges_from_path`
     connection — both natural next milestones, mirroring M12/M13-
     before-M14's two-primitives-then-one-wiring-milestone pattern.
+- **M22 — Wire `query_strategy` into a live endpoint + frontend,**
+  closing the first of M21's two explicitly-deferred follow-ons (the
+  second, a `derive_ranges_from_path` connection, remains open). `GET
+  /solve_flop_cached` — board + stack in, hero's per-combo strategy out,
+  same shape as `/solve_flop`, backed by `poker_solver.library.
+  query_strategy` (M21) instead of a plain per-request cache dict.
+  - **The one load-bearing design principle:** only `board`/`stack_bb`
+    are query params — everything else `query_strategy` takes (`pot`,
+    `positions`, `raise_sizes`, `max_raises`, the demo classes,
+    `iterations`) is a fixed server constant. Reasoning: `query_
+    strategy`'s canonical cache key is *only* `(canonical_board,
+    canonical_stack_bb)` — those are the only two inputs that actually
+    feed it. Every other parameter is silently ignored on a cache hit
+    (generalizes M21's own "pot-not-in-key gotcha" to *every* non-key
+    parameter) — exposing any of them as a free-varying query param on
+    a *persistent, cross-request* library would let a later request's
+    stated value silently not match what was actually solved, echoed
+    back in the response as if it had been honored. Fixing everything
+    except the two real key-contributing params avoids that whole bug
+    class by construction. No `position` param either — confirmed
+    structurally, not assumed: `StrategyResult.opening_range()` is
+    `strategy_at(self.root)`, and `LibraryEntry.strategy` is that
+    verbatim — there is no second position's data anywhere in this
+    pipeline for a request to select, unlike the other three endpoints'
+    full `StrategyResult` (both positions' nodes reachable). The
+    response always reports `"OOP"`.
+  - New `FlopQueryResponse` (`api/schemas.py`) adds `canonical_board`/
+    `canonical_stack_bb` — transparency fields no other response type
+    has, showing what a real board/stack actually canonicalizes to
+    (the concrete thing this endpoint exists to demonstrate), and
+    incidentally what makes the isomorphic-hit API test cheap (compare
+    `canonical_board` directly between two responses, rather than
+    re-deriving `test_library.py`'s own engine-level cross-check at
+    the wrong layer).
+  - **A deliberate, stricter locking departure from every other
+    endpoint:** `_query_flop`'s helper holds `_flop_query_lock` for
+    `query_strategy`'s *entire* call, not just around a dict read/write
+    the way every `_get_or_solve_X` helper does (those only guard the
+    cache dict, letting two concurrent misses for the same never-
+    before-seen key both solve independently — an existing, accepted,
+    previously-undocumented-as-such tradeoff every prior `/solve_flop*`
+    endpoint already has). `query_strategy` is an atomic check-then-
+    maybe-solve-then-insert primitive with no concurrency control of
+    its own (its own docstring's "Known, deliberate limitations"); it
+    can't be decomposed into a separate check step and solve step
+    without reimplementing its internals in `api/main.py`. Holding one
+    lock for the whole call trades a little cross-request parallelism
+    (two *unrelated* concurrent misses now queue rather than solve in
+    parallel) for a *stronger* guarantee than any existing endpoint has
+    — no concurrent-miss double-solve at all — directly resolving
+    `query_strategy`'s own documented gap for this one live surface.
+  - **Deliberately not pre-warmed**, unlike `/solve_flop_turn`/
+    `/solve_flop_to_river` — pre-warming the frontend's own default
+    board would mean a user's very first, unmodified click already
+    showed a cache hit, undercutting the one thing this endpoint exists
+    to demonstrate (a user should get to witness a miss at least once).
+  - **A real behavioral difference from the other three endpoints,
+    documented not just implemented:** `QueryResult.elapsed_seconds` is
+    measured fresh on *every* call, hit or miss — unlike the other
+    three endpoints' cached responses, where it's frozen at original-
+    solve time (`test_solve_flop_is_cached_across_positions`'s own
+    exact-equality assertion proves that). Repeated hits here show a
+    small, non-identical `elapsed_seconds` each time — the literal
+    "hit is fast" proof this endpoint exists to show, not a bug.
+  - **Measured, not assumed, at this endpoint's own fresh pool** (2
+    hero classes / 2 villain classes, confirmed via `len()` at **23
+    combos** — the same scale M17/M18/M20/M21 all used, not re-cited
+    from an old uncommitted figure): through the real `TestClient`-
+    exercised endpoint (full FastAPI/Starlette stack, not just the bare
+    engine call M21 measured), 4 distinct pairwise-non-isomorphic
+    boards' miss timings averaged **1.551s** (range 1.260s-1.793s,
+    somewhat higher than M21's own bare-engine ~0.95s — the FastAPI
+    request/response/JSON-serialization overhead on top of the same
+    underlying solve, a real and expected difference, not a
+    regression). 200 repeated hits on one warmed board averaged
+    **0.1998ms** (min 0.1721ms). A hit against a different, merely-
+    isomorphic board (`2c7d9h`, never itself queried) cost the same
+    (~0.19ms) and reported the identical `canonical_board`. **Ratio:
+    ~7,763x.**
+  - **Frontend:** `CachedFlopSolver.tsx` (new, a sibling to
+    `FlopSolver`, not a 4th runout depth bolted onto its selector —
+    the response shape and interaction differ enough that shoehorning
+    it in would need messy conditional branching, matching the
+    established "different interaction shape -> separate component"
+    precedent `EquityCalculator`/`FlopSolver` themselves set). A
+    "Shuffle suits" button rotates the board's suits by a fixed
+    permutation (`c->d->h->s->c`, one specific element of the same
+    24-permutation group `canonicalize_board` searches, so guaranteed
+    to preserve canonical form and safe under repeated clicks) —
+    without it, clicking Solve twice on identical unmodified text only
+    proves ordinary memoization, indistinguishable from what every
+    other `/solve_flop*` endpoint's own cache already does; shuffling
+    first makes the actual point (a hit on a board *never itself
+    queried*) visible. Pulled into its own `frontend/src/boardSuits.ts`
+    module (not colocated in the component) to keep `CachedFlopSolver.
+    tsx` exporting only its component, matching every other component
+    file's own convention — `shuffleSuits`'s own composition property
+    (4 applications of the rotation return to the identity) is directly
+    tested there. A new `.hit-indicator` pill (green for a hit, neutral
+    gray for a miss — not red, since a miss is a valid, expected
+    first-query outcome, not an error) is the one genuinely new UI
+    element; everything else reuses `FlopSolver`'s existing CSS classes
+    wholesale. Live-verified in the browser end to end: a fresh board
+    shows "Solved live" at ~1.5s; clicking Solve again on the identical
+    board shows "Cache hit" at ~0.2ms; shuffling suits then solving on
+    the *shuffled* text (never itself queried) also shows "Cache hit"
+    at ~0.2ms with the identical `canonical_board` — the real,
+    on-screen proof of the whole roadmap's payoff; a malformed board
+    correctly produces the existing error-banner path and clears any
+    stale result.
 
 ## v3 vision (future) — live-table advisor
 

@@ -29,3 +29,16 @@ class FlopSolveResponse(BaseModel):
     strategy: dict[str, dict[str, float]]
     position: str
     positions: list[str]
+
+
+class FlopQueryResponse(BaseModel):
+    board: str
+    canonical_board: str
+    pot: float
+    stack_bb: float
+    canonical_stack_bb: float
+    hit: bool
+    elapsed_seconds: float
+    strategy: dict[str, dict[str, float]]
+    position: str
+    positions: list[str]

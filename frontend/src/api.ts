@@ -1,4 +1,4 @@
-import type { EquityResponse, FlopSolveDepth, FlopSolveResponse, SolveResponse } from './types';
+import type { EquityResponse, FlopQueryResponse, FlopSolveDepth, FlopSolveResponse, SolveResponse } from './types';
 
 /** Thrown for any non-2xx API response, wrapping the server's `detail`
  * message when there is one (used for both /solve and /equity — the
@@ -73,4 +73,19 @@ export async function fetchFlopStrategy(
     position,
   });
   return fetchJson<FlopSolveResponse>(`${FLOP_DEPTH_ENDPOINTS[depth]}?${query.toString()}`, signal);
+}
+
+// M22: a standalone function, not folded into FLOP_DEPTH_ENDPOINTS/
+// FlopSolveDepth above — /solve_flop_cached returns a structurally
+// different shape (FlopQueryResponse, not FlopSolveResponse: no `pot`/
+// `position` input, a `hit` flag instead of `iterations`) and a
+// different interaction (no runout-depth choice), so it gets its own
+// component (CachedFlopSolver.tsx) rather than a 4th depth option here.
+export async function fetchCachedFlopStrategy(
+  board: string,
+  stackBb: number,
+  signal?: AbortSignal,
+): Promise<FlopQueryResponse> {
+  const query = new URLSearchParams({ board, stack_bb: String(stackBb) });
+  return fetchJson<FlopQueryResponse>(`/solve_flop_cached?${query.toString()}`, signal);
 }
