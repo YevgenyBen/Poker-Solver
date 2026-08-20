@@ -4,6 +4,7 @@ import type {
   FlopQueryResponse,
   FlopSolveDepth,
   FlopSolveResponse,
+  PreflopWalkResponse,
   SolveResponse,
 } from './types';
 
@@ -116,6 +117,23 @@ export async function fetchFlopStrategyFromPath(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ stack_bb: stackBb, action_path: actionPath, board }),
+    signal,
+  });
+}
+
+// M25: a board-independent, pure preflop-tree-state query — what's
+// legal at the node action_path resolves to. POST/JSON-body for the
+// same reason fetchFlopStrategyFromPath is: action_path is a
+// variable-length structured sequence.
+export async function fetchPreflopWalk(
+  stackBb: number,
+  actionPath: string[],
+  signal?: AbortSignal,
+): Promise<PreflopWalkResponse> {
+  return fetchJson<PreflopWalkResponse>('/preflop_walk', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stack_bb: stackBb, action_path: actionPath }),
     signal,
   });
 }

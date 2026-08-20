@@ -783,3 +783,117 @@ def test_solve_flop_from_path_hits_a_board_isomorphic_to_a_previous_miss(client)
     assert first["hit"] is False
     assert second["hit"] is True
     assert second["canonical_board"] == first["canonical_board"]
+
+
+# ---------------------------------------------------------------------------
+# M25 deliverable: POST /preflop_walk — a board-independent, pure
+# preflop-tree-state query ("what's legal from here"), the companion
+# endpoint /solve_flop_from_path's own docstring always said this app
+# was still missing. Reuses the same _get_or_solve_preflop_raw cache
+# /solve_flop_from_path already populates; no range derivation, no
+# board, no query_strategy involved.
+#
+# Expected values below are hand-derived from GameConfig's real
+# defaults (positions=(BTN, BB), small_blind=0.5, big_blind=1.0,
+# raise_sizes=(2.5, 3.0, 2.2), max_raises=4), not guessed.
+# ---------------------------------------------------------------------------
+
+
+def _walk_body(action_path, stack_bb=100.0, iterations=_PATH_ITERATIONS):
+    return {"stack_bb": stack_bb, "action_path": action_path, "iterations": iterations}
+
+
+def _by_kind(legal_actions):
+    return {option["kind"]: option for option in legal_actions}
+
+
+def test_preflop_walk_root_reports_btn_to_act_with_all_four_actions(client):
+    response = client.post("/preflop_walk", json=_walk_body([]))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["is_terminal"] is False
+    assert body["player_to_act"] == "BTN"
+    assert body["live_positions"] == ["BTN", "BB"]
+    assert body["pot"] == pytest.approx(1.5)
+
+    by_kind = _by_kind(body["legal_actions"])
+    assert set(by_kind) == {"fold", "call_or_check", "raise", "all_in"}
+    assert by_kind["fold"]["size"] is None
+    assert by_kind["fold"]["to_call"] is None
+    assert by_kind["call_or_check"]["to_call"] == pytest.approx(0.5)
+    assert by_kind["call_or_check"]["size"] is None
+    assert by_kind["raise"]["size"] == pytest.approx(2.5)
+    assert by_kind["raise"]["to_call"] is None
+    assert by_kind["all_in"]["size"] == pytest.approx(100.0)
+
+
+def test_preflop_walk_after_a_raise_reports_the_real_amount_to_call(client):
+    response = client.post("/preflop_walk", json=_walk_body(["raise"]))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["player_to_act"] == "BB"
+    by_kind = _by_kind(body["legal_actions"])
+    assert by_kind["call_or_check"]["to_call"] == pytest.approx(1.5)
+
+
+def test_preflop_walk_after_a_limp_offers_a_free_check_with_no_fold(client):
+    response = client.post("/preflop_walk", json=_walk_body(["call_or_check"]))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["player_to_act"] == "BB"
+    by_kind = _by_kind(body["legal_actions"])
+    assert "fold" not in by_kind
+    assert by_kind["call_or_check"]["to_call"] == pytest.approx(0.0)
+
+
+def test_preflop_walk_closing_call_is_a_real_two_live_position_terminal(client):
+    response = client.post("/preflop_walk", json=_walk_body(["raise", "call_or_check"]))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["is_terminal"] is True
+    assert body["legal_actions"] == []
+    assert body["player_to_act"] is None
+    assert body["live_positions"] == ["BTN", "BB"]
+    assert body["pot"] == pytest.approx(5.0)
+
+
+def test_preflop_walk_fold_at_root_is_a_one_live_position_terminal(client):
+    response = client.post("/preflop_walk", json=_walk_body(["fold"]))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["is_terminal"] is True
+    assert body["live_positions"] == ["BB"]
+    assert body["pot"] == pytest.approx(1.5)
+
+
+def test_preflop_walk_rejects_an_unknown_action_kind(client):
+    response = client.post("/preflop_walk", json=_walk_body(["not_a_real_kind"]))
+    assert response.status_code == 422
+
+
+def test_preflop_walk_rejects_a_too_long_action_path(client):
+    too_long = ["call_or_check"] * (api_main.MAX_PATH_LENGTH + 1)
+    response = client.post("/preflop_walk", json=_walk_body(too_long))
+    assert response.status_code == 422
+
+
+def test_preflop_walk_rejects_stack_at_or_below_small_blind(client):
+    # Mirrors test_solve_rejects_stack_at_or_below_small_blind — default
+    # small_blind is 0.5bb, GameConfig itself rejects a stack that small.
+    response = client.post("/preflop_walk", json=_walk_body([], stack_bb=0.3))
+    assert response.status_code == 422
+
+
+def test_preflop_walk_shares_the_raw_preflop_cache_with_solve_flop_from_path(client):
+    client.post("/preflop_walk", json=_walk_body(["raise", "call_or_check"]))
+    client.post("/solve_flop_from_path", json=_path_body(["raise", "call_or_check"]))
+    assert len(api_main._preflop_raw_cache) == 1
+
+
+def test_preflop_walk_fold_option_serializes_size_as_null_not_an_omitted_key(client):
+    body = client.post("/preflop_walk", json=_walk_body([])).json()
+    fold_option = next(option for option in body["legal_actions"] if option["kind"] == "fold")
+    assert "size" in fold_option
+    assert fold_option["size"] is None
+    assert "to_call" in fold_option
+    assert fold_option["to_call"] is None
