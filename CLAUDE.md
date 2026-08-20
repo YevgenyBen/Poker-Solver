@@ -1584,6 +1584,74 @@ street chaining needs.
     documents but doesn't resolve), recommendation #2 (test-coverage/
     confidence-signal gap), and recommendations #4-7 remain untouched,
     as scoped.
+- **M28 — The confidence signal recommendation #2 asked for.** M27's own
+  tests already closed that recommendation's *coverage* half (real
+  3+-opponent tests, real asserted values, not just bounds-checks). This
+  closes the other half: `docs/full-table-diagnostic-2026-08.md`'s §3.3
+  itself — "no way, in the code or the API response, to tell a converged
+  answer from one nobody ever computed" — 88% of a real 9-max solve's
+  touched nodes measured with at least one hand at exactly zero
+  `strategy_sum`, silently indistinguishable from a real result.
+  - `InfoSetTable.trained_mask()` (`cfr.py`) exposes exactly the
+    condition `average_strategy()` already computed internally
+    (`strategy_sum.sum(axis=1) > 0`) and discarded — a boolean per hand,
+    not a new accumulator, so no change to what CFR actually tracks.
+    `StrategyResult.trained_hands(node)` / `.trained_for_position(pos)`
+    (`solver.py`) are new, parallel methods — not a change to
+    `strategy_at`'s own shape, so every existing caller (`opening_range`,
+    `strategy_for_position`, every prior milestone's own tests) keeps
+    working unchanged. Wired into the response layer: `format_solve_
+    response`/`format_flop_response` (`strategy_format.py`) both gained
+    a `trained` field alongside their existing strategy field, and
+    `SolveResponse`/`FlopSolveResponse`/`TurnPathQueryResponse`
+    (`api/schemas.py`) all gained the matching typed field — live on
+    `GET /solve/{stack_bb}` (every player count — the diagnostic's own
+    literal citation), `/solve_flop`, `/solve_flop_turn`, `/solve_flop_
+    to_river`, and `/solve_turn_from_path`.
+  - **A real, non-obvious finding, caught by testing against a genuine
+    flop result rather than assumed:** `trained=False` turns out to have
+    two distinct, equally valid causes, not one. The original diagnostic
+    concern — MCCFR never sampling a hand at a node — is one. The other,
+    found while writing `format_flop_response`'s own test: a postflop
+    combo-level result's `self.hands` is the *union* of both positions'
+    ranges, so a hand that's entirely villain's (zero weight in hero's
+    own range by construction) has zero reach for hero throughout the
+    *whole* solve, at any iteration count — not "wasn't sampled yet,"
+    structurally can never be hero's hand at all. Both correctly read as
+    "don't trust this number," just for different reasons; documented
+    explicitly in `trained_hands`'s own docstring rather than left as a
+    surprise the next caller has to rediscover.
+  - **A deliberate, stated scope boundary, not a silent gap:**
+    `/solve_flop_cached` and `/solve_flop_from_path` do *not* expose
+    `trained` — both are backed by `poker_solver.library`'s canonical
+    cache (M20-M24), which persists only a `LibraryEntry`'s already-
+    flattened `strategy` dict, not the live `StrategyResult`/`node_data`
+    a confidence signal needs to be computed from. Adding it there means
+    changing `LibraryEntry`'s own persisted shape (and `save_library`/
+    `load_library`'s JSON format) — a real, separate piece of work
+    against a foundational, already-shipped data structure, correctly
+    out of scope for a same-milestone add-on.
+  - **Frontend:** `RangeGrid`'s cells fade (opacity + dashed outline,
+    not a color change — a 9-max grid can be *mostly* untrained, so a
+    loud per-cell treatment would drown out the grid's own real signal)
+    when `trained[hand] === false`; `DetailPanel` shows a full warning
+    sentence when the *selected* hand is untrained (the place a user
+    looks closely at one hand's exact numbers and might act on them —
+    deliberately louder than the grid's own glance-level fade);
+    `Legend` gained a small swatch explaining the fade. `FlopSolver`/
+    `TurnPathSolver`'s own per-combo row lists get a lighter-weight
+    `.trained-indicator` pill (mirroring M22's own `.hit-indicator`
+    idiom) — expected to appear rarely there, since postflop solving is
+    still heads-up/exact throughout. A hand absent from a `trained` map
+    entirely (including the pre-load `null` state) defaults to trained
+    — every real response's `trained` map covers exactly the same keys
+    as its strategy map, so "absent" only means "not wired through yet"
+    or "nothing has loaded," not "known bad."
+  - **Verified end to end through the real HTTP layer, not just the
+    engine:** a live `GET /solve/100?players=9&position=BB` response's
+    own `trained` map has at least one `false` entry — the diagnostic's
+    88%-untrained finding, now visible in the actual API response a
+    real caller receives, not just an internal measurement.
 
 ## v3 vision (future) — live-table advisor
 

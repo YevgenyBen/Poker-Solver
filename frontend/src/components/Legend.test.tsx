@@ -10,4 +10,9 @@ describe('Legend', () => {
     expect(screen.getByText('raise')).toBeInTheDocument();
     expect(screen.getByText('all-in')).toBeInTheDocument();
   });
+
+  it('explains the untrained-cell fade treatment', () => {
+    render(<Legend />);
+    expect(screen.getByText(/not enough data yet/i)).toBeInTheDocument();
+  });
 });

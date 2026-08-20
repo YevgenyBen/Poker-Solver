@@ -164,6 +164,25 @@ class InfoSetTable:
             normalized = self.strategy_sum / totals
         return np.where(totals > 0, normalized, uniform)
 
+    def trained_mask(self) -> np.ndarray:
+        """Boolean array, shape (num_hands,): whether each hand has any
+        accumulated strategy_sum at this node at all, or would silently
+        fall back to average_strategy()'s own uniform-prior default.
+
+        Exactly the condition average_strategy() already checks
+        internally (`totals > 0`) — this exposes it instead of
+        discarding it, so a caller can tell a genuinely converged
+        answer from one nobody ever computed. That distinction is real:
+        MCCFR only visits nodes/hands actually reached along a sampled
+        path, unlike the exact heads-up solver, which visits every hand
+        at every node exhaustively on every iteration (so this mask is
+        trivially all-True for an exact-path result) — see
+        docs/full-table-diagnostic-2026-08.md's SS3.3, which measured 88%
+        of a real 9-max solve's touched decision nodes at exactly zero
+        strategy_sum for at least one hand.
+        """
+        return self.strategy_sum.sum(axis=1) > 0
+
 
 def _terminal_value_matrix(
     node: TerminalNode, equity_table: np.ndarray, position_a: str, position_b: str

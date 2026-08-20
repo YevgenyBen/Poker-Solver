@@ -46,6 +46,35 @@ def test_average_strategy_normalizes_accumulated_sum():
     assert np.allclose(avg, [[0.75, 0.25]])
 
 
+def test_trained_mask_all_false_when_never_accumulated():
+    table = InfoSetTable.zeros(num_hands=3, num_actions=2)
+    assert list(table.trained_mask()) == [False, False, False]
+
+
+def test_trained_mask_true_only_for_hands_with_accumulated_strategy():
+    table = InfoSetTable.zeros(num_hands=3, num_actions=2)
+    table.strategy_sum = np.array([[3.0, 1.0], [0.0, 0.0], [0.0, 0.5]])
+    assert list(table.trained_mask()) == [True, False, True]
+
+
+def test_trained_mask_matches_average_strategy_fallback_exactly():
+    # trained_mask() must agree, row for row, with which rows
+    # average_strategy() actually falls back to uniform for — it's the
+    # same underlying condition, just exposed instead of discarded. Uses
+    # an *asymmetric* accumulated row deliberately — a symmetric one
+    # (e.g. [2.0, 2.0]) would normalize to the same [0.5, 0.5] the
+    # uniform fallback also produces, which would make this assertion
+    # pass by numeric coincidence rather than actually distinguishing
+    # "real, trained data" from "never accumulated at all" — precisely
+    # the ambiguity trained_mask exists to resolve.
+    table = InfoSetTable.zeros(num_hands=2, num_actions=2)
+    table.strategy_sum = np.array([[3.0, 1.0], [0.0, 0.0]])
+    mask = table.trained_mask()
+    avg = table.average_strategy()
+    assert mask[0] and np.allclose(avg[0], [0.75, 0.25])  # real, asymmetric, trained data
+    assert not mask[1] and np.allclose(avg[1], [0.5, 0.5])  # untrained row: the uniform fallback
+
+
 # ---------------------------------------------------------------------------
 # Toy games with a known, hand-verifiable equilibrium.
 # ---------------------------------------------------------------------------

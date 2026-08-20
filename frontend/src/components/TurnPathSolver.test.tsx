@@ -58,6 +58,7 @@ function turnSolveResponse(overrides: Partial<Record<string, unknown>> = {}) {
     strategy: {
       AdAc: { call_or_check: 0.03, 'raise:25.00': 0.23, 'all_in:85.00': 0.74 },
     },
+    trained: { AdAc: true },
     position: 'BB',
     positions: ['BB', 'BTN'],
     elapsed_seconds: 45.9,
@@ -133,6 +134,29 @@ describe('TurnPathSolver', () => {
         }),
       }),
     );
+  });
+
+  it('marks an untrained combo with a low-data indicator', async () => {
+    const fetchMock = mockFetch(walkFor, () =>
+      turnSolveResponse({
+        strategy: {
+          AdAc: { call_or_check: 0.03, 'raise:25.00': 0.23, 'all_in:85.00': 0.74 },
+          '8d4d': { call_or_check: 0.5, 'raise:25.00': 0.3, 'all_in:85.00': 0.2 },
+        },
+        trained: { AdAc: true, '8d4d': false },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    render(<TurnPathSolver />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'BTN opens, BB calls' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'BTN opens, BB calls' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Solve' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Solve' }));
+
+    await waitFor(() => expect(screen.getByText('8d4d')).toBeInTheDocument());
+    expect(screen.getByText('low data')).toBeInTheDocument();
+    const adAcRow = screen.getByText('AdAc').closest('.detail-row');
+    expect(adAcRow).not.toHaveTextContent('low data');
   });
 
   it('shows a distinct message when the chosen flop line folds out', async () => {

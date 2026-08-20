@@ -109,6 +109,42 @@ class StrategyResult:
         street's `positions` (OOP, by convention)."""
         return self.strategy_at(self.root)
 
+    def trained_hands(self, node: DecisionNode) -> dict:
+        """hand label -> whether `node`'s strategy_at() entry for that
+        hand reflects real accumulated visits, or the untrained
+        uniform-prior fallback both InfoSetTable.average_strategy() and
+        strategy_at() itself silently substitute otherwise (see either
+        docstring). The confidence signal recommendation #2 of
+        docs/full-table-diagnostic-2026-08.md named directly: "no way,
+        in the code or the API response, to tell a converged answer
+        from one nobody ever computed."
+
+        A parallel method, not a change to strategy_at()'s own shape —
+        every existing caller of strategy_at()/opening_range()/
+        strategy_for_position() keeps working unchanged; a caller that
+        wants both zips this method's output alongside them by hand
+        label.
+
+        `False` has two distinct, equally valid causes, not just one —
+        confirmed via a real flop result during M28's own testing, not
+        assumed: MCCFR under-sampling (the original diagnostic concern
+        — a node/hand a sampled path never happened to reach) is one;
+        the other is a hand having *zero reach weight in this position's
+        own range to begin with* (e.g. a postflop combo-level result's
+        `self.hands` is the union of both positions' ranges, so a hand
+        that's entirely villain's — never hero's — has 0 reach for hero
+        throughout the whole solve, at any iteration count, and reads as
+        untrained here too). Both are correctly "don't trust this
+        number as hero's real strategy," just for different underlying
+        reasons — this method doesn't distinguish which.
+        """
+        actions = node.legal_actions
+        table = self.node_data.get(id(node))
+        if table is None:
+            table = InfoSetTable.zeros(len(self.hands), len(actions))
+        mask = table.trained_mask()
+        return {str(hand): bool(mask[hand_idx]) for hand_idx, hand in enumerate(self.hands)}
+
     def node_for_position(self, position: str) -> DecisionNode:
         """The decision node for `position`'s first turn to act, reached
         by everyone before them calling/checking (i.e. "the action folds
@@ -133,6 +169,12 @@ class StrategyResult:
         node_for_position. For the first-to-act position this is exactly
         opening_range()."""
         return self.strategy_at(self.node_for_position(position))
+
+    def trained_for_position(self, position: str) -> dict:
+        """trained_hands() at `position`'s node_for_position — the
+        confidence-signal counterpart to strategy_for_position(), same
+        relationship trained_hands() has to strategy_at()."""
+        return self.trained_hands(self.node_for_position(position))
 
     def continuing_frequencies(self, node: DecisionNode, action_kind: str | None = None) -> dict:
         """hand -> frequency at `node`, keyed by the actual `StartingHand`/

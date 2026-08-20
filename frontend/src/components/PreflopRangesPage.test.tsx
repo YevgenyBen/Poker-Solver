@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PreflopRangesPage } from './PreflopRangesPage';
 
-function mockResponseFor(stackBb: number) {
+function mockResponseFor(stackBb: number, trained: Record<string, boolean> = { AA: true, KK: true, '72o': true }) {
   return {
     ok: true,
     json: () =>
@@ -14,6 +14,7 @@ function mockResponseFor(stackBb: number) {
         opening_range: Object.fromEntries(
           ['AA', 'KK', '72o'].map((hand) => [hand, { fold: hand === '72o' ? 0.8 : 0.0, raise: hand === '72o' ? 0.2 : 1.0 }]),
         ),
+        trained,
         position: 'BTN',
         positions: ['BTN', 'BB'],
       }),
@@ -29,6 +30,7 @@ function mockMultiwayResponseFor(position: string, positions: string[] = ['BTN',
         iterations: 100000,
         elapsed_seconds: 12.5,
         opening_range: Object.fromEntries(['AA', 'KK', '72o'].map((hand) => [hand, { fold: 0.1, raise: 0.9 }])),
+        trained: { AA: true, KK: true, '72o': true },
         position,
         positions,
       }),
@@ -65,6 +67,24 @@ describe('PreflopRangesPage', () => {
 
     expect(screen.getByRole('heading', { name: '72o' })).toBeInTheDocument();
     expect(screen.getByText('80.0%')).toBeInTheDocument();
+  });
+
+  it('marks an untrained hand in the grid and warns about it in the detail panel', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(mockResponseFor(100, { AA: true, KK: true, '72o': false })),
+    );
+    const user = userEvent.setup();
+    render(<PreflopRangesPage />);
+
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/solved/i));
+    expect(screen.getByText('72o')).toHaveClass('untrained');
+    expect(screen.getByText('AA')).not.toHaveClass('untrained');
+
+    await user.click(screen.getByText('72o'));
+    // Matched on text unique to DetailPanel's own warning — Legend's
+    // "faded = not enough data yet" note also matches /not enough data/.
+    expect(screen.getByText(/solver never sampled/i)).toBeInTheDocument();
   });
 
   it('switching stack depth via a preset re-solves', async () => {

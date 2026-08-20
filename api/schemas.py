@@ -8,6 +8,7 @@ class SolveResponse(BaseModel):
     iterations: int
     elapsed_seconds: float
     opening_range: dict[str, dict[str, float]]
+    trained: dict[str, bool]
     position: str
     positions: list[str]
 
@@ -27,6 +28,7 @@ class FlopSolveResponse(BaseModel):
     iterations: int
     elapsed_seconds: float
     strategy: dict[str, dict[str, float]]
+    trained: dict[str, bool]
     position: str
     positions: list[str]
 
@@ -145,6 +147,7 @@ class TurnPathQueryResponse(BaseModel):
     is_terminal: bool
     player_to_act: str | None
     strategy: dict[str, dict[str, float]]
+    trained: dict[str, bool]
     position: str
     positions: list[str]
     elapsed_seconds: float

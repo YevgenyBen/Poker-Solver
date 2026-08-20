@@ -289,6 +289,7 @@ export function TurnPathSolver() {
           </p>
           {combos.map((combo) => {
             const freqs = solveResult.strategy[combo];
+            const isTrained = solveResult.trained[combo] ?? true;
             const breakdown = sortedEntries(freqs)
               .filter(([, freq]) => freq > 0.005)
               .map(([action, freq]) => `${action} ${(freq * 100).toFixed(0)}%`)
@@ -300,6 +301,11 @@ export function TurnPathSolver() {
                   <span className="bar-fill" style={{ width: '100%', background: gradientFor(freqs) }} />
                 </span>
                 <span className="breakdown">{breakdown}</span>
+                {!isTrained && (
+                  <span className="trained-indicator untrained" title="Not enough data — the untrained default, not a real strategy">
+                    low data
+                  </span>
+                )}
               </div>
             );
           })}
