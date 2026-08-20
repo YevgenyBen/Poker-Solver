@@ -51,7 +51,7 @@ export function PreflopRangesPage() {
     : 'BTN opening range (button vs. big blind, first action)';
 
   return (
-    <section>
+    <section className="preflop-ranges">
       <h2>{title}</h2>
       <p className="subtitle">{subtitle}</p>
 

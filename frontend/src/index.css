@@ -1,13 +1,29 @@
 :root {
-  --fold: #c0392b;
-  --call: #2980b9;
-  --raise: #27ae60;
-  --allin: #8e44ad;
-  --bg: #f7f7f5;
+  /* Action colors — kept close to their original hue identity (this is
+     load-bearing UI meaning throughout the app: fold/call/raise/all-in,
+     see Legend), refined toward slightly deeper, less "primary-crayon"
+     tones for a more considered feel. */
+  --fold: #bd4438;
+  --call: #3573a6;
+  --raise: #2f9e5b;
+  --allin: #7d4a97;
+
+  /* Neutrals — a touch warmer than pure gray, with panels now reading
+     as distinct bright surfaces against a slightly deeper page bg. */
+  --bg: #f5f4f1;
   --panel: #ffffff;
-  --border: #ddd8d0;
-  --text: #2b2b28;
-  --text-muted: #6b6a66;
+  --border: #e3ddd2;
+  --border-strong: #cfc7b8;
+  --text: #292723;
+  --text-muted: #75726b;
+
+  /* Supporting tokens for depth/consistency, new this pass — replaces
+     several previously-hardcoded 4px/6px radii and one-off shadow
+     values scattered across the file. */
+  --shadow-sm: 0 1px 2px rgba(41, 39, 35, 0.06);
+  --shadow: 0 2px 8px rgba(41, 39, 35, 0.08), 0 1px 2px rgba(41, 39, 35, 0.04);
+  --radius: 8px;
+  --radius-sm: 6px;
 }
 
 * {
@@ -18,20 +34,26 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: "Inter", -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 #root {
-  padding: 1.5rem;
-}
-
-header h1 {
-  margin: 0 0 0.25rem;
-  font-size: 1.4rem;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem;
 }
 
 .app-header {
-  margin-bottom: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .tab-nav {
@@ -39,27 +61,16 @@ header h1 {
   gap: 0.35rem;
   flex-wrap: wrap;
   border-bottom: 1px solid var(--border);
-  padding-bottom: 0.75rem;
-  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  margin-bottom: 1.25rem;
 }
 
-.tab-nav button {
-  border: 1px solid var(--border);
+.tab-page {
   background: var(--panel);
-  border-radius: 4px;
-  padding: 0.4rem 0.8rem;
-  font-size: 0.9rem;
-  cursor: pointer;
-}
-
-.tab-nav button:hover {
-  background: #eeeee9;
-}
-
-.tab-nav button.active {
-  border-color: var(--call);
-  color: var(--call);
-  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1.75rem 2rem;
 }
 
 .subtitle {
@@ -73,7 +84,7 @@ header h1 {
   align-items: center;
   gap: 1rem;
   flex-wrap: wrap;
-  margin-bottom: 0.35rem;
+  margin-bottom: 0.5rem;
 }
 
 .stack-control {
@@ -90,10 +101,12 @@ header h1 {
 .stack-value {
   font-weight: 600;
   min-width: 3.5rem;
+  font-variant-numeric: tabular-nums;
 }
 
 #stack-slider {
   width: 200px;
+  accent-color: var(--call);
 }
 
 .presets {
@@ -102,31 +115,12 @@ header h1 {
   flex-wrap: wrap;
 }
 
-.presets button {
-  border: 1px solid var(--border);
-  background: var(--panel);
-  border-radius: 4px;
-  padding: 0.25rem 0.6rem;
-  font-size: 0.85rem;
-  cursor: pointer;
-}
-
-.presets button:hover {
-  background: #eeeee9;
-}
-
-.presets button.active {
-  border-color: var(--call);
-  color: var(--call);
-  font-weight: 600;
-}
-
 .table-mode-control {
   display: flex;
   align-items: center;
   gap: 1rem;
   flex-wrap: wrap;
-  margin-bottom: 0.35rem;
+  margin-bottom: 0.5rem;
 }
 
 .players-toggle,
@@ -136,26 +130,63 @@ header h1 {
   flex-wrap: wrap;
 }
 
+/* Every toggle/tab-style button in the app (tab bar, stack presets,
+   table-size/position toggles) and every primary form-action button
+   (Calculate/Solve) shared near-identical rules previously duplicated
+   6 times over — consolidated here so they can never silently drift
+   apart, and so a hover/focus refinement only needs to happen once. */
+.tab-nav button,
+.presets button,
 .players-toggle button,
-.position-selector button {
+.position-selector button,
+.equity-inputs button,
+.flop-inputs button {
   border: 1px solid var(--border);
   background: var(--panel);
-  border-radius: 4px;
-  padding: 0.25rem 0.6rem;
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 0.85rem;
+  font-family: inherit;
   font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text);
   cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
+.tab-nav button {
+  padding: 0.5rem 1rem;
+}
+
+.tab-nav button:hover,
+.presets button:hover,
 .players-toggle button:hover,
-.position-selector button:hover {
-  background: #eeeee9;
+.position-selector button:hover,
+.equity-inputs button:hover,
+.flop-inputs button:hover {
+  background: var(--bg);
+  border-color: var(--border-strong);
 }
 
+.tab-nav button.active,
+.presets button.active,
 .players-toggle button.active,
 .position-selector button.active {
   border-color: var(--call);
+  background: #eaf2f8;
   color: var(--call);
   font-weight: 600;
+}
+
+.tab-nav button:focus-visible,
+.presets button:focus-visible,
+.players-toggle button:focus-visible,
+.position-selector button:focus-visible,
+.equity-inputs button:focus-visible,
+.flop-inputs button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--call);
+  outline-offset: 1px;
 }
 
 .status {
@@ -184,7 +215,7 @@ header h1 {
   display: inline-block;
   width: 0.8rem;
   height: 0.8rem;
-  border-radius: 2px;
+  border-radius: 3px;
 }
 
 .swatch.fold { background: var(--fold); }
@@ -206,6 +237,8 @@ header h1 {
   gap: 2px;
   background: var(--border);
   border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
   width: max-content;
 }
 
@@ -222,12 +255,12 @@ header h1 {
 }
 
 .cell:hover,
+.cell.selected,
 .cell:focus-visible {
-  outline: 2px solid var(--text);
-  outline-offset: -2px;
-}
-
-.cell.selected {
+  /* Inward offset, not the generic outward focus-ring above — cells
+     sit only 2px apart in a 13x13 grid, where an outward ring would
+     overlap neighboring cells. Kept unified with hover/selected rather
+     than distinct, for the same reason. */
   outline: 2px solid var(--text);
   outline-offset: -2px;
 }
@@ -235,7 +268,8 @@ header h1 {
 .detail {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
   padding: 1rem;
   min-width: 240px;
 }
@@ -248,7 +282,8 @@ header h1 {
 
 .detail h2 {
   margin: 0 0 0.75rem;
-  font-size: 1.1rem;
+  font-size: 1.15rem;
+  font-weight: 600;
 }
 
 .detail-row {
@@ -266,7 +301,7 @@ header h1 {
 
 .detail-row .bar-track {
   flex: 1;
-  background: #eee;
+  background: var(--bg);
   border-radius: 3px;
   height: 0.8rem;
   overflow: hidden;
@@ -283,13 +318,22 @@ header h1 {
   font-variant-numeric: tabular-nums;
 }
 
-.equity-calculator {
-  max-width: 420px;
+/* Shared page-title treatment across every tab except Preflop Ranges'
+   dynamic header (handled separately, above) — one rule instead of the
+   3 near-duplicate, slightly-drifted per-section versions this used to
+   be (each component keeps its own class for width/layout, this only
+   consolidates the <h2> itself). */
+.preflop-ranges h2,
+.equity-calculator h2,
+.flop-solver h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1.3rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
-.equity-calculator h2 {
-  margin: 0 0 0.75rem;
-  font-size: 1.1rem;
+.equity-calculator {
+  max-width: 420px;
 }
 
 .equity-inputs {
@@ -297,37 +341,30 @@ header h1 {
   align-items: flex-end;
   gap: 0.75rem;
   flex-wrap: wrap;
+  margin-top: 0.4rem;
   margin-bottom: 0.75rem;
 }
 
 .equity-inputs label {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.3rem;
   font-size: 0.8rem;
   color: var(--text-muted);
 }
 
 .equity-inputs input {
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0.35rem 0.5rem;
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.6rem;
+  font-family: inherit;
   font-size: 0.9rem;
   width: 7rem;
+  transition: border-color 0.15s ease;
 }
 
 .equity-inputs button {
-  border: 1px solid var(--border);
-  background: var(--panel);
-  border-radius: 4px;
-  padding: 0.4rem 0.8rem;
-  font-size: 0.85rem;
-  cursor: pointer;
   height: fit-content;
-}
-
-.equity-inputs button:hover {
-  background: #eeeee9;
 }
 
 .equity-error {
@@ -341,11 +378,6 @@ header h1 {
 
 .flop-solver {
   max-width: 480px;
-}
-
-.flop-solver h2 {
-  margin: 0 0 0.25rem;
-  font-size: 1.1rem;
 }
 
 .flop-solver .subtitle {
@@ -363,7 +395,7 @@ header h1 {
 .flop-inputs label {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.3rem;
   font-size: 0.8rem;
   color: var(--text-muted);
 }
@@ -371,24 +403,16 @@ header h1 {
 .flop-inputs input,
 .flop-inputs select {
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0.35rem 0.5rem;
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.6rem;
+  font-family: inherit;
   font-size: 0.9rem;
   width: 7rem;
+  transition: border-color 0.15s ease;
 }
 
 .flop-inputs button {
-  border: 1px solid var(--border);
-  background: var(--panel);
-  border-radius: 4px;
-  padding: 0.4rem 0.8rem;
-  font-size: 0.85rem;
-  cursor: pointer;
   height: fit-content;
-}
-
-.flop-inputs button:hover {
-  background: #eeeee9;
 }
 
 .flop-error {
@@ -430,7 +454,7 @@ header h1 {
   display: inline-block;
   font-size: 0.75rem;
   font-weight: 600;
-  padding: 0.1rem 0.5rem;
+  padding: 0.15rem 0.55rem;
   border-radius: 999px;
   border: 1px solid var(--border);
 }
