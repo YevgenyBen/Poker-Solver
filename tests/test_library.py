@@ -1,9 +1,9 @@
 import pytest
 
-from poker_solver.canonicalize import canonicalize_board, translate_combo
+from poker_solver.canonicalize import canonical_stack_depth, canonicalize_board, translate_combo
 from poker_solver.cards import Card
 from poker_solver.combos import range_from_class_frequencies
-from poker_solver.library import build_library, load_library, lookup_strategy, save_library
+from poker_solver.library import build_library, load_library, lookup_strategy, query_strategy, save_library
 from poker_solver.solver import solve_flop
 from poker_solver.starting_hands import StartingHand
 
@@ -35,6 +35,21 @@ BOARD_A = tuple(cards("2h 7s 9d"))  # rainbow, no rank ties
 def _build_library_kwargs(boards):
     return dict(
         boards=boards,
+        hero_classes=HERO_CLASSES,
+        villain_classes=VILLAIN_CLASSES,
+        pot=POT,
+        effective_stack_bb=STACK_BB,
+        raise_sizes=RAISE_SIZES,
+        max_raises=MAX_RAISES,
+        iterations=ITERATIONS,
+        equity_samples=EQUITY_SAMPLES,
+        equity_seed=EQUITY_SEED,
+    )
+
+
+def _query_kwargs(board):
+    return dict(
+        board=board,
         hero_classes=HERO_CLASSES,
         villain_classes=VILLAIN_CLASSES,
         pot=POT,
@@ -188,3 +203,138 @@ def test_lookup_strategy_miss_and_hit_across_a_stack_bucket_boundary():
     library = build_library(**_build_library_kwargs([BOARD_A]))  # built at 17bb -> buckets to 15
     assert lookup_strategy(library, BOARD_A, effective_stack_bb=25.0) is None  # different bucket
     assert lookup_strategy(library, BOARD_A, effective_stack_bb=17.0) is not None  # same bucket, matches build
+
+
+# ---------------------------------------------------------------------------
+# query_strategy — Phase 4: canonicalize-then-lookup, falling back to an
+# on-demand solve on a miss and caching the result.
+# ---------------------------------------------------------------------------
+
+
+def test_query_strategy_first_miss_then_hit_on_the_same_board():
+    library = {}
+
+    first = query_strategy(library, **_query_kwargs(BOARD_A))
+    assert first.hit is False
+
+    second = query_strategy(library, **_query_kwargs(BOARD_A))
+    assert second.hit is True
+    assert second.strategy == first.strategy
+
+    # Cross-check the stored entry against a fresh direct solve of the
+    # CANONICAL board with translated ranges — the same exact,
+    # deterministic pattern test_build_library_solves_at_the_canonical_
+    # bucketed_stack_depth already uses, and deliberately NOT a direct
+    # solve of BOARD_A itself: board-level equity for a flop
+    # (remaining_needed=2) is Monte Carlo sampled, and remaining_deck's
+    # suit-dependent iteration order means the same equity_seed draws
+    # genuinely different specific runouts for two differently-suited
+    # (even if isomorphic) boards — so a translated round-trip through
+    # canonical space is exactly reproducible against *itself*
+    # (deterministic), but not bit-identical to an independently
+    # re-seeded fresh solve of a non-canonical real board. Comparing
+    # against a solve of the SAME canonical board sidesteps that
+    # entirely (identical remaining_deck ordering, identical seed).
+    canonical_board, suit_map = canonicalize_board(BOARD_A)
+    canonical_stack_bb = canonical_stack_depth(STACK_BB)
+    entry = library[(canonical_board, canonical_stack_bb)]
+
+    exclude = frozenset(BOARD_A)
+    hero_range = range_from_class_frequencies(HERO_CLASSES, exclude=exclude)
+    villain_range = range_from_class_frequencies(VILLAIN_CLASSES, exclude=exclude)
+    canonical_hero_range = {translate_combo(c, suit_map): w for c, w in hero_range.items()}
+    canonical_villain_range = {translate_combo(c, suit_map): w for c, w in villain_range.items()}
+    direct = solve_flop(
+        board=canonical_board,
+        hero_range=canonical_hero_range,
+        villain_range=canonical_villain_range,
+        pot=POT,
+        effective_stack_bb=15.0,
+        raise_sizes=RAISE_SIZES,
+        max_raises=MAX_RAISES,
+        iterations=ITERATIONS,
+        equity_samples=EQUITY_SAMPLES,
+        equity_seed=EQUITY_SEED,
+    )
+    assert entry.strategy == direct.opening_range()
+
+
+def test_query_strategy_hits_a_board_isomorphic_to_a_previous_miss():
+    library = {}
+    miss = query_strategy(library, **_query_kwargs(BOARD_A))
+    assert miss.hit is False
+
+    board_b = tuple(cards("2c 7d 9h"))  # isomorphic to BOARD_A, physically different
+    assert board_b != BOARD_A
+    hit = query_strategy(library, **_query_kwargs(board_b))
+    assert hit.hit is True
+
+    # board_b is (not by coincidence of this test, but worth being exact
+    # about) exactly BOARD_A's own canonical form — canonicalize_board(
+    # board_b) is therefore an identity map, so this exact-match
+    # cross-check against a fresh direct solve of board_b is safe for
+    # the same reason test_query_strategy_first_miss_then_hit_on_the_
+    # same_board's own cross-check is: it's really comparing against a
+    # solve of the SAME canonical board, not two differently-suited
+    # boards sharing one Monte Carlo seed (see that test's comment for
+    # why the latter is not bit-exact).
+    exclude = frozenset(board_b)
+    hero_range = range_from_class_frequencies(HERO_CLASSES, exclude=exclude)
+    villain_range = range_from_class_frequencies(VILLAIN_CLASSES, exclude=exclude)
+    direct = solve_flop(
+        board=board_b,
+        hero_range=hero_range,
+        villain_range=villain_range,
+        pot=POT,
+        effective_stack_bb=15.0,
+        raise_sizes=RAISE_SIZES,
+        max_raises=MAX_RAISES,
+        iterations=ITERATIONS,
+        equity_samples=EQUITY_SAMPLES,
+        equity_seed=EQUITY_SEED,
+    )
+    direct_strategy = direct.opening_range()
+    assert set(hit.strategy.keys()) == set(direct_strategy.keys())
+    for combo_key, freqs in direct_strategy.items():
+        for action, freq in freqs.items():
+            assert hit.strategy[combo_key][action] == pytest.approx(freq)
+
+
+def test_query_strategy_mutates_the_passed_in_library_object_in_place():
+    library = {}
+    original_ref = library  # captured before the call, on purpose
+
+    query_strategy(library, **_query_kwargs(BOARD_A))
+
+    # Asserting against original_ref (not a fresh reference to `library`)
+    # is the point: it would only pass if query_strategy mutated the
+    # caller's own dict object rather than rebinding `library` to a new
+    # one internally.
+    assert len(original_ref) == 1
+    canonical_board, _ = canonicalize_board(BOARD_A)
+    assert (canonical_board, 15.0) in original_ref
+
+
+def test_query_strategy_hit_is_faster_than_miss_on_the_same_spot():
+    library = {}
+    miss = query_strategy(library, **_query_kwargs(BOARD_A))
+    hit = query_strategy(library, **_query_kwargs(BOARD_A))
+    assert miss.hit is False
+    assert hit.hit is True
+    assert hit.elapsed_seconds < miss.elapsed_seconds
+
+
+def test_query_strategy_ignores_a_changed_pot_on_a_cached_hit():
+    library = {}
+    first = query_strategy(library, **_query_kwargs(BOARD_A))
+    assert first.hit is False
+
+    kwargs = _query_kwargs(BOARD_A)
+    kwargs["pot"] = POT * 3
+    second = query_strategy(library, **kwargs)
+
+    # A changed pot doesn't trigger a re-solve or an error — pot isn't
+    # part of the canonical key, so this still hits and silently
+    # returns the first call's (pot=POT) strategy.
+    assert second.hit is True
+    assert second.strategy == first.strategy
