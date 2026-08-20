@@ -829,6 +829,84 @@ street chaining needs.
   - Engine only, no `api/main.py`/frontend changes, zero changes to any
     existing module — matches M10/M17's own precedent for a
     zero-existing-callers primitive milestone.
+- **M20 — Offline precomputed spot library (Phase 3 of the
+  real-time-speed roadmap).** `poker_solver/library.py` (new) — the
+  first real consumer of M19's `canonicalize.py`. `LibraryEntry`
+  (frozen dataclass: `canonical_board`, `canonical_stack_bb`, `pot`,
+  `strategy`, `iterations`, `elapsed_seconds`) + `build_library`/
+  `save_library`/`load_library`/`lookup_strategy`. Flop-only,
+  opening-node-only (a library entry answers "what should first-to-act
+  do on this canonical flop, at this stack depth" — not facing-a-bet or
+  any deeper node; the solve already produces that data cheaply via
+  `node_data`, but which node(s) to store is really "which action paths
+  does this library serve," the same question M16's `derive_ranges_
+  from_path` already generalizes, a natural, cheap follow-on left for
+  whenever a real consumer needs it, not attempted here). Canonical key
+  deliberately omits `pot` — one `build_library` call fixes `pot` for
+  every entry it builds, the same "fixed menu" reasoning `canonicalize.
+  py`'s own docstring already applies to `raise_sizes`/`max_raises`; a
+  multi-pot/SPR-indexed library is a flagged, explicit out-of-scope
+  follow-on.
+  - **The crux design question, resolved and proven, not hand-waved:**
+    `build_library` only accepts *class*-frequency dicts (`StartingHand
+    -> weight`), never raw per-combo `HandCombo` dicts — the only way a
+    canonical hit correctly serves *any* real board isomorphic to a
+    stored entry, not just the literal board a solve happened to run
+    against. For two real boards `B1`/`B2` that canonicalize to the
+    same `C` via generally *different* winning suit permutations to
+    safely share one entry, the translated (combo -> weight) dict must
+    come out identical either way — true because `combos.range_from_
+    class_frequencies` is suit-blind by construction (`combos_for_
+    class` enumerates from `StartingHand.high_rank`/`.low_rank` alone,
+    never a fixed suit, confirmed by reading the code, not assumed), so
+    applying any full 4-suit bijection just relabels suits throughout
+    without changing which combos exist or how many, and the uniform
+    per-class weighting makes the equivalence exact, not approximate.
+    This fails for a hand-picked, suit-asymmetric range (e.g. just
+    `{"AcKc": 1.0}`) — translating one combo under two different
+    winning permutations generally produces two different canonical
+    combos, silently misrepresenting a query built from a different
+    permutation. No cheap general runtime check catches this, so the
+    design forecloses the footgun at the API boundary instead:
+    class-dicts-only, which are suit-symmetric by construction. Stated
+    as an explicit limitation: a caller needing an arbitrary/asymmetric
+    combo-level range is out of scope for this primitive (M16's
+    `derive_ranges_from_path` territory, feeding into Phase 4).
+  - Solves at the *canonical* (bucketed) stack depth via M19's
+    `canonical_stack_depth`, never the raw input depth, so every entry
+    sharing a canonical key is genuinely interchangeable — verified by
+    a dedicated test that cross-checks a stored entry against a direct
+    `solve_flop` call at the bucketed depth, not the raw one.
+  - `save_library`/`load_library` use JSON (an entry-list shape, not a
+    packed string dict key — self-describing, hand-inspectable),
+    mirroring `equity.py`'s `cache_path`/`path.parent.mkdir` on-disk-
+    cache style precedent (the first non-numpy on-disk cache in the
+    repo).
+  - **Tested end to end, not just structurally:** a library built by
+    solving real board `A` only is queried with a real board `B` — a
+    genuine suit relabeling of `A`, physically different, never solved
+    directly — and the returned strategy is confirmed to match a fresh
+    direct `solve_flop(B, ...)` call *exactly* (not approximate-with-
+    slack; suit relabeling preserves all hand-strength/showdown
+    outcomes exactly). This is the concrete proof of the crux design
+    answer above, not just an assertion of it.
+  - **Measured, not assumed:** a 20-canonical-board library (verified
+    pairwise suit-non-isomorphic before building, so the count isn't
+    silently inflated by an accidental duplicate), at the same 23-combo
+    demo scale M17/M18 used (2 hero classes / 2 villain classes),
+    built in **18.47s total, ~0.92s/board** — in the same ballpark as
+    M18's own single-solve figure at this scale (~1.21s), the small
+    difference explained by this measurement's smaller tree (`max_
+    raises=2`, one raise size) rather than any change to the underlying
+    solve cost. Not the full 1,755-board production library (M19's own
+    measured flop-canonicalization count) — a later, separate concern
+    once this primitive's shape is validated to work at all, same
+    "prove it small first" discipline every primitive milestone this
+    session has followed.
+  - Engine only, no `api/main.py`/frontend changes, zero changes to any
+    existing module, `library.py` not added to `poker_solver/__init__.
+    py`'s `__all__` — matches M17/M19's own standalone-primitive
+    precedent.
 
 ## v3 vision (future) — live-table advisor
 
@@ -941,6 +1019,24 @@ simpler than the naive design it replaced. Confirmed by exhaustive
 enumeration: 22,100 flops collapse to 1,755 canonical forms, 270,725
 turns collapse to 16,432, and 2,598,960 rivers collapse to 134,459 —
 real numbers a future phase-3 library-sizing decision can use directly.
+
+**M20 update — phase 3 (an offline precomputed spot library) ships as a
+standalone primitive with its key contract proven, not just assumed:**
+`poker_solver/library.py` batch-solves real boards, dedupes by M19's
+canonical (board, bucketed-stack) key, and stores each distinct
+canonical solve. The real risk this phase could have gotten wrong
+silently — whether a canonical hit actually serves *any* isomorphic
+real board, or only the literal board a solve happened to run against —
+was resolved by constraining `build_library` to class-frequency ranges
+only (never raw asymmetric combo dicts, which don't have the suit-
+blindness property the whole scheme depends on) and confirmed end to
+end: a library built by solving one real board is queried with a
+*different*, merely suit-isomorphic real board never solved directly,
+and the returned strategy matches a fresh direct solve exactly. Phase 4
+(a live query path with canonicalize-then-lookup-then-fallback-to-
+on-demand-solve, plus API/frontend wiring) is the roadmap's final,
+still-unscoped phase — now unblocked, since phases 2 and 3's contracts
+are both proven, not just built.
 
 ## Engine is standalone
 

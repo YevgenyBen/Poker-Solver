@@ -1,0 +1,190 @@
+import pytest
+
+from poker_solver.canonicalize import canonicalize_board, translate_combo
+from poker_solver.cards import Card
+from poker_solver.combos import range_from_class_frequencies
+from poker_solver.library import build_library, load_library, lookup_strategy, save_library
+from poker_solver.solver import solve_flop
+from poker_solver.starting_hands import StartingHand
+
+
+def cards(text: str) -> list:
+    return [Card.from_str(token) for token in text.split()]
+
+
+# ---------------------------------------------------------------------------
+# A tiny, fast class pool, kept small and self-contained (not imported from
+# api/main.py — poker_solver's own tests never pull fixtures from the API
+# layer, and this milestone's library.py can't depend on api/ anyway, see
+# tests/test_package_boundary.py).
+# ---------------------------------------------------------------------------
+
+HERO_CLASSES = {StartingHand("A", "A"): 1.0}
+VILLAIN_CLASSES = {StartingHand("K", "K"): 1.0}
+POT = 10.0
+STACK_BB = 17.0  # buckets to 15.0 under the default 5bb bucket
+RAISE_SIZES = ()
+MAX_RAISES = 1
+ITERATIONS = 50
+EQUITY_SAMPLES = 50
+EQUITY_SEED = 1
+
+BOARD_A = tuple(cards("2h 7s 9d"))  # rainbow, no rank ties
+
+
+def _build_library_kwargs(boards):
+    return dict(
+        boards=boards,
+        hero_classes=HERO_CLASSES,
+        villain_classes=VILLAIN_CLASSES,
+        pot=POT,
+        effective_stack_bb=STACK_BB,
+        raise_sizes=RAISE_SIZES,
+        max_raises=MAX_RAISES,
+        iterations=ITERATIONS,
+        equity_samples=EQUITY_SAMPLES,
+        equity_seed=EQUITY_SEED,
+    )
+
+
+# ---------------------------------------------------------------------------
+# build_library
+# ---------------------------------------------------------------------------
+
+
+def test_build_library_covers_the_requested_boards():
+    # Different ranks from BOARD_A (2,7,9) -> genuinely distinct canonical
+    # form, not just a suit relabeling of it.
+    board_b = tuple(cards("3c 8d Th"))
+    library = build_library(**_build_library_kwargs([BOARD_A, board_b]))
+    assert len(library) == 2
+
+
+def test_build_library_dedupes_isomorphic_boards_to_one_solve():
+    # 2h 7s 9d and 2c 7d 9h are both rainbow boards with the exact same
+    # ranks (2, 7, 9) — genuinely suit-isomorphic (some 4-suit bijection
+    # maps one to the other). build_library must recognize this and only
+    # solve once.
+    board_b = tuple(cards("2c 7d 9h"))
+    canonical_a, _ = canonicalize_board(BOARD_A)
+    canonical_b, _ = canonicalize_board(board_b)
+    assert canonical_a == canonical_b  # sanity: confirms they really are isomorphic
+
+    library = build_library(**_build_library_kwargs([BOARD_A, board_b]))
+    assert len(library) == 1
+
+
+def test_build_library_solves_at_the_canonical_bucketed_stack_depth():
+    # STACK_BB=17.0 buckets to 15.0 under the default 5bb bucket.
+    library = build_library(**_build_library_kwargs([BOARD_A]))
+    (entry,) = library.values()
+    assert entry.canonical_stack_bb == pytest.approx(15.0)
+
+    # Cross-check: solving directly at stack_bb=15 (not 17) with matching
+    # seed/iterations against the same canonical board/ranges must produce
+    # the identical stored strategy — proving it solved at 15, not 17.
+    canonical_board, suit_map = canonicalize_board(BOARD_A)
+    exclude = frozenset(BOARD_A)
+    hero_range = range_from_class_frequencies(HERO_CLASSES, exclude=exclude)
+    villain_range = range_from_class_frequencies(VILLAIN_CLASSES, exclude=exclude)
+    canonical_hero_range = {translate_combo(c, suit_map): w for c, w in hero_range.items()}
+    canonical_villain_range = {translate_combo(c, suit_map): w for c, w in villain_range.items()}
+    direct = solve_flop(
+        board=canonical_board,
+        hero_range=canonical_hero_range,
+        villain_range=canonical_villain_range,
+        pot=POT,
+        effective_stack_bb=15.0,
+        raise_sizes=RAISE_SIZES,
+        max_raises=MAX_RAISES,
+        iterations=ITERATIONS,
+        equity_samples=EQUITY_SAMPLES,
+        equity_seed=EQUITY_SEED,
+    )
+    assert entry.strategy == direct.opening_range()
+
+
+# ---------------------------------------------------------------------------
+# save_library / load_library
+# ---------------------------------------------------------------------------
+
+
+def test_save_load_round_trip(tmp_path):
+    library = build_library(**_build_library_kwargs([BOARD_A]))
+    path = tmp_path / "library.json"
+    save_library(library, path)
+    loaded = load_library(path)
+
+    assert set(loaded.keys()) == set(library.keys())
+    for key, entry in library.items():
+        loaded_entry = loaded[key]
+        assert loaded_entry.canonical_board == entry.canonical_board
+        assert loaded_entry.canonical_stack_bb == pytest.approx(entry.canonical_stack_bb)
+        assert loaded_entry.pot == pytest.approx(entry.pot)
+        assert loaded_entry.iterations == entry.iterations
+        assert set(loaded_entry.strategy.keys()) == set(entry.strategy.keys())
+        for combo_key, freqs in entry.strategy.items():
+            for action, freq in freqs.items():
+                assert loaded_entry.strategy[combo_key][action] == pytest.approx(freq)
+
+
+def test_save_library_creates_parent_directories(tmp_path):
+    library = build_library(**_build_library_kwargs([BOARD_A]))
+    path = tmp_path / "nested" / "dir" / "library.json"
+    assert not path.parent.exists()
+    save_library(library, path)
+    assert path.exists()
+
+
+# ---------------------------------------------------------------------------
+# lookup_strategy — the actual point of this milestone: a hit correctly
+# serves a real board isomorphic to, but physically different from, the one
+# actually solved.
+# ---------------------------------------------------------------------------
+
+
+def test_lookup_strategy_hit_for_a_board_isomorphic_to_but_different_from_the_one_solved():
+    library = build_library(**_build_library_kwargs([BOARD_A]))
+
+    board_b = tuple(cards("2c 7d 9h"))  # isomorphic to BOARD_A, physically different
+    assert board_b != BOARD_A
+
+    looked_up = lookup_strategy(library, board_b, effective_stack_bb=STACK_BB)
+    assert looked_up is not None
+
+    # Independently solve directly against board_b and confirm an exact
+    # match (suit relabeling preserves all hand-strength/showdown outcomes
+    # exactly, so this is an exact match, not approximate-with-slack).
+    exclude = frozenset(board_b)
+    hero_range = range_from_class_frequencies(HERO_CLASSES, exclude=exclude)
+    villain_range = range_from_class_frequencies(VILLAIN_CLASSES, exclude=exclude)
+    direct = solve_flop(
+        board=board_b,
+        hero_range=hero_range,
+        villain_range=villain_range,
+        pot=POT,
+        effective_stack_bb=15.0,  # the canonical bucket STACK_BB=17.0 maps to
+        raise_sizes=RAISE_SIZES,
+        max_raises=MAX_RAISES,
+        iterations=ITERATIONS,
+        equity_samples=EQUITY_SAMPLES,
+        equity_seed=EQUITY_SEED,
+    )
+    direct_strategy = direct.opening_range()
+
+    assert set(looked_up.keys()) == set(direct_strategy.keys())
+    for combo_key, freqs in direct_strategy.items():
+        for action, freq in freqs.items():
+            assert looked_up[combo_key][action] == pytest.approx(freq)
+
+
+def test_lookup_strategy_miss_for_an_unrelated_board():
+    library = build_library(**_build_library_kwargs([BOARD_A]))
+    unrelated_board = tuple(cards("3c 8d Th"))  # different ranks, not isomorphic to BOARD_A
+    assert lookup_strategy(library, unrelated_board, effective_stack_bb=STACK_BB) is None
+
+
+def test_lookup_strategy_miss_and_hit_across_a_stack_bucket_boundary():
+    library = build_library(**_build_library_kwargs([BOARD_A]))  # built at 17bb -> buckets to 15
+    assert lookup_strategy(library, BOARD_A, effective_stack_bb=25.0) is None  # different bucket
+    assert lookup_strategy(library, BOARD_A, effective_stack_bb=17.0) is not None  # same bucket, matches build
