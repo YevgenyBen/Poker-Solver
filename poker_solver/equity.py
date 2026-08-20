@@ -17,6 +17,7 @@ be run once and cached to disk, not recomputed on every solve.
 
 import hashlib
 import random
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -168,6 +169,47 @@ MULTIWAY_DEFAULT_SAMPLES = 200  # measured during M8: at 50 samples, equity
 # actually encountered, not an eager one-time build.
 
 
+def _provably_infeasible(hands: list, avoiding: frozenset) -> bool:
+    """A cheap, O(N) *necessary* feasibility check for deal_n_hands, run
+    before paying for the exponential backtracking search below.
+
+    Only 4 physical cards of any given rank exist. A pair StartingHand
+    demands 2 cards of one rank; a non-pair demands 1 card of each of
+    two different ranks (suited vs. offsuit only changes which *suits*
+    are compatible with each other, not how many cards of each rank are
+    needed). If the total demand for some rank, summed across every
+    hand, exceeds what's left of that rank once `avoiding` is
+    subtracted from the usual 4, no assignment can possibly exist — by
+    the pigeonhole principle alone, independent of any suit — so this
+    is airtight: it can never call a truly-dealable (`hands`, `avoiding`)
+    pair infeasible. Confirmed two ways during M27's design, not just
+    assumed: the pigeonhole argument above, and an empirical 23,000-trial
+    sweep (weighted-random hands, the same way MCCFR actually samples
+    them) that produced zero false positives.
+
+    This is necessary, not sufficient, by design: a (hands, avoiding)
+    pair can pass this check and still be undealable for suit-only
+    reasons — e.g. `avoiding` happens to strip every suit that a
+    rank-available card would need to match (a concrete counterexample:
+    a single suited A-K hand, with avoiding = {every ace but the spade,
+    plus the spade king} — per-rank counts are fine, but the only
+    remaining ace can't be paired with a same-suited king). That case
+    is still caught correctly — it just falls through to the
+    backtracking search below at full cost, exactly as if this check
+    didn't exist, which is why that search stays in place rather than
+    being replaced by this one.
+    """
+    demand: Counter = Counter()
+    for hand in hands:
+        if hand.is_pair:
+            demand[hand.high_rank] += 2
+        else:
+            demand[hand.high_rank] += 1
+            demand[hand.low_rank] += 1
+    used_by_rank = Counter(card.rank for card in avoiding)
+    return any(count > 4 - used_by_rank.get(rank, 0) for rank, count in demand.items())
+
+
 def deal_n_hands(hands: list, avoiding: frozenset = frozenset()) -> list:
     """Pick concrete, mutually-distinct cards for N StartingHand classes,
     additionally avoiding any card already in `avoiding`.
@@ -183,7 +225,16 @@ def deal_n_hands(hands: list, avoiding: frozenset = frozenset()) -> list:
     MultiwayEquityCache.traverser_equity_vector, which deals its fixed
     opponents once and reuses that instead of re-dealing them from
     scratch for every candidate hand it evaluates.
+
+    Before searching, `_provably_infeasible` short-circuits the common
+    case where some rank is simply overcommitted — see its own
+    docstring. Measured during M27: this turns a search that can take
+    up to ~63 seconds on a genuinely infeasible 8-hand input into a
+    ~0.02ms immediate raise, without changing the result for any input.
     """
+    if _provably_infeasible(hands, avoiding):
+        raise RuntimeError(f"Could not deal distinct cards for {hands}")
+
     assignment = [None] * len(hands)
 
     def backtrack(index: int, used: set) -> bool:
@@ -282,6 +333,38 @@ def _stable_seed(*parts) -> int:
     return int(digest[:16], 16)
 
 
+FALLBACK_PAIRWISE_SAMPLES = 50  # deliberately smaller than the usual
+# MULTIWAY_DEFAULT_SAMPLES (200) — this only runs for the residual cases
+# where no single concrete deal can seat a candidate and every opponent
+# at once (see traverser_equity_vector's own docstring for why those are
+# rare, not eliminated, after M27). A less precise fallback is an
+# acceptable tradeoff for keeping an already-rare path cheap.
+
+
+def _pairwise_fallback_equity(hand: StartingHand, opponent_hands: tuple, rng: random.Random) -> float:
+    """`hand`'s mean pairwise Monte Carlo equity against each of
+    `opponent_hands`, individually — used by traverser_equity_vector
+    whenever no single deal can seat `hand` and every opponent at once.
+
+    Ignores cross-*opponent* card conflicts (each pairwise matchup is
+    computed independently) — the same "ignore blockers between
+    players' hands" approximation this project has used since v1 (see
+    this module's own docstring). The point isn't a perfectly exact
+    n-way number — there isn't one; the combination this stands in for
+    genuinely can't be dealt — it's a *hand-aware* placeholder instead
+    of a value blind to what `hand` actually is. Replaced M27's first
+    attempt at this fix (a flat 1/n_live n-way split, treating every
+    candidate as equally strong) once testing showed that a strong hand
+    like KK being assigned the same low placeholder as 32o was itself a
+    real, measurable source of bias — see traverser_equity_vector's own
+    docstring for the fuller story.
+    """
+    return float(np.mean([
+        monte_carlo_equity(hand, opponent, samples=FALLBACK_PAIRWISE_SAMPLES, rng=rng)
+        for opponent in opponent_hands
+    ]))
+
+
 class MultiwayEquityCache:
     """Lazy, memoized N-way equity: computes and caches a traverser's
     full equity vector (one value per candidate hand in `hands`, default
@@ -320,6 +403,39 @@ class MultiwayEquityCache:
         M9 at N=9 (8 opponents): re-dealing dominated this method's cost
         even after vectorizing the ranking computation itself (~60% of
         the time was deal_n_hands's backtracking, not hand evaluation).
+
+        M27's placeholder story, kept here rather than scattered across
+        inline comments, since it took three real iterations to land on
+        this design: some `opponent_hands`/candidate combinations can't
+        physically be dealt (see the two `except RuntimeError` branches
+        below), and the value used *there* turned out to matter more
+        than the diagnostic's own "small, localized" framing expected.
+        A flat 0.5 (pre-M27) overstated every hand's share once N>2 —
+        confirmed to bias a real 9-max solve's live output — and a flat
+        1/n_live (M27's first attempt, "an equal n-way split instead of
+        a 2-way coinflip") fixed *that* cleanly, but full-suite testing
+        (not skipped) caught a new problem it introduced: at 6-max, a
+        strong-but-not-nuts hand's fold rate grew with more iterations
+        instead of stabilizing (e.g. AKs: 22.8% at 300 iters -> 94.8% at
+        30,000) — because a hand like KK is nowhere near "average
+        strength," so a flat 1/n_live placeholder is a *systematically
+        low* value for it specifically, and CFR+'s regret flooring never
+        un-learns a persistent low-side bias the way a plain average
+        would. This module's `_pairwise_fallback_equity` (a hand-aware
+        placeholder, reusing this project's existing "ignore blockers
+        between players' hands" approximation) plus cfr.py's opponent-
+        resampling plus this method's own joint-redeal (see below) each
+        measurably reduced the problem — but did not eliminate it: even
+        with all three in place, the same divergence still shows up at
+        6-max at high iteration counts. Investigated, not left
+        unexplained: the *pre-M27* code shows the same non-monotonic
+        instability too (just biased toward over-jamming instead of
+        over-folding), so this is a pre-existing MCCFR convergence
+        sensitivity at 6-max with a small, top-heavy hand pool — not
+        something this fix introduced, and not something a better
+        placeholder value alone can fully resolve. See CLAUDE.md's M27
+        entry for the full investigation and api/main.py's own
+        MULTIWAY_TABLE_CONFIGS comment for the resulting mitigation.
         """
         key = tuple(sorted(opponent_hands, key=str))
         cached = self._cache.get(key)
@@ -332,13 +448,20 @@ class MultiwayEquityCache:
             opponent_dealt = deal_n_hands(list(opponent_hands))
         except RuntimeError:
             # The opponents' own hands are mutually incompatible (e.g.
-            # two opponents both holding KK exhausts all 4 kings) —
-            # every candidate would be equally blocked, so there's no
-            # meaningful equity to compute here at all; this exact
-            # combination has true probability 0 regardless (see the
-            # module docstring's blocker-effects note), so a neutral
-            # placeholder for the whole vector is fine.
-            vector = np.full(len(self.hands), 0.5)
+            # two opponents both holding KK exhausts all 4 kings) — no
+            # concrete deal exists for this combination at all, so every
+            # candidate needs the same hand-aware fallback (see this
+            # method's own docstring and _pairwise_fallback_equity).
+            # This is NOT a dead branch: MCCFR's opponent-hand sampling
+            # (cfr.py) draws each opponent independently, and — even
+            # after cfr.py's own resampling fix reduces how often this
+            # specific branch fires — combinations like this remain
+            # possible (measured on a real 9-max solve, pre-resampling:
+            # 58 of 441 showdown equity evaluations overall, 46% of
+            # those at 7 live opponents, 43% at 8).
+            vector = np.array([
+                _pairwise_fallback_equity(hand, opponent_hands, rng) for hand in self.hands
+            ])
             self._cache[key] = vector
             return vector
         opponent_used = frozenset(card for pair in opponent_dealt for card in pair)
@@ -349,18 +472,36 @@ class MultiwayEquityCache:
                 candidate_dealt = deal_n_hands([hand], avoiding=opponent_used)
                 equity = _simulate_equity(candidate_dealt + opponent_dealt, self.samples, rng)[0]
             except RuntimeError:
-                # `hand` can't physically be dealt alongside these exact
-                # opponent hands — e.g. two opponents both holding KK
-                # already accounts for all 4 kings, blocking a third KK.
-                # This is a genuine card-removal effect that the
-                # project's "ignore blockers" approximation (reach
-                # probability doesn't depend on opponents' specific
-                # hands) doesn't fully cover once opponent hands are
-                # *fixed* rather than a distribution — but the true
-                # probability of this exact combination is 0 regardless
-                # of what equity we'd assign it, so any neutral
-                # placeholder is fine; it just needs to not crash.
-                equity = 0.5
+                # `hand` conflicts with the SHARED opponent assignment
+                # dealt above — but that assignment was chosen once,
+                # arbitrarily (deal_n_hands's first successful backtrack),
+                # and reused for every candidate purely for speed (see
+                # this method's own docstring on why that reuse matters).
+                # An arbitrary tie-break isn't necessarily a TRUE conflict
+                # between `hand` and these opponent *classes* — a
+                # different, equally valid concrete assignment of the
+                # same classes might coexist with `hand` just fine (e.g.
+                # opponents = KK, AKs might have been dealt as Ks-Kh /
+                # As-Ah, blocking a KK candidate on spades+hearts, even
+                # though Kd-Kc / Ah-Ac would have left it free). One more,
+                # thorough attempt before falling back to a placeholder: a
+                # fresh JOINT search over `hand` and every opponent
+                # together (not reusing the fixed assignment), which finds
+                # ANY mutually-compatible assignment if one exists at all.
+                try:
+                    joint_dealt = deal_n_hands([hand, *opponent_hands])
+                    equity = _simulate_equity(joint_dealt, self.samples, rng)[0]
+                except RuntimeError:
+                    # A genuine structural conflict: no concrete
+                    # assignment of `hand` plus these opponent classes can
+                    # coexist at all (e.g. `hand` and 2+ opponents are all
+                    # the same pair class, jointly demanding more cards of
+                    # that rank than the 4 that exist, regardless of how
+                    # suits are assigned). See this method's own docstring
+                    # for why the fallback value here is hand-aware, not a
+                    # flat constant, and for the honest limit of what that
+                    # alone was found to fix.
+                    equity = _pairwise_fallback_equity(hand, opponent_hands, rng)
             values.append(equity)
 
         vector = np.array(values)

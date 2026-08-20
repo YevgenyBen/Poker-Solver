@@ -83,7 +83,7 @@ from typing import Callable, Optional
 import numpy as np
 
 from .chance import ChanceNode
-from .equity import MultiwayEquityCache
+from .equity import MultiwayEquityCache, deal_n_hands
 from .game_tree import BB, BTN, DecisionNode, TerminalNode
 
 # Opponent-action sampling always retains at least this much probability
@@ -103,6 +103,31 @@ from .game_tree import BB, BTN, DecisionNode, TerminalNode
 # N=3 for exactly this reason; 0.05 measured meaningfully better without
 # reintroducing the original degenerate-lockout bug it exists to prevent).
 EXPLORATION_EPSILON = 0.05
+
+# mccfr_solve samples each opponent's hand independently, with no
+# card-removal tracking between them (see the module docstring above)
+# — so the resulting tuple can be physically undealable (e.g. two
+# opponents both drawn as KK exhausts all 4 kings). Left unresampled,
+# MultiwayEquityCache.traverser_equity_vector still has to return
+# *something* for these, and even a well-chosen placeholder (see
+# equity.py) turned out to compound rather than average out under CFR+'s
+# regret flooring — measured during M27 at real 6-max scale: a hand's
+# fold rate that should stabilize instead grew monotonically with more
+# iterations (22.8% at 300 -> 69.2% at 3,000 -> 94.8% at 30,000), the
+# same "gets worse with more iterations" signature M8 already diagnosed
+# for a different mechanism (see EXPLORATION_EPSILON above). Rejecting
+# an infeasible opponent tuple and resampling a fresh one — instead of
+# proceeding and needing a placeholder at all — attacks this at the
+# source rather than picking a better constant to compound. Capped, not
+# unbounded: real hands pools were measured to need at most a handful of
+# retries (infeasibility rates topped out in the low tens of percent
+# even at 9-max's 8 opponents), so this generous a cap is essentially
+# never exhausted in practice; it exists only so a pathologically small
+# or degenerate hands pool (e.g. every candidate the same single pair
+# class) can't hang the solver in an unwinnable resampling loop — that
+# case falls back to proceeding with the last (infeasible) draw, exactly
+# like every draw did before this fix existed.
+MAX_OPPONENT_RESAMPLE_ATTEMPTS = 50
 
 
 @dataclass
@@ -497,7 +522,13 @@ def mccfr_solve(
 
     Unlike `solve()`, this is only deterministic given a fixed `seed`
     ("same seed -> same result"), not unconditionally — opponent hands
-    and actions are genuinely sampled.
+    and actions are genuinely sampled. Each iteration's opponent-hand
+    draw is resampled (up to MAX_OPPONENT_RESAMPLE_ATTEMPTS times) until
+    it's physically dealable, so — unlike a version without this fix —
+    the number of `rng` draws consumed per iteration isn't fixed; a
+    given `seed` still reproduces the same result, just not one whose
+    per-iteration `rng` consumption can be reasoned about independent of
+    `hands`' own composition.
     """
     num_hands = len(hands)
     hand_index = {hand: i for i, hand in enumerate(hands)}
@@ -507,11 +538,28 @@ def mccfr_solve(
     node_data: dict = {}
     for iteration in range(iterations):
         traverser = positions[iteration % len(positions)]
-        opponent_hands = {
-            position: rng.choices(hands, weights=combo_weights)[0]
-            for position in positions
-            if position != traverser
-        }
+        opponent_hands = None
+        for _ in range(MAX_OPPONENT_RESAMPLE_ATTEMPTS):
+            candidate_hands = {
+                position: rng.choices(hands, weights=combo_weights)[0]
+                for position in positions
+                if position != traverser
+            }
+            try:
+                deal_n_hands(list(candidate_hands.values()))
+            except RuntimeError:
+                continue  # opponents mutually incompatible — resample the whole draw
+            opponent_hands = candidate_hands
+            break
+        if opponent_hands is None:
+            # Every resample attempt was infeasible — only reachable with a
+            # pathologically small/degenerate hands pool (see
+            # MAX_OPPONENT_RESAMPLE_ATTEMPTS's own comment). Proceed with
+            # the last draw anyway; MultiwayEquityCache's own placeholder
+            # handles it from here, exactly as every draw did before this
+            # fix existed — this preserves termination without silently
+            # dropping the iteration.
+            opponent_hands = candidate_hands
         reach = np.array(combo_weights)
         _mccfr_recurse(
             root, traverser, opponent_hands, reach, node_data, num_hands, hand_index, equity_cache, rng

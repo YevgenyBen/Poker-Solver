@@ -1,10 +1,14 @@
 import random
+import time
 
 import numpy as np
 import pytest
 
+from poker_solver.cards import Card
 from poker_solver.equity import (
     MultiwayEquityCache,
+    _pairwise_fallback_equity,
+    _provably_infeasible,
     _stable_seed,
     build_equity_table,
     deal_n_hands,
@@ -189,6 +193,73 @@ def test_deal_n_hands_matches_deal_two_hands_for_two_hands():
 
 
 # ---------------------------------------------------------------------------
+# _provably_infeasible (M27's O(N) precheck ahead of deal_n_hands's
+# exponential backtracking)
+# ---------------------------------------------------------------------------
+
+
+def test_provably_infeasible_true_when_a_rank_is_overcommitted():
+    # 3 separate KK opponents demand 6 kings; only 4 exist.
+    hands = [StartingHand("K", "K")] * 3
+    assert _provably_infeasible(hands, frozenset()) is True
+
+
+def test_provably_infeasible_false_when_ranks_are_within_supply():
+    hands = [StartingHand("A", "A"), StartingHand("K", "K"), StartingHand("Q", "Q")]
+    assert _provably_infeasible(hands, frozenset()) is False
+
+
+def test_provably_infeasible_accounts_for_avoiding():
+    # 2 AA hands need 2 aces — fine on an empty deck, but not once
+    # `avoiding` already claims 3 of the 4 aces.
+    hands = [StartingHand("A", "A"), StartingHand("A", "A")]
+    assert _provably_infeasible(hands, frozenset()) is False
+    avoiding = frozenset({Card("A", "s"), Card("A", "h"), Card("A", "d")})
+    assert _provably_infeasible(hands, avoiding) is True
+
+
+def test_provably_infeasible_is_necessary_not_sufficient():
+    # A concrete suit-only conflict: rank counts are fine (1 ace needed,
+    # 1 left; 1 king needed, 3 left), so the precheck must NOT flag it —
+    # but the only remaining ace is the spade, and the spade king is
+    # exactly the one that's gone, so a same-suited A-K hand still can't
+    # actually be dealt. The precheck correctly declines to shortcut
+    # this; deal_n_hands must still catch it via the backtracking
+    # fallback, at full cost, exactly as if the precheck didn't exist.
+    hand = StartingHand("A", "K", suited=True)
+    avoiding = frozenset({Card("A", "h"), Card("A", "d"), Card("A", "c"), Card("K", "s")})
+    assert _provably_infeasible([hand], avoiding) is False
+    with pytest.raises(RuntimeError):
+        deal_n_hands([hand], avoiding=avoiding)
+
+
+def test_deal_n_hands_precheck_is_fast_for_a_confirmed_infeasible_case():
+    # A real 8-hand case drawn the same weighted-random way MCCFR
+    # actually samples opponents (found via a fixed-seed scratch sweep
+    # during M27's design, not hand-crafted): rank 6 is demanded by 5
+    # of these 8 hands (96o, A6o, K6o, 63s, 62o), 1 more than the 4
+    # sixes that exist. Measured directly against a standalone copy of
+    # the pre-M27 backtracking (no precheck): 1509.8ms. This test
+    # doesn't need to reproduce that "before" number — it only needs
+    # this bound to be one the old code would have blown through, which
+    # 1 second is.
+    hands = [
+        StartingHand("9", "6", suited=False),
+        StartingHand("A", "6", suited=False),
+        StartingHand("K", "6", suited=False),
+        StartingHand("T", "2", suited=False),
+        StartingHand("9", "7", suited=False),
+        StartingHand("6", "3", suited=True),
+        StartingHand("6", "2", suited=False),
+        StartingHand("Q", "Q", suited=False),
+    ]
+    start = time.perf_counter()
+    with pytest.raises(RuntimeError):
+        deal_n_hands(hands)
+    assert time.perf_counter() - start < 1.0
+
+
+# ---------------------------------------------------------------------------
 # monte_carlo_equity_n
 # ---------------------------------------------------------------------------
 
@@ -253,6 +324,60 @@ def test_stable_seed_differs_for_different_master_seed():
 
 
 # ---------------------------------------------------------------------------
+# _pairwise_fallback_equity
+# ---------------------------------------------------------------------------
+
+
+def test_pairwise_fallback_equity_is_a_probability():
+    value = _pairwise_fallback_equity(StartingHand("A", "A"), (StartingHand("K", "K"),), random.Random(1))
+    assert 0.0 <= value <= 1.0
+
+
+def test_pairwise_fallback_equity_is_deterministic_given_a_seed():
+    hand, opponents = StartingHand("A", "K", suited=True), (StartingHand("Q", "Q"), StartingHand("7", "2", suited=False))
+    first = _pairwise_fallback_equity(hand, opponents, random.Random(7))
+    second = _pairwise_fallback_equity(hand, opponents, random.Random(7))
+    assert first == second
+
+
+def test_pairwise_fallback_equity_matches_monte_carlo_equity_for_one_opponent():
+    # mean() of a length-1 list is just that element — this fallback
+    # should reduce to a plain pairwise call for a single opponent,
+    # given the same rng state either way.
+    hand, opponent = StartingHand("A", "A"), StartingHand("K", "K")
+    fallback = _pairwise_fallback_equity(hand, (opponent,), random.Random(3))
+    direct = monte_carlo_equity(hand, opponent, samples=50, rng=random.Random(3))
+    assert fallback == pytest.approx(direct)
+
+
+def test_pairwise_fallback_equity_reflects_relative_strength():
+    # The whole point of this fallback (replacing M27's first, flatter
+    # 1/n_live attempt): a strong hand should get a meaningfully higher
+    # fallback value than a weak one against the exact same opponents.
+    opponents = (StartingHand("K", "K"), StartingHand("Q", "Q"))
+    strong = _pairwise_fallback_equity(StartingHand("A", "A"), opponents, random.Random(11))
+    weak = _pairwise_fallback_equity(StartingHand("3", "2", suited=False), opponents, random.Random(11))
+    assert strong > weak
+
+
+def test_pairwise_fallback_equity_averages_across_multiple_opponents():
+    # Against one strong (KK) and one weak (32o) opponent, the fallback
+    # (only FALLBACK_PAIRWISE_SAMPLES=50 samples per matchup, deliberately
+    # cheap — see its own comment) should land roughly between AA's TRUE
+    # equity against each one alone, computed here at a much larger
+    # sample count for a stable ground truth — proving it's actually
+    # averaging both opponents, not just reflecting one of them, without
+    # the test itself being sensitive to 50-sample noise.
+    hand = StartingHand("A", "A")
+    kk, weak = StartingHand("K", "K"), StartingHand("3", "2", suited=False)
+    true_vs_kk = monte_carlo_equity(hand, kk, samples=2000, rng=random.Random(100))
+    true_vs_weak = monte_carlo_equity(hand, weak, samples=2000, rng=random.Random(101))
+    combined = _pairwise_fallback_equity(hand, (kk, weak), random.Random(4))
+    lo, hi = min(true_vs_kk, true_vs_weak), max(true_vs_kk, true_vs_weak)
+    assert lo - 0.1 < combined < hi + 0.1
+
+
+# ---------------------------------------------------------------------------
 # MultiwayEquityCache
 # ---------------------------------------------------------------------------
 
@@ -305,15 +430,60 @@ def test_multiway_cache_values_are_probabilities():
 
 def test_multiway_cache_handles_blocked_traverser_hand_gracefully():
     # Both opponents hold KK — that's all 4 kings gone, so a third KK
-    # for a candidate traverser hand is physically impossible. Must not
-    # crash; the impossible entry gets a neutral placeholder since its
-    # true probability is 0 regardless of the value assigned.
+    # for a candidate traverser hand is physically impossible even after
+    # the joint-redeal retry (2 opponents + 1 candidate, all KK, need 6
+    # kings). Must not crash; the impossible entry gets the hand-aware
+    # pairwise fallback (see _pairwise_fallback_equity) — a KK-vs-KK
+    # mirror match should land close to a real 0.5, not a flat n-way
+    # split like the old 1/3 (M27's first, since-replaced attempt).
     cache = MultiwayEquityCache(hands=[StartingHand("K", "K"), StartingHand("A", "A")], samples=20)
     vector = cache.traverser_equity_vector((StartingHand("K", "K"), StartingHand("K", "K")))
     assert len(vector) == 2
     assert not np.any(np.isnan(vector))
     assert np.all(vector >= 0.0)
     assert np.all(vector <= 1.0)
+    assert vector[0] > 0.4  # KK candidate: blocked, hand-aware fallback close to a real mirror-match 0.5
+    assert vector[1] != pytest.approx(vector[0])  # AA candidate: not blocked, a real simulated value
+
+
+def test_multiway_cache_blocked_candidate_placeholder_reflects_real_strength():
+    # 4 live opponents (KK, QQ, AA, AA — the two AAs together use all 4
+    # aces) block a 5th AA candidate even after the joint-redeal retry.
+    # The old flat-1/n_live placeholder (1/5 = 0.2, M27's first, since-
+    # replaced attempt) was blind to AA being the best possible hand;
+    # the hand-aware pairwise fallback should instead land well above
+    # that, close to AA's real average edge over this specific field.
+    cache = MultiwayEquityCache(hands=[StartingHand("A", "A")], samples=20)
+    opponents = (
+        StartingHand("K", "K"),
+        StartingHand("Q", "Q"),
+        StartingHand("A", "A"),  # together with the next AA, uses all 4 aces
+        StartingHand("A", "A"),
+    )
+    vector = cache.traverser_equity_vector(opponents)
+    assert vector[0] > 0.5
+
+
+def test_multiway_cache_opponents_mutually_infeasible_is_hand_aware():
+    # 3 separate opponents all holding KK demand 6 kings — the opponent
+    # tuple itself can't be dealt at all, hitting the OTHER fallback
+    # branch (distinct from the blocked-candidate tests above, which
+    # all have feasible opponents). The old flat-n-way-split placeholder
+    # (M27's first, since-replaced attempt) gave every candidate the
+    # exact same value regardless of hand strength; the hand-aware
+    # pairwise fallback should instead clearly favor AA (dominates KK
+    # pairwise) over 72o (dominated by KK pairwise) against this same
+    # opponent tuple.
+    cache = MultiwayEquityCache(hands=[StartingHand("A", "A"), StartingHand("7", "2", suited=False)], samples=20)
+    opponents = (StartingHand("K", "K"), StartingHand("K", "K"), StartingHand("K", "K"))
+    vector = cache.traverser_equity_vector(opponents)
+    assert len(vector) == 2
+    assert not np.any(np.isnan(vector))
+    assert np.all(vector >= 0.0)
+    assert np.all(vector <= 1.0)
+    assert vector[0] > vector[1]  # AA's fallback clearly beats 72o's, same opponents either way
+    assert vector[0] > 0.6  # AA vs KK pairwise is lopsided in AA's favor
+    assert vector[1] < 0.4  # 72o vs KK pairwise is lopsided in KK's favor
 
 
 def test_multiway_cache_deterministic_across_separate_caches_with_same_seed():

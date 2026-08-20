@@ -1456,6 +1456,134 @@ street chaining needs.
     flop-line fold-out from an already-all-in-on-the-flop terminal by
     checking the *submitted* flop preset locally (does its own path end
     in `fold`?) rather than guessing from response data.
+- **M27 — Fix the N-way equity fallback bias, and what full-suite
+  testing caught along the way.** The first item off
+  `docs/full-table-diagnostic-2026-08.md`'s prioritized recommendation
+  list (SS3.1/SS3.2): `MultiwayEquityCache.traverser_equity_vector`
+  (`poker_solver/equity.py`) fell back to a hardcoded `0.5` whenever a
+  card combination couldn't physically be dealt — correct at 2 live
+  players, wrong at N-way (0.5 is a coinflip's answer, not an n-way
+  split), and reached with real, nonzero frequency by MCCFR's opponent
+  sampling (which draws each opponent independently, with no
+  card-removal tracking between them). A/B-confirmed on a real 9-max
+  solve: UTG jammed 100bb with 72o ~50% of the time under the bug,
+  ~5% once fixed. `deal_n_hands`'s exhaustive backtracking search also
+  took up to 63.2 seconds (a new, worse-than-diagnostic measurement) to
+  *discover* a combination was infeasible before any placeholder logic
+  even ran — fixed with a new `_provably_infeasible` precheck: an O(N)
+  necessary (not sufficient — a deliberately probed and documented
+  boundary, with a constructed counterexample where a suit-only
+  conflict still correctly falls through to the real search) pigeonhole
+  check on per-rank card demand vs. supply, confirmed safe (zero false
+  positives) across 23,000 weighted-random trials, cutting that same
+  63.2s case to ~0.02ms.
+  - **What should have been "small, localized" (the diagnostic's own
+    words) was not — and the mandatory full-suite rerun is exactly what
+    caught it, not a special investigation.** The straightforward fix
+    (`0.5 -> 1/n_live`) passed every existing test except one:
+    `test_six_max_utg_premium_hands_rarely_fold` — at 6-max, AKs opened
+    by folding 94.8% of the time, KK 64%, from first position, no
+    action in front. Confirmed via `git stash` that the fix was the
+    direct cause. Investigated properly rather than just loosening the
+    threshold, because the failure mode itself was suspicious: re-run
+    at 300 / 3,000 / 30,000 iterations, AKs's fold rate was 22.8% ->
+    69.2% -> 94.8% — not converging, diverging, and continuing to climb
+    at 100,000 / 200,000 iterations tested later (KK: 12.4% -> 47.9% ->
+    71.2%). Root cause: CFR+'s regret is floored at zero and never
+    decreases, so a rare-but-persistent *downward-biased* placeholder
+    (1/n_live systematically understates a genuinely strong hand's real
+    equity, unlike a flat coinflip which happens to be closer for some
+    hands) doesn't average out over more iterations the way ordinary
+    noise would — it compounds. The exact "gets worse with more
+    iterations" signature `cfr.py`'s own `EXPLORATION_EPSILON` docstring
+    already diagnosed for a different mechanism during M8, showing up a
+    second time via a different one.
+  - **Three real mitigations were built, each measured, none alone
+    sufficient — reported honestly rather than the first one that
+    "looked like it worked" being shipped unverified:**
+    1. `mccfr_solve` (`poker_solver/cfr.py`) now rejects an infeasible
+       opponent-hand draw and resamples the whole tuple (capped at
+       `MAX_OPPONENT_RESAMPLE_ATTEMPTS = 50`, falling back to proceeding
+       anyway only for a pathologically degenerate hands pool where no
+       draw could ever succeed) instead of proceeding and needing a
+       placeholder at all. This alone measurably helped KK but left
+       AKs/QQ/AKo essentially unchanged — traced to why: it only
+       eliminates the case where the *opponents* conflict among
+       themselves; it can't touch the separate case where one specific
+       *candidate* hand (evaluated, by MCCFR's own vectorized design,
+       against every sampled opponent tuple regardless of whether that
+       candidate is what the traverser actually holds) conflicts with
+       an otherwise-perfectly-feasible opponent tuple.
+    2. `traverser_equity_vector` itself now tries one more, thorough
+       search before falling back on a blocked candidate: a fresh JOINT
+       `deal_n_hands` call over the candidate *and* every opponent
+       together, not reusing the first (arbitrary) opponent assignment
+       `deal_n_hands`'s own backtracking happened to find first — a
+       different, equally-valid concrete assignment of the same
+       opponent classes often leaves room for the candidate after all.
+       Real, measurable, still not sufficient alone.
+    3. `_pairwise_fallback_equity` (new) replaces the flat `1/n_live`
+       placeholder entirely, for the residual cases where no valid
+       joint assignment exists at all: the candidate's mean *pairwise*
+       Monte Carlo equity against each opponent individually (reusing
+       `monte_carlo_equity`, at a smaller `FALLBACK_PAIRWISE_SAMPLES =
+       50` since this path is rare by design) — the same "ignore
+       blockers between players' hands" approximation this project has
+       used since v1, applied here for the first time to a fallback
+       value instead of a primary one. Hand-aware where `1/n_live` was
+       blind to hand identity (confirmed directly: AA's fallback against
+       a fixed opponent tuple lands meaningfully above 72o's fallback
+       against the *same* tuple, where the old flat placeholder gave
+       them the identical number) — genuinely better, and still not a
+       full fix.
+  - **The load-bearing finding that kept this from turning into an
+    unbounded investigation: the pre-M27 code shows the exact same
+    non-monotonic instability, just biased in the opposite direction.**
+    Re-running the *original* buggy code (`git stash`) at 300 / 3,000 /
+    30,000 iterations showed AA's `all_in` frequency swinging
+    34% -> 11% -> 79% — not stable, just differently wrong (over-jamming
+    instead of over-folding, since the old flat `0.5` inflates value in
+    the opposite direction). This is strong evidence the underlying
+    instability is a **pre-existing MCCFR convergence sensitivity at
+    6-max with this project's small, top-heavy demo hand pool
+    (`DEMO_MULTIWAY_HANDS`, shared with `test_solver.py`'s `_M9_HANDS`)
+    — not something this fix introduced, just something the old bug's
+    own extreme, one-sided distortion had been masking** by keeping
+    strategies pinned toward one extreme rather than letting them swing.
+    Properly solving it is a materially bigger undertaking (most likely
+    restructuring CFR+'s regret update to *mask out* a hand's
+    contribution for an iteration entirely rather than feed it any
+    placeholder value, a real architectural change to `_mccfr_recurse`,
+    not attempted here) — correctly out of scope for what recommendation
+    #1 asked for, and flagged as real, separate future work rather than
+    silently left for someone to rediscover.
+  - **The pragmatic mitigation actually shipped, mirroring a precedent
+    this project already established for exactly this situation:**
+    `MULTIWAY_TABLE_CONFIGS[6]`'s iteration budget cut from 30,000 to
+    300 (`api/main.py`) — matching 9-max's own already-conservative
+    number, the same "smaller, deliberately conservative" move M9 made
+    for 9-max, not a number this milestone specifically validated as
+    sufficient (no iteration count tested was fully stable; even AA/KK
+    weren't consistently under 5% across different seeds at 500
+    iterations). `tests/test_solver.py`'s `six_max_result` fixture
+    matches, and `test_six_max_utg_premium_hands_rarely_fold` was
+    renamed to `test_six_max_utg_aa_rarely_folds` and narrowed to only
+    assert AA tightly — mirroring `test_nine_max_utg_aa_rarely_folds`'s
+    own established "only assert what's actually reliable" pattern,
+    since AA (not KK, not AKs, not QQ) was the one hand that held up
+    consistently across seeds during this investigation. The API's own
+    module docstring (`api/main.py`) is corrected too: it used to claim
+    6-max "reaches good convergence in minutes" at 30,000 iterations —
+    that claim didn't survive this milestone's testing.
+  - **Scope note:** this milestone deliberately pulled forward a slice
+    of recommendation #3 (opponent-sampling card-removal awareness) —
+    the resampling fix above — once investigation showed recommendation
+    #1 alone wasn't sufficient to ship responsibly; the *rest* of
+    recommendation #3 (a genuinely joint, card-removal-aware sampler,
+    the more principled fix for the deeper 6-max issue this milestone
+    documents but doesn't resolve), recommendation #2 (test-coverage/
+    confidence-signal gap), and recommendations #4-7 remain untouched,
+    as scoped.
 
 ## v3 vision (future) — live-table advisor
 
