@@ -56,3 +56,26 @@ export interface FlopQueryResponse {
   position: string;
   positions: string[];
 }
+
+// Mirrors api/schemas.py's FlopPathQueryResponse — /solve_flop_from_path
+// (M24), backed by poker_solver.library.query_strategy_from_path (M23).
+// Deliberately not a reuse of FlopQueryResponse above: position/positions
+// are the real resolved labels here (e.g. "BB"/["BB","BTN"]), not a
+// hardcoded "OOP"/"IP"; pot is genuinely request-varying, not fixed; and
+// stack_bb (the preflop starting depth) vs. effective_stack_bb (what's
+// left entering the flop, after preflop investment) are two distinct
+// numbers.
+export interface FlopPathQueryResponse {
+  board: string;
+  canonical_board: string;
+  action_path: string[];
+  stack_bb: number;
+  effective_stack_bb: number;
+  canonical_stack_bb: number;
+  pot: number;
+  hit: boolean;
+  elapsed_seconds: number;
+  strategy: OpeningRange;
+  position: string;
+  positions: string[];
+}

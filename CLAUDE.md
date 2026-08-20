@@ -1178,6 +1178,96 @@ street chaining needs.
     M15/M16/M19/M20/M21's own bridge-milestone precedent. Confirmed M22
     did not already partially cover this: `/solve_flop_cached` calls
     `query_strategy` with fixed constants, never anything path-derived.
+- **M24 — Live endpoint (+ frontend) for a real action-path
+  description.** Closes the last thing M21/M22/M23 each still listed
+  as remaining. `POST /solve_flop_from_path` — stack in (big blinds),
+  a sequence of action *kinds* (`"raise"`/`"call_or_check"`/`"fold"`/
+  `"all_in"`, no exact sizes needed), a flop board, out comes hero's
+  per-combo strategy on a real, user-described situation rather than a
+  fixed demo range. The first `POST`/request-body route in this app
+  (every other route is `GET`-with-query-params — a variable-length
+  structured action sequence doesn't fit that shape naturally).
+  `poker_solver/game_tree.py` gains `resolve_action(node, kind)` — the
+  first *shared* version of a pattern ~30 call sites across this
+  codebase had each inlined separately (`next(a for a in node.
+  legal_actions if a.kind == X)`), safe because at most one sized
+  `RAISE` action can ever exist at a single node (confirmed structural,
+  not incidental — `_raise_total_size` computes one scalar, assigned
+  once inside one `if`, never a loop), so a bare kind is never
+  ambiguous.
+  - **Finding 1, measured before shipping, not assumed: a fully general
+    backend would have been catastrophic, not just slow.**
+    `derive_ranges_from_path` doesn't prune anything — a real walked
+    path against the actual 169-class preflop pool left **both sides'
+    entire pool nonzero** (CFR+'s own floating-point floor, not a
+    meaningful signal), a **~1,176-combo union** that would cost on the
+    order of *hours per request* fed straight into `solve_flop`'s O(N²)
+    equity-table build. Fixed at the API layer, not the engine —
+    `derive_ranges_from_path`/`query_strategy_from_path` are untouched,
+    exactly as general as M16/M23 built them — by capping the *derived*
+    range to the top `MAX_PATH_QUERY_CLASSES_PER_SIDE` (6)
+    highest-frequency classes per side (via `dataclasses.replace` on
+    `PathScenario`'s frozen `ranges` field) before calling `query_
+    strategy_from_path`. Measured for real: ~82 combos, ~21s/miss on a
+    real 3-step path — the same "shipped anyway, real measured cost,
+    not hidden" bucket M9/M14 already established. Also confirmed the
+    cap keeps the *realistic* range, not an arbitrary one: on a real
+    3-bet-call line, the top-ranked BTN classes were JTs/QTs/Q9s/A6s/
+    A7o, with AA/KK/QQ/AKs at the *bottom* — the same "premium hands
+    4-bet/jam rather than flat a 3-bet" pattern M16 already documented,
+    resurfacing here as independent confirmation top-K keeps signal,
+    not noise.
+  - **Finding 2, also caught before shipping: sharing one library dict
+    (M22's own pattern) would have silently corrupted answers here.**
+    `query_strategy`'s canonical key is `(canonical_board, canonical_
+    stack_bb)` only — safe for `/solve_flop_cached` because its range/
+    pot are fixed constants, identical on every call. This endpoint's
+    range/pot are derived fresh per request from each client's own
+    `action_path` — two unrelated real situations that happen to
+    canonicalize to the same (board, stack-bucket) key would silently
+    return each other's answer on a "hit." Fixed with a partitioned
+    `_path_query_libraries`, one private library per distinct
+    `(action_path, stack_bb, iterations)`, never one shared dict —
+    verified live, not just reasoned about: two different action paths
+    at the identical board/stack produced two separate partitions,
+    correctly different pots, and correctly different strategies.
+  - `_get_or_solve_preflop_raw` caches the *raw* `StrategyResult`
+    (unlike `/solve/{stack_bb}`'s own `_get_or_solve`, which formats
+    and discards it) — mirrors `_get_or_solve_multiway`'s own
+    "cache the raw result" precedent, needed here since `derive_
+    ranges_from_path` has to walk the real tree/`node_data`.
+  - Two independent, deliberately different iteration decisions: the
+    *preflop*-stage `iterations` is a real request field (capped by the
+    existing `MAX_ITERATIONS`) — safe, since `_get_or_solve_preflop_raw`
+    is a plain per-request cache dict, exactly like `/solve/{stack_bb}`
+    already relies on. The *flop*-stage iterations stay a fixed
+    constant, not exposed — that part sits behind `query_strategy`'s
+    canonical-library abstraction, where a client-varying value would
+    be silently ignored on a hit, the exact bug class `/solve_flop_
+    cached`'s own design principle already guards against.
+  - **Frontend:** `ActionPathSolver.tsx` (new) — a curated 3-preset
+    selector ("BTN opens, BB calls" / "BTN opens, BB 3-bets, BTN
+    calls" / "BTN limps, BB checks back"), deliberately not a general
+    step-by-step action-path builder. A true general wizard needs its
+    own companion "what's legal from here" endpoint plus incremental
+    round-trip state management — real, separate scope this project
+    has never built in the same milestone as the general backend (M9's
+    curated hand subset, M11's curated range before M16 generalized
+    the *input* side, M14's curated pool). The backend stays fully
+    general regardless (costs nothing extra beyond the cap above), so
+    a future milestone can build the general wizard without touching
+    the route/schema again. `api.ts`'s `fetchJson` generalized from a
+    bare `signal?` param to a full `RequestInit` for this endpoint's
+    `POST`/JSON body — the first of its kind — confirmed backward-
+    compatible with every existing `GET` caller (same `fetch(url, {
+    signal })` call shape either way, no existing test assertions
+    needed to change). Live-verified in the browser end to end: each
+    preset solves and renders a real strategy with sane `pot`/
+    `effective_stack_bb` numbers (the 3-bet preset's pot visibly
+    exceeds the open-call preset's); re-solving the identical preset/
+    board/stack shows a cache hit with a sharp `elapsed_seconds` drop;
+    a malformed board produces the existing error-banner path and
+    clears correctly; switching presets clears a stale result.
 
 ## v3 vision (future) — live-table advisor
 
@@ -1191,17 +1281,19 @@ situation, not a curated demo range.
 Two gaps identified when scoping this, pulling in different directions:
 **flexible situation input** (`solve_flop*` only ever consumed curated
 hardcoded ranges or, as of M15, one fixed preflop line — M16 is the
-first general step past that, M23 the second) and **real-time speed**
-(measured solve times, M12-M14, run ~20s to several minutes even for
-small ranges). The user chose flexible input first, since speed work
-is easier to scope once the shape of query it needs to serve fast is
-known. Now addressed at the engine level by the 4-phase real-time-speed
-roadmap below (M17-M21), wired into a live endpoint by M22, and
-connected to a real, user-derived situation (not just a fixed demo
-range) by M23: a hit costs ~0.15-0.2ms, a miss falls back to an
-on-demand solve (~0.95-1.55s) — the remaining gap is a live endpoint
-that accepts a real, untrusted action-path description end to end, not
-the underlying pieces, which are all now proven to compose.
+first general step past that, M23 the second, M24 the third) and
+**real-time speed** (measured solve times, M12-M14, run ~20s to several
+minutes even for small ranges). The user chose flexible input first,
+since speed work is easier to scope once the shape of query it needs to
+serve fast is known. Both gaps are now closed end to end: the 4-phase
+real-time-speed roadmap (M17-M21), wired into a live endpoint by M22,
+connected to a real, user-derived situation by M23, and finally exposed
+as a real live endpoint accepting an untrusted action-path description
+by M24 (`POST /solve_flop_from_path`) — a hit costs ~0.15-0.2ms, a real
+derived-situation miss ~17-21s (capped, per M24's own Finding 1, from
+what would otherwise be hours). What remains, deliberately: multiway
+postflop solving, the LLM layer, and a general step-by-step action-path
+UI (M24's own frontend is a curated 3-preset selector, not that).
 
 Where an LLM fits, and deliberately doesn't: translating a player's
 natural-language hand description into the structured input the engine
@@ -1214,14 +1306,15 @@ computation for LLM pattern-matching that can sound just as confident
 when wrong — exactly what a real solver exists to avoid.
 
 Not scoped yet, deliberately: multiway postflop solving, the LLM layer
-itself, and a live endpoint that accepts a real, untrusted action-path
-description end to end (the engine-level pieces — `poker_solver/
-library.py`, M19-M23, see "The real-time-speed roadmap" below — are all
-wired and proven to compose; only that final product-surface step
-remains). M16 (arbitrary action-path range derivation) is the first
-concrete bridge piece, M23 (connecting it to `query_strategy`) the
-second — everything else here depends on a general way to describe "the current
-situation" first.
+itself, and a general step-by-step action-path builder UI (M24 ships a
+curated 3-preset selector calling a fully general backend — see
+`CLAUDE.md`'s M24 entry — not the general wizard; that needs its own
+companion "what's legal from here" endpoint and incremental frontend
+state management, real separate scope). M16 (arbitrary action-path
+range derivation) is the first concrete bridge piece, M23 (connecting
+it to `query_strategy`) the second, M24 (a live endpoint exposing that
+connection to a real, untrusted client) the third and last needed to
+close this gap end to end.
 
 ### The real-time-speed roadmap
 
@@ -1385,6 +1478,22 @@ action-path description (deliberately deferred, same reasoning as
 every other bridge milestone in this roadmap) and multiway postflop
 solving (out of scope for this entire roadmap, not just this
 milestone).
+
+**M24 update — the live endpoint ships too, closing this roadmap's
+product-surface work:** `POST /solve_flop_from_path` finally exposes
+the full canonicalize -> library -> path-derived-range chain to a real,
+untrusted client — the thing M21 first named as remaining, that every
+milestone since (M22, M23) closed one piece of. Getting there safely
+required two real findings, not just wiring the pieces together: an
+uncapped derived range would have cost hours per request (Finding 1,
+fixed with a request-time top-K cap, engine layer untouched), and
+sharing one canonical-key library across different real situations
+would have silently corrupted answers (Finding 2, fixed with a
+partitioned per-`(action_path, stack_bb, iterations)` library). Real
+measured numbers: a capped miss costs ~17-21s, a hit ~0.1-0.7ms.
+Multiway postflop solving and the LLM layer remain the only things
+this whole roadmap + its flexible-input companion thread never
+scoped — both explicitly future work, not this project's v2.
 
 ## Engine is standalone
 

@@ -20,6 +20,14 @@ FAST_MULTIWAY_ITERATIONS = 30
 # constant even though the value happens to coincide with others below,
 # matching this file's existing per-endpoint naming precedent.
 FAST_FLOP_QUERY_ITERATIONS = 20
+# /solve_flop_from_path's (M24) own fast-test flop-stage iteration count
+# and range cap — mirrors FLOP_QUERY_ITERATIONS' own shrink, plus a
+# class-per-side cap far below MAX_PATH_QUERY_CLASSES_PER_SIDE's real
+# value (6) so even the full 169-class preflop pool caps down to a tiny,
+# fast flop-stage solve (see the module docstring's Finding 1 for why an
+# uncapped pool is untestable at any speed).
+FAST_PATH_QUERY_ITERATIONS = 20
+FAST_MAX_PATH_QUERY_CLASSES_PER_SIDE = 2
 
 
 @pytest.fixture(autouse=True)
@@ -58,12 +66,22 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
     monkeypatch.setattr(api_main, "FLOP_QUERY_HERO_CLASSES", {StartingHand("A", "A"): 1.0})
     monkeypatch.setattr(api_main, "FLOP_QUERY_VILLAIN_CLASSES", {StartingHand("K", "K"): 1.0})
     monkeypatch.setattr(api_main, "FLOP_QUERY_ITERATIONS", FAST_FLOP_QUERY_ITERATIONS)
+    # /solve_flop_from_path (M24) solves a REAL preflop spot over the
+    # full 169-class pool internally (that's the whole point — a real
+    # derived situation, not a fixed demo range), so there's no fixed
+    # class-pool constant to shrink the way FLOP_QUERY_HERO_CLASSES
+    # shrinks /solve_flop_cached's. Instead this fixture shrinks the
+    # *cap* applied at request time, and the flop-stage iteration count.
+    monkeypatch.setattr(api_main, "PATH_QUERY_ITERATIONS", FAST_PATH_QUERY_ITERATIONS)
+    monkeypatch.setattr(api_main, "MAX_PATH_QUERY_CLASSES_PER_SIDE", FAST_MAX_PATH_QUERY_CLASSES_PER_SIDE)
     _cache.clear()
     _multiway_cache.clear()
     api_main._flop_cache.clear()
     api_main._flop_turn_cache.clear()
     api_main._flop_to_river_cache.clear()
     api_main._flop_query_library.clear()
+    api_main._preflop_raw_cache.clear()
+    api_main._path_query_libraries.clear()
     yield
     _cache.clear()
     _multiway_cache.clear()
@@ -71,6 +89,8 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
     api_main._flop_turn_cache.clear()
     api_main._flop_to_river_cache.clear()
     api_main._flop_query_library.clear()
+    api_main._preflop_raw_cache.clear()
+    api_main._path_query_libraries.clear()
 
 
 @pytest.fixture()
@@ -654,3 +674,112 @@ def test_solve_flop_cached_different_boards_are_not_confused(client):
     assert first["hit"] is False
     assert second["hit"] is False
     assert first["canonical_board"] != second["canonical_board"]
+
+
+# ---------------------------------------------------------------------------
+# M24 deliverable: POST /solve_flop_from_path — a real preflop action
+# sequence (not a fixed demo range) in, flop advice out, chaining
+# derive_ranges_from_path (M16) into query_strategy_from_path (M23).
+# ---------------------------------------------------------------------------
+
+_PATH_ITERATIONS = 200  # a real per-request preflop solve, not fixture-capped — kept small for test speed
+
+
+def _path_body(action_path, stack_bb=100.0, board="2h6d9c", iterations=_PATH_ITERATIONS):
+    return {"stack_bb": stack_bb, "action_path": action_path, "board": board, "iterations": iterations}
+
+
+def test_solve_flop_from_path_returns_200_for_a_real_open_call_line(client):
+    response = client.post("/solve_flop_from_path", json=_path_body(["raise", "call_or_check"]))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["hit"] is False
+    assert body["board"] == "2h6d9c"
+    assert len(body["canonical_board"]) == 6
+    assert body["position"] in ("BTN", "BB")
+    assert set(body["positions"]) == {"BTN", "BB"}
+    assert len(body["strategy"]) > 0
+    for freqs in body["strategy"].values():
+        assert sum(freqs.values()) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_solve_flop_from_path_returns_200_for_a_real_open_3bet_call_line(client):
+    # A 3-step path (BTN acts twice) — pot must exceed the 2-step
+    # open-call line's, a real, cheap, meaningful check.
+    open_call = client.post("/solve_flop_from_path", json=_path_body(["raise", "call_or_check"])).json()
+    open_3bet_call = client.post(
+        "/solve_flop_from_path", json=_path_body(["raise", "raise", "call_or_check"])
+    ).json()
+    assert open_3bet_call["pot"] > open_call["pot"]
+
+
+def test_solve_flop_from_path_rejects_an_unknown_action_kind(client):
+    response = client.post("/solve_flop_from_path", json=_path_body(["not_a_real_kind"]))
+    assert response.status_code == 422
+
+
+def test_solve_flop_from_path_rejects_a_kind_illegal_at_a_specific_step(client):
+    # BB facing a limp has no fold option — step 1 (0-indexed) fails.
+    response = client.post("/solve_flop_from_path", json=_path_body(["call_or_check", "fold"]))
+    assert response.status_code == 422
+    assert "step 1" in response.json()["detail"]
+
+
+def test_solve_flop_from_path_rejects_a_non_terminal_path(client):
+    response = client.post("/solve_flop_from_path", json=_path_body(["raise"]))
+    assert response.status_code == 422
+
+
+def test_solve_flop_from_path_rejects_an_empty_action_path(client):
+    response = client.post("/solve_flop_from_path", json=_path_body([]))
+    assert response.status_code == 422
+
+
+def test_solve_flop_from_path_rejects_a_folded_out_path(client):
+    response = client.post("/solve_flop_from_path", json=_path_body(["fold"]))
+    assert response.status_code == 422
+
+
+def test_solve_flop_from_path_rejects_a_malformed_board(client):
+    response = client.post(
+        "/solve_flop_from_path", json=_path_body(["raise", "call_or_check"], board="Jh7d")
+    )
+    assert response.status_code == 422
+
+
+def test_solve_flop_from_path_reuses_the_cached_preflop_solve_across_different_paths(client):
+    client.post("/solve_flop_from_path", json=_path_body(["raise", "call_or_check"]))
+    client.post("/solve_flop_from_path", json=_path_body(["call_or_check", "call_or_check"]))
+    assert len(api_main._preflop_raw_cache) == 1
+
+
+def test_solve_flop_from_path_partitions_different_paths_into_separate_libraries(client):
+    # The actual point of Finding 2's fix: two different action_paths at
+    # the same stack_bb/board must never share one canonical-key
+    # library, or one could silently serve the other's answer.
+    open_call = client.post("/solve_flop_from_path", json=_path_body(["raise", "call_or_check"])).json()
+    limp_check = client.post(
+        "/solve_flop_from_path", json=_path_body(["call_or_check", "call_or_check"])
+    ).json()
+    assert len(api_main._path_query_libraries) == 2
+    assert open_call["pot"] != limp_check["pot"]
+    assert open_call["strategy"] != limp_check["strategy"]
+
+
+def test_solve_flop_from_path_repeat_query_hits(client):
+    body = _path_body(["raise", "call_or_check"])
+    first = client.post("/solve_flop_from_path", json=body).json()
+    second = client.post("/solve_flop_from_path", json=body).json()
+    assert first["hit"] is False
+    assert second["hit"] is True
+    assert second["elapsed_seconds"] < first["elapsed_seconds"]
+
+
+def test_solve_flop_from_path_hits_a_board_isomorphic_to_a_previous_miss(client):
+    first = client.post("/solve_flop_from_path", json=_path_body(["raise", "call_or_check"], board="2h6d9c")).json()
+    second = client.post(
+        "/solve_flop_from_path", json=_path_body(["raise", "call_or_check"], board="2c6d9h")
+    ).json()
+    assert first["hit"] is False
+    assert second["hit"] is True
+    assert second["canonical_board"] == first["canonical_board"]

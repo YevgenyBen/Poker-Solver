@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchEquity, fetchFlopStrategy, fetchOpeningRange, SolveError } from './api';
+import { fetchEquity, fetchFlopStrategy, fetchFlopStrategyFromPath, fetchOpeningRange, SolveError } from './api';
 
 describe('fetchOpeningRange', () => {
   afterEach(() => {
@@ -189,6 +189,56 @@ describe('fetchFlopStrategy', () => {
     expect(fetchMock).toHaveBeenLastCalledWith(
       '/solve_flop_to_river?board=Jh7d2c&pot=10&stack_bb=40&position=OOP',
       { signal: undefined },
+    );
+  });
+});
+
+describe('fetchFlopStrategyFromPath', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('POSTs a JSON body and returns the parsed response', async () => {
+    const payload = {
+      board: 'Jh7d2c',
+      canonical_board: 'Jc2d7h',
+      action_path: ['raise', 'call_or_check'],
+      stack_bb: 100,
+      effective_stack_bb: 97.5,
+      canonical_stack_bb: 100,
+      pot: 5,
+      hit: false,
+      elapsed_seconds: 17.2,
+      strategy: {},
+      position: 'BB',
+      positions: ['BB', 'BTN'],
+    };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(payload) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await fetchFlopStrategyFromPath(100, ['raise', 'call_or_check'], 'Jh7d2c');
+    expect(result).toEqual(payload);
+    expect(fetchMock).toHaveBeenCalledWith('/solve_flop_from_path', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stack_bb: 100, action_path: ['raise', 'call_or_check'], board: 'Jh7d2c' }),
+      signal: undefined,
+    });
+  });
+
+  it('throws SolveError with the server-provided detail on failure', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 422,
+        json: () => Promise.resolve({ detail: "step 0: 'not_a_kind' is not legal at this node" }),
+      }),
+    );
+
+    await expect(fetchFlopStrategyFromPath(100, ['not_a_kind'], 'Jh7d2c')).rejects.toThrow(SolveError);
+    await expect(fetchFlopStrategyFromPath(100, ['not_a_kind'], 'Jh7d2c')).rejects.toThrow(
+      "step 0: 'not_a_kind' is not legal at this node",
     );
   });
 });

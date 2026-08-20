@@ -141,8 +141,42 @@ pre-warmed, unlike /solve_flop_turn and /solve_flop_to_river — pre-
 warming the frontend's own default board would mean a user's very
 first, unmodified click already showed a cache hit, undercutting the
 one thing this endpoint exists to demonstrate.
+
+POST /solve_flop_from_path is M24's deliverable, closing the last thing
+M21/M22/M23 each still listed as remaining: a live endpoint that
+accepts a real, untrusted action-path description end to end (stack in,
+big blinds; a sequence of action *kinds* like "raise"/"call_or_check";
+a flop board out) rather than a fixed demo range. Chains a real preflop
+solve (cached raw, not just formatted, unlike /solve/{stack_bb}'s own
+`_get_or_solve`) through `derive_ranges_from_path` (M16) into `query_
+strategy_from_path` (M23) — the first endpoint to actually exercise
+that connection live. This is the first POST/request-body route in
+this app (every other route is GET-with-query-params) — variable-length
+structured input (an action sequence) doesn't fit that shape naturally.
+
+Two real problems were found and fixed *before* this shipped, not
+after: (1) `derive_ranges_from_path` doesn't prune anything — a real
+walked path against the full 169-class preflop pool left both sides'
+*entire* class pool nonzero (CFR+'s own floating-point floor, not a
+meaningful signal), a ~1,176-combo union that would cost on the order
+of hours per request fed straight into `solve_flop`'s O(N²) equity-
+table build. Fixed by capping the *derived* range to the top
+MAX_PATH_QUERY_CLASSES_PER_SIDE highest-frequency classes per side at
+this API layer (via `dataclasses.replace` on the `PathScenario` — the
+engine layer itself, `derive_ranges_from_path`/`query_strategy_from_
+path`, is untouched and stays exactly as general as M16/M23 built it),
+measured for real at ~82 combos / ~21s per miss on a real 3-step path.
+(2) Unlike /solve_flop_cached's one shared `_flop_query_library` (safe
+there only because its range/pot are fixed constants, identical on
+every call), this endpoint's range/pot are derived fresh per request
+from each client's own action_path — sharing one dict would let two
+unrelated real situations that happen to canonicalize to the same
+(board, stack-bucket) key silently return each other's answer. Fixed
+with a partitioned `_path_query_libraries`, one dict per distinct
+(action_path, stack_bb, iterations), never a single shared one.
 """
 
+import dataclasses
 import logging
 import os
 import threading
@@ -158,14 +192,15 @@ from poker_solver.canonicalize import canonical_stack_depth, canonicalize_board
 from poker_solver.cards import parse_cards
 from poker_solver.combos import HandCombo, range_from_class_frequencies
 from poker_solver.equity import MultiwayEquityCache
-from poker_solver.game_tree import GameConfig
-from poker_solver.library import query_strategy
+from poker_solver.game_tree import DecisionNode, GameConfig, resolve_action
+from poker_solver.library import query_strategy, query_strategy_from_path
 from poker_solver.solver import (
     DEFAULT_FLOP_ITERATIONS,
     DEFAULT_FLOP_TO_RIVER_ITERATIONS,
     DEFAULT_FLOP_TURN_ITERATIONS,
     DEFAULT_ITERATIONS,
     StrategyResult,
+    derive_ranges_from_path,
     solve_flop,
     solve_flop_to_river,
     solve_flop_turn,
@@ -174,7 +209,14 @@ from poker_solver.solver import (
 from poker_solver.starting_hands import StartingHand
 from poker_solver.strategy_format import format_flop_response, format_solve_response
 
-from .schemas import EquityResponse, FlopQueryResponse, FlopSolveResponse, SolveResponse
+from .schemas import (
+    ActionPathRequest,
+    EquityResponse,
+    FlopPathQueryResponse,
+    FlopQueryResponse,
+    FlopSolveResponse,
+    SolveResponse,
+)
 
 # The React app's production build (see frontend/, `npm run build`). Not
 # committed to git — build it locally or in CI before serving for real.
@@ -288,6 +330,33 @@ FLOP_QUERY_VILLAIN_CLASSES = {
 FLOP_QUERY_POT = 10.0
 FLOP_QUERY_ITERATIONS = DEFAULT_FLOP_ITERATIONS
 
+# /solve_flop_from_path's (M24) own cost controls. MAX_PATH_QUERY_
+# CLASSES_PER_SIDE is not a fixed demo pool like the constants above —
+# derive_ranges_from_path's own output is capped down to this many
+# highest-frequency classes per side at request time (see the module
+# docstring's Finding 1: an uncapped real path left the *entire*
+# 169-class pool nonzero, a ~1,176-combo union that would cost hours
+# per request). Measured for real at this value: ~82 combos, ~21s per
+# miss on a real 3-step path — a deliberate, moderately larger cap than
+# FLOP_QUERY_HERO_/VILLAIN_CLASSES' own 2-classes-per-side, since this
+# endpoint's whole point is representing a real derived situation, not
+# a curated demo, so keeping more of the genuinely relevant range is
+# worth the extra cost. MAX_PATH_LENGTH is cheap insurance, not load-
+# bearing — the tree structurally bounds a real legal path to roughly
+# 2*max_raises regardless, an oversized list fails fast at the first
+# illegal step either way.
+MAX_PATH_QUERY_CLASSES_PER_SIDE = 6
+MAX_PATH_LENGTH = 20
+# Flop-stage iterations, fixed — not exposed, unlike the preflop-stage
+# iterations request field below. This part of the pipeline sits behind
+# query_strategy's canonical-library abstraction, where a client-
+# varying value would be silently ignored on a cache hit — the exact
+# bug class /solve_flop_cached's own design principle already guards
+# against; the preflop-stage solve, by contrast, is a plain per-request
+# cache dict (see _get_or_solve_preflop_raw), so exposing *its* own
+# iterations is exactly as safe as /solve/{stack_bb} already relies on.
+PATH_QUERY_ITERATIONS = DEFAULT_FLOP_ITERATIONS
+
 # Fixed server-side constants, not query params — same reasoning
 # DEMO_FLOP_HERO_/VILLAIN_CLASSES already establish (letting a client
 # control tree size/range directly is an unbounded-cost door). Different
@@ -341,6 +410,18 @@ _flop_to_river_lock = threading.Lock()
 # docstring for why that's a deliberate, stricter departure.
 _flop_query_library: dict = {}
 _flop_query_lock = threading.Lock()
+
+_preflop_raw_cache: dict = {}
+_preflop_raw_lock = threading.Lock()
+# Deliberately NOT one shared dict like _flop_query_library above — see
+# the module docstring's Finding 2. This endpoint's range/pot are
+# derived fresh per request from each client's own action_path, unlike
+# /solve_flop_cached's fixed demo range, so a shared canonical (board,
+# stack) key could silently serve one real situation's answer to an
+# unrelated one. One private library per distinct (action_path,
+# stack_bb, iterations) instead.
+_path_query_libraries: dict = {}
+_path_query_lock = threading.Lock()
 
 
 def _prewarm_enabled() -> bool:
@@ -564,6 +645,144 @@ def _query_flop(board_cards: tuple, stack_bb: float) -> dict:
     }
 
 
+def _get_or_solve_preflop_raw(stack_bb: float, iterations: int) -> StrategyResult:
+    """Solves (or returns the cached result of solving) a real heads-up
+    preflop spot, caching the RAW StrategyResult — unlike _get_or_solve
+    above, which formats the result and discards it. M24 needs the real
+    tree/node_data to walk with derive_ranges_from_path, the same
+    reason _get_or_solve_multiway already caches its own raw result
+    rather than a formatted one. Its own cache dict, not _cache — a
+    formatted dict and a raw StrategyResult are different
+    representations, never mixed in one dict (mirrors every other
+    cache-dict boundary in this file)."""
+    key = _cache_key(stack_bb, iterations)
+    with _preflop_raw_lock:
+        cached = _preflop_raw_cache.get(key)
+    if cached is not None:
+        return cached
+
+    result = solve_preflop(stack_bb=stack_bb, iterations=iterations)
+
+    with _preflop_raw_lock:
+        _preflop_raw_cache[key] = result
+    return result
+
+
+def _resolve_action_path(root: DecisionNode, action_kinds: list) -> list:
+    """Turns a client-supplied list of bare action *kind* strings (e.g.
+    ["raise", "call_or_check"]) into the real Action objects derive_
+    ranges_from_path needs, walking the tree one step at a time via
+    game_tree.resolve_action. Raises ValueError prefixed with the
+    (0-indexed) step number that failed — friendlier than a bare
+    tree-level error for an untrusted caller who can't see the tree.
+
+    Explicitly checks isinstance(node, DecisionNode) before resolving
+    each step — a TerminalNode has no legal_actions at all (calling
+    resolve_action on one would raise a raw AttributeError, not a clean
+    ValueError), so an action_path that runs past a real terminal needs
+    to be caught here, one step before derive_ranges_from_path's own
+    "path continues past a TerminalNode" check would otherwise catch it
+    on the already-fully-built Action list.
+    """
+    actions = []
+    node = root
+    for step, kind in enumerate(action_kinds):
+        if not isinstance(node, DecisionNode):
+            raise ValueError(f"step {step}: the hand is already over — no more actions are legal")
+        try:
+            action = resolve_action(node, kind)
+        except ValueError as exc:
+            raise ValueError(f"step {step}: {exc}") from exc
+        actions.append(action)
+        node = node.children[action]
+    return actions
+
+
+def _cap_range(range_dict: dict, max_classes: int) -> dict:
+    """Top MAX_PATH_QUERY_CLASSES_PER_SIDE classes by frequency, not
+    alphabetical/random — a solved strategy has already ranked classes
+    by relevance (see the module docstring's Finding 1: an uncapped
+    real path left the entire 169-class pool nonzero, a ~1,176-combo
+    union that would cost hours per request)."""
+    if len(range_dict) <= max_classes:
+        return range_dict
+    top_items = sorted(range_dict.items(), key=lambda item: item[1], reverse=True)[:max_classes]
+    return dict(top_items)
+
+
+def _query_flop_from_path(action_kinds: list, stack_bb: float, board_cards: tuple, iterations: int) -> dict:
+    """Orchestrates POST /solve_flop_from_path end to end: a real
+    (cached, raw) preflop solve -> resolve the client's bare action
+    kinds into real Actions -> derive_ranges_from_path (M16) -> cap
+    both sides to MAX_PATH_QUERY_CLASSES_PER_SIDE (Finding 1) -> a
+    private, per-(action_path, stack_bb, iterations) library (Finding
+    2, not the shared _flop_query_library _query_flop above uses) ->
+    query_strategy_from_path (M23).
+
+    Holds _path_query_lock for the entire query_strategy_from_path
+    call, mirroring _query_flop's own stricter-than-the-hand-rolled-
+    helpers locking discipline, for the same reason (query_strategy is
+    an atomic primitive with no concurrency control of its own). One
+    single lock guards every partition, not one lock per partition —
+    a deliberate simplicity choice: this endpoint is already expensive
+    per miss (~21s, see the module docstring) and low-traffic by
+    design (a demo, not a high-throughput service), so the extra
+    complexity of per-partition locking isn't earning its keep yet.
+    """
+    preflop_result = _get_or_solve_preflop_raw(stack_bb, iterations)
+    actions = _resolve_action_path(preflop_result.root, action_kinds)
+    path_scenario = derive_ranges_from_path(preflop_result, actions)
+
+    capped_ranges = {
+        position: _cap_range(range_dict, MAX_PATH_QUERY_CLASSES_PER_SIDE)
+        for position, range_dict in path_scenario.ranges.items()
+    }
+    capped_scenario = dataclasses.replace(path_scenario, ranges=capped_ranges)
+
+    exclude = frozenset(board_cards)
+    for position, range_dict in capped_scenario.ranges.items():
+        if not range_from_class_frequencies(range_dict, exclude=exclude):
+            # Mirrors _query_flop's own guard — cheap, re-derived, no
+            # solve cost (query_strategy_from_path/build_library would
+            # otherwise silently run with an all-zero reach vector for
+            # this position instead of a clear error).
+            raise ValueError(
+                f"board {''.join(str(c) for c in board_cards)!r} blocks every combo in "
+                f"{position}'s derived (capped) range"
+            )
+
+    ip_position, oop_position = preflop_result.config.positions
+    partition_key = (tuple(action_kinds), round(stack_bb), iterations)
+    with _path_query_lock:
+        library = _path_query_libraries.setdefault(partition_key, {})
+        result = query_strategy_from_path(
+            library,
+            preflop_result,
+            capped_scenario,
+            board_cards,
+            iterations=PATH_QUERY_ITERATIONS,
+        )
+
+    effective_stack_bb = path_scenario.stacks[oop_position]
+    canonical_board, _ = canonicalize_board(board_cards)
+    canonical_stack_bb = canonical_stack_depth(effective_stack_bb)
+
+    return {
+        "board": "".join(str(c) for c in board_cards),
+        "canonical_board": "".join(str(c) for c in canonical_board),
+        "action_path": list(action_kinds),
+        "stack_bb": stack_bb,
+        "effective_stack_bb": effective_stack_bb,
+        "canonical_stack_bb": canonical_stack_bb,
+        "pot": path_scenario.pot,
+        "hit": result.hit,
+        "elapsed_seconds": result.elapsed_seconds,
+        "strategy": result.strategy,
+        "position": oop_position,
+        "positions": [oop_position, ip_position],
+    }
+
+
 def _prewarm_common_depths() -> None:
     for depth in PREWARM_STACK_DEPTHS:
         try:
@@ -720,6 +939,24 @@ async def solve_flop_cached_endpoint(
         if len(board_cards) != 3:
             raise ValueError(f"board must have exactly 3 cards for a flop, got {len(board_cards)}")
         return await run_in_threadpool(_query_flop, board_cards, stack_bb)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/solve_flop_from_path", response_model=FlopPathQueryResponse)
+async def solve_flop_from_path_endpoint(request: ActionPathRequest):
+    try:
+        if len(request.action_path) > MAX_PATH_LENGTH:
+            raise ValueError(f"action_path is too long ({len(request.action_path)} > {MAX_PATH_LENGTH})")
+        board_cards = tuple(parse_cards(request.board))
+        if len(board_cards) != 3:
+            raise ValueError(f"board must have exactly 3 cards for a flop, got {len(board_cards)}")
+        iterations = request.iterations if request.iterations is not None else DEFAULT_ITERATIONS
+        if not 0 < iterations <= MAX_ITERATIONS:
+            raise ValueError(f"iterations must be between 1 and {MAX_ITERATIONS}, got {iterations}")
+        return await run_in_threadpool(
+            _query_flop_from_path, request.action_path, request.stack_bb, board_cards, iterations
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
