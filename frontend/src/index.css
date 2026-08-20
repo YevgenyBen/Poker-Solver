@@ -370,6 +370,18 @@ main {
   font-size: 0.85rem;
 }
 
+/* M25: ActionPathSolver's breadcrumb sits directly above its own
+   "<player> to act" .status line — .status alone is display:
+   inline-block (so a hit-indicator span can sit inline within a
+   solve-result status line elsewhere), which left these two adjacent
+   paragraphs rendering on the same visual line with no separator
+   ("RootBTN to act, pot 1.5bb"), caught live in the browser, not by
+   any test (jsdom doesn't lay out CSS). Forces its own line without
+   touching .status's shared inline-block behavior anywhere else. */
+.action-path-trail {
+  display: block;
+}
+
 .flop-result .status {
   color: var(--text-muted);
   font-size: 0.8rem;
