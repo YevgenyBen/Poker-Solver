@@ -743,6 +743,92 @@ street chaining needs.
   - Engine only, no `api/main.py`/frontend changes — matches M12/M13/
     M17's own precedent for a milestone whose entire point is a
     measurement.
+- **M19 — Situation canonicalization (Phase 2 of the real-time-speed
+  roadmap).** `poker_solver/canonicalize.py` (new) —
+  `canonicalize_board`, `translate_card`/`translate_cards`/
+  `translate_combo`, `invert_suit_map`, `canonical_stack_depth`. An
+  exact, lossless suit-relabeling symmetry — deliberately distinct from
+  M17/M18's equity-based bucketing, which collapses *strategically
+  similar but physically different* combos, lossily. Canonicalization
+  here collapses *physically identical-up-to-suit-labeling*
+  boards/hands, losslessly: two boards that are literal suit
+  relabelings of each other represent the exact same strategic spot,
+  and a result computed for one translates back to the other with zero
+  information loss. Ships as a standalone primitive with zero existing
+  callers — same precedent as `combos.py` (M10, wired in by M11) and
+  `abstraction.py` (M17, wired in by M18) — not wired into
+  `solve_flop`/`solve_flop_abstracted`/`solve_flop_turn`/
+  `solve_flop_to_river`, since that's Phase 3's job (an offline
+  precomputed spot library, still unscoped) once its own cache-key
+  shape is known from actually building it.
+  - **A real algorithm-selection finding, caught during design
+    validation, not code review:** the first design sketched was a
+    single-pass "walk board cards in dealt order, first new suit seen
+    gets the next canonical letter" heuristic, preserving board-card
+    order. Brute-force-validated against the true suit-isomorphism
+    minimum (all 22,100 possible flops, compared to a 24-permutation
+    search) before any code was trusted: the naive walk produced 1,911
+    distinct forms against the true minimum of 1,755 — 156 real
+    equivalence classes needlessly split. Root cause: a **paired rank
+    on the board** makes "which same-rank card came first" an
+    arbitrary, strategically meaningless input accident the naive walk
+    is nonetheless sensitive to (`2c 2h 3c` and `2c 2h 3h` are
+    genuinely suit-isomorphic via the c↔h swap, but the naive walk
+    canonicalizes them differently; sorting the input by rank first
+    doesn't fix it either — the tie-break among same-rank cards still
+    leaks raw suit identity through). A second, independent gap:
+    preserving board-card order would let the literal same physical
+    board fail to canonicalize together if listed differently —
+    directly working against this milestone's purpose of maximizing a
+    future library's hit rate. Fixed by searching all 24 suit
+    permutations and taking the lexicographically-smallest
+    `(rank, canonical_suit)`-sorted result — the textbook-correct
+    suit-automorphism-group minimum, and *simpler* than the naive
+    design besides: the winning permutation is already a total
+    bijection over all 4 suits, so the naive design's separate "now
+    handle suits absent from the board" step disappears entirely.
+    `canonicalize_board`'s docstring and a dedicated regression test
+    (the `2c 2h 3c`/`2c 2h 3h` pair) both carry this finding forward.
+  - **Documented, not built:** action-history-shape canonicalization
+    needs no new code — `game_tree.StreetConfig`'s fixed
+    `raise_sizes`/`max_raises` menu already makes two situations solved
+    under the same bet-sizing menu directly comparable. Recorded as an
+    existing invariant Phase 2 relies on, in `canonicalize.py`'s module
+    docstring.
+  - `translate_combo` is a thin wrapper, not a reimplementation:
+    `HandCombo.__post_init__` (M10) already order-normalizes its two
+    cards by `(value, suit)`, so reconstructing a `HandCombo` from
+    translated cards re-runs that normalization for free — no separate
+    hole-card rank-ordering logic needed.
+  - `canonical_stack_depth` buckets to the nearest multiple of
+    `DEFAULT_STACK_BUCKET_BB = 5.0` bb via Python's `round()` — its
+    round-half-to-even ("banker's rounding") behavior is documented and
+    pinned by a test (`12.5 -> 10.0`, `17.5 -> 20.0`, rounding in
+    *opposite* directions at the same bucket size), not silently relied
+    on.
+  - **Measured, not assumed:** exhaustive enumeration of all
+    `C(52,3)=22,100` flops finds exactly **1,755** distinct canonical
+    forms (~1s, asserted as a permanent regression test); all
+    `C(52,4)=270,725` turns find exactly **16,432** (~7-28s depending on
+    machine load, also asserted as a permanent test — both figures
+    matched this milestone's own design-time prediction exactly).
+    River (`C(52,5)=2,598,960`) was measured once, not asserted as a
+    permanent test (too slow to pay on every future full-suite rerun
+    for one number, the same cost-honesty precedent M9/M12/M13/M17/M18
+    already established): **134,459** distinct canonical forms, in
+    342.9s — well past the ~70s linear extrapolation from the turn
+    measurement's per-board cost. Traced, not left unexplained: that
+    measurement ran concurrently with a full `pytest tests/` background
+    run on the same machine, the same kind of concurrent-load
+    distortion M14 already documented for its own pre-warm-window
+    measurement — the ~343s figure reflects real contention, not
+    evidence the algorithm itself scales worse than linearly; not
+    re-measured in isolation since the milestone's actual deliverable
+    (the flop/turn regression tests) doesn't depend on the river
+    figure's precision.
+  - Engine only, no `api/main.py`/frontend changes, zero changes to any
+    existing module — matches M10/M17's own precedent for a
+    zero-existing-callers primitive milestone.
 
 ## v3 vision (future) — live-table advisor
 
@@ -839,6 +925,22 @@ library-building cost (batch-solving many canonical situations ahead
 of time, where CFR iteration count/tensor size matters more relative
 to a one-time equity build per situation) — not measured yet, a real
 open question for whichever milestone scopes phase 3.
+
+**M19 update — phase 2 (canonicalization) ships as a standalone
+primitive, same pattern M17 set for phase 1:**
+`poker_solver/canonicalize.py` provides exact, lossless suit-relabeling
+canonicalization for boards and hole cards, plus bucketed stack-depth
+rounding — the piece a future phase-3 library will actually index by.
+Not wired into anything live yet. One real correctness finding along
+the way: a naively-simple single-pass canonicalization algorithm was
+measured against the true suit-isomorphism minimum before being
+trusted, and found to under-collapse paired-rank boards (1,911 distinct
+flop forms instead of the true 1,755) — fixed by searching the full
+24-permutation suit-automorphism group instead, which also turned out
+simpler than the naive design it replaced. Confirmed by exhaustive
+enumeration: 22,100 flops collapse to 1,755 canonical forms, 270,725
+turns collapse to 16,432, and 2,598,960 rivers collapse to 134,459 —
+real numbers a future phase-3 library-sizing decision can use directly.
 
 ## Engine is standalone
 
