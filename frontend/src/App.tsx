@@ -35,7 +35,7 @@ export function App() {
 
       <TabNav tabs={[...TABS]} activeTab={activeTab} onSelect={setHashRoute} />
 
-      <main id="tab-panel" role="tabpanel" aria-labelledby={`tab-${activeTab}`}>
+      <main className="tab-page" id="tab-panel" role="tabpanel" aria-labelledby={`tab-${activeTab}`}>
         {activeTab === 'preflop' && <PreflopRangesPage />}
         {activeTab === 'equity' && <EquityCalculator />}
         {activeTab === 'flop' && <FlopSolver />}
