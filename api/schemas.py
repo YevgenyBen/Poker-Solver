@@ -114,3 +114,37 @@ class PreflopWalkResponse(BaseModel):
     live_positions: list[str]
     pot: float
     legal_actions: list[LegalActionOption]
+
+
+class TurnPathRequest(BaseModel):
+    """M26's request body — two action paths (preflop, then flop) plus
+    a real dealt turn card. Two independent iteration fields, not one:
+    `iterations` (the preflop leg) and `turn_iterations` (the
+    solve_flop_turn leg) are capped very differently server-side (see
+    api/main.py's module docstring for why coupling them would be
+    wrong), so both need their own field. Same no-numeric-constraints-
+    here convention as ActionPathRequest/PreflopWalkRequest."""
+
+    stack_bb: float
+    preflop_action_path: list[str]
+    board: str
+    flop_action_path: list[str]
+    turn_card: str
+    iterations: int | None = None
+    turn_iterations: int | None = None
+
+
+class TurnPathQueryResponse(BaseModel):
+    board: str
+    turn_card: str
+    preflop_action_path: list[str]
+    flop_action_path: list[str]
+    stack_bb: float
+    effective_stack_bb: float
+    pot: float
+    is_terminal: bool
+    player_to_act: str | None
+    strategy: dict[str, dict[str, float]]
+    position: str
+    positions: list[str]
+    elapsed_seconds: float

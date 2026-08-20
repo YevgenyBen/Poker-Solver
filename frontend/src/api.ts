@@ -6,6 +6,7 @@ import type {
   FlopSolveResponse,
   PreflopWalkResponse,
   SolveResponse,
+  TurnPathQueryResponse,
 } from './types';
 
 /** Thrown for any non-2xx API response, wrapping the server's `detail`
@@ -134,6 +135,31 @@ export async function fetchPreflopWalk(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ stack_bb: stackBb, action_path: actionPath }),
+    signal,
+  });
+}
+
+// M26: real turn-level advice — a preflop path, a real flop board, a
+// real flop-line action path, and a real dealt turn card in, the turn
+// decision's strategy out.
+export async function fetchTurnStrategyFromPath(
+  stackBb: number,
+  preflopActionPath: string[],
+  board: string,
+  flopActionPath: string[],
+  turnCard: string,
+  signal?: AbortSignal,
+): Promise<TurnPathQueryResponse> {
+  return fetchJson<TurnPathQueryResponse>('/solve_turn_from_path', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      stack_bb: stackBb,
+      preflop_action_path: preflopActionPath,
+      board,
+      flop_action_path: flopActionPath,
+      turn_card: turnCard,
+    }),
     signal,
   });
 }

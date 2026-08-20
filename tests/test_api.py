@@ -28,6 +28,13 @@ FAST_FLOP_QUERY_ITERATIONS = 20
 # uncapped pool is untestable at any speed).
 FAST_PATH_QUERY_ITERATIONS = 20
 FAST_MAX_PATH_QUERY_CLASSES_PER_SIDE = 2
+# /solve_turn_from_path (M26) reuses FLOP_TURN_MAX_RAISES/RAISE_SIZES
+# directly (no demo-class constants of its own to shrink, same
+# situation /solve_flop_from_path is in) — so it's already shrunk by
+# this fixture's own FLOP_TURN_MAX_RAISES=1/RAISE_SIZES=() patch below,
+# for the same test-speed reason. Its own class cap needs its own
+# separate shrink, mirroring FAST_MAX_PATH_QUERY_CLASSES_PER_SIDE.
+FAST_MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE = 1
 
 
 @pytest.fixture(autouse=True)
@@ -74,6 +81,7 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
     # *cap* applied at request time, and the flop-stage iteration count.
     monkeypatch.setattr(api_main, "PATH_QUERY_ITERATIONS", FAST_PATH_QUERY_ITERATIONS)
     monkeypatch.setattr(api_main, "MAX_PATH_QUERY_CLASSES_PER_SIDE", FAST_MAX_PATH_QUERY_CLASSES_PER_SIDE)
+    monkeypatch.setattr(api_main, "MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE", FAST_MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE)
     _cache.clear()
     _multiway_cache.clear()
     api_main._flop_cache.clear()
@@ -82,6 +90,7 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
     api_main._flop_query_library.clear()
     api_main._preflop_raw_cache.clear()
     api_main._path_query_libraries.clear()
+    api_main._turn_path_cache.clear()
     yield
     _cache.clear()
     _multiway_cache.clear()
@@ -91,6 +100,7 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
     api_main._flop_query_library.clear()
     api_main._preflop_raw_cache.clear()
     api_main._path_query_libraries.clear()
+    api_main._turn_path_cache.clear()
 
 
 @pytest.fixture()
@@ -897,3 +907,170 @@ def test_preflop_walk_fold_option_serializes_size_as_null_not_an_omitted_key(cli
     assert fold_option["size"] is None
     assert "to_call" in fold_option
     assert fold_option["to_call"] is None
+
+
+# ---------------------------------------------------------------------------
+# M26 deliverable: POST /solve_turn_from_path — real turn-level advice,
+# reading poker_solver.solver.solve_flop_turn's own chance_data live,
+# not just a flop-level number improved by real turn action baked in.
+#
+# This fixture's own FLOP_TURN_MAX_RAISES=1/FLOP_TURN_RAISE_SIZES=()
+# patch above (shared with /solve_flop_turn's own tests, since this
+# endpoint reuses those same production constants directly) leaves only
+# 3 real showdown-eligible flop lines reachable: check-check (no chips
+# move — a real, if unexciting, turn decision), all-in+call, and the
+# fold variants off of an all-in (all_in+fold, or check+all_in+fold) —
+# re-derived directly from a real tree walk under these exact patched
+# values before writing any assertion below, not assumed from this
+# milestone's own (unpatched, max_raises=2) planning-time enumeration.
+# ---------------------------------------------------------------------------
+
+_TURN_PATH_ITERATIONS = 200  # a real per-request solve, not fixture-capped — kept small for test speed
+_TURN_CARD = "Ts"  # doesn't collide with the default test board "2h6d9c"
+
+
+def _turn_body(
+    preflop_action_path,
+    flop_action_path,
+    turn_card=_TURN_CARD,
+    stack_bb=100.0,
+    board="2h6d9c",
+    iterations=_TURN_PATH_ITERATIONS,
+    turn_iterations=_TURN_PATH_ITERATIONS,
+):
+    return {
+        "stack_bb": stack_bb,
+        "preflop_action_path": preflop_action_path,
+        "board": board,
+        "flop_action_path": flop_action_path,
+        "turn_card": turn_card,
+        "iterations": iterations,
+        "turn_iterations": turn_iterations,
+    }
+
+
+def test_solve_turn_from_path_returns_a_real_non_uniform_turn_strategy(client):
+    response = client.post(
+        "/solve_turn_from_path", json=_turn_body(["raise", "call_or_check"], ["call_or_check", "call_or_check"])
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["is_terminal"] is False
+    assert body["board"] == "2h6d9c"
+    assert body["turn_card"] == "Ts"
+    assert body["player_to_act"] in ("BTN", "BB")
+    assert set(body["positions"]) == {"BTN", "BB"}
+    assert body["pot"] > 0
+    assert body["effective_stack_bb"] > 0
+    assert len(body["strategy"]) > 0
+    for freqs in body["strategy"].values():
+        assert sum(freqs.values()) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_solve_turn_from_path_reuses_the_same_cache_entry_across_turn_cards_and_flop_lines(client):
+    # The exact regression a real bug in an early draft of this
+    # milestone would have caught: a first design keyed the cache by
+    # the full request (including flop_action_path/turn_card), which
+    # would force a full re-solve per distinct turn-card query against
+    # an identical situation — defeating the entire point of reading
+    # chance_data live. One shared solve should answer all of these.
+    base = _turn_body(["raise", "call_or_check"], ["call_or_check", "call_or_check"])
+    first = client.post("/solve_turn_from_path", json=base).json()
+    assert len(api_main._turn_path_cache) == 1
+
+    different_turn_card = client.post("/solve_turn_from_path", json={**base, "turn_card": "4c"}).json()
+    assert len(api_main._turn_path_cache) == 1
+    assert different_turn_card["turn_card"] != first["turn_card"]
+
+    already_all_in = client.post(
+        "/solve_turn_from_path", json={**base, "flop_action_path": ["all_in", "call_or_check"]}
+    ).json()
+    assert len(api_main._turn_path_cache) == 1
+    assert already_all_in["is_terminal"] is True
+    assert already_all_in["strategy"] == {}
+    assert already_all_in["effective_stack_bb"] == pytest.approx(0.0)
+
+    fold_out = client.post("/solve_turn_from_path", json={**base, "flop_action_path": ["all_in", "fold"]}).json()
+    assert len(api_main._turn_path_cache) == 1
+    assert fold_out["is_terminal"] is True
+    assert fold_out["strategy"] == {}
+    assert fold_out["player_to_act"] is None
+
+
+def test_solve_turn_from_path_partitions_different_preflop_legs_into_separate_cache_entries(client):
+    client.post(
+        "/solve_turn_from_path", json=_turn_body(["raise", "call_or_check"], ["call_or_check", "call_or_check"])
+    )
+    client.post(
+        "/solve_turn_from_path",
+        json=_turn_body(["call_or_check", "call_or_check"], ["call_or_check", "call_or_check"]),
+    )
+    assert len(api_main._turn_path_cache) == 2
+
+
+def test_solve_turn_from_path_rejects_an_illegal_turn_card(client):
+    # "9c" is already on the board (board="2h6d9c").
+    response = client.post(
+        "/solve_turn_from_path",
+        json=_turn_body(["raise", "call_or_check"], ["call_or_check", "call_or_check"], turn_card="9c"),
+    )
+    assert response.status_code == 422
+
+
+def test_solve_turn_from_path_rejects_a_malformed_turn_card(client):
+    response = client.post(
+        "/solve_turn_from_path",
+        json=_turn_body(["raise", "call_or_check"], ["call_or_check", "call_or_check"], turn_card="TsJd"),
+    )
+    assert response.status_code == 422
+
+
+def test_solve_turn_from_path_rejects_an_illegal_flop_action_kind(client):
+    response = client.post(
+        "/solve_turn_from_path", json=_turn_body(["raise", "call_or_check"], ["not_a_real_kind"])
+    )
+    assert response.status_code == 422
+
+
+def test_solve_turn_from_path_rejects_a_non_terminal_flop_path(client):
+    response = client.post(
+        "/solve_turn_from_path", json=_turn_body(["raise", "call_or_check"], ["call_or_check"])
+    )
+    assert response.status_code == 422
+
+
+def test_solve_turn_from_path_rejects_a_non_terminal_preflop_path(client):
+    # Mirrors test_solve_flop_from_path_rejects_a_non_terminal_path — the
+    # exact safety check a real early draft of this milestone silently
+    # dropped (see CLAUDE.md's M26 entry): library.query_strategy_from_
+    # path's own TerminalNode check, ported here explicitly since this
+    # endpoint deliberately bypasses that function.
+    response = client.post(
+        "/solve_turn_from_path", json=_turn_body(["raise"], ["call_or_check", "call_or_check"])
+    )
+    assert response.status_code == 422
+
+
+def test_solve_turn_from_path_rejects_a_too_long_flop_action_path(client):
+    too_long = ["call_or_check"] * (api_main.MAX_PATH_LENGTH + 1)
+    response = client.post("/solve_turn_from_path", json=_turn_body(["raise", "call_or_check"], too_long))
+    assert response.status_code == 422
+
+
+def test_solve_turn_from_path_rejects_a_too_long_preflop_action_path(client):
+    too_long = ["call_or_check"] * (api_main.MAX_PATH_LENGTH + 1)
+    response = client.post(
+        "/solve_turn_from_path", json=_turn_body(too_long, ["call_or_check", "call_or_check"])
+    )
+    assert response.status_code == 422
+
+
+def test_solve_turn_from_path_rejects_out_of_range_turn_iterations(client):
+    response = client.post(
+        "/solve_turn_from_path",
+        json=_turn_body(
+            ["raise", "call_or_check"], ["call_or_check", "call_or_check"],
+            turn_iterations=api_main.MAX_FLOP_TURN_ITERATIONS + 1,
+        ),
+    )
+    assert response.status_code == 422
