@@ -1128,6 +1128,7 @@ def _query_turn_from_path(
             "is_terminal": True,
             "player_to_act": None,
             "strategy": {},
+            "trained": {},
             "pot": flop_node.pot,
             "effective_stack_bb": effective_stack_bb,
         }
@@ -1154,6 +1155,7 @@ def _query_turn_from_path(
             "is_terminal": True,
             "player_to_act": None,
             "strategy": {},
+            "trained": {},
             "pot": turn_node.pot,
             "effective_stack_bb": remaining_stack,
         }
@@ -1162,11 +1164,13 @@ def _query_turn_from_path(
     # itself), never a deeper turn-street path — see the module
     # docstring for why that's a deliberate cut, not an oversight.
     strategy = result.strategy_at(turn_node)
+    trained = result.trained_hands(turn_node)
     return {
         **response,
         "is_terminal": False,
         "player_to_act": turn_node.player_to_act,
         "strategy": strategy,
+        "trained": trained,
         "pot": turn_node.pot,
         "effective_stack_bb": remaining_stack,
     }

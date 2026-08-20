@@ -124,6 +124,10 @@ def test_solve_returns_200_with_well_formed_response(client):
     assert body["iterations"] == FAST_ITERATIONS
     assert body["elapsed_seconds"] >= 0.0
     assert len(body["opening_range"]) == 169
+    assert len(body["trained"]) == 169
+    # The exact HU solver visits every hand exhaustively — nothing here
+    # should ever read as untrained.
+    assert all(body["trained"].values())
 
 
 def test_solve_frequencies_sum_to_one_per_hand(client):
@@ -225,6 +229,20 @@ def test_multiway_solve_frequencies_sum_to_one_per_hand(client, players):
     body = client.get(f"/solve/100?players={players}").json()
     for freqs in body["opening_range"].values():
         assert sum(freqs.values()) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_multiway_solve_trained_covers_the_same_hands_as_opening_range(client):
+    body = client.get("/solve/100?players=9").json()
+    assert set(body["trained"].keys()) == set(body["opening_range"].keys())
+
+
+def test_multiway_solve_bb_has_genuinely_untrained_hands(client):
+    # M28, docs/full-table-diagnostic-2026-08.md's SS3.3, verified end to
+    # end through the real HTTP layer this time: at 9-max's real
+    # (test-fixture-shrunk) iteration budget, a deep position genuinely
+    # has hands MCCFR never touched, and the live response now says so.
+    body = client.get("/solve/100?players=9&position=BB").json()
+    assert not all(body["trained"].values())
 
 
 def test_multiway_solve_defaults_to_first_to_act_position(client):
@@ -338,6 +356,7 @@ def test_solve_flop_returns_200_with_well_formed_response(client):
     assert body["iterations"] == FAST_FLOP_ITERATIONS
     assert body["elapsed_seconds"] >= 0.0
     assert body["position"] == "OOP"
+    assert set(body["trained"].keys()) == set(body["strategy"].keys())
     assert body["positions"] == ["OOP", "IP"]
     assert len(body["strategy"]) > 0
 
@@ -965,6 +984,7 @@ def test_solve_turn_from_path_returns_a_real_non_uniform_turn_strategy(client):
     assert len(body["strategy"]) > 0
     for freqs in body["strategy"].values():
         assert sum(freqs.values()) == pytest.approx(1.0, abs=1e-6)
+    assert set(body["trained"].keys()) == set(body["strategy"].keys())
 
 
 def test_solve_turn_from_path_reuses_the_same_cache_entry_across_turn_cards_and_flop_lines(client):
@@ -988,12 +1008,14 @@ def test_solve_turn_from_path_reuses_the_same_cache_entry_across_turn_cards_and_
     assert len(api_main._turn_path_cache) == 1
     assert already_all_in["is_terminal"] is True
     assert already_all_in["strategy"] == {}
+    assert already_all_in["trained"] == {}
     assert already_all_in["effective_stack_bb"] == pytest.approx(0.0)
 
     fold_out = client.post("/solve_turn_from_path", json={**base, "flop_action_path": ["all_in", "fold"]}).json()
     assert len(api_main._turn_path_cache) == 1
     assert fold_out["is_terminal"] is True
     assert fold_out["strategy"] == {}
+    assert fold_out["trained"] == {}
     assert fold_out["player_to_act"] is None
 
 

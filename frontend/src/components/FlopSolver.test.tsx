@@ -18,6 +18,7 @@ function mockFlopResponse(overrides: Partial<Record<string, unknown>> = {}) {
           AdAc: { call_or_check: 0.02, 'raise:7.50': 0.6, 'all_in:40.00': 0.38 },
           '8d4d': { call_or_check: 0.33, 'raise:7.50': 0.33, 'all_in:40.00': 0.34 },
         },
+        trained: { AdAc: true, '8d4d': true },
         ...overrides,
       }),
   };
@@ -51,6 +52,21 @@ describe('FlopSolver', () => {
       '/solve_flop?board=Jh7d2c&pot=10&stack_bb=40&position=OOP',
       { signal: undefined },
     );
+  });
+
+  it('marks an untrained combo with a low-data indicator, and not a trained one', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(mockFlopResponse({ trained: { AdAc: true, '8d4d': false } })),
+    );
+
+    render(<FlopSolver />);
+    fireEvent.click(screen.getByRole('button', { name: /solve flop/i }));
+
+    await waitFor(() => expect(screen.getByText('AdAc')).toBeInTheDocument());
+    expect(screen.getByText('low data')).toBeInTheDocument();
+    const adAcRow = screen.getByText('AdAc').closest('.detail-row');
+    expect(adAcRow).not.toHaveTextContent('low data');
   });
 
   it('sends whatever the user typed, including a chosen position', async () => {

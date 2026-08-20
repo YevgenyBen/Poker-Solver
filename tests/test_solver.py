@@ -99,6 +99,39 @@ def test_strategy_at_falls_back_to_uniform_for_an_unvisited_node():
             assert freq == pytest.approx(1.0 / num_actions)
 
 
+def test_trained_hands_is_false_for_an_unvisited_node():
+    # The confidence-signal counterpart to the test above (M28,
+    # docs/full-table-diagnostic-2026-08.md's SS3.3): strategy_at's
+    # uniform fallback and trained_hands's False must agree — an
+    # unvisited node's uniform numbers are the untrained default, not a
+    # coincidentally-flat real strategy.
+    config = GameConfig(raise_sizes=(), max_raises=1)
+    root = build_game_tree(config)
+    result = StrategyResult(
+        config=config, root=root, hands=_SMALL_HANDS, node_data={}, iterations=0, elapsed_seconds=0.0
+    )
+    trained = result.trained_hands(root)
+    assert set(trained.keys()) == {str(hand) for hand in _SMALL_HANDS}
+    assert not any(trained.values())
+
+
+def test_trained_hands_true_where_strategy_sum_was_actually_accumulated():
+    config = GameConfig(raise_sizes=(), max_raises=1)
+    result = solve_preflop(iterations=20, config=config, hands=_SMALL_HANDS, equity_table=_SMALL_EQUITY_TABLE)
+    trained = result.trained_hands(result.root)
+    # The exact HU solver visits the whole tree exhaustively every
+    # iteration — every hand at the root should be trained.
+    assert set(trained.keys()) == {str(hand) for hand in _SMALL_HANDS}
+    assert all(trained.values())
+
+
+def test_trained_for_position_matches_trained_hands_at_node_for_position():
+    config = GameConfig(raise_sizes=(), max_raises=1)
+    result = solve_preflop(iterations=20, config=config, hands=_SMALL_HANDS, equity_table=_SMALL_EQUITY_TABLE)
+    position = result.root.player_to_act
+    assert result.trained_for_position(position) == result.trained_hands(result.node_for_position(position))
+
+
 # ---------------------------------------------------------------------------
 # Directional GTO sanity checks against known heads-up preflop intuition.
 # Full 169-hand solve, backed by the real (cached) preflop equity table —
@@ -391,6 +424,17 @@ def test_nine_max_strategy_for_position_bb_is_well_formed(nine_max_result):
     strategy = nine_max_result.strategy_for_position("BB")
     for freqs in strategy.values():
         assert pytest.approx(sum(freqs.values()), abs=1e-6) == 1.0
+
+
+def test_nine_max_bb_has_genuinely_untrained_hands(nine_max_result):
+    # The exact scenario M28 exists to surface (docs/full-table-
+    # diagnostic-2026-08.md's SS3.3): at 9-max's small iteration budget,
+    # a deep position reached only via many earlier players' actions
+    # first genuinely has hands MCCFR never sampled there at all — not
+    # a hypothetical, a real property of this fixture's own result.
+    trained = nine_max_result.trained_for_position("BB")
+    assert set(trained.keys()) == {str(hand) for hand in _M9_HANDS}
+    assert not all(trained.values())
 
 
 # ---------------------------------------------------------------------------

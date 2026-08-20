@@ -18,6 +18,16 @@ def format_solve_response(result: StrategyResult, position: str | None = None) -
     added for M8 so 3+ player results can expose every position's
     strategy, not just the first to act. `positions` is always included
     so a caller (the frontend) knows what else it could ask for.
+
+    `trained` (M28) is `opening_range`'s exact confidence counterpart,
+    hand-for-hand: `False` means that hand's `opening_range` entry is
+    the untrained uniform-prior fallback, not a real converged answer —
+    see StrategyResult.trained_for_position. Always all-`True` for the
+    heads-up (players=2) exact solver, which visits every hand
+    exhaustively; genuinely mixed for a multiway (players=3/6/9) MCCFR
+    result, which only visits what a sampled path actually reaches —
+    the exact gap docs/full-table-diagnostic-2026-08.md's SS3.3 named as
+    otherwise invisible to a caller of this endpoint.
     """
     chosen_position = position or result.root.player_to_act
     return {
@@ -25,6 +35,7 @@ def format_solve_response(result: StrategyResult, position: str | None = None) -
         "iterations": result.iterations,
         "elapsed_seconds": result.elapsed_seconds,
         "opening_range": result.strategy_for_position(chosen_position),
+        "trained": result.trained_for_position(chosen_position),
         "position": chosen_position,
         "positions": list(result.config.positions),
     }
@@ -54,6 +65,16 @@ def format_flop_response(result: StrategyResult, board: str, position: str | Non
     board cards (only combos.py/board_equity.py ever see them, to solve
     for the right equity_table), so the caller (who parsed the board to
     call solve_flop in the first place) is the only one who still has it.
+
+    `trained` (M28), same field/meaning as format_solve_response's own —
+    included here too for one uniform response shape across every
+    solving endpoint, even though every postflop solve today is
+    heads-up (the exact solver, exhaustive by construction), so this is
+    currently always all-`True` in practice. Real, not speculative,
+    forward-compatibility: multiway postflop solving is this project's
+    own named, still-unscoped next structural gap (see
+    docs/full-table-diagnostic-2026-08.md's SS4) — whenever it lands,
+    this field is already exactly where it needs to be.
     """
     chosen_position = position or result.root.player_to_act
     return {
@@ -63,6 +84,7 @@ def format_flop_response(result: StrategyResult, board: str, position: str | Non
         "iterations": result.iterations,
         "elapsed_seconds": result.elapsed_seconds,
         "strategy": result.strategy_for_position(chosen_position),
+        "trained": result.trained_for_position(chosen_position),
         "position": chosen_position,
         "positions": list(result.config.positions),
     }

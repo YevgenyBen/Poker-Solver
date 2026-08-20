@@ -14,6 +14,10 @@ export function Legend() {
           {label}
         </span>
       ))}
+      <span className="legend-item legend-untrained-note">
+        <span className="swatch untrained-swatch" />
+        faded = not enough data yet
+      </span>
     </div>
   );
 }

@@ -33,6 +33,14 @@ def test_format_solve_response_has_the_expected_shape(preflop_result):
     assert body["position"] == "BTN"
     assert body["positions"] == ["BTN", "BB"]
     assert set(body["opening_range"].keys()) == {str(hand) for hand in _SMALL_HANDS}
+    assert set(body["trained"].keys()) == {str(hand) for hand in _SMALL_HANDS}
+
+
+def test_format_solve_response_trained_is_all_true_for_the_exact_solver(preflop_result):
+    # The exact HU solver visits every hand at the root exhaustively —
+    # nothing should ever read as untrained here.
+    body = format_solve_response(preflop_result)
+    assert all(body["trained"].values())
 
 
 def test_format_solve_response_defaults_to_first_to_act(preflop_result):
@@ -74,6 +82,16 @@ def test_format_flop_response_has_the_expected_shape(flop_result):
     assert body["position"] == "OOP"
     assert body["positions"] == ["OOP", "IP"]
     assert set(body["strategy"].keys()) == {"7s7c", "AhKh"}
+    assert set(body["trained"].keys()) == {"7s7c", "AhKh"}
+    # OOP's own real combo (7s7c) is trained — the exact solver visits it
+    # exhaustively. AhKh is villain's combo, zero-weight in OOP's own
+    # range by construction, so OOP's reach for it is 0 throughout the
+    # whole solve and its strategy_sum row never accumulates anything —
+    # correctly reads as untrained too, for a different, equally valid
+    # reason than MCCFR under-sampling: this hand structurally can never
+    # be OOP's, at any iteration count, not just "wasn't sampled yet".
+    assert body["trained"]["7s7c"] is True
+    assert body["trained"]["AhKh"] is False
 
 
 def test_format_flop_response_frequencies_sum_to_one(flop_result):

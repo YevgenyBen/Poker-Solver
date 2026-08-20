@@ -2,11 +2,22 @@
 export type ActionFrequencies = Record<string, number>;
 export type OpeningRange = Record<string, ActionFrequencies>;
 
+// M28: hand label -> whether that hand's entry in a same-shaped
+// OpeningRange reflects real accumulated solving, or the untrained
+// uniform-prior default — see poker_solver/solver.py's
+// StrategyResult.trained_hands and CLAUDE.md's M28 entry. `false` can
+// mean either "MCCFR never sampled this hand at this node" or "this
+// hand has zero weight in this position's own range to begin with" —
+// both are correctly "don't trust this number," this map doesn't
+// distinguish which.
+export type TrainedMap = Record<string, boolean>;
+
 export interface SolveResponse {
   stack_bb: number;
   iterations: number;
   elapsed_seconds: number;
   opening_range: OpeningRange;
+  trained: TrainedMap;
   position: string;
   positions: string[];
 }
@@ -30,6 +41,7 @@ export interface FlopSolveResponse {
   iterations: number;
   elapsed_seconds: number;
   strategy: OpeningRange;
+  trained: TrainedMap;
   position: string;
   positions: string[];
 }
@@ -121,6 +133,7 @@ export interface TurnPathQueryResponse {
   is_terminal: boolean;
   player_to_act: string | null;
   strategy: OpeningRange;
+  trained: TrainedMap;
   position: string;
   positions: string[];
   elapsed_seconds: number;

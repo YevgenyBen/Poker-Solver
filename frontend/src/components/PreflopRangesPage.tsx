@@ -26,7 +26,9 @@ export function PreflopRangesPage() {
   const isMultiway = isMultiwayTableSize(players);
   const { data, status } = useOpeningRange(stackBb, isMultiway ? { players, position } : undefined);
   const openingRange = data?.opening_range ?? null;
+  const trained = data?.trained ?? null;
   const selectedFreqs = selectedHand && openingRange ? (openingRange[selectedHand] ?? null) : null;
+  const selectedTrained = selectedHand && trained ? (trained[selectedHand] ?? null) : null;
 
   function handlePlayersChange(newPlayers: number) {
     setPlayers(newPlayers);
@@ -69,8 +71,8 @@ export function PreflopRangesPage() {
       <Legend />
 
       <div className="range-layout">
-        <RangeGrid openingRange={openingRange} selectedHand={selectedHand} onSelect={setSelectedHand} />
-        <DetailPanel hand={selectedHand} freqs={selectedFreqs} />
+        <RangeGrid openingRange={openingRange} trained={trained} selectedHand={selectedHand} onSelect={setSelectedHand} />
+        <DetailPanel hand={selectedHand} freqs={selectedFreqs} trained={selectedTrained} />
       </div>
     </section>
   );
