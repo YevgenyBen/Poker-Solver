@@ -145,7 +145,7 @@ export function ActionPathSolver() {
         ))}
       </div>
 
-      <p className="status" aria-label="Action path so far">
+      <p className="status action-path-trail" aria-label="Action path so far">
         {actionPath.length === 0 ? 'Root' : actionPath.map(pathStepLabel).join(' → ')}
       </p>
 
