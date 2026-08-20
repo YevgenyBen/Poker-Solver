@@ -907,6 +907,99 @@ street chaining needs.
     existing module, `library.py` not added to `poker_solver/__init__.
     py`'s `__all__` — matches M17/M19's own standalone-primitive
     precedent.
+- **M21 — Live query path (Phase 4 of the real-time-speed roadmap,
+  closing it).** `poker_solver/library.py` gained `QueryResult` (frozen
+  dataclass: `strategy`, `hit`, `elapsed_seconds`) + `query_strategy`:
+  canonicalize-then-lookup, falling back to an on-demand solve (via
+  `build_library`, not duplicated logic) on a miss, caching the result
+  into the caller's own `library` dict *in place* so a subsequent hit —
+  on the same board *or* any isomorphic one — really is instant.
+  - The post-insert re-lookup is provably a hit, not just expected to
+    be: `canonicalize_board`/`canonical_stack_depth` are pure functions
+    of their inputs alone, and `query_strategy` threads the identical
+    `board`/`effective_stack_bb`/`stack_bucket_bb` into the triggering
+    lookup, the `build_library` call, and the final lookup — enforced
+    with an explicit `RuntimeError` (not a bare `assert`, which `python
+    -O` would silently strip, and which has no precedent elsewhere in
+    `poker_solver/`).
+  - **A real, previously-undiscovered subtlety, caught by writing a
+    more rigorous test than M20 shipped, not by code review:** M20's
+    own "isomorphic board hit" test (and this milestone's first draft
+    of an analogous test) asserted an *exact* match between a
+    translated canonical-space strategy and a fresh, independently
+    re-seeded direct solve of a different real board — and it happened
+    to pass only because that test's second board was, unnoticed,
+    *literally* the first board's own canonical form (an identity
+    suit-map, not a real relabeling). Written against a genuinely
+    different (non-canonical) real board instead, the same comparison
+    fails — not from a translation bug (`invert_suit_map`/
+    `translate_combo` correctly reassign each value to its right
+    combo, confirmed by hand-tracing the exact permutation), but
+    because flop-level equity (`remaining_needed=2`) is Monte Carlo
+    sampled, and `cards.remaining_deck`'s rank-then-suit iteration
+    order differs between two differently-suited (even if isomorphic)
+    boards — so the same `equity_seed` draws genuinely different
+    specific runouts for each, a real, small, finite-sample
+    discrepancy, not a bug. **What's still exactly true, and tested as
+    such:** the deterministic translate-in/solve/translate-out pipeline
+    is bit-reproducible against *itself* (confirmed via a corrected
+    test that compares the stored entry against a fresh solve of the
+    *same* canonical board, sidestepping the cross-board sampling-order
+    issue entirely — the same pattern M20's own bucketed-stack-depth
+    test already used, just not yet applied to this comparison). **What
+    is not exactly true, now stated rather than silently assumed:** a
+    canonical hit's translated result is the correct translation of
+    whatever the *original* canonical solve computed, not necessarily
+    bit-identical to what an independent fresh Monte-Carlo solve of
+    that *specific* isomorphic real board would separately produce.
+    This doesn't weaken M20's actual crux property (a hit correctly
+    *serves* any isomorphic board without re-solving) — it refines what
+    "correctly" was ever precisely shown to mean, the same kind of
+    honest correction this project applied to M15's wrong test
+    assumption and M18's dual-reach subtlety.
+  - **A related, smaller gotcha, named explicitly and pinned by a
+    test:** `pot`/`positions`/`raise_sizes`/`max_raises` are not part
+    of the canonical key (inherited from `build_library`/`lookup_
+    strategy`'s own "fixed menu" cut) — a second `query_strategy` call
+    against an already-cached (board, stack) with a *different* `pot`
+    still hits and silently returns the *first* call's strategy; it
+    does not re-solve, does not raise. Callers sharing one `library`
+    across genuinely different pots/sizing menus need their own
+    external key discipline.
+  - Known, deliberate limitations, stated rather than glossed over: no
+    automatic `save_library` persistence on a miss (in-memory only); no
+    concurrency control (two simultaneous callers hitting the same miss
+    could both solve and both write — correct final state, wasted
+    duplicate work; a real live server layer would need its own
+    serialization strategy, not attempted here); no connection yet to
+    `derive_ranges_from_path` (M16) — mostly a direct fit
+    (`StartingHand`-keyed output already matches `query_strategy`'s own
+    input shape), but `PathScenario.stacks` is a per-position dict, not
+    the single `effective_stack_bb` float this function expects, so an
+    arbitrary path needs an explicit "both live positions' remaining
+    stacks are equal here" check before that hookup would be safe.
+  - **Measured, not assumed — the concluding number this whole 4-phase
+    roadmap has been chasing since M17:** at the same ~23-combo demo
+    scale M18/M20 used (confirmed via `len()`, not assumed), 5 distinct
+    real boards' miss timings averaged **0.951s** (range 0.717s-1.019s,
+    consistent with M20's own ~0.92s/board figure — a miss *is* a
+    one-board `build_library` call). 1000 repeated hits on one warmed
+    board averaged **0.1507ms** (min 0.1465ms) — genuinely no CFR, no
+    equity-table construction, just a canonicalize + dict `.get()` +
+    a handful of `translate_combo` calls. A hit against a *different*,
+    merely-isomorphic board (never itself solved) cost the same
+    (~0.152ms), confirming hit cost doesn't depend on literal-vs-
+    isomorphic match. **Ratio: ~6,313x.** This is the real, measured
+    answer to the question the roadmap exists to answer — not the
+    speedup M17's card abstraction alone failed to deliver (M18), but
+    the one avoiding live equity-table construction entirely on a hit
+    (M19+M20+M21 together) actually does.
+  - Engine only: no `api/main.py`/frontend wiring (a live endpoint
+    calling `query_strategy` against a real, persistent, shared
+    library — including a concurrent-miss serialization decision this
+    milestone didn't need to make), and no `derive_ranges_from_path`
+    connection — both natural next milestones, mirroring M12/M13-
+    before-M14's two-primitives-then-one-wiring-milestone pattern.
 
 ## v3 vision (future) — live-table advisor
 
@@ -921,13 +1014,14 @@ Two gaps identified when scoping this, pulling in different directions:
 **flexible situation input** (`solve_flop*` only ever consumed curated
 hardcoded ranges or, as of M15, one fixed preflop line — M16 is the
 first general step past that) and **real-time speed** (measured solve
-times, M12-M14, run ~20s to several minutes even for small ranges — not
-attempted yet; likely needs precomputed/cached common spots, a real
-database of solved situations indexed by canonicalized game state,
-and/or narrowing scope to one decision rather than a full range
-strategy at every node). The user chose flexible input first, since
-speed work is easier to scope once the shape of query it needs to serve
-fast is known.
+times, M12-M14, run ~20s to several minutes even for small ranges).
+The user chose flexible input first, since speed work is easier to
+scope once the shape of query it needs to serve fast is known. Now
+addressed at the engine level by the 4-phase real-time-speed roadmap
+below (M17-M21): canonicalized situations are looked up in a
+precomputed/cached spot library, a hit costing ~0.15ms and a miss
+falling back to an on-demand solve (~0.95s) — not yet wired into a
+live product surface.
 
 Where an LLM fits, and deliberately doesn't: translating a player's
 natural-language hand description into the structured input the engine
@@ -940,9 +1034,12 @@ computation for LLM pattern-matching that can sound just as confident
 when wrong — exactly what a real solver exists to avoid.
 
 Not scoped yet, deliberately: multiway postflop solving, the LLM layer
-itself, any precomputed-spot caching system. M16 (arbitrary action-path
-range derivation) is the first concrete bridge piece — everything else
-here depends on a general way to describe "the current situation" first.
+itself, and product-surface wiring for the precomputed-spot caching
+system that now exists at the engine level (`poker_solver/library.py`,
+M19-M21 — see "The real-time-speed roadmap" below). M16 (arbitrary
+action-path range derivation) is the first concrete bridge piece —
+everything else here depends on a general way to describe "the current
+situation" first.
 
 ### The real-time-speed roadmap
 
@@ -1037,6 +1134,54 @@ and the returned strategy matches a fresh direct solve exactly. Phase 4
 on-demand-solve, plus API/frontend wiring) is the roadmap's final,
 still-unscoped phase — now unblocked, since phases 2 and 3's contracts
 are both proven, not just built.
+
+**Correction, from M21:** that exact-match claim above held for the
+specific board pair M20's own test used, but only because that pair's
+second board was, unnoticed, literally the first board's own canonical
+form (an identity suit-map). Tested against a genuinely different real
+board instead, the match is not bit-exact — flop-level equity is Monte
+Carlo sampled, and the deck's suit-dependent iteration order means the
+same seed draws different specific runouts for two differently-suited
+isomorphic boards. The actual crux property (a hit correctly *serves*
+any isomorphic board without re-solving) still holds; see M21's own
+entry above for the precise, corrected statement and the fix applied
+to the test that first surfaced this.
+
+**M21 update — Phase 4 (a live query path) ships, closing the
+roadmap's engine-level work:** `poker_solver/library.py`'s `query_
+strategy` completes the loop this roadmap set out to build in M17:
+canonicalize a real query, look it up, return instantly on a hit, fall
+back to an on-demand solve on a miss (via `build_library`'s own logic,
+not duplicated), and cache the result in place so the next hit on that
+canonical spot — or any real board merely isomorphic to it — really is
+instant. All four phases are now done: card abstraction (M17) was
+tried and found not to be the lever (M18: equity-table construction,
+not the CFR tensor step, dominates cost, so shrinking hand count
+doesn't shrink the real bottleneck); canonicalization (M19) and an
+offline precomputed library (M20) sidestep that bottleneck entirely on
+a hit instead of trying to speed it up; this phase wires hit/miss into
+one live entry point and measures the real payoff: a hit costs
+**~0.15ms**, a miss costs **~0.95s** (in the same ballpark as M20's own
+~0.92s/board figure, since a miss *is* a one-board `build_library`
+call), a **~6,313x** ratio — the concrete, measured answer to the
+question this roadmap exists to answer, not an assumed one.
+
+What's deliberately still not done, now that the roadmap's own
+engine-level work is complete: no `api/main.py`/frontend wiring (a live
+endpoint calling `query_strategy` against a real, persistent, shared
+library, including a concurrent-miss serialization decision this
+milestone didn't need to make), and no connection to M16's `derive_
+ranges_from_path` (translating a real, user-described action history
+into `query_strategy`'s `hero_classes`/`villain_classes` inputs — a
+mostly direct fit, since `derive_ranges_from_path` already returns
+`StartingHand`-keyed ranges for a preflop `StrategyResult`, but with
+one real wrinkle worth naming precisely: `PathScenario.stacks` is a
+per-position dict, not the single `effective_stack_bb` float `query_
+strategy`/`solve_flop` expect, so an arbitrary path needs an explicit
+"both live positions' remaining stacks are equal here" check before
+that hookup is safe). Both are natural next milestones — the same
+two-engine-primitives-then-one-wiring-milestone pattern M12/M13-
+before-M14 already established.
 
 ## Engine is standalone
 
