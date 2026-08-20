@@ -78,7 +78,8 @@ from .canonicalize import (
 )
 from .cards import Card
 from .combos import HandCombo, range_from_class_frequencies
-from .solver import solve_flop
+from .game_tree import GameConfig, TerminalNode
+from .solver import PathScenario, StrategyResult, solve_flop
 
 LIBRARY_FORMAT_VERSION = 1
 
@@ -363,3 +364,103 @@ def query_strategy(
             "invariant was violated; this should be impossible, please report"
         )
     return QueryResult(strategy=strategy, hit=False, elapsed_seconds=time.perf_counter() - start)
+
+
+def query_strategy_from_path(
+    library: dict,
+    result: StrategyResult,
+    path_scenario: PathScenario,
+    board,
+    raise_sizes: tuple = (2.5, 3.0, 2.2),
+    max_raises: int = 4,
+    iterations: int = None,
+    equity_samples: int = None,
+    equity_seed: int = DEFAULT_EQUITY_SEED,
+    stack_bucket_bb: float = DEFAULT_STACK_BUCKET_BB,
+) -> QueryResult:
+    """Bridges M16's derive_ranges_from_path into query_strategy: given a
+    PathScenario (from walking a real preflop StrategyResult along a
+    real action_path) and a real flop board, derives query_strategy's
+    hero_classes/villain_classes/pot/effective_stack_bb/positions
+    inputs and calls it — reusing query_strategy outright, not
+    reimplementing its canonicalize/cache/solve logic.
+
+    Requires result.config to be a GameConfig (preflop-rooted) — a
+    postflop-rooted PathScenario's ranges are HandCombo-keyed, not the
+    StartingHand-keyed class dicts query_strategy requires, and would
+    otherwise fail confusingly several frames deep instead of here.
+
+    Requires len(result.config.positions) == 2 (heads-up-origin only —
+    mirrors derive_flop_scenario's (M15) own multiway-out-of-scope cut:
+    mapping a surviving subset of a larger table to postflop OOP/IP
+    depends on the full original seating order, not just which of two
+    survivors posted the bigger blind — poker_solver's postflop
+    machinery is heads-up-only regardless, so this costs nothing real
+    today).
+
+    Requires path_scenario.node to be a TerminalNode — the proven,
+    minimal, sufficient signal that the betting round genuinely closed.
+    NOT a stacks-equality check: a limped-and-not-yet-decided pot can
+    have equal stacks while a live decision (check-back vs. raise) is
+    still pending. TerminalNode-ness, combined with derive_ranges_
+    from_path's own already-enforced 2+-live-positions guarantee,
+    proves stacks are equal as a consequence — verified against game_
+    tree.py's no-side-pots construction (every CALL_OR_CHECK matches
+    current_bet exactly, every ALL_IN commits exactly config.stack_bb,
+    so to_act can only empty once every live player matches the same
+    final bet level, no side pots at any N meaning two live players can
+    never end up all-in at different amounts) — cross-checked below
+    with an explicit RuntimeError, not re-derived as an independent
+    condition.
+
+    Position mapping is a verified poker-mechanics fact, not an
+    assumption: result.config.positions[0] (the button-equivalent,
+    first to act preflop) maps to postflop "IP"; positions[1] (the
+    big-blind-equivalent) maps to "OOP" — real heads-up poker's button
+    acts first preflop but last (in position) every street after.
+    """
+    if not isinstance(result.config, GameConfig):
+        raise ValueError(
+            "query_strategy_from_path only bridges a preflop-rooted result "
+            "(result.config must be a GameConfig) — a postflop-rooted path's "
+            "ranges are HandCombo-keyed, not the StartingHand-keyed class dicts "
+            "query_strategy requires"
+        )
+    if len(result.config.positions) != 2:
+        raise ValueError(
+            f"query_strategy_from_path only models a heads-up-origin result, not "
+            f"a {len(result.config.positions)}-player one — mirrors derive_flop_"
+            "scenario's (M15) own multiway-out-of-scope cut"
+        )
+    if not isinstance(path_scenario.node, TerminalNode):
+        raise ValueError(
+            "path_scenario.node is not a TerminalNode — the betting round hasn't "
+            "closed (someone still has a live decision), so live positions' "
+            "remaining stacks aren't provably equal yet; walk action_path further"
+        )
+
+    ip_position, oop_position = result.config.positions
+    oop_stack = path_scenario.stacks[oop_position]
+    ip_stack = path_scenario.stacks[ip_position]
+    if oop_stack != ip_stack:
+        raise RuntimeError(
+            "query_strategy_from_path: live positions' remaining stacks differ "
+            "despite path_scenario.node being a TerminalNode — should be "
+            "impossible per game_tree.py's no-side-pots invariant, please report"
+        )
+
+    return query_strategy(
+        library,
+        board=board,
+        hero_classes=path_scenario.ranges[oop_position],
+        villain_classes=path_scenario.ranges[ip_position],
+        pot=path_scenario.pot,
+        effective_stack_bb=oop_stack,
+        positions=(oop_position, ip_position),
+        raise_sizes=raise_sizes,
+        max_raises=max_raises,
+        iterations=iterations,
+        equity_samples=equity_samples,
+        equity_seed=equity_seed,
+        stack_bucket_bb=stack_bucket_bb,
+    )

@@ -3,8 +3,17 @@ import pytest
 from poker_solver.canonicalize import canonical_stack_depth, canonicalize_board, translate_combo
 from poker_solver.cards import Card
 from poker_solver.combos import range_from_class_frequencies
-from poker_solver.library import build_library, load_library, lookup_strategy, query_strategy, save_library
-from poker_solver.solver import solve_flop
+from poker_solver.equity import build_equity_table
+from poker_solver.game_tree import CALL_OR_CHECK, RAISE, GameConfig, TerminalNode, build_game_tree
+from poker_solver.library import (
+    build_library,
+    load_library,
+    lookup_strategy,
+    query_strategy,
+    query_strategy_from_path,
+    save_library,
+)
+from poker_solver.solver import StrategyResult, derive_ranges_from_path, solve_flop, solve_preflop
 from poker_solver.starting_hands import StartingHand
 
 
@@ -338,3 +347,146 @@ def test_query_strategy_ignores_a_changed_pot_on_a_cached_hit():
     # returns the first call's (pot=POT) strategy.
     assert second.hit is True
     assert second.strategy == first.strategy
+
+
+# ---------------------------------------------------------------------------
+# query_strategy_from_path — M23: bridges M16's derive_ranges_from_path
+# into query_strategy. A small, fast, real preflop pool (module-scoped so
+# tests 1/2/5 below don't each pay for their own solve_preflop call).
+# ---------------------------------------------------------------------------
+
+_PATH_HANDS = [StartingHand("A", "A"), StartingHand("K", "K"), StartingHand("7", "2", suited=False)]
+_PATH_EQUITY_TABLE = build_equity_table(hands=_PATH_HANDS, samples=30)
+_PATH_BOARD = tuple(Card.from_str(t) for t in ["2h", "6d", "9c"])
+
+
+@pytest.fixture(scope="module")
+def preflop_pipeline_result():
+    config = GameConfig(raise_sizes=(2.5,), max_raises=2)
+    return solve_preflop(iterations=300, config=config, hands=_PATH_HANDS, equity_table=_PATH_EQUITY_TABLE)
+
+
+def _open_then_call_path_scenario(preflop_result):
+    root = preflop_result.root
+    open_raise = next(a for a in root.legal_actions if a.kind == RAISE)
+    bb_node = root.children[open_raise]
+    call_action = next(a for a in bb_node.legal_actions if a.kind == CALL_OR_CHECK)
+    return derive_ranges_from_path(preflop_result, [open_raise, call_action])
+
+
+def test_query_strategy_from_path_real_pipeline_end_to_end(preflop_pipeline_result):
+    path_scenario = _open_then_call_path_scenario(preflop_pipeline_result)
+    # Explicit precondition, not assumed: open-then-call closes the
+    # betting round for a heads-up root, reaching a genuine TerminalNode
+    # with both original positions still live.
+    assert path_scenario.live_positions == ("BTN", "BB")
+    assert isinstance(path_scenario.node, TerminalNode)
+
+    result = query_strategy_from_path(
+        {},
+        preflop_pipeline_result,
+        path_scenario,
+        _PATH_BOARD,
+        raise_sizes=RAISE_SIZES,
+        max_raises=MAX_RAISES,
+        iterations=ITERATIONS,
+        equity_samples=EQUITY_SAMPLES,
+        equity_seed=EQUITY_SEED,
+    )
+    assert result.hit is False
+    assert len(result.strategy) > 0
+    for freqs in result.strategy.values():
+        assert sum(freqs.values()) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_query_strategy_from_path_rejects_a_non_terminal_path(preflop_pipeline_result):
+    # BB hasn't responded to the open yet — the round isn't closed, so
+    # live positions' remaining stacks aren't provably equal.
+    root = preflop_pipeline_result.root
+    open_raise = next(a for a in root.legal_actions if a.kind == RAISE)
+    path_scenario = derive_ranges_from_path(preflop_pipeline_result, [open_raise])
+
+    with pytest.raises(ValueError):
+        query_strategy_from_path({}, preflop_pipeline_result, path_scenario, _PATH_BOARD)
+
+
+def test_query_strategy_from_path_rejects_a_multiway_origin_result():
+    config = GameConfig(positions=("BTN", "SB", "BB"))
+    root = build_game_tree(config)
+    # A stub (node_data={}) is sufficient — the multiway guard fires on
+    # result.config.positions alone, before touching solved frequencies.
+    stub_result = StrategyResult(config=config, root=root, hands=_PATH_HANDS, node_data={}, iterations=0, elapsed_seconds=0.0)
+    path_scenario = derive_ranges_from_path(stub_result, [])
+
+    with pytest.raises(ValueError):
+        query_strategy_from_path({}, stub_result, path_scenario, _PATH_BOARD)
+
+
+def test_query_strategy_from_path_rejects_a_postflop_rooted_result():
+    # A real solve_flop result, walked to a genuine TerminalNode (OOP
+    # checks, IP checks back) — a valid PathScenario on its own terms,
+    # but its ranges are HandCombo-keyed, not the StartingHand-keyed
+    # class dicts query_strategy requires.
+    exclude = frozenset(BOARD_A)
+    hero_range = range_from_class_frequencies(HERO_CLASSES, exclude=exclude)
+    villain_range = range_from_class_frequencies(VILLAIN_CLASSES, exclude=exclude)
+    flop_result = solve_flop(
+        board=BOARD_A,
+        hero_range=hero_range,
+        villain_range=villain_range,
+        pot=POT,
+        effective_stack_bb=STACK_BB,
+        raise_sizes=RAISE_SIZES,
+        max_raises=MAX_RAISES,
+        iterations=ITERATIONS,
+        equity_samples=EQUITY_SAMPLES,
+        equity_seed=EQUITY_SEED,
+    )
+    root = flop_result.root
+    check_action = next(a for a in root.legal_actions if a.kind == CALL_OR_CHECK)
+    ip_node = root.children[check_action]
+    check_back = next(a for a in ip_node.legal_actions if a.kind == CALL_OR_CHECK)
+    path_scenario = derive_ranges_from_path(flop_result, [check_action, check_back])
+
+    with pytest.raises(ValueError):
+        query_strategy_from_path({}, flop_result, path_scenario, BOARD_A)
+
+
+def test_query_strategy_from_path_maps_btn_to_ip_and_bb_to_oop(preflop_pipeline_result):
+    path_scenario = _open_then_call_path_scenario(preflop_pipeline_result)
+    # Explicit precondition: BTN's (compound open-and-call) range and
+    # BB's (single-step) range are real, different distributions — not
+    # coincidentally identical, so a backwards mapping would be
+    # detectable, not silently masked.
+    assert path_scenario.ranges["BTN"] != path_scenario.ranges["BB"]
+
+    via_path = query_strategy_from_path(
+        {},
+        preflop_pipeline_result,
+        path_scenario,
+        _PATH_BOARD,
+        raise_sizes=RAISE_SIZES,
+        max_raises=MAX_RAISES,
+        iterations=ITERATIONS,
+        equity_samples=EQUITY_SAMPLES,
+        equity_seed=EQUITY_SEED,
+    )
+
+    # Independent, direct cross-check: BB (button-of-two's opponent, the
+    # big-blind-equivalent) is postflop OOP; BTN is IP. A backwards
+    # mapping would make this direct call disagree with the wrapper.
+    direct = query_strategy(
+        {},
+        board=_PATH_BOARD,
+        hero_classes=path_scenario.ranges["BB"],
+        villain_classes=path_scenario.ranges["BTN"],
+        pot=path_scenario.pot,
+        effective_stack_bb=path_scenario.stacks["BB"],
+        positions=("BB", "BTN"),
+        raise_sizes=RAISE_SIZES,
+        max_raises=MAX_RAISES,
+        iterations=ITERATIONS,
+        equity_samples=EQUITY_SAMPLES,
+        equity_seed=EQUITY_SEED,
+    )
+    assert via_path.strategy == direct.strategy

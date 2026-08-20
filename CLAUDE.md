@@ -1110,6 +1110,74 @@ street chaining needs.
     on-screen proof of the whole roadmap's payoff; a malformed board
     correctly produces the existing error-banner path and clears any
     stale result.
+- **M23 — Connect `derive_ranges_from_path` to `query_strategy`
+  (engine only).** Closes the second of M21's two explicitly-deferred
+  follow-ons (the first, a live `query_strategy` endpoint, shipped in
+  M22 — against a fixed demo range, not a real user-described
+  situation). New `poker_solver/library.py` function `query_strategy_
+  from_path(library, result, path_scenario, board, ...)`: given a
+  preflop `StrategyResult` and the `PathScenario` `derive_ranges_from_
+  path` (M16) derived from walking a real `action_path` against it,
+  derives `query_strategy`'s `hero_classes`/`villain_classes`/`pot`/
+  `effective_stack_bb`/`positions` inputs and calls it — reusing
+  `query_strategy` outright, not reimplementing its canonicalize/
+  cache/solve logic.
+  - **The real technical finding:** `query_strategy`'s own (M21)
+    docstring framed the blocker as needing a stacks-equality check.
+    The correct, provably sufficient check is not a stacks comparison
+    at all — it's `isinstance(path_scenario.node, TerminalNode)`.
+    Stack equality alone is insufficient (a limped pot leaves both
+    stacks equal while the big blind still has a live decision
+    pending — check-back closes the round, raise reopens it);
+    `TerminalNode`-ness is both necessary and sufficient, proved
+    directly from `game_tree._build`'s no-side-pots construction
+    (every `CALL_OR_CHECK` matches `current_bet` exactly, every
+    `ALL_IN` commits exactly `config.stack_bb`, so `to_act` can only
+    empty with 2+ live players once all of them match the same final
+    bet level — including the all-in case, where no side pots at any N
+    means two live players can never end up all-in at different
+    amounts). Combined with `derive_ranges_from_path`'s own already-
+    enforced "fewer than 2 live positions raises `ValueError`," a
+    returned `PathScenario` whose `node` is a `TerminalNode` is
+    automatically guaranteed 2+ live positions with exactly equal
+    remaining stacks — a proven consequence, cross-checked with an
+    explicit `RuntimeError` (not a bare `assert` — the same `python -O`
+    -safety precedent `query_strategy`'s own post-insert-lookup check
+    already set, the only other invariant check like it in
+    `poker_solver/`), not re-derived as a second independent condition.
+  - **A second, independent guard: `result` must be preflop-rooted**
+    (`isinstance(result.config, GameConfig)`), not just heads-up.
+    `StrategyResult`/`PathScenario`/`derive_ranges_from_path` are
+    deliberately street-agnostic — a `PathScenario` from a `solve_flop`
+    result can equally reach a 2-live-position `TerminalNode`, but its
+    `ranges` are `HandCombo`-keyed, not `StartingHand`-keyed, silently
+    violating `query_strategy`'s documented class-dict-only contract
+    (confirmed directly: `HandCombo` has no `.high_rank`/`.low_rank`,
+    which `combos_for_class` immediately reads off its input's keys —
+    without this guard, the mistake would surface as a confusing
+    `AttributeError` several frames deep, not a clear error here).
+  - **Heads-up-origin only** (`len(result.config.positions) == 2`) —
+    the same multiway cut `derive_flop_scenario` (M15) already made,
+    for the same reason: mapping a surviving subset of a 3+-handed
+    table to postflop OOP/IP depends on the full original seating
+    order. Postflop solving in this project (M11-M22) is heads-up-only
+    regardless, so this costs nothing real today.
+  - **A backwards test convention, corrected:** real heads-up poker's
+    button acts first preflop but last (in position, IP) every street
+    after; the big blind acts last preflop but first (OOP) postflop.
+    `result.config.positions[0]` -> postflop `"IP"`; `positions[1]` ->
+    `"OOP"`. Two existing M15/M16 pipeline tests bind the preflop
+    raiser (BTN in both) to `hero_range`/`positions[0]`/`"OOP"` — the
+    reverse of real mechanics, incidental test convenience rather than
+    a deliberate convention. Pinned by a new regression test that
+    cross-checks `query_strategy_from_path`'s result against a direct
+    `query_strategy` call using the correct explicit mapping.
+  - Engine only — no `api/main.py`/frontend wiring (a live endpoint
+    accepting a real, untrusted action-path description is a
+    materially bigger, separate API-design question) — matches
+    M15/M16/M19/M20/M21's own bridge-milestone precedent. Confirmed M22
+    did not already partially cover this: `/solve_flop_cached` calls
+    `query_strategy` with fixed constants, never anything path-derived.
 
 ## v3 vision (future) — live-table advisor
 
@@ -1123,15 +1191,17 @@ situation, not a curated demo range.
 Two gaps identified when scoping this, pulling in different directions:
 **flexible situation input** (`solve_flop*` only ever consumed curated
 hardcoded ranges or, as of M15, one fixed preflop line — M16 is the
-first general step past that) and **real-time speed** (measured solve
-times, M12-M14, run ~20s to several minutes even for small ranges).
-The user chose flexible input first, since speed work is easier to
-scope once the shape of query it needs to serve fast is known. Now
-addressed at the engine level by the 4-phase real-time-speed roadmap
-below (M17-M21): canonicalized situations are looked up in a
-precomputed/cached spot library, a hit costing ~0.15ms and a miss
-falling back to an on-demand solve (~0.95s) — not yet wired into a
-live product surface.
+first general step past that, M23 the second) and **real-time speed**
+(measured solve times, M12-M14, run ~20s to several minutes even for
+small ranges). The user chose flexible input first, since speed work
+is easier to scope once the shape of query it needs to serve fast is
+known. Now addressed at the engine level by the 4-phase real-time-speed
+roadmap below (M17-M21), wired into a live endpoint by M22, and
+connected to a real, user-derived situation (not just a fixed demo
+range) by M23: a hit costs ~0.15-0.2ms, a miss falls back to an
+on-demand solve (~0.95-1.55s) — the remaining gap is a live endpoint
+that accepts a real, untrusted action-path description end to end, not
+the underlying pieces, which are all now proven to compose.
 
 Where an LLM fits, and deliberately doesn't: translating a player's
 natural-language hand description into the structured input the engine
@@ -1144,11 +1214,13 @@ computation for LLM pattern-matching that can sound just as confident
 when wrong — exactly what a real solver exists to avoid.
 
 Not scoped yet, deliberately: multiway postflop solving, the LLM layer
-itself, and product-surface wiring for the precomputed-spot caching
-system that now exists at the engine level (`poker_solver/library.py`,
-M19-M21 — see "The real-time-speed roadmap" below). M16 (arbitrary
-action-path range derivation) is the first concrete bridge piece —
-everything else here depends on a general way to describe "the current
+itself, and a live endpoint that accepts a real, untrusted action-path
+description end to end (the engine-level pieces — `poker_solver/
+library.py`, M19-M23, see "The real-time-speed roadmap" below — are all
+wired and proven to compose; only that final product-surface step
+remains). M16 (arbitrary action-path range derivation) is the first
+concrete bridge piece, M23 (connecting it to `query_strategy`) the
+second — everything else here depends on a general way to describe "the current
 situation" first.
 
 ### The real-time-speed roadmap
@@ -1292,6 +1364,27 @@ strategy`/`solve_flop` expect, so an arbitrary path needs an explicit
 that hookup is safe). Both are natural next milestones — the same
 two-engine-primitives-then-one-wiring-milestone pattern M12/M13-
 before-M14 already established.
+
+**M22 update — the first of those two follow-ons ships:** `GET /solve_
+flop_cached` calls `query_strategy` live, against a fixed demo range
+(not yet a real user-described one — that's M23's job). Measured
+through the real endpoint: a hit costs **~0.20ms**, a miss costs
+**~1.55s**, a **~7,763x** ratio. The connection to `derive_ranges_from_
+path` remains open.
+
+**M23 update — the second follow-on ships too, closing both:**
+`poker_solver/library.py`'s `query_strategy_from_path` bridges a real
+preflop `StrategyResult` + a real walked `action_path` into `query_
+strategy`, completing the loop M21's own write-up predicted. The
+"stacks equal" check M21 anticipated turned out to be the wrong check
+— the correct one is `isinstance(path_scenario.node, TerminalNode)`,
+proved sufficient (not just necessary) from `game_tree.py`'s
+no-side-pots construction; see M23's own Phase C entry for the full
+argument. Still not done: a live endpoint accepting a real, untrusted
+action-path description (deliberately deferred, same reasoning as
+every other bridge milestone in this roadmap) and multiway postflop
+solving (out of scope for this entire roadmap, not just this
+milestone).
 
 ## Engine is standalone
 
