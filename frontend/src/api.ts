@@ -1,12 +1,25 @@
-import type { EquityResponse, FlopQueryResponse, FlopSolveDepth, FlopSolveResponse, SolveResponse } from './types';
+import type {
+  EquityResponse,
+  FlopPathQueryResponse,
+  FlopQueryResponse,
+  FlopSolveDepth,
+  FlopSolveResponse,
+  SolveResponse,
+} from './types';
 
 /** Thrown for any non-2xx API response, wrapping the server's `detail`
  * message when there is one (used for both /solve and /equity — the
  * name predates /equity, kept as-is rather than churning it). */
 export class SolveError extends Error {}
 
-async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(url, { signal });
+// M24: generalized from a bare `signal?: AbortSignal` second param to a
+// full RequestInit — /solve_flop_from_path is this app's first POST/
+// JSON-body request, and every prior GET-only caller below still
+// passes just `{ signal }`, so `fetch(url, init)`'s actual call shape
+// is unchanged for them (confirmed: existing tests asserting
+// `toHaveBeenCalledWith(url, { signal: undefined })` needed no changes).
+async function fetchJson<T>(url: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(url, init);
   if (!response.ok) {
     let detail = `Request failed (${response.status})`;
     try {
@@ -36,7 +49,7 @@ export async function fetchOpeningRange(
   if (params?.players !== undefined) query.set('players', String(params.players));
   if (params?.position !== undefined) query.set('position', params.position);
   const queryString = query.toString();
-  return fetchJson<SolveResponse>(`/solve/${stackBb}${queryString ? `?${queryString}` : ''}`, signal);
+  return fetchJson<SolveResponse>(`/solve/${stackBb}${queryString ? `?${queryString}` : ''}`, { signal });
 }
 
 export async function fetchEquity(
@@ -46,7 +59,7 @@ export async function fetchEquity(
   signal?: AbortSignal,
 ): Promise<EquityResponse> {
   const query = new URLSearchParams({ hand_a: handA, hand_b: handB, board });
-  return fetchJson<EquityResponse>(`/equity?${query.toString()}`, signal);
+  return fetchJson<EquityResponse>(`/equity?${query.toString()}`, { signal });
 }
 
 // M14: one endpoint per runout depth — see api/main.py's module
@@ -72,7 +85,7 @@ export async function fetchFlopStrategy(
     stack_bb: String(stackBb),
     position,
   });
-  return fetchJson<FlopSolveResponse>(`${FLOP_DEPTH_ENDPOINTS[depth]}?${query.toString()}`, signal);
+  return fetchJson<FlopSolveResponse>(`${FLOP_DEPTH_ENDPOINTS[depth]}?${query.toString()}`, { signal });
 }
 
 // M22: a standalone function, not folded into FLOP_DEPTH_ENDPOINTS/
@@ -87,5 +100,22 @@ export async function fetchCachedFlopStrategy(
   signal?: AbortSignal,
 ): Promise<FlopQueryResponse> {
   const query = new URLSearchParams({ board, stack_bb: String(stackBb) });
-  return fetchJson<FlopQueryResponse>(`/solve_flop_cached?${query.toString()}`, signal);
+  return fetchJson<FlopQueryResponse>(`/solve_flop_cached?${query.toString()}`, { signal });
+}
+
+// M24: the first POST/JSON-body request in this API — action_path is a
+// variable-length structured sequence, a genuinely awkward fit for
+// query params, unlike every GET-based function above.
+export async function fetchFlopStrategyFromPath(
+  stackBb: number,
+  actionPath: string[],
+  board: string,
+  signal?: AbortSignal,
+): Promise<FlopPathQueryResponse> {
+  return fetchJson<FlopPathQueryResponse>('/solve_flop_from_path', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stack_bb: stackBb, action_path: actionPath, board }),
+    signal,
+  });
 }

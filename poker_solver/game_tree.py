@@ -323,6 +323,35 @@ class DecisionNode:
         return list(self.children.keys())
 
 
+def resolve_action(node: "DecisionNode", kind: str) -> Action:
+    """The one real `Action` of kind `kind` legal at `node`, without the
+    caller needing to know its exact `size`.
+
+    Every caller that needs a specific `Action` off a node's own
+    `legal_actions` (M15/M16's `derive_flop_scenario`/`derive_ranges_
+    from_path`, ~30 call sites across the test suite) has always
+    inlined the identical `next(a for a in node.legal_actions if a.kind
+    == X)` pattern — this is the first shared version of it, added for
+    a *live, untrusted* caller (M24's action-path endpoint) that only
+    has a bare kind string, not a pre-known exact size.
+
+    Safe by construction, not just in practice: at most one sized RAISE
+    action can ever exist at a single node (`_raise_total_size` computes
+    one scalar, assigned into the node's action dict exactly once inside
+    one `if`, never a loop — see `_build`), and ALL_IN is a disjoint
+    kind that never collides with it. So a bare kind never has more than
+    one matching `Action` here; no ambiguity case exists to resolve.
+
+    Raises `ValueError` (not `StopIteration`) for an unknown kind or a
+    kind not currently legal at this node — a clearer error for an
+    untrusted caller than a bare generator exhaustion.
+    """
+    for action in node.legal_actions:
+        if action.kind == kind:
+            return action
+    raise ValueError(f"{kind!r} is not legal at this node (legal actions: {node.legal_actions!r})")
+
+
 def _raise_total_size(raise_number: int, open_size_reference: float, previous_bet: float, raise_sizes: tuple) -> float:
     """Total committed size for raise number `raise_number` (1-indexed).
 

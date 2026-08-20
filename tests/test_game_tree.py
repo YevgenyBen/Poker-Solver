@@ -15,6 +15,7 @@ from poker_solver.game_tree import (
     build_game_tree,
     build_street_tree,
     count_terminal_nodes,
+    resolve_action,
     tree_depth,
     walk,
 )
@@ -184,6 +185,35 @@ def test_bb_check_after_limp_is_terminal_showdown():
     checked = after_limp.children[Action(CALL_OR_CHECK)]
     assert isinstance(checked, TerminalNode)
     assert checked.is_showdown
+
+
+# ---------------------------------------------------------------------------
+# M24: resolve_action — the first shared "kind string -> real Action"
+# helper, for a live caller (an action-path endpoint) that only has a
+# bare kind, not a pre-known exact size.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_action_matches_an_existing_kind():
+    root = build_game_tree(GameConfig())
+    assert resolve_action(root, RAISE) == Action(RAISE, 2.5)
+    assert resolve_action(root, CALL_OR_CHECK) == Action(CALL_OR_CHECK)
+    assert resolve_action(root, ALL_IN).kind == ALL_IN
+
+
+def test_resolve_action_raises_for_an_unknown_kind_string():
+    root = build_game_tree(GameConfig())
+    with pytest.raises(ValueError):
+        resolve_action(root, "not_a_real_kind")
+
+
+def test_resolve_action_raises_for_a_kind_not_legal_at_this_node():
+    # BB facing a limp has no fold option (test_bb_facing_limp_has_no_
+    # fold_option above) — a real, not contrived, illegal-here case.
+    root = build_game_tree(GameConfig())
+    after_limp = root.children[Action(CALL_OR_CHECK)]
+    with pytest.raises(ValueError):
+        resolve_action(after_limp, FOLD)
 
 
 def test_call_after_a_raise_is_terminal():
