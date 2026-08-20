@@ -1292,29 +1292,19 @@ as a real live endpoint accepting an untrusted action-path description
 by M24 (`POST /solve_flop_from_path`) — a hit costs ~0.15-0.2ms, a real
 derived-situation miss ~17-21s (capped, per M24's own Finding 1, from
 what would otherwise be hours). What remains, deliberately: multiway
-postflop solving, the LLM layer, and a general step-by-step action-path
-UI (M24's own frontend is a curated 3-preset selector, not that).
+postflop solving and a general step-by-step action-path UI (M24's own
+frontend is a curated 3-preset selector, not that).
 
-Where an LLM fits, and deliberately doesn't: translating a player's
-natural-language hand description into the structured input the engine
-needs, and narrating the engine's own computed frequencies back in
-plain language — an input/output layer around the solver, never a
-replacement for it. Feeding an LLM general poker strategy content and
-letting it generate advice directly, bypassing the solver, was
-considered and rejected: it would trade a mathematically grounded GTO
-computation for LLM pattern-matching that can sound just as confident
-when wrong — exactly what a real solver exists to avoid.
-
-Not scoped yet, deliberately: multiway postflop solving, the LLM layer
-itself, and a general step-by-step action-path builder UI (M24 ships a
-curated 3-preset selector calling a fully general backend — see
-`CLAUDE.md`'s M24 entry — not the general wizard; that needs its own
-companion "what's legal from here" endpoint and incremental frontend
-state management, real separate scope). M16 (arbitrary action-path
-range derivation) is the first concrete bridge piece, M23 (connecting
-it to `query_strategy`) the second, M24 (a live endpoint exposing that
-connection to a real, untrusted client) the third and last needed to
-close this gap end to end.
+Not scoped yet, deliberately: multiway postflop solving and a general
+step-by-step action-path builder UI (M24 ships a curated 3-preset
+selector calling a fully general backend — see `CLAUDE.md`'s M24 entry
+— not the general wizard; that needs its own companion "what's legal
+from here" endpoint and incremental frontend state management, real
+separate scope). M16 (arbitrary action-path range derivation) is the
+first concrete bridge piece, M23 (connecting it to `query_strategy`)
+the second, M24 (a live endpoint exposing that connection to a real,
+untrusted client) the third and last needed to close this gap end to
+end.
 
 ### The real-time-speed roadmap
 
@@ -1491,9 +1481,9 @@ sharing one canonical-key library across different real situations
 would have silently corrupted answers (Finding 2, fixed with a
 partitioned per-`(action_path, stack_bb, iterations)` library). Real
 measured numbers: a capped miss costs ~17-21s, a hit ~0.1-0.7ms.
-Multiway postflop solving and the LLM layer remain the only things
-this whole roadmap + its flexible-input companion thread never
-scoped — both explicitly future work, not this project's v2.
+Multiway postflop solving remains the only thing this whole roadmap +
+its flexible-input companion thread never scoped — explicitly future
+work, not this project's v2.
 
 ## Engine is standalone
 
