@@ -11,169 +11,93 @@ function mockResponseFor(stackBb: number) {
         stack_bb: stackBb,
         iterations: 1000,
         elapsed_seconds: 2.5,
-        opening_range: Object.fromEntries(
-          ['AA', 'KK', '72o'].map((hand) => [hand, { fold: hand === '72o' ? 0.8 : 0.0, raise: hand === '72o' ? 0.2 : 1.0 }]),
-        ),
+        opening_range: Object.fromEntries(['AA', 'KK', '72o'].map((hand) => [hand, { fold: 0, raise: 1 }])),
         position: 'BTN',
         positions: ['BTN', 'BB'],
       }),
   };
 }
 
-function mockMultiwayResponseFor(position: string, positions: string[] = ['BTN', 'SB', 'BB']) {
-  return {
-    ok: true,
-    json: () =>
-      Promise.resolve({
-        stack_bb: 100,
-        iterations: 100000,
-        elapsed_seconds: 12.5,
-        opening_range: Object.fromEntries(['AA', 'KK', '72o'].map((hand) => [hand, { fold: 0.1, raise: 0.9 }])),
-        position,
-        positions,
-      }),
-  };
-}
-
-// M25: ActionPathSolver's usePreflopWalk fires a POST /preflop_walk on
-// mount, unlike every other section of the page (which only fetches on
-// an explicit user action) — so every test below that renders <App />
-// needs to answer this request too, not just /solve. A fixed root-state
-// payload is enough: no test in this file exercises ActionPathSolver's
-// own behavior (that's ActionPathSolver.test.tsx's job), so all that
-// matters here is that the shape is well-formed and doesn't crash.
-function mockWalkResponse() {
-  return {
-    ok: true,
-    json: () =>
-      Promise.resolve({
-        stack_bb: 100,
-        action_path: [],
-        is_terminal: false,
-        player_to_act: 'BTN',
-        live_positions: ['BTN', 'BB'],
-        pot: 1.5,
-        legal_actions: [
-          { kind: 'fold', size: null, to_call: 0.5 },
-          { kind: 'call_or_check', size: null, to_call: 0.5 },
-          { kind: 'raise', size: 2.5, to_call: null },
-          { kind: 'all_in', size: 100, to_call: null },
-        ],
-      }),
-  };
-}
-
+// App.tsx is now just the tab shell — each tab's own real behavior is
+// covered by that tab's own dedicated test file (PreflopRangesPage.
+// test.tsx, EquityCalculator.test.tsx, FlopSolver.test.tsx,
+// CachedFlopSolver.test.tsx, ActionPathSolver.test.tsx). This file only
+// tests tab switching, unmounting, and hash-URL sync.
 describe('App', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    window.location.hash = '';
   });
 
-  it('loads the default stack on mount and renders the grid', async () => {
-    const fetchMock = vi.fn((url: string) =>
-      Promise.resolve(url === '/preflop_walk' ? mockWalkResponse() : mockResponseFor(100)),
-    );
-    vi.stubGlobal('fetch', fetchMock);
+  it('defaults to the Preflop Ranges tab and solves on mount', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponseFor(100)));
 
     render(<App />);
 
-    expect(fetchMock).toHaveBeenCalledWith('/solve/100', expect.anything());
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/solved in 2.50s/i));
-    expect(screen.getAllByRole('button', { name: /^[AKQJT2-9]/ })).not.toHaveLength(0);
+    expect(screen.getByRole('tab', { name: 'Preflop Ranges' })).toHaveAttribute('aria-selected', 'true');
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/solved/i));
   });
 
-  it('clicking a hand shows its breakdown in the detail panel', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((url: string) => Promise.resolve(url === '/preflop_walk' ? mockWalkResponse() : mockResponseFor(100))),
-    );
+  it('switching to another tab shows its content, unmounts the previous tab, and updates the URL hash', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponseFor(100)));
     const user = userEvent.setup();
     render(<App />);
-
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/solved/i));
-    await user.click(screen.getByText('72o'));
 
-    expect(screen.getByRole('heading', { name: '72o' })).toBeInTheDocument();
-    expect(screen.getByText('80.0%')).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: 'Equity Calculator' }));
+
+    expect(screen.getByRole('heading', { name: 'Equity calculator' })).toBeInTheDocument();
+    // Real unmount, not just CSS-hidden — the Preflop tab's own input
+    // must be gone from the DOM entirely.
+    expect(screen.queryByLabelText('Effective stack')).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Equity Calculator' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Preflop Ranges' })).toHaveAttribute('aria-selected', 'false');
+    expect(window.location.hash).toBe('#equity');
   });
 
-  it('switching stack depth via a preset re-solves', async () => {
-    const fetchMock = vi.fn((url: string) =>
-      Promise.resolve(url === '/preflop_walk' ? mockWalkResponse() : mockResponseFor(Number(url.split('/').pop()))),
-    );
-    vi.stubGlobal('fetch', fetchMock);
-    const user = userEvent.setup();
+  it('opens directly to the tab named in the URL hash on load, with no click needed', () => {
+    window.location.hash = '#action-path';
+
     render(<App />);
 
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/solved/i));
-    await user.click(screen.getByRole('button', { name: '50bb' }));
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/solve/50', expect.anything()));
+    expect(screen.getByRole('heading', { name: 'Action-path flop solver' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Action-Path Wizard' })).toHaveAttribute('aria-selected', 'true');
   });
 
-  it('switching to 3-max mode re-solves with players=3 and reveals the position selector', async () => {
-    const fetchMock = vi.fn((url: string) =>
-      Promise.resolve(url === '/preflop_walk' ? mockWalkResponse() : mockMultiwayResponseFor('BTN')),
-    );
-    vi.stubGlobal('fetch', fetchMock);
-    const user = userEvent.setup();
+  it('falls back to the default tab for an unknown hash', () => {
+    window.location.hash = '#not-a-real-tab';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponseFor(100)));
+
     render(<App />);
 
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/solved/i));
-    await user.click(screen.getByRole('button', { name: '3-max (demo)' }));
-
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenLastCalledWith('/solve/100?players=3&position=BTN', expect.anything()),
-    );
-    expect(screen.getByRole('button', { name: 'SB' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Preflop Ranges' })).toHaveAttribute('aria-selected', 'true');
   });
 
-  it('picking a different position in 3-max mode re-solves for that position', async () => {
-    const fetchMock = vi.fn((url: string) => {
-      if (url === '/preflop_walk') return Promise.resolve(mockWalkResponse());
-      const position = new URL(url, 'http://localhost').searchParams.get('position') ?? 'BTN';
-      return Promise.resolve(mockMultiwayResponseFor(position));
-    });
+  it('switching away from and back to Preflop Ranges re-solves rather than showing stale content', async () => {
+    // This is the behavioral contract the unmount-on-switch design
+    // rests on (see useHashRoute.ts/App.tsx's own comments) — a later
+    // switch to keep-mounted-but-hidden would fail this loudly instead
+    // of silently reintroducing the eager-fetch-on-load problem the
+    // tab navigation change fixes.
+    const fetchMock = vi.fn().mockResolvedValue(mockResponseFor(100));
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
     render(<App />);
-
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/solved/i));
-    await user.click(screen.getByRole('button', { name: '3-max (demo)' }));
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenLastCalledWith('/solve/100?players=3&position=BTN', expect.anything()),
-    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    await user.click(screen.getByRole('button', { name: 'SB' }));
+    await user.click(screen.getByRole('tab', { name: 'Equity Calculator' }));
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
 
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenLastCalledWith('/solve/100?players=3&position=SB', expect.anything()),
-    );
-  });
-
-  it.each([
-    ['6-max (demo)', 6, ['UTG', 'MP', 'CO', 'BTN', 'SB', 'BB']],
-    ['9-max (demo)', 9, ['UTG', 'UTG1', 'MP1', 'MP2', 'MP3', 'CO', 'BTN', 'SB', 'BB']],
-  ] as const)('switching to %s re-solves with players=%d and shows every position', async (label, players, positions) => {
-    const fetchMock = vi.fn((url: string) =>
-      Promise.resolve(
-        url === '/preflop_walk' ? mockWalkResponse() : mockMultiwayResponseFor(positions[0], [...positions]),
-      ),
-    );
-    vi.stubGlobal('fetch', fetchMock);
-    const user = userEvent.setup();
-    render(<App />);
-
+    await user.click(screen.getByRole('tab', { name: 'Preflop Ranges' }));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/solved/i));
-    await user.click(screen.getByRole('button', { name: label }));
 
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenLastCalledWith(
-        `/solve/100?players=${players}&position=${positions[0]}`,
-        expect.anything(),
-      ),
-    );
-    for (const pos of positions) {
-      expect(screen.getByRole('button', { name: pos })).toBeInTheDocument();
-    }
+    // The mock resolves fast enough that catching the transient
+    // "Solving…" text is racy — a second real fetch call is the robust
+    // proof that remounting re-solved instead of showing stale content
+    // (there's nowhere for stale content to have been cached in; the
+    // whole point is that PreflopRangesPage was unmounted and lost its
+    // state, so this can only pass by actually re-fetching).
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
