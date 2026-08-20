@@ -12,6 +12,11 @@ export default defineConfig({
     proxy: {
       '/solve': 'http://127.0.0.1:8000',
       '/equity': 'http://127.0.0.1:8000',
+      // Its own entry, not covered by '/solve' above — M25's route is
+      // named /preflop_walk, not /solve_something, unlike every other
+      // POST route this app has added since M14 (the exact class of bug
+      // M10 hit for real with /equity, before that entry existed).
+      '/preflop_walk': 'http://127.0.0.1:8000',
     },
   },
   test: {

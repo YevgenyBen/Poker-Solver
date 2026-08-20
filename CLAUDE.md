@@ -1268,6 +1268,81 @@ street chaining needs.
     board/stack shows a cache hit with a sharp `elapsed_seconds` drop;
     a malformed board produces the existing error-banner path and
     clears correctly; switching presets clears a stale result.
+- **M25 — General step-by-step action-path builder.** Closes the exact
+  gap M24's own docstring and CLAUDE.md's v3 vision both flagged: a
+  general wizard needs its own companion "what's legal from here"
+  endpoint plus incremental round-trip state management. `POST
+  /preflop_walk` — stack + an `action_path` so far in, the node it
+  resolves to's legal actions (plus `pot`/`player_to_act`/
+  `live_positions`/`is_terminal`) out. Board-independent and boardless —
+  a pure preflop-tree-state query, no CFR strategy, no `query_strategy`
+  at all — so none of M24's range-capping or partitioned-library
+  machinery applies here; it reuses `_get_or_solve_preflop_raw`'s
+  existing cache unmodified (confirmed live, not just reasoned: walking
+  a path then solving it via `/solve_flop_from_path` left exactly one
+  entry in `_preflop_raw_cache`).
+  - `_resolve_action_path` (M24) now returns `(actions, node)` instead
+    of just the action list — its one existing call site (inside
+    `_query_flop_from_path`) discards the node unchanged, and the new
+    `_preflop_walk` helper uses it directly. Considered and rejected:
+    routing through `solver.PathScenario.node` (via `derive_ranges_
+    from_path`) instead — `derive_ranges_from_path` raises on fewer
+    than 2 live positions, so every fold-out path would crash instead
+    of returning a clean terminal response, and it would pay for
+    per-step reach-multiplication a query that never uses ranges
+    doesn't need.
+  - **The "amount to call" safety argument, proven, not assumed:**
+    `_preflop_walk` computes `to_call` from `max(node.invested.
+    values())` over *every* position, folded ones included — safe only
+    because `game_tree._build` never offers FOLD unless `to_call > 0`
+    at that instant, so the position actually holding the current max
+    can never fold; every other action only ever raises the acting
+    position's invested to `>=` the pre-action max. So the true live
+    max is monotonically non-decreasing along any path, and a folded
+    position's frozen `invested` can never exceed a later node's true
+    max — the all-positions max always equals the live-only max
+    `_build` itself would compute.
+  - A terminal node is not automatically postflop-eligible: a fold-out
+    is terminal too, with only 1 live position, which `/solve_flop_
+    from_path` 422s on. `_preflop_walk` reports `live_positions`
+    explicitly rather than leaving the caller to infer it from
+    `is_terminal` alone — load-bearing for the frontend's own
+    real-terminal-vs-fold-out branch below.
+  - `frontend/vite.config.ts` needed its own new `/preflop_walk` proxy
+    entry — the existing list only prefix-matches `/solve`/`/equity`,
+    and every `POST` route added since M14 happened to be named `/solve_
+    something`, so this genuinely new prefix would otherwise silently
+    fall through to the SPA's `index.html`, the exact class of bug M10
+    hit for real with `/equity` before that entry existed.
+  - **Frontend:** `usePreflopWalk.ts` (new) — mirrors `useOpeningRange.
+    ts`'s effect+abort+primitive-flattening shape (`actionPath.join('|')`
+    standing in for `useOpeningRange`'s own params-destructuring), with
+    `SolveError`-aware error handling to match `ActionPathSolver.tsx`'s
+    existing convention instead. `ActionPathSolver.tsx` reworked in
+    place: `action_path` now grows one legal click at a time (`walk =
+    usePreflopWalk(stackBb, actionPath)`), with Undo/Reset controls and
+    the 3 presets kept on as one-click shortcuts into the same growing
+    path rather than the only paths reachable. The board/Solve UI
+    (unchanged, still M24's `fetchFlopStrategyFromPath`) is gated on
+    `is_terminal && live_positions.length >= 2`, with a distinct
+    "hand's over, `<position>` wins the pot" message when a fold
+    leaves only 1 live position — the real correctness gap the terminal/
+    live_positions distinction above exists to prevent. A stack change
+    resets `action_path` to `[]` directly in the input handler, not a
+    separate effect. Live-verified in the browser end to end: the root
+    walk (BTN to act, pot 1.5bb, all 4 actions with the right
+    `to_call`/sizes); clicking Raise advances to BB's turn with the
+    correct 1.5bb `to_call`; Undo reverts exactly one step; the
+    open-call preset reaches a real terminal, solves, and renders a
+    sane strategy (~9.2s, a live miss); Reset clears back to root; a
+    Fold at root shows "Hand's over — BB wins the 1.5bb pot." with no
+    board input; changing the stack (100 → 50) resets the path *and*
+    correctly re-derives the new all-in size (100 → 50); an
+    intentionally-too-small stack (0.2bb) surfaces a walk-error banner
+    with no legal-action buttons; and, separately, a malformed board on
+    a real terminal surfaces a solve-error banner while leaving the
+    walk state (board input, Solve button, breadcrumb) fully intact —
+    a solve-step failure never resets the wizard.
 
 ## v3 vision (future) — live-table advisor
 
@@ -1281,30 +1356,23 @@ situation, not a curated demo range.
 Two gaps identified when scoping this, pulling in different directions:
 **flexible situation input** (`solve_flop*` only ever consumed curated
 hardcoded ranges or, as of M15, one fixed preflop line — M16 is the
-first general step past that, M23 the second, M24 the third) and
-**real-time speed** (measured solve times, M12-M14, run ~20s to several
-minutes even for small ranges). The user chose flexible input first,
-since speed work is easier to scope once the shape of query it needs to
-serve fast is known. Both gaps are now closed end to end: the 4-phase
-real-time-speed roadmap (M17-M21), wired into a live endpoint by M22,
-connected to a real, user-derived situation by M23, and finally exposed
-as a real live endpoint accepting an untrusted action-path description
-by M24 (`POST /solve_flop_from_path`) — a hit costs ~0.15-0.2ms, a real
-derived-situation miss ~17-21s (capped, per M24's own Finding 1, from
-what would otherwise be hours). What remains, deliberately: multiway
-postflop solving and a general step-by-step action-path UI (M24's own
-frontend is a curated 3-preset selector, not that).
-
-Not scoped yet, deliberately: multiway postflop solving and a general
-step-by-step action-path builder UI (M24 ships a curated 3-preset
-selector calling a fully general backend — see `CLAUDE.md`'s M24 entry
-— not the general wizard; that needs its own companion "what's legal
-from here" endpoint and incremental frontend state management, real
-separate scope). M16 (arbitrary action-path range derivation) is the
-first concrete bridge piece, M23 (connecting it to `query_strategy`)
-the second, M24 (a live endpoint exposing that connection to a real,
-untrusted client) the third and last needed to close this gap end to
-end.
+first general step past that, M23 the second, M24 the third, M25 the
+fourth and last) and **real-time speed** (measured solve times, M12-M14,
+run ~20s to several minutes even for small ranges). The user chose
+flexible input first, since speed work is easier to scope once the
+shape of query it needs to serve fast is known. Both gaps are now
+closed end to end: the 4-phase real-time-speed roadmap (M17-M21), wired
+into a live endpoint by M22, connected to a real, user-derived situation
+by M23, exposed as a real live endpoint accepting an untrusted
+action-path description by M24 (`POST /solve_flop_from_path` — a hit
+costs ~0.15-0.2ms, a real derived-situation miss ~17-21s, capped per
+M24's own Finding 1 from what would otherwise be hours), and finally
+given a real interactive frontend by M25 (`POST /preflop_walk` plus a
+rebuilt `ActionPathSolver.tsx`, replacing M24's own curated 3-preset
+selector with a general step-by-step wizard over the exact same, fully
+general backend M24 already shipped). What remains, deliberately:
+multiway postflop solving — the only thing this whole roadmap and its
+flexible-input companion thread never scoped.
 
 ### The real-time-speed roadmap
 

@@ -80,3 +80,37 @@ class FlopPathQueryResponse(BaseModel):
     strategy: dict[str, dict[str, float]]
     position: str
     positions: list[str]
+
+
+class PreflopWalkRequest(BaseModel):
+    """M25's request body — board-independent, unlike ActionPathRequest:
+    a "what's legal from here" query is a pure preflop-tree-state check,
+    with no board/flop involved at all. Same no-numeric-constraints-here
+    convention as ActionPathRequest, for the same circular-import reason."""
+
+    stack_bb: float
+    action_path: list[str]
+    iterations: int | None = None
+
+
+class LegalActionOption(BaseModel):
+    """One action legal at the node action_path currently resolves to.
+    `size` (total commitment) is set for raise/all_in; `to_call` (amount
+    owed, 0 meaning a free check) is set for call_or_check; fold sets
+    neither. Structured numbers, not a pre-formatted label — matches
+    this app's existing division of labor (the frontend formats, e.g.
+    FlopSolver.tsx's own .toFixed() calls)."""
+
+    kind: str
+    size: float | None = None
+    to_call: float | None = None
+
+
+class PreflopWalkResponse(BaseModel):
+    stack_bb: float
+    action_path: list[str]
+    is_terminal: bool
+    player_to_act: str | None
+    live_positions: list[str]
+    pot: float
+    legal_actions: list[LegalActionOption]

@@ -79,3 +79,27 @@ export interface FlopPathQueryResponse {
   position: string;
   positions: string[];
 }
+
+// Mirrors api/schemas.py's LegalActionOption. size/to_call use `| null`,
+// not `?:` — Pydantic serializes a None field as JSON null, not an
+// omitted key (this app sets no exclude_none anywhere), so a missing
+// key here would silently never happen and `?:` would be the wrong type.
+export interface LegalActionOption {
+  kind: string;
+  size: number | null;
+  to_call: number | null;
+}
+
+// Mirrors api/schemas.py's PreflopWalkResponse — /preflop_walk (M25), a
+// pure preflop-tree-state query (no board, no CFR strategy) backed by
+// api/main.py's _preflop_walk. player_to_act is null exactly when
+// is_terminal is true (the hand is over, nobody's left to act).
+export interface PreflopWalkResponse {
+  stack_bb: number;
+  action_path: string[];
+  is_terminal: boolean;
+  player_to_act: string | null;
+  live_positions: string[];
+  pot: number;
+  legal_actions: LegalActionOption[];
+}

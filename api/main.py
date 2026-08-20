@@ -174,6 +174,25 @@ unrelated real situations that happen to canonicalize to the same
 (board, stack-bucket) key silently return each other's answer. Fixed
 with a partitioned `_path_query_libraries`, one dict per distinct
 (action_path, stack_bb, iterations), never a single shared one.
+
+POST /preflop_walk is M25's deliverable, the companion endpoint
+/solve_flop_from_path's own docstring (and CLAUDE.md's v3 vision) always
+said this app was still missing: "what's legal from here," a board-
+independent, boardless preflop-tree-only query (stack in, an action path
+so far, the legal actions and pot/live-position state at the resulting
+node out), letting a real frontend build an action_path one legal click
+at a time instead of only offering curated presets. Reuses `_get_or_
+solve_preflop_raw`'s same cache /solve_flop_from_path already populates
+(walking to a mid-tree node needs no range derivation, no board, no
+equity table, no `query_strategy` at all — so none of the partitioned-
+library machinery above applies here, and none was added). `_resolve_
+action_path` (M24) now returns the final node it walks to, not just the
+Action list, since this endpoint needs to inspect that node directly
+rather than hand it to `derive_ranges_from_path`. A terminal node is not
+automatically a *postflop-eligible* terminal — a fold-out is terminal
+with only one live position, which `/solve_flop_from_path` would 422 on
+— so the response reports `live_positions` explicitly rather than
+leaving the caller to guess from `is_terminal` alone.
 """
 
 import dataclasses
@@ -192,7 +211,7 @@ from poker_solver.canonicalize import canonical_stack_depth, canonicalize_board
 from poker_solver.cards import parse_cards
 from poker_solver.combos import HandCombo, range_from_class_frequencies
 from poker_solver.equity import MultiwayEquityCache
-from poker_solver.game_tree import DecisionNode, GameConfig, resolve_action
+from poker_solver.game_tree import CALL_OR_CHECK, DecisionNode, GameConfig, TerminalNode, resolve_action
 from poker_solver.library import query_strategy, query_strategy_from_path
 from poker_solver.solver import (
     DEFAULT_FLOP_ITERATIONS,
@@ -215,6 +234,8 @@ from .schemas import (
     FlopPathQueryResponse,
     FlopQueryResponse,
     FlopSolveResponse,
+    PreflopWalkRequest,
+    PreflopWalkResponse,
     SolveResponse,
 )
 
@@ -668,13 +689,19 @@ def _get_or_solve_preflop_raw(stack_bb: float, iterations: int) -> StrategyResul
     return result
 
 
-def _resolve_action_path(root: DecisionNode, action_kinds: list) -> list:
+def _resolve_action_path(root: DecisionNode, action_kinds: list) -> tuple:
     """Turns a client-supplied list of bare action *kind* strings (e.g.
     ["raise", "call_or_check"]) into the real Action objects derive_
     ranges_from_path needs, walking the tree one step at a time via
     game_tree.resolve_action. Raises ValueError prefixed with the
     (0-indexed) step number that failed — friendlier than a bare
     tree-level error for an untrusted caller who can't see the tree.
+
+    Returns (actions, node) — the resolved Action list *and* the node
+    the walk actually ends at. M24's original version returned only the
+    action list (all it needed for derive_ranges_from_path); M25's
+    _preflop_walk needs the node itself, to inspect what's legal *from
+    here* without also requiring a resolved next step.
 
     Explicitly checks isinstance(node, DecisionNode) before resolving
     each step — a TerminalNode has no legal_actions at all (calling
@@ -695,7 +722,63 @@ def _resolve_action_path(root: DecisionNode, action_kinds: list) -> list:
             raise ValueError(f"step {step}: {exc}") from exc
         actions.append(action)
         node = node.children[action]
-    return actions
+    return actions, node
+
+
+def _preflop_walk(stack_bb: float, action_kinds: list, iterations: int) -> dict:
+    """Orchestrates POST /preflop_walk: a real (cached, raw) preflop
+    solve -> resolve the client's bare action kinds into real Actions,
+    walking to the resulting node -> report what's legal from there.
+
+    No range derivation, no board, no query_strategy — this is a pure
+    tree-state query, so none of _query_flop_from_path's range-capping
+    or partitioned-library machinery applies here.
+    """
+    preflop_result = _get_or_solve_preflop_raw(stack_bb, iterations)
+    _actions, node = _resolve_action_path(preflop_result.root, action_kinds)
+    live_positions = [p for p in preflop_result.config.positions if p not in node.folded]
+
+    if isinstance(node, TerminalNode):
+        return {
+            "stack_bb": stack_bb,
+            "action_path": list(action_kinds),
+            "is_terminal": True,
+            "player_to_act": None,
+            "live_positions": live_positions,
+            "pot": node.pot,
+            "legal_actions": [],
+        }
+
+    # Safe over ALL positions (folded included), not just live ones:
+    # FOLD is only ever offered when to_call > 0 at that instant (see
+    # game_tree._build), so the position actually holding the current
+    # max can never fold; every other action only ever raises the
+    # acting position's invested to >= the pre-action max. So the true
+    # max across live positions is monotonically non-decreasing along
+    # any path, and a folded position's frozen invested can never
+    # exceed a later node's true max — max(node.invested.values()) over
+    # every position, folded or not, always equals the live max.
+    current_bet = max(node.invested.values())
+    to_call = current_bet - node.invested[node.player_to_act]
+
+    legal_actions = []
+    for action in node.legal_actions:
+        option = {"kind": action.kind, "size": None, "to_call": None}
+        if action.kind == CALL_OR_CHECK:
+            option["to_call"] = to_call
+        elif action.size is not None:
+            option["size"] = action.size
+        legal_actions.append(option)
+
+    return {
+        "stack_bb": stack_bb,
+        "action_path": list(action_kinds),
+        "is_terminal": False,
+        "player_to_act": node.player_to_act,
+        "live_positions": live_positions,
+        "pot": node.pot,
+        "legal_actions": legal_actions,
+    }
 
 
 def _cap_range(range_dict: dict, max_classes: int) -> dict:
@@ -730,7 +813,7 @@ def _query_flop_from_path(action_kinds: list, stack_bb: float, board_cards: tupl
     complexity of per-partition locking isn't earning its keep yet.
     """
     preflop_result = _get_or_solve_preflop_raw(stack_bb, iterations)
-    actions = _resolve_action_path(preflop_result.root, action_kinds)
+    actions, _node = _resolve_action_path(preflop_result.root, action_kinds)
     path_scenario = derive_ranges_from_path(preflop_result, actions)
 
     capped_ranges = {
@@ -957,6 +1040,19 @@ async def solve_flop_from_path_endpoint(request: ActionPathRequest):
         return await run_in_threadpool(
             _query_flop_from_path, request.action_path, request.stack_bb, board_cards, iterations
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/preflop_walk", response_model=PreflopWalkResponse)
+async def preflop_walk_endpoint(request: PreflopWalkRequest):
+    try:
+        if len(request.action_path) > MAX_PATH_LENGTH:
+            raise ValueError(f"action_path is too long ({len(request.action_path)} > {MAX_PATH_LENGTH})")
+        iterations = request.iterations if request.iterations is not None else DEFAULT_ITERATIONS
+        if not 0 < iterations <= MAX_ITERATIONS:
+            raise ValueError(f"iterations must be between 1 and {MAX_ITERATIONS}, got {iterations}")
+        return await run_in_threadpool(_preflop_walk, request.stack_bb, request.action_path, iterations)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

@@ -35,13 +35,43 @@ function mockMultiwayResponseFor(position: string, positions: string[] = ['BTN',
   };
 }
 
+// M25: ActionPathSolver's usePreflopWalk fires a POST /preflop_walk on
+// mount, unlike every other section of the page (which only fetches on
+// an explicit user action) — so every test below that renders <App />
+// needs to answer this request too, not just /solve. A fixed root-state
+// payload is enough: no test in this file exercises ActionPathSolver's
+// own behavior (that's ActionPathSolver.test.tsx's job), so all that
+// matters here is that the shape is well-formed and doesn't crash.
+function mockWalkResponse() {
+  return {
+    ok: true,
+    json: () =>
+      Promise.resolve({
+        stack_bb: 100,
+        action_path: [],
+        is_terminal: false,
+        player_to_act: 'BTN',
+        live_positions: ['BTN', 'BB'],
+        pot: 1.5,
+        legal_actions: [
+          { kind: 'fold', size: null, to_call: 0.5 },
+          { kind: 'call_or_check', size: null, to_call: 0.5 },
+          { kind: 'raise', size: 2.5, to_call: null },
+          { kind: 'all_in', size: 100, to_call: null },
+        ],
+      }),
+  };
+}
+
 describe('App', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
   it('loads the default stack on mount and renders the grid', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(mockResponseFor(100));
+    const fetchMock = vi.fn((url: string) =>
+      Promise.resolve(url === '/preflop_walk' ? mockWalkResponse() : mockResponseFor(100)),
+    );
     vi.stubGlobal('fetch', fetchMock);
 
     render(<App />);
@@ -52,7 +82,10 @@ describe('App', () => {
   });
 
   it('clicking a hand shows its breakdown in the detail panel', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponseFor(100)));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => Promise.resolve(url === '/preflop_walk' ? mockWalkResponse() : mockResponseFor(100))),
+    );
     const user = userEvent.setup();
     render(<App />);
 
@@ -64,7 +97,9 @@ describe('App', () => {
   });
 
   it('switching stack depth via a preset re-solves', async () => {
-    const fetchMock = vi.fn((url: string) => Promise.resolve(mockResponseFor(Number(url.split('/').pop()))));
+    const fetchMock = vi.fn((url: string) =>
+      Promise.resolve(url === '/preflop_walk' ? mockWalkResponse() : mockResponseFor(Number(url.split('/').pop()))),
+    );
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
     render(<App />);
@@ -76,7 +111,9 @@ describe('App', () => {
   });
 
   it('switching to 3-max mode re-solves with players=3 and reveals the position selector', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(mockMultiwayResponseFor('BTN'));
+    const fetchMock = vi.fn((url: string) =>
+      Promise.resolve(url === '/preflop_walk' ? mockWalkResponse() : mockMultiwayResponseFor('BTN')),
+    );
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
     render(<App />);
@@ -92,6 +129,7 @@ describe('App', () => {
 
   it('picking a different position in 3-max mode re-solves for that position', async () => {
     const fetchMock = vi.fn((url: string) => {
+      if (url === '/preflop_walk') return Promise.resolve(mockWalkResponse());
       const position = new URL(url, 'http://localhost').searchParams.get('position') ?? 'BTN';
       return Promise.resolve(mockMultiwayResponseFor(position));
     });
@@ -116,7 +154,11 @@ describe('App', () => {
     ['6-max (demo)', 6, ['UTG', 'MP', 'CO', 'BTN', 'SB', 'BB']],
     ['9-max (demo)', 9, ['UTG', 'UTG1', 'MP1', 'MP2', 'MP3', 'CO', 'BTN', 'SB', 'BB']],
   ] as const)('switching to %s re-solves with players=%d and shows every position', async (label, players, positions) => {
-    const fetchMock = vi.fn().mockResolvedValue(mockMultiwayResponseFor(positions[0], [...positions]));
+    const fetchMock = vi.fn((url: string) =>
+      Promise.resolve(
+        url === '/preflop_walk' ? mockWalkResponse() : mockMultiwayResponseFor(positions[0], [...positions]),
+      ),
+    );
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
     render(<App />);
