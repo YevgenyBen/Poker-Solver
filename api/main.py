@@ -193,6 +193,92 @@ automatically a *postflop-eligible* terminal — a fold-out is terminal
 with only one live position, which `/solve_flop_from_path` would 422 on
 — so the response reports `live_positions` explicitly rather than
 leaving the caller to guess from `is_terminal` alone.
+
+POST /solve_turn_from_path is M26's deliverable: real turn-level advice,
+not just a flop-level number improved by real turn action baked in.
+`solve_flop_turn` (M12) already runs one CFR solve over the *entire*
+joint flop+turn tree, and its `StrategyResult.chance_data` dict already
+holds a real, fully-solved turn `DecisionNode` for every dealt-card
+branch — nothing before this milestone ever walked in and read one out
+(this module's own docstring said so, unchanged since M14: "an
+interactive turn/river explorer is a separate, materially bigger
+feature, not attempted"). Measured, not assumed, before committing to
+this: reading chance_data *is* free — walking into one specific branch
+and calling `strategy_at()` on it costs ~0.04ms, confirmed separately
+from the solve that produces it. Zero new engine code was needed in
+`poker_solver/` for this milestone.
+
+**A real, caught-the-hard-way finding along the way, not smoothed
+over**: an early version reused `MAX_PATH_QUERY_CLASSES_PER_SIDE`
+directly for this endpoint's own range cap, on the assumption that a
+6-class-per-side cap costing `/solve_flop_from_path` ~21s/miss would
+cost roughly the same here. A real end-to-end request instead measured
+**454s**. Root cause: `solve_flop_turn`'s cost curve is fundamentally
+steeper than `solve_flop`-via-`query_strategy`'s — it builds ~49 branch
+equity tables per chance-eligible flop terminal, not one table total —
+so the same 6-class cap (which expands to a *combo* count depending on
+how many of those classes are pairs/suited/offsuit, not a fixed number)
+produced a 58-combo pool here, not the ~12-combo pool a hand-picked
+demo range measured during planning. Fixed with `MAX_TURN_PATH_QUERY_
+CLASSES_PER_SIDE`, this endpoint's own, separately-measured cap (see
+its own comment for the real numbers at cap=1/2/3/6) — landing this
+endpoint's real cost in the same already-accepted "slow but tolerable
+for a live, if not snappy, request" bracket `/solve_flop_to_river`
+established at M14 (~63-105s), not the ~18-26s this docstring
+originally, incorrectly, expected to carry over.
+
+Chains three existing pieces, none of them modified: `_get_or_solve_
+preflop_raw` + `_resolve_action_path` + `derive_ranges_from_path` for
+the preflop leg (identical to `/solve_flop_from_path`'s own first
+stage); `solve_flop_turn` (M12) for the flop+turn solve, behind its own
+plain-dict cache (`_turn_path_cache`) — deliberately narrow-keyed: the
+key covers only what solve_flop_turn's own cost actually depends on
+(the preflop leg, the board, both iteration counts), and deliberately
+*excludes* `flop_action_path`/`turn_card` — including them would force
+a full re-solve (tens of seconds, see MAX_TURN_PATH_QUERY_CLASSES_PER_
+SIDE's own comment for the real numbers) for every different turn-card
+query against an otherwise-identical situation, defeating this
+milestone's own "reading chance_data afterward is free" finding;
+`_resolve_action_path` again,
+reused unchanged a second time in the same request, now walking the
+flop_turn result's own root instead of the preflop result's, to find
+which of its chance-eligible terminals the client's flop_action_path
+actually reaches.
+
+Two real checks, present in `library.query_strategy_from_path` but
+silently lost without them since this endpoint deliberately bypasses
+that function (its canonical-library machinery doesn't fit a per-turn-
+card query shape), are ported here explicitly: `path_scenario.node`
+must be a `TerminalNode` (the preflop round actually closed), and both
+live positions' remaining stacks must be equal (proven, not merely
+checked, to always hold at a real terminal — see `query_strategy_from_
+path`'s own docstring for the full argument; kept here as a defensive
+`RuntimeError`, the same "should be impossible, cross-checked anyway"
+precedent that function already set). Without them, an unclosed preflop
+path would silently feed one side's stack into `solve_flop_turn` as if
+both players shared it, instead of erroring cleanly.
+
+`iterations` (preflop leg) and `turn_iterations` (the solve_flop_turn
+leg) are two independent request fields, not one shared value —
+deliberately, not an oversight: /solve_flop_from_path's own flop-stage
+iterations are fixed/unexposed specifically because that leg sits
+behind query_strategy's canonical-library abstraction (a client-varying
+value would be silently ignored on a hit); this endpoint doesn't use
+that abstraction at all, so nothing forces the two legs' costs to share
+one cap, and doing so anyway would silently under-cap preflop
+convergence 10x below every sibling endpoint's own MAX_ITERATIONS for a
+reason (turn-solve cost) that has nothing to do with preflop's own
+(much cheaper) cost.
+
+Only the *first* turn decision is ever exposed (`branch.root` itself,
+never a deeper turn-street path) — a deliberate scope cut mirroring
+query_strategy's own opening-node-only precedent, not an oversight. An
+interactive "what's legal on the turn from here" walker, and river-
+level advice one street further, are the natural next milestones this
+one deliberately defers — both already de-risked cost-wise by this
+milestone's own measurements (a two-hop river walk measured ~0.002ms
+after a real solve_flop_to_river call), unlike every prior open
+question in this project's real-time-speed thread.
 """
 
 import dataclasses
@@ -237,6 +323,8 @@ from .schemas import (
     PreflopWalkRequest,
     PreflopWalkResponse,
     SolveResponse,
+    TurnPathQueryResponse,
+    TurnPathRequest,
 )
 
 # The React app's production build (see frontend/, `npm run build`). Not
@@ -405,6 +493,24 @@ FLOP_TO_RIVER_RAISE_SIZES = ()
 MAX_FLOP_TURN_ITERATIONS = 2_000
 MAX_FLOP_TO_RIVER_ITERATIONS = DEFAULT_FLOP_TO_RIVER_ITERATIONS
 
+# /solve_turn_from_path's OWN class cap, deliberately separate from
+# MAX_PATH_QUERY_CLASSES_PER_SIDE — a real, measured finding this
+# milestone made the hard way (a first draft reused that constant
+# directly and a real request measured 454s). MAX_PATH_QUERY_CLASSES_
+# PER_SIDE=6 was calibrated against /solve_flop_from_path's own
+# solve_flop-via-query_strategy cost profile; this endpoint's
+# solve_flop_turn call is a fundamentally steeper curve (build_chance_
+# node's ~49 branch equity tables per chance-eligible terminal, not
+# solve_flop's single table), so the same class count produces a much
+# larger combo pool and a much worse cost. Measured for real, same
+# preflop line/board/iterations throughout: cap=6 -> 58 combos, 454s;
+# cap=3 -> 27 combos, 99.9s; cap=2 -> 19 combos, 45.9s; cap=1 -> 7
+# combos, 10.2s. Set to 2 — in the same "slow but tolerable for a live,
+# if not snappy, request" bracket /solve_flop_to_river was already
+# accepted in at M14 (~63-105s), while keeping more range diversity
+# than capping to a single class per side would.
+MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE = 2
+
 _cache: dict = {}
 _cache_lock = threading.Lock()
 _multiway_cache: dict = {}
@@ -443,6 +549,21 @@ _preflop_raw_lock = threading.Lock()
 # stack_bb, iterations) instead.
 _path_query_libraries: dict = {}
 _path_query_lock = threading.Lock()
+
+# M26's own plain-dict cache for solve_flop_turn results, deliberately
+# separate from every dict above. Keyed narrowly — only what solve_
+# flop_turn's own cost actually depends on (preflop_action_path,
+# stack_bb, its own iterations, board, turn_iterations) — deliberately
+# NOT flop_action_path/turn_card, which are resolved by walking the
+# already-solved tree afterward (~0.04ms, measured) rather than by
+# re-solving; including them in the key would force a full re-solve per
+# distinct turn-card query against an identical situation, defeating
+# this endpoint's whole point. Locking mirrors _get_or_solve_flop_
+# turn's own looser discipline (around the dict access only, not the
+# whole solve) — not query_strategy's atomic whole-call lock, since
+# this isn't going through that primitive.
+_turn_path_cache: dict = {}
+_turn_path_lock = threading.Lock()
 
 
 def _prewarm_enabled() -> bool:
@@ -866,6 +987,152 @@ def _query_flop_from_path(action_kinds: list, stack_bb: float, board_cards: tupl
     }
 
 
+def _query_turn_from_path(
+    preflop_action_kinds: list,
+    flop_action_kinds: list,
+    turn_card,
+    stack_bb: float,
+    board_cards: tuple,
+    iterations: int,
+    turn_iterations: int,
+) -> dict:
+    """Orchestrates POST /solve_turn_from_path end to end: a real
+    (cached, raw) preflop solve -> resolve the client's preflop action
+    kinds -> derive_ranges_from_path (M16) -> cap both sides (Finding 1,
+    same as /solve_flop_from_path) -> solve_flop_turn (M12), behind its
+    own narrowly-keyed cache -> resolve the client's flop action kinds
+    against *that* result's own root -> deal the client's real turn
+    card -> read whatever real strategy solve_flop_turn already computed
+    there. See the module docstring for the full design writeup.
+    """
+    preflop_result = _get_or_solve_preflop_raw(stack_bb, iterations)
+    preflop_actions, _node = _resolve_action_path(preflop_result.root, preflop_action_kinds)
+    path_scenario = derive_ranges_from_path(preflop_result, preflop_actions)
+
+    # Ported from library.query_strategy_from_path (bypassed here — its
+    # canonical-library machinery doesn't fit this endpoint's per-turn-
+    # card query shape) — not specific to that abstraction, still
+    # required: derive_ranges_from_path itself does not require the
+    # preflop action to have closed.
+    if not isinstance(path_scenario.node, TerminalNode):
+        raise ValueError("preflop_action_path does not reach a terminal — action isn't capped yet")
+    ip_position, oop_position = preflop_result.config.positions
+    oop_stack = path_scenario.stacks[oop_position]
+    ip_stack = path_scenario.stacks[ip_position]
+    if oop_stack != ip_stack:
+        raise RuntimeError(
+            "derive_ranges_from_path returned unequal stacks at a terminal node — should be "
+            "impossible per game_tree.py's no-side-pots invariant, please report"
+        )
+    effective_stack_bb = oop_stack
+
+    # MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE, not MAX_PATH_QUERY_CLASSES_
+    # PER_SIDE — see that constant's own comment for the real measured
+    # reason (solve_flop_turn's cost curve is fundamentally steeper than
+    # solve_flop_from_path's own query_strategy-backed one).
+    capped_ranges = {
+        position: _cap_range(range_dict, MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE)
+        for position, range_dict in path_scenario.ranges.items()
+    }
+    exclude = frozenset(board_cards)
+    for position, range_dict in capped_ranges.items():
+        if not range_from_class_frequencies(range_dict, exclude=exclude):
+            raise ValueError(
+                f"board {''.join(str(c) for c in board_cards)!r} blocks every combo in "
+                f"{position}'s derived (capped) range"
+            )
+    hero_range = range_from_class_frequencies(capped_ranges[oop_position], exclude=exclude)
+    villain_range = range_from_class_frequencies(capped_ranges[ip_position], exclude=exclude)
+
+    turn_solve_key = (tuple(preflop_action_kinds), round(stack_bb), iterations, board_cards, turn_iterations)
+    with _turn_path_lock:
+        result = _turn_path_cache.get(turn_solve_key)
+    if result is None:
+        result = solve_flop_turn(
+            board=board_cards,
+            hero_range=hero_range,
+            villain_range=villain_range,
+            pot=path_scenario.pot,
+            effective_stack_bb=effective_stack_bb,
+            positions=(oop_position, ip_position),
+            raise_sizes=FLOP_TURN_RAISE_SIZES,
+            max_raises=FLOP_TURN_MAX_RAISES,
+            iterations=turn_iterations,
+        )
+        with _turn_path_lock:
+            _turn_path_cache[turn_solve_key] = result
+
+    _flop_actions, flop_node = _resolve_action_path(result.root, flop_action_kinds)
+    if not isinstance(flop_node, TerminalNode):
+        raise ValueError("flop_action_path does not reach a terminal — action isn't capped yet")
+
+    response = {
+        "board": "".join(str(c) for c in board_cards),
+        "turn_card": str(turn_card),
+        "preflop_action_path": list(preflop_action_kinds),
+        "flop_action_path": list(flop_action_kinds),
+        "stack_bb": stack_bb,
+        "position": oop_position,
+        "positions": [oop_position, ip_position],
+        "elapsed_seconds": result.elapsed_seconds,
+    }
+
+    if id(flop_node) not in result.chance_data:
+        # Heads-up only: proven airtight, not assumed (see the module
+        # docstring) — TerminalNode.is_showdown is exactly `len(folded)
+        # == 0` for a 2-position tree, and chance_data is only ever
+        # populated for showdown-eligible terminals, so "not in
+        # chance_data" and "folded" are exactly equivalent here, no
+        # ambiguous third case.
+        return {
+            **response,
+            "is_terminal": True,
+            "player_to_act": None,
+            "strategy": {},
+            "pot": flop_node.pot,
+            "effective_stack_bb": effective_stack_bb,
+        }
+
+    chance_node = result.chance_data[id(flop_node)]
+    if turn_card not in chance_node.branches:
+        raise ValueError(f"{turn_card} is not a legal turn card here (already on the board, or already dealt)")
+    turn_node = chance_node.branches[turn_card].root
+
+    # Recomputed identically to chance.py's build_chance_node's own
+    # `remaining_stack` — there is no way to read it back off ChanceNode/
+    # ChanceBranch directly, so this must stay hand-in-sync with that
+    # formula if it ever changes. Safe over ALL positions' invested
+    # (not just one), same max()-over-everyone reasoning _preflop_walk's
+    # own to_call computation already relies on.
+    remaining_stack = effective_stack_bb - max(chance_node.invested.values())
+
+    if isinstance(turn_node, TerminalNode):
+        # The flop action already put a player fully all-in — chance.py's
+        # own design reuses the terminal itself as branch.root in that
+        # case, never populating a real turn decision node.
+        return {
+            **response,
+            "is_terminal": True,
+            "player_to_act": None,
+            "strategy": {},
+            "pot": turn_node.pot,
+            "effective_stack_bb": remaining_stack,
+        }
+
+    # Only the FIRST turn decision is ever exposed here (branch.root
+    # itself), never a deeper turn-street path — see the module
+    # docstring for why that's a deliberate cut, not an oversight.
+    strategy = result.strategy_at(turn_node)
+    return {
+        **response,
+        "is_terminal": False,
+        "player_to_act": turn_node.player_to_act,
+        "strategy": strategy,
+        "pot": turn_node.pot,
+        "effective_stack_bb": remaining_stack,
+    }
+
+
 def _prewarm_common_depths() -> None:
     for depth in PREWARM_STACK_DEPTHS:
         try:
@@ -903,6 +1170,26 @@ def _prewarm_common_depths() -> None:
         )
     except Exception:
         logger.exception("pre-warm failed for solve_flop_to_river")
+
+    # /solve_turn_from_path's own cost (~16-26s) is in the same
+    # tax-worth-avoiding bracket the two pre-warms above were already
+    # accepted for. Matches TurnPathSolver.tsx's own default preflop/
+    # flop presets and board — keep these in sync if either side's
+    # defaults ever change (same "kept in sync manually" precedent
+    # DEFAULT_CHAINED_FLOP_BOARD's own comment already accepts).
+    try:
+        logger.info("pre-warming solve_turn_from_path for the default line")
+        _query_turn_from_path(
+            ["raise", "call_or_check"],
+            ["raise", "call_or_check"],
+            parse_cards("2h")[0],
+            100.0,
+            tuple(parse_cards(DEFAULT_CHAINED_FLOP_BOARD)),
+            DEFAULT_ITERATIONS,
+            DEFAULT_FLOP_TURN_ITERATIONS,
+        )
+    except Exception:
+        logger.exception("pre-warm failed for solve_turn_from_path")
 
 
 @asynccontextmanager
@@ -1053,6 +1340,45 @@ async def preflop_walk_endpoint(request: PreflopWalkRequest):
         if not 0 < iterations <= MAX_ITERATIONS:
             raise ValueError(f"iterations must be between 1 and {MAX_ITERATIONS}, got {iterations}")
         return await run_in_threadpool(_preflop_walk, request.stack_bb, request.action_path, iterations)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/solve_turn_from_path", response_model=TurnPathQueryResponse)
+async def solve_turn_from_path_endpoint(request: TurnPathRequest):
+    try:
+        if len(request.preflop_action_path) > MAX_PATH_LENGTH:
+            raise ValueError(
+                f"preflop_action_path is too long ({len(request.preflop_action_path)} > {MAX_PATH_LENGTH})"
+            )
+        if len(request.flop_action_path) > MAX_PATH_LENGTH:
+            raise ValueError(f"flop_action_path is too long ({len(request.flop_action_path)} > {MAX_PATH_LENGTH})")
+        board_cards = tuple(parse_cards(request.board))
+        if len(board_cards) != 3:
+            raise ValueError(f"board must have exactly 3 cards for a flop, got {len(board_cards)}")
+        turn_cards = tuple(parse_cards(request.turn_card))
+        if len(turn_cards) != 1:
+            raise ValueError(f"turn_card must have exactly 1 card, got {len(turn_cards)}")
+        iterations = request.iterations if request.iterations is not None else DEFAULT_ITERATIONS
+        if not 0 < iterations <= MAX_ITERATIONS:
+            raise ValueError(f"iterations must be between 1 and {MAX_ITERATIONS}, got {iterations}")
+        turn_iterations = (
+            request.turn_iterations if request.turn_iterations is not None else DEFAULT_FLOP_TURN_ITERATIONS
+        )
+        if not 0 < turn_iterations <= MAX_FLOP_TURN_ITERATIONS:
+            raise ValueError(
+                f"turn_iterations must be between 1 and {MAX_FLOP_TURN_ITERATIONS}, got {turn_iterations}"
+            )
+        return await run_in_threadpool(
+            _query_turn_from_path,
+            request.preflop_action_path,
+            request.flop_action_path,
+            turn_cards[0],
+            request.stack_bb,
+            board_cards,
+            iterations,
+            turn_iterations,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

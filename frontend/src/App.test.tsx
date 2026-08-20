@@ -64,6 +64,15 @@ describe('App', () => {
     expect(screen.getByRole('tab', { name: 'Action-Path Wizard' })).toHaveAttribute('aria-selected', 'true');
   });
 
+  it('opens directly to the Turn Advisor tab named in the URL hash, with no click needed', () => {
+    window.location.hash = '#turn';
+
+    render(<App />);
+
+    expect(screen.getByRole('heading', { name: 'Turn advisor' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Turn Advisor' })).toHaveAttribute('aria-selected', 'true');
+  });
+
   it('falls back to the default tab for an unknown hash', () => {
     window.location.hash = '#not-a-real-tab';
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponseFor(100)));

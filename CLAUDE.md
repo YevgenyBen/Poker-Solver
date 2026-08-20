@@ -1343,6 +1343,119 @@ street chaining needs.
     a real terminal surfaces a solve-error banner while leaving the
     walk state (board input, Solve button, breadcrumb) fully intact —
     a solve-step failure never resets the wizard.
+- **M26 — Live turn-level advice (`POST /solve_turn_from_path`).**
+  Closes the gap M14's own module docstring had named, unchanged, since
+  it shipped: `/solve_flop_turn`/`/solve_flop_to_river` already run one
+  CFR solve over the *entire* joint flop+turn(+river) tree, and their
+  result's `chance_data` dict already holds a real, fully-solved turn/
+  river `DecisionNode` for every dealt-card branch — nothing before
+  this milestone ever walked in and read one out ("an interactive
+  turn/river explorer is a separate, materially bigger feature, not
+  attempted"). It turned out to already be a plumbing gap, not a
+  solving one: **measured, not assumed**, walking into one specific
+  branch and calling `strategy_at()` on it costs ~0.04ms *after* the
+  solve that produces it — reading `chance_data` is free. Zero new
+  engine code was needed in `poker_solver/` for this milestone; it
+  chains three existing pieces (`_get_or_solve_preflop_raw` +
+  `_resolve_action_path` + `derive_ranges_from_path` for the preflop
+  leg, `solve_flop_turn` for the flop+turn solve, `_resolve_action_path`
+  again — reused unchanged a second time in one request, now walking
+  the flop_turn result's own root — to find which chance-eligible
+  terminal the client's `flop_action_path` reaches).
+  - **A real bug a design-validation pass caught before any code
+    shipped, not smoothed over:** a first draft silently dropped a
+    safety check that only existed inside `library.query_strategy_
+    from_path` — bypassed here because its canonical-library machinery
+    doesn't fit a per-turn-card query shape, but its two checks
+    (`path_scenario.node` must be a `TerminalNode`; both live
+    positions' remaining stacks must be equal) are *not* specific to
+    that machinery and are still required. Without them, an unclosed
+    preflop path (e.g. BB hasn't acted after BTN's raise) would
+    silently feed one side's stack into `solve_flop_turn` as if both
+    players shared it, instead of erroring cleanly. Ported explicitly;
+    regression-tested (`test_solve_turn_from_path_rejects_a_non_
+    terminal_preflop_path`, mirroring the equivalent existing test for
+    `/solve_flop_from_path`).
+  - **A second real bug the same pass caught:** the original cache-key
+    design included `flop_action_path`/`turn_card` — which would have
+    forced a full re-solve for every different *turn card* asked about
+    against an *identical* preflop+flop situation, directly defeating
+    the "reading chance_data afterward is free" finding above. Fixed
+    by keying `_turn_path_cache` narrowly — only what `solve_flop_
+    turn`'s own cost actually depends on (the preflop leg, the board,
+    both iteration counts) — and resolving `flop_action_path`/
+    `turn_card` by walking the already-solved tree on every call
+    instead, since that's already free. Regression-tested: two
+    requests differing only in `turn_card` (or only in
+    `flop_action_path`) leave exactly one entry in `_turn_path_cache`,
+    while two requests with genuinely different preflop legs leave two
+    — proving the key is neither too coarse nor too narrow.
+  - **A third finding, caught by testing the real pipeline instead of
+    an isolated call, and the most consequential of the three:** an
+    early version reused `MAX_PATH_QUERY_CLASSES_PER_SIDE` (6, already
+    tuned for `/solve_flop_from_path`'s own `solve_flop`-via-`query_
+    strategy` cost profile) directly for this endpoint's own range cap.
+    A real end-to-end request measured **454s**. Root cause:
+    `solve_flop_turn`'s cost curve is fundamentally steeper than
+    `solve_flop`'s — it builds ~49 branch equity tables per chance-
+    eligible flop terminal, not one table total — so the same 6-class
+    cap (which expands to a *combo* count depending on how many of
+    those classes are pairs/suited/offsuit, not a fixed number)
+    produced a 58-combo pool against a real derived range, not the
+    ~12-combo pool a hand-picked demo range used during planning.
+    Fixed with `MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE`, this endpoint's
+    own, separately-measured cap. Real numbers, same preflop line/
+    board/iterations throughout: cap=6 → 58 combos, 454s; cap=3 → 27
+    combos, 99.9s; cap=2 → 19 combos, 45.9s; cap=1 → 7 combos, 10.2s.
+    Set to 2 — landing this endpoint's real cost in the same
+    already-accepted "slow but tolerable for a live, if not snappy,
+    request" bracket `/solve_flop_to_river` established at M14
+    (~63-105s), not the ~18-26s bracket the docstring originally,
+    incorrectly, expected to carry over from an isolated measurement.
+  - `iterations` (preflop leg) and `turn_iterations` (the `solve_flop_
+    turn` leg) are two independent request fields, not one shared
+    value — deliberately: `/solve_flop_from_path`'s own flop-stage
+    iterations are fixed/unexposed specifically because that leg sits
+    behind `query_strategy`'s canonical-library abstraction (a
+    client-varying value would be silently ignored on a hit); this
+    endpoint doesn't use that abstraction at all, so nothing forces the
+    two legs to share one cap, and doing so anyway would have silently
+    under-capped preflop convergence 10x below every sibling endpoint's
+    own `MAX_ITERATIONS` for a reason that has nothing to do with
+    preflop's own (much cheaper) cost.
+  - Only the *first* turn decision is ever exposed (`branch.root`
+    itself, never a deeper turn-street path) — a deliberate scope cut
+    mirroring `query_strategy`'s own opening-node-only precedent, not
+    an oversight. River-level advice one street further, and an
+    interactive "what's legal on the flop from here" walker (this
+    milestone's flop-line input is a curated preset dropdown, not a
+    general wizard — mirroring `ActionPathSolver.tsx`'s own M24-before-
+    M25 history), are the natural next milestones this one deliberately
+    defers — both already de-risked cost-wise by this milestone's own
+    measurements (a two-hop river walk, after a real `solve_flop_to_
+    river` call, measured ~0.002ms), unlike every prior open question
+    in this project's real-time-speed thread.
+  - **Frontend:** `TurnPathSolver.tsx` (new) reuses `usePreflopWalk`
+    (M25) directly for its own preflop leg — *not* a re-implementation
+    of curated preflop presets. (A real correction a design-validation
+    pass made before any frontend code was written: `ActionPathSolver.
+    tsx` is not still M24's original curated-preset component — M25
+    reworked it in place into a general interactive wizard. Building a
+    new curated-only preflop selector from scratch would have been a
+    real regression against what already ships.) The flop leg is 8
+    curated presets — the 7 real, empirically-enumerated (not guessed)
+    flop-terminal action-kind paths reachable at `FLOP_TURN_MAX_
+    RAISES`/`FLOP_TURN_RAISE_SIZES`'s real values, plus one fold-out
+    line to exercise that outcome. A known, stated limitation: this
+    list is hardcoded to match those two server constants and would
+    silently drift if they ever changed — the structural fix (enumerate
+    legal flop lines live) is possible in principle (legal action
+    *kinds* depend only on `StreetConfig`'s pot/stack/raise_sizes/
+    max_raises, not board/range) but is the same "interactive flop
+    wizard" scope jump already deferred above. Distinguishes a
+    flop-line fold-out from an already-all-in-on-the-flop terminal by
+    checking the *submitted* flop preset locally (does its own path end
+    in `fold`?) rather than guessing from response data.
 
 ## v3 vision (future) — live-table advisor
 
@@ -1370,9 +1483,28 @@ M24's own Finding 1 from what would otherwise be hours), and finally
 given a real interactive frontend by M25 (`POST /preflop_walk` plus a
 rebuilt `ActionPathSolver.tsx`, replacing M24's own curated 3-preset
 selector with a general step-by-step wizard over the exact same, fully
-general backend M24 already shipped). What remains, deliberately:
-multiway postflop solving — the only thing this whole roadmap and its
-flexible-input companion thread never scoped.
+general backend M24 already shipped).
+
+**M26 update — turn-level advice ships too, extending both threads
+above one street further:** `POST /solve_turn_from_path` reaches a real
+turn decision (not just a flop-level number improved by real turn
+action baked in), and confirms the real-time-speed thread's own
+`solve_flop_turn`/`solve_flop_to_river` (M12/M13) had already computed
+real turn/river strategies all along — reading one out live cost
+nothing new (~0.04ms, after a solve that was already being paid for).
+A real, caught-before-shipping finding along the way: the derived-range
+cap that works for the flop (`MAX_PATH_QUERY_CLASSES_PER_SIDE=6`) does
+*not* carry over to the turn — `solve_flop_turn`'s steeper cost curve
+turned the same cap into a 454s real request; a separately-measured,
+smaller cap (`MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE=2`) brought it back
+to ~46s, in the same bracket `/solve_flop_to_river` was already
+accepted in. What remains, deliberately: river-level advice one street
+further (already de-risked cost-wise by this milestone's own
+measurements — a two-hop river walk measured ~0.002ms), an interactive
+flop-action wizard (this milestone's own flop-line input is a curated
+preset dropdown, mirroring `ActionPathSolver.tsx`'s own M24-before-M25
+history), and multiway postflop solving — the only thing across this
+entire multi-milestone thread that has never been scoped at all.
 
 ### The real-time-speed roadmap
 

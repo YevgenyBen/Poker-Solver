@@ -103,3 +103,25 @@ export interface PreflopWalkResponse {
   pot: number;
   legal_actions: LegalActionOption[];
 }
+
+// Mirrors api/schemas.py's TurnPathQueryResponse — /solve_turn_from_path
+// (M26). player_to_act/strategy reflect the turn decision reached after
+// preflop_action_path, a real flop board, flop_action_path, and a real
+// dealt turn_card; is_terminal covers two distinct real outcomes (a
+// fold-out on the flop, or the flop action already left both players
+// fully all-in) — strategy is empty ({}) in both.
+export interface TurnPathQueryResponse {
+  board: string;
+  turn_card: string;
+  preflop_action_path: string[];
+  flop_action_path: string[];
+  stack_bb: number;
+  effective_stack_bb: number;
+  pot: number;
+  is_terminal: boolean;
+  player_to_act: string | null;
+  strategy: OpeningRange;
+  position: string;
+  positions: string[];
+  elapsed_seconds: number;
+}
