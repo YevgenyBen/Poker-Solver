@@ -1,84 +1,47 @@
-import { useState } from 'react';
 import { ActionPathSolver } from './components/ActionPathSolver';
 import { CachedFlopSolver } from './components/CachedFlopSolver';
-import { DetailPanel } from './components/DetailPanel';
 import { EquityCalculator } from './components/EquityCalculator';
 import { FlopSolver } from './components/FlopSolver';
-import { Legend } from './components/Legend';
-import { RangeGrid } from './components/RangeGrid';
-import { StackControl } from './components/StackControl';
-import { TableModeControl } from './components/TableModeControl';
-import { MULTIWAY_POSITIONS, MULTIWAY_TABLE_SIZES, type MultiwayTableSize } from './hands';
-import { useOpeningRange } from './useOpeningRange';
+import { PreflopRangesPage } from './components/PreflopRangesPage';
+import { TabNav } from './components/TabNav';
+import { useHashRoute } from './useHashRoute';
 
-const DEFAULT_STACK_BB = 100;
+const TABS = [
+  { id: 'preflop', label: 'Preflop Ranges' },
+  { id: 'equity', label: 'Equity Calculator' },
+  { id: 'flop', label: 'Flop Solver' },
+  { id: 'flop-cached', label: 'Cached Flop Solver' },
+  { id: 'action-path', label: 'Action-Path Wizard' },
+] as const;
 
-function isMultiwayTableSize(players: number): players is MultiwayTableSize {
-  return (MULTIWAY_TABLE_SIZES as readonly number[]).includes(players);
-}
+const DEFAULT_TAB = 'preflop';
+const TAB_IDS = new Set<string>(TABS.map((tab) => tab.id));
 
+// The app shell: an <h1> app title, a tab bar, and exactly one active
+// tab's page mounted at a time (unmounting the rest, not just hiding
+// them — see useHashRoute.ts and each page's own component for why:
+// RangeGrid/ActionPathSolver both fetch eagerly on mount, so keeping
+// every tab mounted simultaneously would keep re-triggering all of
+// them regardless of which the user is actually looking at).
 export function App() {
-  const [stackBb, setStackBb] = useState(DEFAULT_STACK_BB);
-  const [players, setPlayers] = useState(2);
-  const [position, setPosition] = useState(MULTIWAY_POSITIONS[3][0]);
-  const [selectedHand, setSelectedHand] = useState<string | null>(null);
-
-  const isMultiway = isMultiwayTableSize(players);
-  const { data, status } = useOpeningRange(stackBb, isMultiway ? { players, position } : undefined);
-  const openingRange = data?.opening_range ?? null;
-  const selectedFreqs = selectedHand && openingRange ? (openingRange[selectedHand] ?? null) : null;
-
-  function handlePlayersChange(newPlayers: number) {
-    setPlayers(newPlayers);
-    // Default to that table size's own first-to-act position — BTN is
-    // first to act at 3-max, but UTG is at 6/9-max, so a single
-    // hardcoded default would silently ask for the wrong "opening
-    // range" once the table has more than 3 seats.
-    if (isMultiwayTableSize(newPlayers)) {
-      setPosition(MULTIWAY_POSITIONS[newPlayers][0]);
-    }
-    setSelectedHand(null);
-  }
-
-  function handlePositionChange(newPosition: string) {
-    setPosition(newPosition);
-    setSelectedHand(null);
-  }
-
-  const title = isMultiway ? `${players}-max preflop solver (demo)` : 'Heads-up preflop solver';
-  const subtitle = isMultiway
-    ? `${position}'s strategy, action folded to them — ${players}-max demo: a small curated hand subset (MCCFR), not the full 169-hand exact solve`
-    : 'BTN opening range (button vs. big blind, first action)';
+  const [hashRoute, setHashRoute] = useHashRoute(DEFAULT_TAB);
+  const activeTab = TAB_IDS.has(hashRoute) ? hashRoute : DEFAULT_TAB;
 
   return (
     <>
-      <header>
-        <h1>{title}</h1>
-        <p className="subtitle">{subtitle}</p>
+      <header className="app-header">
+        <h1>Poker Solver</h1>
       </header>
 
-      <StackControl initialStackBb={stackBb} onChange={setStackBb} />
-      <TableModeControl
-        players={players}
-        position={position}
-        onPlayersChange={handlePlayersChange}
-        onPositionChange={handlePositionChange}
-      />
-      <span className="status" role="status">
-        {status}
-      </span>
+      <TabNav tabs={[...TABS]} activeTab={activeTab} onSelect={setHashRoute} />
 
-      <Legend />
-
-      <main>
-        <RangeGrid openingRange={openingRange} selectedHand={selectedHand} onSelect={setSelectedHand} />
-        <DetailPanel hand={selectedHand} freqs={selectedFreqs} />
+      <main id="tab-panel" role="tabpanel" aria-labelledby={`tab-${activeTab}`}>
+        {activeTab === 'preflop' && <PreflopRangesPage />}
+        {activeTab === 'equity' && <EquityCalculator />}
+        {activeTab === 'flop' && <FlopSolver />}
+        {activeTab === 'flop-cached' && <CachedFlopSolver />}
+        {activeTab === 'action-path' && <ActionPathSolver />}
       </main>
-
-      <EquityCalculator />
-      <FlopSolver />
-      <CachedFlopSolver />
-      <ActionPathSolver />
     </>
   );
 }

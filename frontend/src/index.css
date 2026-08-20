@@ -30,6 +30,38 @@ header h1 {
   font-size: 1.4rem;
 }
 
+.app-header {
+  margin-bottom: 1rem;
+}
+
+.tab-nav {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.tab-nav button {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 4px;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.tab-nav button:hover {
+  background: #eeeee9;
+}
+
+.tab-nav button.active {
+  border-color: var(--call);
+  color: var(--call);
+  font-weight: 600;
+}
+
 .subtitle {
   margin: 0 0 1rem;
   color: var(--text-muted);
@@ -160,7 +192,7 @@ header h1 {
 .swatch.raise { background: var(--raise); }
 .swatch.allin { background: var(--allin); }
 
-main {
+.range-layout {
   display: flex;
   gap: 1.5rem;
   align-items: flex-start;
@@ -252,9 +284,6 @@ main {
 }
 
 .equity-calculator {
-  margin-top: 2rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid var(--border);
   max-width: 420px;
 }
 
@@ -311,9 +340,6 @@ main {
 }
 
 .flop-solver {
-  margin-top: 2rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid var(--border);
   max-width: 480px;
 }
 
