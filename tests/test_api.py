@@ -16,6 +16,10 @@ from poker_solver.starting_hands import StartingHand
 # several parametrized players=9 tests, was measured during M9 to make
 # the test suite itself slow.
 FAST_MULTIWAY_ITERATIONS = 30
+# /solve_flop_cached's own fast-test iteration count — its own named
+# constant even though the value happens to coincide with others below,
+# matching this file's existing per-endpoint naming precedent.
+FAST_FLOP_QUERY_ITERATIONS = 20
 
 
 @pytest.fixture(autouse=True)
@@ -45,17 +49,28 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
     monkeypatch.setattr(api_main, "DEMO_CHAINED_FLOP_VILLAIN_CLASSES", {StartingHand("6", "4", suited=True): 1.0})
     monkeypatch.setattr(api_main, "FLOP_TURN_MAX_RAISES", 1)
     monkeypatch.setattr(api_main, "FLOP_TURN_RAISE_SIZES", ())
+    # /solve_flop_cached (M22) has no `iterations` query param (see its
+    # own module-docstring paragraph for why — nothing not part of the
+    # canonical key is request-controllable), so unlike every other
+    # /solve_flop* endpoint's tests, there's no per-request lever to
+    # keep a real solve fast — the fixed pool/iteration constants
+    # themselves have to be monkeypatched down instead.
+    monkeypatch.setattr(api_main, "FLOP_QUERY_HERO_CLASSES", {StartingHand("A", "A"): 1.0})
+    monkeypatch.setattr(api_main, "FLOP_QUERY_VILLAIN_CLASSES", {StartingHand("K", "K"): 1.0})
+    monkeypatch.setattr(api_main, "FLOP_QUERY_ITERATIONS", FAST_FLOP_QUERY_ITERATIONS)
     _cache.clear()
     _multiway_cache.clear()
     api_main._flop_cache.clear()
     api_main._flop_turn_cache.clear()
     api_main._flop_to_river_cache.clear()
+    api_main._flop_query_library.clear()
     yield
     _cache.clear()
     _multiway_cache.clear()
     api_main._flop_cache.clear()
     api_main._flop_turn_cache.clear()
     api_main._flop_to_river_cache.clear()
+    api_main._flop_query_library.clear()
 
 
 @pytest.fixture()
@@ -541,3 +556,101 @@ def test_solve_flop_turn_and_solve_flop_to_river_are_cached_independently(client
 
     assert not _any_branch_has_a_populated_chance_fn(turn_result)
     assert _any_branch_has_a_populated_chance_fn(river_result)
+
+
+# ---------------------------------------------------------------------------
+# M22 deliverable: /solve_flop_cached — canonicalize-then-lookup, falling
+# back to an on-demand solve on a miss (poker_solver.library.query_
+# strategy, M21). Unlike every other /solve_flop* endpoint, only `board`
+# and `stack_bb` are query params — see api/main.py's own module-docstring
+# paragraph for why everything else is a fixed server constant.
+# ---------------------------------------------------------------------------
+
+
+def test_solve_flop_cached_returns_200_with_well_formed_response(client):
+    response = client.get("/solve_flop_cached?board=Jh7d2c&stack_bb=40")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["board"] == "Jh7d2c"
+    assert body["stack_bb"] == 40.0
+    assert body["pot"] == api_main.FLOP_QUERY_POT
+    assert body["hit"] is False  # a never-before-seen board is always a miss
+    assert body["elapsed_seconds"] >= 0.0
+    assert body["position"] == "OOP"
+    assert body["positions"] == ["OOP", "IP"]
+    assert len(body["canonical_board"]) == 6  # 3 cards, 2 chars each
+    assert body["canonical_stack_bb"] > 0
+    assert len(body["strategy"]) > 0
+
+
+def test_solve_flop_cached_frequencies_sum_to_one_per_combo(client):
+    response = client.get("/solve_flop_cached?board=Jh7d2c&stack_bb=40")
+    for freqs in response.json()["strategy"].values():
+        assert sum(freqs.values()) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_solve_flop_cached_rejects_a_board_that_isnt_exactly_three_cards(client):
+    too_few = client.get("/solve_flop_cached?board=Jh7d&stack_bb=40")
+    assert too_few.status_code == 422
+
+    too_many = client.get("/solve_flop_cached?board=Jh7d2c9h&stack_bb=40")
+    assert too_many.status_code == 422
+
+
+def test_solve_flop_cached_rejects_nonpositive_stack(client):
+    response = client.get("/solve_flop_cached?board=Jh7d2c&stack_bb=0")
+    assert response.status_code == 422
+
+
+def test_solve_flop_cached_rejects_a_board_that_blocks_the_entire_demo_range(client):
+    # Unlike /solve_flop's own same-named test (which asserts 200 — its
+    # 3-class hero pool only gets *partially* blocked by AhAdAc, see that
+    # test's own comment), this fixture shrinks FLOP_QUERY_HERO_CLASSES
+    # to a single class (AA), which AhAdAc blocks completely — a genuine
+    # 422, not a copy-paste mistake.
+    response = client.get("/solve_flop_cached?board=AhAdAc&stack_bb=40")
+    assert response.status_code == 422
+
+
+def test_solve_flop_cached_miss_then_hit_on_the_same_board(client):
+    first = client.get("/solve_flop_cached?board=Jh7d2c&stack_bb=40").json()
+    assert first["hit"] is False
+
+    second = client.get("/solve_flop_cached?board=Jh7d2c&stack_bb=40").json()
+    assert second["hit"] is True
+    assert second["strategy"] == first["strategy"]
+    assert second["canonical_board"] == first["canonical_board"]
+    # Unlike /solve_flop*'s own cached responses (elapsed_seconds frozen
+    # at original-solve time, see test_solve_flop_is_cached_across_
+    # positions' own exact-equality assertion), query_strategy measures
+    # elapsed_seconds fresh on every call, hit or miss — the concrete
+    # "hit is fast" proof this endpoint exists to show, not a bug.
+    assert second["elapsed_seconds"] < first["elapsed_seconds"]
+
+
+def test_solve_flop_cached_hits_a_board_isomorphic_to_a_previous_miss(client):
+    # The actual point of the whole real-time-speed roadmap. 2h7s9d and
+    # 2c7d9h are the same isomorphic pair tests/test_library.py's own
+    # engine-level tests already use — reused here for consistency
+    # rather than inventing and hoping a new pair is right.
+    first = client.get("/solve_flop_cached?board=2h7s9d&stack_bb=40").json()
+    assert first["hit"] is False
+
+    second = client.get("/solve_flop_cached?board=2c7d9h&stack_bb=40").json()
+    assert second["hit"] is True
+    assert second["board"] == "2c7d9h"  # echoes the real query board, not the first one
+    assert second["canonical_board"] == first["canonical_board"]
+    assert second["canonical_stack_bb"] == first["canonical_stack_bb"]
+    # Deliberately NOT asserting strategy equality here — the combo keys
+    # are translated to each board's own real suits and legitimately
+    # differ. That finer-grained bit-exactness already belongs to
+    # tests/test_library.py's own engine-level cross-check; this test
+    # only needs the HTTP plumbing (a real cache hit occurred) to work.
+
+
+def test_solve_flop_cached_different_boards_are_not_confused(client):
+    first = client.get("/solve_flop_cached?board=2h7s9d&stack_bb=40").json()
+    second = client.get("/solve_flop_cached?board=3c8dTh&stack_bb=40").json()
+    assert first["hit"] is False
+    assert second["hit"] is False
+    assert first["canonical_board"] != second["canonical_board"]

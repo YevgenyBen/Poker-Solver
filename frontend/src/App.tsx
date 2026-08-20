@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { CachedFlopSolver } from './components/CachedFlopSolver';
 import { DetailPanel } from './components/DetailPanel';
 import { EquityCalculator } from './components/EquityCalculator';
 import { FlopSolver } from './components/FlopSolver';
@@ -75,6 +76,7 @@ export function App() {
 
       <EquityCalculator />
       <FlopSolver />
+      <CachedFlopSolver />
     </>
   );
 }

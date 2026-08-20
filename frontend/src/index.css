@@ -381,3 +381,27 @@ main {
   font-size: 0.8rem;
   color: var(--text-muted);
 }
+
+/* M22: /solve_flop_cached's hit/miss indicator — no existing badge/pill
+   anywhere in the app to reuse, modeled on .presets button.active's
+   minimal "bordered, colored, bold text" idiom instead of a new
+   tinted-background badge system. Green for a hit, neutral gray for a
+   miss (not --fold/red — a miss is a valid, expected first-query
+   outcome, not an error). */
+.hit-indicator {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+
+.hit-indicator.hit {
+  color: var(--raise);
+  border-color: var(--raise);
+}
+
+.hit-indicator.miss {
+  color: var(--text-muted);
+}

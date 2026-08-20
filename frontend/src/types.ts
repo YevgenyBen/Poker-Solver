@@ -37,3 +37,22 @@ export interface FlopSolveResponse {
 // M14: which of the three /solve_flop* endpoints to call — see api.ts's
 // fetchFlopStrategy.
 export type FlopSolveDepth = 'flop' | 'flop_turn' | 'flop_to_river';
+
+// Mirrors api/schemas.py's FlopQueryResponse — /solve_flop_cached
+// (M22), backed by poker_solver.library.query_strategy (M21). A
+// structurally different shape from FlopSolveResponse above, not an
+// extension of it: no `iterations` (not meaningful for a cache hit),
+// plus `hit`/`canonical_board`/`canonical_stack_bb`, which none of the
+// other three endpoints have.
+export interface FlopQueryResponse {
+  board: string;
+  canonical_board: string;
+  pot: number;
+  stack_bb: number;
+  canonical_stack_bb: number;
+  hit: boolean;
+  elapsed_seconds: number;
+  strategy: OpeningRange;
+  position: string;
+  positions: string[];
+}
