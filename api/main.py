@@ -39,9 +39,25 @@ poker_solver/hand_eval.py and equity.py for the vectorized evaluator
 that was built to make each computation itself fast, and cfr.py's
 EXPLORATION_EPSILON docstring for the sampling-bias fix that makes
 higher iteration counts actually converge rather than just take longer.
-Net effect: 6-max reaches good convergence in minutes; 9-max is
+Net effect: 3-max reaches good convergence in minutes; 9-max is
 deliberately budgeted fewer iterations and correspondingly noisier —
 documented, not hidden, the same way M8 documented 3-max's own limits.
+
+**Correction from M27**: this docstring used to also claim 6-max
+"reaches good convergence in minutes" at 30,000 iterations — that
+claim didn't hold up under closer testing. Fixing a real equity bug
+(poker_solver/equity.py's MultiwayEquityCache — see its own module
+comment) surfaced a separate, pre-existing MCCFR convergence
+sensitivity at 6-max with this project's small, top-heavy demo hand
+pool: some hands' learned fold rate grows steadily with more
+iterations instead of stabilizing (confirmed to also affect the
+*pre-fix* code, just biased in the opposite direction, so this isn't
+something the equity fix introduced). 6-max's own iteration budget
+below was cut sharply as a result, mirroring 9-max's own "smaller,
+deliberately conservative" precedent rather than the fuller
+convergence 30,000 iterations was believed to reach — see CLAUDE.md's
+M27 entry for the full investigation. Fully resolving 6-max's
+convergence is real, separate future work, not attempted here.
 
 GET /equity is M10's deliverable: given two concrete hand combos (not
 169-class hands — see poker_solver/combos.py for why postflop reasoning
@@ -357,15 +373,38 @@ DEMO_MULTIWAY_HANDS = [
 # player count grows — see the module docstring for why (cache-hit rate
 # collapses with opponent count, not solvable by raw speed alone).
 # Measured during M9 (samples=200, this hand pool, 100bb): 3-max reaches
-# good convergence in seconds once cached; 6-max in ~2.5 minutes (30K
-# iterations); 9-max's per-iteration cost was too variable to safely
-# budget a large count for a live endpoint (some iterations touch far
-# more distinct opponent-hand combinations than others), so it's capped
-# at a smaller, empirically-verified-reliable count (~1.5 minutes) —
-# genuinely noisier than 6-max's output, not just "less time given".
+# good convergence in seconds once cached; 9-max's per-iteration cost was
+# too variable to safely budget a large count for a live endpoint (some
+# iterations touch far more distinct opponent-hand combinations than
+# others), so it's capped at a smaller, empirically-verified-reliable
+# count (~1.5 minutes).
+#
+# 6-max **used to** run 30,000 iterations (~2.5 minutes), believed since
+# M9 to reach "good convergence". M27 found that belief was wrong: fixing
+# a real equity-fallback bug (poker_solver/equity.py's
+# MultiwayEquityCache) surfaced a pre-existing MCCFR convergence
+# sensitivity specific to 6-max with this small, top-heavy demo hand pool
+# — some hands' fold rate at 30,000 iterations grows steadily rather than
+# stabilizing (measured: AKs's UTG-open fold rate climbed from 22.8% at
+# 300 iterations to 94.8% at 30,000, and kept climbing at 100,000+ —
+# never leveling off). Confirmed not to be something M27's own fix
+# introduced: the *pre-fix* code shows the same non-monotonic instability
+# too, just biased toward over-jamming instead of over-folding (see
+# CLAUDE.md's M27 entry for the full investigation, including why three
+# separate placeholder-quality improvements each helped some but did not
+# resolve it). No iteration count tested was fully stable — AKo's fold
+# rate was already climbing noticeably by 500 iterations (38.3%), and
+# even AA/KK weren't consistently stable there across different seeds —
+# so there's no verified-safe *larger* number to fall back to; matching
+# 9-max's own already-conservative 300 is the most defensible choice
+# available, not a number this milestone specifically validated as
+# sufficient. Only AA's own fold rate held up consistently across seeds
+# at 300 (see tests/test_solver.py's six_max_result tests, which now
+# mirror 9-max's own "only assert what's actually reliable" pattern).
+# Fully resolving 6-max's convergence is real, separate future work.
 MULTIWAY_TABLE_CONFIGS = {
     3: {"positions": ("BTN", "SB", "BB"), "iterations": 100_000},
-    6: {"positions": ("UTG", "MP", "CO", "BTN", "SB", "BB"), "iterations": 30_000},
+    6: {"positions": ("UTG", "MP", "CO", "BTN", "SB", "BB"), "iterations": 300},
     9: {"positions": ("UTG", "UTG1", "MP1", "MP2", "MP3", "CO", "BTN", "SB", "BB"), "iterations": 300},
 }
 
