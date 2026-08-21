@@ -1520,6 +1520,145 @@ def _cap_range_to_combos(class_frequencies: dict, max_combos: int, exclude: froz
     return dict(top_items)
 
 
+@dataclasses.dataclass(frozen=True)
+class _PathSituation:
+    """Everything the five path-derived endpoints' shared front half
+    produces (M50) — the real, solved-and-validated situation a client's
+    action path describes, before any street-specific solving happens.
+
+    `capped_scenario` is only populated for a CLASS-level cap (the
+    canonical-library path in _query_flop_from_path needs a real
+    PathScenario whose `ranges` are still StartingHand-keyed, per
+    library.query_strategy_from_path's own documented class-dicts-only
+    contract); a combo-level cap (M46's river endpoint) has no
+    meaningful class-level equivalent and leaves this None.
+    """
+
+    preflop_result: StrategyResult
+    path_scenario: object  # solver.PathScenario
+    postflop_positions: tuple
+    effective_stack_bb: float
+    position_ranges: dict  # position -> {HandCombo: weight}
+    capped_scenario: object | None
+
+
+def _derive_path_situation(
+    *,
+    action_kinds: list,
+    stack_bb: float,
+    board_cards: tuple,
+    iterations: int,
+    players: int,
+    multiway: bool,
+    sibling_endpoint: str,
+    max_classes_per_position: int | None = None,
+    max_combos_per_position: int | None = None,
+    path_field_name: str = "action_path",
+) -> _PathSituation:
+    """The shared front half of every path-derived endpoint (M50).
+
+    Extracted from five near-identical orchestrators (_query_flop_from_
+    path, _query_flop_multiway_from_path, _query_turn_from_path,
+    _query_turn_multiway_from_path, _query_river_from_path) that each
+    hand-rolled the same pipeline: a real (cached, raw) preflop solve ->
+    resolve the client's bare action kinds into real Actions ->
+    derive_ranges_from_path (M16) -> require a real terminal with the
+    right live-position count -> cap every position's derived range ->
+    expand to board-legal combos -> postflop_action_order (M29) ->
+    derive the shared effective stack. Only the SOLVE stage and the
+    response shape genuinely differ between those five; everything above
+    was duplicated, which is why surfacing path_scenario.trained (a gap
+    named and deferred in M29/M42/M44) kept needing a five-place change.
+
+    Deliberately parameterized, not unified away, because these are real
+    per-endpoint differences, not incidental drift:
+      * `multiway` — exactly 2 live positions (the exact 2-position
+        solvers) vs. 3+ (the MCCFR multiway solvers). Each rejects the
+        other's case with a message naming `sibling_endpoint`.
+      * class-level vs. combo-level capping — see _cap_range_to_combos
+        and RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE for the measured reason
+        the river endpoint needs the finer lever.
+      * `path_field_name` — the flop endpoints call their own field
+        `action_path`, the deeper ones `preflop_action_path`; error text
+        names whichever the client actually sent.
+    """
+    if (max_classes_per_position is None) == (max_combos_per_position is None):
+        raise RuntimeError("exactly one of max_classes_per_position/max_combos_per_position must be set")
+
+    preflop_result = _get_or_solve_preflop_raw(stack_bb, iterations, players=players)
+    actions, _node = _resolve_action_path(preflop_result.root, action_kinds)
+    path_scenario = derive_ranges_from_path(preflop_result, actions)
+
+    # Known, deliberate gap (M29/M42/M44): path_scenario.trained — whether
+    # each derived-range hand was genuinely backed by real solving along
+    # the path, rather than the untrained uniform default — still isn't
+    # surfaced in any endpoint's response. It now has exactly ONE place
+    # that would need to change to fix it, which was much of the point of
+    # this extraction; the response-shape decision it needs is still its
+    # own separate work.
+    if not isinstance(path_scenario.node, TerminalNode):
+        raise ValueError(f"{path_field_name} does not reach a terminal — action isn't capped yet")
+
+    live_count = len(path_scenario.live_positions)
+    if multiway and live_count < 3:
+        raise ValueError(
+            f"{path_field_name} leaves only {live_count} live position(s) — "
+            f"use {sibling_endpoint} for a 2-survivor situation"
+        )
+    if not multiway and live_count != 2:
+        # Previously this case reached postflop_action_order's own 2-tuple
+        # unpack and surfaced as a bare "too many values to unpack"
+        # ValueError (still a 422, but an unhelpful one) in the two flop
+        # endpoints; the deeper ones already checked explicitly. Unified
+        # here so every endpoint gives the same real explanation.
+        raise ValueError(
+            f"{path_field_name} leaves {live_count} live positions, not 2 — "
+            f"use {sibling_endpoint} for a 3+-survivor situation"
+        )
+
+    postflop_positions = postflop_action_order(preflop_result.config.positions, path_scenario.live_positions)
+    effective_stack_bb = path_scenario.stacks[postflop_positions[0]]
+    if any(path_scenario.stacks[p] != effective_stack_bb for p in postflop_positions):
+        raise RuntimeError(
+            "derive_ranges_from_path's own TerminalNode guarantee (equal remaining stacks "
+            "across every live position) did not hold — this should be unreachable"
+        )
+
+    exclude = frozenset(board_cards)
+    capped_scenario = None
+    if max_classes_per_position is not None:
+        capped_ranges = {
+            position: _cap_range(range_dict, max_classes_per_position)
+            for position, range_dict in path_scenario.ranges.items()
+        }
+        capped_scenario = dataclasses.replace(path_scenario, ranges=capped_ranges)
+        position_ranges = {
+            position: range_from_class_frequencies(range_dict, exclude=exclude)
+            for position, range_dict in capped_ranges.items()
+        }
+    else:
+        position_ranges = {
+            position: _cap_range_to_combos(range_dict, max_combos_per_position, exclude)
+            for position, range_dict in path_scenario.ranges.items()
+        }
+
+    for position, combo_dict in position_ranges.items():
+        if not combo_dict:
+            raise ValueError(
+                f"board {''.join(str(c) for c in board_cards)!r} blocks every combo in "
+                f"{position}'s derived (capped) range"
+            )
+
+    return _PathSituation(
+        preflop_result=preflop_result,
+        path_scenario=path_scenario,
+        postflop_positions=postflop_positions,
+        effective_stack_bb=effective_stack_bb,
+        position_ranges=position_ranges,
+        capped_scenario=capped_scenario,
+    )
+
+
 def _query_flop_from_path(
     action_kinds: list, stack_bb: float, board_cards: tuple, iterations: int, players: int = 2
 ) -> dict:
@@ -1552,56 +1691,31 @@ def _query_flop_from_path(
     design (a demo, not a high-throughput service), so the extra
     complexity of per-partition locking isn't earning its keep yet.
     """
-    preflop_result = _get_or_solve_preflop_raw(stack_bb, iterations, players=players)
-    actions, _node = _resolve_action_path(preflop_result.root, action_kinds)
-    path_scenario = derive_ranges_from_path(preflop_result, actions)
+    situation = _derive_path_situation(
+        action_kinds=action_kinds,
+        stack_bb=stack_bb,
+        board_cards=board_cards,
+        iterations=iterations,
+        players=players,
+        multiway=False,
+        sibling_endpoint="/solve_flop_multiway_from_path",
+        max_classes_per_position=MAX_PATH_QUERY_CLASSES_PER_SIDE,
+    )
+    oop_position, ip_position = situation.postflop_positions
+    effective_stack_bb = situation.effective_stack_bb
 
-    # Known, deliberate gap (M29): path_scenario.trained (whether each
-    # derived-range hand was genuinely backed by real solving along the
-    # path, not the untrained default — see PathScenario's own
-    # docstring) isn't surfaced in this endpoint's response. Real and
-    # measured to matter at 6/9-max specifically (a deep 3-bet line's
-    # derived range came back exactly uniform in testing), but exposing
-    # it well needs its own response-shape decision (per-hand, like
-    # `trained` below, or a per-position summary) — deferred rather than
-    # bolted on here, the same "prove the core capability, name what's
-    # deferred" discipline this project's own bridge milestones already
-    # follow throughout (see CLAUDE.md's M29 entry).
-    capped_ranges = {
-        position: _cap_range(range_dict, MAX_PATH_QUERY_CLASSES_PER_SIDE)
-        for position, range_dict in path_scenario.ranges.items()
-    }
-    capped_scenario = dataclasses.replace(path_scenario, ranges=capped_ranges)
-
-    exclude = frozenset(board_cards)
-    for position, range_dict in capped_scenario.ranges.items():
-        if not range_from_class_frequencies(range_dict, exclude=exclude):
-            # Mirrors _query_flop's own guard — cheap, re-derived, no
-            # solve cost (query_strategy_from_path/build_library would
-            # otherwise silently run with an all-zero reach vector for
-            # this position instead of a clear error).
-            raise ValueError(
-                f"board {''.join(str(c) for c in board_cards)!r} blocks every combo in "
-                f"{position}'s derived (capped) range"
-            )
-
-    # M29: postflop_action_order, not a raw positions[0]/[1] unpack —
-    # correct at any origin table size, not just heads-up (see its own
-    # docstring for the real poker rule this replaces a heads-up-only
-    # guess with).
-    oop_position, ip_position = postflop_action_order(preflop_result.config.positions, path_scenario.live_positions)
     partition_key = (tuple(action_kinds), round(stack_bb), iterations, players)
     with _path_query_lock:
         library = _path_query_libraries.setdefault(partition_key, {})
         result = query_strategy_from_path(
             library,
-            preflop_result,
-            capped_scenario,
+            situation.preflop_result,
+            situation.capped_scenario,
             board_cards,
             iterations=PATH_QUERY_ITERATIONS,
         )
 
-    effective_stack_bb = path_scenario.stacks[oop_position]
+    path_scenario = situation.path_scenario
     canonical_board, _ = canonicalize_board(board_cards)
     canonical_stack_bb = canonical_stack_depth(effective_stack_bb)
 
@@ -1645,48 +1759,20 @@ def _query_flop_multiway_from_path(
     already include it — two different origin table sizes can share the
     same literal action-kind path.
     """
-    preflop_result = _get_or_solve_preflop_raw(stack_bb, iterations, players=players)
-    actions, _node = _resolve_action_path(preflop_result.root, action_kinds)
-    path_scenario = derive_ranges_from_path(preflop_result, actions)
-
-    if not isinstance(path_scenario.node, TerminalNode):
-        raise ValueError("action_path does not reach a terminal — action isn't capped yet")
-    if len(path_scenario.live_positions) < 3:
-        raise ValueError(
-            f"action_path leaves only {len(path_scenario.live_positions)} live position(s) — "
-            "use /solve_flop_from_path for a 2-survivor situation"
-        )
-
-    # Known, deliberate gap (M29, same as _query_flop_from_path above):
-    # path_scenario.trained isn't surfaced in this endpoint's response.
-    capped_ranges = {
-        position: _cap_range(range_dict, MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION)
-        for position, range_dict in path_scenario.ranges.items()
-    }
-
-    exclude = frozenset(board_cards)
-    position_ranges = {
-        position: range_from_class_frequencies(range_dict, exclude=exclude)
-        for position, range_dict in capped_ranges.items()
-    }
-    for position, combo_dict in position_ranges.items():
-        if not combo_dict:
-            raise ValueError(
-                f"board {''.join(str(c) for c in board_cards)!r} blocks every combo in "
-                f"{position}'s derived (capped) range"
-            )
-
-    # M29: postflop_action_order, already N-general — a 2-player caller
-    # elsewhere in this file unpacks its first two entries; here the
-    # full 3+-entry tuple is exactly what solve_flop_multiway's own
-    # `positions` parameter needs.
-    postflop_positions = postflop_action_order(preflop_result.config.positions, path_scenario.live_positions)
-    effective_stack_bb = path_scenario.stacks[postflop_positions[0]]
-    if any(path_scenario.stacks[p] != effective_stack_bb for p in postflop_positions):
-        raise RuntimeError(
-            "derive_ranges_from_path's own TerminalNode guarantee (equal remaining stacks "
-            "across every live position) did not hold — this should be unreachable"
-        )
+    situation = _derive_path_situation(
+        action_kinds=action_kinds,
+        stack_bb=stack_bb,
+        board_cards=board_cards,
+        iterations=iterations,
+        players=players,
+        multiway=True,
+        sibling_endpoint="/solve_flop_from_path",
+        max_classes_per_position=MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION,
+    )
+    path_scenario = situation.path_scenario
+    position_ranges = situation.position_ranges
+    postflop_positions = situation.postflop_positions
+    effective_stack_bb = situation.effective_stack_bb
 
     key = (tuple(action_kinds), players, round(stack_bb), iterations, board_cards, flop_iterations)
     with _flop_multiway_path_lock:
@@ -1746,59 +1832,26 @@ def _query_turn_from_path(
     identical collision reason `_query_flop_from_path`'s partition key
     now includes it.
     """
-    preflop_result = _get_or_solve_preflop_raw(stack_bb, iterations, players=players)
-    preflop_actions, _node = _resolve_action_path(preflop_result.root, preflop_action_kinds)
-    path_scenario = derive_ranges_from_path(preflop_result, preflop_actions)
-    # Known, deliberate gap: path_scenario.trained isn't surfaced here
-    # either — see _query_flop_from_path's identical note above.
-
-    # Ported from library.query_strategy_from_path (bypassed here — its
-    # canonical-library machinery doesn't fit this endpoint's per-turn-
-    # card query shape) — not specific to that abstraction, still
-    # required: derive_ranges_from_path itself does not require the
-    # preflop action to have closed.
-    if not isinstance(path_scenario.node, TerminalNode):
-        raise ValueError("preflop_action_path does not reach a terminal — action isn't capped yet")
-    if len(path_scenario.live_positions) != 2:
-        # Only reachable once players != 2 is actually possible here
-        # (M29) — a multiway-origin preflop path can close with 3+ live
-        # positions (e.g. a 3-way pot nobody folds out of), which
-        # solve_flop_turn's 2-position-only postflop machinery can't
-        # model. Checked explicitly rather than let postflop_action_
-        # order's own unpack fail with a confusing "too many values".
-        raise ValueError(
-            f"preflop_action_path leaves {len(path_scenario.live_positions)} live positions, not 2 — "
-            "postflop solving is 2-position only, regardless of the origin table size"
-        )
-    # M29: postflop_action_order, not a raw positions[0]/[1] unpack —
-    # correct at any origin table size, not just heads-up.
-    oop_position, ip_position = postflop_action_order(preflop_result.config.positions, path_scenario.live_positions)
-    oop_stack = path_scenario.stacks[oop_position]
-    ip_stack = path_scenario.stacks[ip_position]
-    if oop_stack != ip_stack:
-        raise RuntimeError(
-            "derive_ranges_from_path returned unequal stacks at a terminal node — should be "
-            "impossible per game_tree.py's no-side-pots invariant, please report"
-        )
-    effective_stack_bb = oop_stack
-
     # MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE, not MAX_PATH_QUERY_CLASSES_
     # PER_SIDE — see that constant's own comment for the real measured
     # reason (solve_flop_turn's cost curve is fundamentally steeper than
     # solve_flop_from_path's own query_strategy-backed one).
-    capped_ranges = {
-        position: _cap_range(range_dict, MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE)
-        for position, range_dict in path_scenario.ranges.items()
-    }
-    exclude = frozenset(board_cards)
-    for position, range_dict in capped_ranges.items():
-        if not range_from_class_frequencies(range_dict, exclude=exclude):
-            raise ValueError(
-                f"board {''.join(str(c) for c in board_cards)!r} blocks every combo in "
-                f"{position}'s derived (capped) range"
-            )
-    hero_range = range_from_class_frequencies(capped_ranges[oop_position], exclude=exclude)
-    villain_range = range_from_class_frequencies(capped_ranges[ip_position], exclude=exclude)
+    situation = _derive_path_situation(
+        action_kinds=preflop_action_kinds,
+        stack_bb=stack_bb,
+        board_cards=board_cards,
+        iterations=iterations,
+        players=players,
+        multiway=False,
+        sibling_endpoint="/solve_turn_multiway_from_path",
+        max_classes_per_position=MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE,
+        path_field_name="preflop_action_path",
+    )
+    oop_position, ip_position = situation.postflop_positions
+    effective_stack_bb = situation.effective_stack_bb
+    path_scenario = situation.path_scenario
+    hero_range = situation.position_ranges[oop_position]
+    villain_range = situation.position_ranges[ip_position]
 
     turn_solve_key = (
         tuple(preflop_action_kinds),
@@ -1928,43 +1981,21 @@ def _query_turn_multiway_from_path(
     the way the exact solver's chance_data does, so a legal card the
     solve never sampled is built on demand instead of rejected.
     """
-    preflop_result = _get_or_solve_preflop_raw(stack_bb, iterations, players=players)
-    preflop_actions, _node = _resolve_action_path(preflop_result.root, preflop_action_kinds)
-    path_scenario = derive_ranges_from_path(preflop_result, preflop_actions)
-    # Known, deliberate gap (M29, same as every other path-based
-    # endpoint): path_scenario.trained isn't surfaced here either.
-
-    if not isinstance(path_scenario.node, TerminalNode):
-        raise ValueError("preflop_action_path does not reach a terminal — action isn't capped yet")
-    if len(path_scenario.live_positions) < 3:
-        raise ValueError(
-            f"preflop_action_path leaves only {len(path_scenario.live_positions)} live position(s) — "
-            "use /solve_turn_from_path for a 2-survivor situation"
-        )
-
-    capped_ranges = {
-        position: _cap_range(range_dict, MAX_MULTIWAY_TURN_PATH_QUERY_CLASSES_PER_POSITION)
-        for position, range_dict in path_scenario.ranges.items()
-    }
-    exclude = frozenset(board_cards)
-    position_ranges = {
-        position: range_from_class_frequencies(range_dict, exclude=exclude)
-        for position, range_dict in capped_ranges.items()
-    }
-    for position, combo_dict in position_ranges.items():
-        if not combo_dict:
-            raise ValueError(
-                f"board {''.join(str(c) for c in board_cards)!r} blocks every combo in "
-                f"{position}'s derived (capped) range"
-            )
-
-    postflop_positions = postflop_action_order(preflop_result.config.positions, path_scenario.live_positions)
-    effective_stack_bb = path_scenario.stacks[postflop_positions[0]]
-    if any(path_scenario.stacks[p] != effective_stack_bb for p in postflop_positions):
-        raise RuntimeError(
-            "derive_ranges_from_path's own TerminalNode guarantee (equal remaining stacks "
-            "across every live position) did not hold — this should be unreachable"
-        )
+    situation = _derive_path_situation(
+        action_kinds=preflop_action_kinds,
+        stack_bb=stack_bb,
+        board_cards=board_cards,
+        iterations=iterations,
+        players=players,
+        multiway=True,
+        sibling_endpoint="/solve_turn_from_path",
+        max_classes_per_position=MAX_MULTIWAY_TURN_PATH_QUERY_CLASSES_PER_POSITION,
+        path_field_name="preflop_action_path",
+    )
+    path_scenario = situation.path_scenario
+    position_ranges = situation.position_ranges
+    postflop_positions = situation.postflop_positions
+    effective_stack_bb = situation.effective_stack_bb
 
     turn_solve_key = (
         tuple(preflop_action_kinds),
@@ -2104,39 +2135,25 @@ def _query_river_from_path(
     cache`'s own key, for the identical collision reason `_turn_path_
     cache`'s key already includes it.
     """
-    preflop_result = _get_or_solve_preflop_raw(stack_bb, iterations, players=players)
-    preflop_actions, _node = _resolve_action_path(preflop_result.root, preflop_action_kinds)
-    path_scenario = derive_ranges_from_path(preflop_result, preflop_actions)
-    # Known, deliberate gap: path_scenario.trained isn't surfaced here
-    # either — see _query_flop_from_path's identical note above.
-
-    if not isinstance(path_scenario.node, TerminalNode):
-        raise ValueError("preflop_action_path does not reach a terminal — action isn't capped yet")
-    if len(path_scenario.live_positions) != 2:
-        # Same restriction _query_turn_from_path already has, for the
-        # identical reason: postflop solving here is 2-position only,
-        # regardless of the origin table size.
-        raise ValueError(
-            f"preflop_action_path leaves {len(path_scenario.live_positions)} live positions, not 2 — "
-            "postflop solving is 2-position only, regardless of the origin table size"
-        )
-    oop_position, ip_position = postflop_action_order(preflop_result.config.positions, path_scenario.live_positions)
-    oop_stack = path_scenario.stacks[oop_position]
-    ip_stack = path_scenario.stacks[ip_position]
-    if oop_stack != ip_stack:
-        raise RuntimeError(
-            "derive_ranges_from_path returned unequal stacks at a terminal node — should be "
-            "impossible per game_tree.py's no-side-pots invariant, please report"
-        )
-    effective_stack_bb = oop_stack
-
-    exclude = frozenset(board_cards)
-    hero_range = _cap_range_to_combos(path_scenario.ranges[oop_position], RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE, exclude)
-    villain_range = _cap_range_to_combos(path_scenario.ranges[ip_position], RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE, exclude)
-    if not hero_range:
-        raise ValueError(f"board {''.join(str(c) for c in board_cards)!r} blocks every combo in {oop_position}'s derived (capped) range")
-    if not villain_range:
-        raise ValueError(f"board {''.join(str(c) for c in board_cards)!r} blocks every combo in {ip_position}'s derived (capped) range")
+    # Combo-level capping, not class-level like every sibling endpoint —
+    # see RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE's own comment for the
+    # measured reason solve_flop_to_river needs the finer lever.
+    situation = _derive_path_situation(
+        action_kinds=preflop_action_kinds,
+        stack_bb=stack_bb,
+        board_cards=board_cards,
+        iterations=iterations,
+        players=players,
+        multiway=False,
+        sibling_endpoint="/solve_turn_multiway_from_path",
+        max_combos_per_position=RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE,
+        path_field_name="preflop_action_path",
+    )
+    oop_position, ip_position = situation.postflop_positions
+    effective_stack_bb = situation.effective_stack_bb
+    path_scenario = situation.path_scenario
+    hero_range = situation.position_ranges[oop_position]
+    villain_range = situation.position_ranges[ip_position]
 
     river_solve_key = (
         tuple(preflop_action_kinds),

@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 from api import main as api_main
 from api.main import _cache, _multiway_cache, app
-from poker_solver.cards import remaining_deck
+from poker_solver.cards import parse_cards, remaining_deck
 from poker_solver.starting_hands import StartingHand
 
 # api.main's real multiway iteration counts (100K/30K/300, see main.py's
@@ -1227,6 +1227,98 @@ def test_preflop_walk_after_a_limp_offers_a_free_check_with_no_fold(client):
     assert by_kind["call_or_check"]["to_call"] == pytest.approx(0.0)
 
 
+# ---------------------------------------------------------------------------
+# M50: _derive_path_situation — the shared front half extracted from all
+# five path-derived endpoints' own near-identical orchestrators. Tested
+# directly here (not only through the five endpoints that now delegate to
+# it) so its own parameterized behavior — the live-position rule, the two
+# capping modes, the error text — has real coverage of its own.
+# ---------------------------------------------------------------------------
+
+_DERIVE_BOARD = tuple(parse_cards("2h6d9c"))
+
+
+def _derive(**overrides):
+    kwargs = {
+        "action_kinds": ["raise", "call_or_check"],
+        "stack_bb": 100.0,
+        "board_cards": _DERIVE_BOARD,
+        "iterations": _PATH_ITERATIONS,
+        "players": 2,
+        "multiway": False,
+        "sibling_endpoint": "/sibling",
+        "max_classes_per_position": 2,
+    }
+    kwargs.update(overrides)
+    return api_main._derive_path_situation(**kwargs)
+
+
+def test_derive_path_situation_returns_a_well_formed_two_position_situation():
+    situation = _derive()
+    assert len(situation.postflop_positions) == 2
+    assert set(situation.postflop_positions) == {"BTN", "BB"}
+    assert situation.effective_stack_bb > 0
+    assert set(situation.position_ranges) == set(situation.postflop_positions)
+    for combo_dict in situation.position_ranges.values():
+        assert combo_dict  # non-empty, board-legal combos
+    # Class-level capping populates capped_scenario (the canonical
+    # library needs a real StartingHand-keyed PathScenario).
+    assert situation.capped_scenario is not None
+    for range_dict in situation.capped_scenario.ranges.values():
+        assert len(range_dict) <= 2
+
+
+def test_derive_path_situation_combo_capping_leaves_capped_scenario_none():
+    situation = _derive(max_classes_per_position=None, max_combos_per_position=3)
+    assert situation.capped_scenario is None
+    for combo_dict in situation.position_ranges.values():
+        assert 0 < len(combo_dict) <= 3
+
+
+def test_derive_path_situation_requires_exactly_one_capping_mode():
+    with pytest.raises(RuntimeError):
+        _derive(max_combos_per_position=3)  # both set
+    with pytest.raises(RuntimeError):
+        _derive(max_classes_per_position=None)  # neither set
+
+
+def test_derive_path_situation_rejects_a_non_terminal_path_naming_the_client_field():
+    with pytest.raises(ValueError, match="preflop_action_path does not reach a terminal"):
+        _derive(action_kinds=["raise"], path_field_name="preflop_action_path")
+
+
+def test_derive_path_situation_two_position_mode_rejects_three_live_naming_the_sibling():
+    with pytest.raises(ValueError, match=r"3 live positions, not 2.*/sibling"):
+        _derive(action_kinds=["call_or_check"] * 3, players=3)
+
+
+def test_derive_path_situation_multiway_mode_rejects_two_survivors_naming_the_sibling():
+    with pytest.raises(ValueError, match=r"only 2 live position\(s\).*/sibling"):
+        _derive(action_kinds=["raise", "fold", "call_or_check"], players=3, multiway=True)
+
+
+def test_derive_path_situation_multiway_mode_accepts_three_live():
+    situation = _derive(action_kinds=["call_or_check"] * 3, players=3, multiway=True)
+    assert len(situation.postflop_positions) == 3
+    assert set(situation.postflop_positions) == {"BTN", "SB", "BB"}
+    # Every live position's stack matches — M23's TerminalNode guarantee,
+    # N-generally, which _derive_path_situation asserts internally.
+    stacks = {situation.path_scenario.stacks[p] for p in situation.postflop_positions}
+    assert len(stacks) == 1
+
+
+def test_derive_path_situation_rejects_a_board_that_blocks_a_whole_capped_range():
+    # A real, constructible case, not a contrived one: at a 1-class cap
+    # on this path, BB's single top class is the pair 22 — and a board of
+    # three deuces leaves only one deuce in the deck, so every one of
+    # 22's six combos is blocked. (Verified empirically before writing
+    # this assertion rather than assumed; a pair is the only class shape
+    # a 3-card flop can fully block, since 4 of a rank exist and a pair
+    # needs 2 of them.)
+    with pytest.raises(ValueError, match=r"blocks every combo in BB's derived \(capped\) range"):
+        _derive(board_cards=tuple(parse_cards("2h2s2d")), max_classes_per_position=1)
+
+
 def test_preflop_walk_closing_call_is_a_real_two_live_position_terminal(client):
     response = client.post("/preflop_walk", json=_walk_body(["raise", "call_or_check"]))
     assert response.status_code == 200
@@ -1333,6 +1425,14 @@ def test_solve_flop_from_path_rejects_a_multiway_path_with_three_live_survivors(
         "/solve_flop_from_path", json=_path_body(["call_or_check", "call_or_check", "call_or_check"], players=3)
     )
     assert response.status_code == 422
+    # M50: this used to surface as a bare "too many values to unpack"
+    # ValueError from postflop_action_order's own 2-tuple unpack (still a
+    # 422, but useless to a caller) — the shared _derive_path_situation
+    # now checks live-position count explicitly, for every endpoint, and
+    # names the sibling endpoint that DOES serve this case.
+    detail = response.json()["detail"]
+    assert "3 live positions, not 2" in detail
+    assert "/solve_flop_multiway_from_path" in detail
 
 
 def test_solve_flop_from_path_players_2_and_3_partition_separately(client):
