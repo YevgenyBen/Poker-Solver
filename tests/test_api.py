@@ -1,7 +1,9 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from api import config as api_config
 from api import main as api_main
+from api import solving as api_solving
 from api.main import app
 from poker_solver.cards import parse_cards, remaining_deck
 from poker_solver.starting_hands import StartingHand
@@ -49,9 +51,9 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
     monkeypatch.setenv("POKER_SOLVER_PREWARM", "0")
     fast_table_configs = {
         players: {**table, "iterations": FAST_MULTIWAY_ITERATIONS}
-        for players, table in api_main.MULTIWAY_TABLE_CONFIGS.items()
+        for players, table in api_config.MULTIWAY_TABLE_CONFIGS.items()
     }
-    monkeypatch.setattr(api_main, "MULTIWAY_TABLE_CONFIGS", fast_table_configs)
+    monkeypatch.setattr(api_config, "MULTIWAY_TABLE_CONFIGS", fast_table_configs)
     # DEMO_CHAINED_FLOP_HERO_/VILLAIN_CLASSES' real 12-combo pool costs
     # ~18-26s (solve_flop_turn) / ~63-105s (solve_flop_to_river) per
     # solve — real numbers from M14's own PR, far too slow to pay
@@ -62,41 +64,41 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
     # to 1 (matching test_solver.py's own tiny_flop_turn_result fixture
     # scale — this tests HTTP plumbing, not the real demo tree's
     # convergence, which nothing here asserts on anyway).
-    monkeypatch.setattr(api_main, "DEMO_CHAINED_FLOP_HERO_CLASSES", {StartingHand("9", "8", suited=True): 1.0})
-    monkeypatch.setattr(api_main, "DEMO_CHAINED_FLOP_VILLAIN_CLASSES", {StartingHand("6", "4", suited=True): 1.0})
-    monkeypatch.setattr(api_main, "FLOP_TURN_MAX_RAISES", 1)
-    monkeypatch.setattr(api_main, "FLOP_TURN_RAISE_SIZES", ())
+    monkeypatch.setattr(api_config, "DEMO_CHAINED_FLOP_HERO_CLASSES", {StartingHand("9", "8", suited=True): 1.0})
+    monkeypatch.setattr(api_config, "DEMO_CHAINED_FLOP_VILLAIN_CLASSES", {StartingHand("6", "4", suited=True): 1.0})
+    monkeypatch.setattr(api_config, "FLOP_TURN_MAX_RAISES", 1)
+    monkeypatch.setattr(api_config, "FLOP_TURN_RAISE_SIZES", ())
     # /solve_flop_cached (M22) has no `iterations` query param (see its
     # own module-docstring paragraph for why — nothing not part of the
     # canonical key is request-controllable), so unlike every other
     # /solve_flop* endpoint's tests, there's no per-request lever to
     # keep a real solve fast — the fixed pool/iteration constants
     # themselves have to be monkeypatched down instead.
-    monkeypatch.setattr(api_main, "FLOP_QUERY_HERO_CLASSES", {StartingHand("A", "A"): 1.0})
-    monkeypatch.setattr(api_main, "FLOP_QUERY_VILLAIN_CLASSES", {StartingHand("K", "K"): 1.0})
-    monkeypatch.setattr(api_main, "FLOP_QUERY_ITERATIONS", FAST_FLOP_QUERY_ITERATIONS)
+    monkeypatch.setattr(api_config, "FLOP_QUERY_HERO_CLASSES", {StartingHand("A", "A"): 1.0})
+    monkeypatch.setattr(api_config, "FLOP_QUERY_VILLAIN_CLASSES", {StartingHand("K", "K"): 1.0})
+    monkeypatch.setattr(api_config, "FLOP_QUERY_ITERATIONS", FAST_FLOP_QUERY_ITERATIONS)
     # /solve_flop_from_path (M24) solves a REAL preflop spot over the
     # full 169-class pool internally (that's the whole point — a real
     # derived situation, not a fixed demo range), so there's no fixed
     # class-pool constant to shrink the way FLOP_QUERY_HERO_CLASSES
     # shrinks /solve_flop_cached's. Instead this fixture shrinks the
     # *cap* applied at request time, and the flop-stage iteration count.
-    monkeypatch.setattr(api_main, "PATH_QUERY_ITERATIONS", FAST_PATH_QUERY_ITERATIONS)
-    monkeypatch.setattr(api_main, "MAX_PATH_QUERY_CLASSES_PER_SIDE", FAST_MAX_PATH_QUERY_CLASSES_PER_SIDE)
-    monkeypatch.setattr(api_main, "MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE", FAST_MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE)
+    monkeypatch.setattr(api_config, "PATH_QUERY_ITERATIONS", FAST_PATH_QUERY_ITERATIONS)
+    monkeypatch.setattr(api_config, "MAX_PATH_QUERY_CLASSES_PER_SIDE", FAST_MAX_PATH_QUERY_CLASSES_PER_SIDE)
+    monkeypatch.setattr(api_config, "MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE", FAST_MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE)
     # /solve_river_from_path (M46) — its own combo-level cap, shrunk to
     # the practical floor (1 combo per side, 2 total) for the same
     # test-speed reason as every cap above; FLOP_TO_RIVER_MAX_RAISES/
     # RAISE_SIZES are already at their minimal production values (1/())
     # so need no further shrink here.
-    monkeypatch.setattr(api_main, "RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE", FAST_RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE)
+    monkeypatch.setattr(api_config, "RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE", FAST_RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE)
     # DEMO_MULTIWAY_FLOP_CLASSES (M37) — same shrink-to-the-floor idiom as
     # DEMO_CHAINED_FLOP_HERO_/VILLAIN_CLASSES above: one small suited
     # class per position (4 combos each via range_from_class_frequencies,
     # the practical floor), plus MULTIWAY_FLOP_MAX_RAISES down to 1 —
     # this tests HTTP plumbing, not the real demo tree's convergence.
     monkeypatch.setattr(
-        api_main,
+        api_config,
         "DEMO_MULTIWAY_FLOP_CLASSES",
         {
             "OOP": {StartingHand("9", "8", suited=True): 1.0},
@@ -104,8 +106,8 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
             "IP": {StartingHand("5", "3", suited=True): 1.0},
         },
     )
-    monkeypatch.setattr(api_main, "MULTIWAY_FLOP_MAX_RAISES", 1)
-    monkeypatch.setattr(api_main, "MULTIWAY_FLOP_RAISE_SIZES", ())
+    monkeypatch.setattr(api_config, "MULTIWAY_FLOP_MAX_RAISES", 1)
+    monkeypatch.setattr(api_config, "MULTIWAY_FLOP_RAISE_SIZES", ())
     # M60: one call, not a hand-maintained list. Every cache
     # registers itself (see api/main.py's _SolveCache), so a new
     # endpoint's cache can no longer be forgotten here.
@@ -235,7 +237,7 @@ def test_multiway_solve_returns_200_with_well_formed_response(client, players, e
     assert body["stack_bb"] == 100.0
     assert body["position"] == expected_positions[0]
     assert body["positions"] == expected_positions
-    assert len(body["opening_range"]) == len(api_main.DEMO_MULTIWAY_HANDS)
+    assert len(body["opening_range"]) == len(api_config.DEMO_MULTIWAY_HANDS)
 
 
 @pytest.mark.parametrize("players", [3, 6, 9])
@@ -524,7 +526,7 @@ def test_solve_flop_turn_rejects_nonpositive_pot_or_stack(client):
 def test_solve_flop_turn_rejects_iterations_above_the_cap(client):
     response = client.get(
         f"/solve_flop_turn?board={_CHAINED_FLOP_BOARD}&pot=10&stack_bb=40"
-        f"&iterations={api_main.MAX_FLOP_TURN_ITERATIONS + 1}"
+        f"&iterations={api_config.MAX_FLOP_TURN_ITERATIONS + 1}"
     )
     assert response.status_code == 422
 
@@ -573,7 +575,7 @@ def test_solve_flop_to_river_rejects_iterations_above_the_cap(client):
     # a magic number, so this stays correct if that default ever changes.
     response = client.get(
         f"/solve_flop_to_river?board={_CHAINED_FLOP_BOARD}&pot=10&stack_bb=40"
-        f"&iterations={api_main.MAX_FLOP_TO_RIVER_ITERATIONS + 1}"
+        f"&iterations={api_config.MAX_FLOP_TO_RIVER_ITERATIONS + 1}"
     )
     assert response.status_code == 422
 
@@ -683,7 +685,7 @@ def test_solve_flop_multiway_rejects_nonpositive_pot_or_stack(client):
 def test_solve_flop_multiway_rejects_iterations_above_the_cap(client):
     response = client.get(
         f"/solve_flop_multiway?board={_MULTIWAY_FLOP_BOARD}&pot=10&stack_bb=40"
-        f"&iterations={api_main.MAX_FLOP_MULTIWAY_ITERATIONS + 1}"
+        f"&iterations={api_config.MAX_FLOP_MULTIWAY_ITERATIONS + 1}"
     )
     assert response.status_code == 422
 
@@ -724,7 +726,7 @@ def test_solve_flop_turn_multiway_rejects_nonpositive_pot_or_stack(client):
 def test_solve_flop_turn_multiway_rejects_iterations_above_the_cap(client):
     response = client.get(
         f"/solve_flop_turn_multiway?board={_MULTIWAY_FLOP_BOARD}&pot=10&stack_bb=40"
-        f"&iterations={api_main.MAX_FLOP_TURN_MULTIWAY_ITERATIONS + 1}"
+        f"&iterations={api_config.MAX_FLOP_TURN_MULTIWAY_ITERATIONS + 1}"
     )
     assert response.status_code == 422
 
@@ -805,7 +807,7 @@ def test_solve_flop_to_river_multiway_rejects_nonpositive_pot_or_stack(client):
 def test_solve_flop_to_river_multiway_rejects_iterations_above_the_cap(client):
     response = client.get(
         f"/solve_flop_to_river_multiway?board={_MULTIWAY_FLOP_BOARD}&pot=10&stack_bb=40"
-        f"&iterations={api_main.MAX_FLOP_TO_RIVER_MULTIWAY_ITERATIONS + 1}"
+        f"&iterations={api_config.MAX_FLOP_TO_RIVER_MULTIWAY_ITERATIONS + 1}"
     )
     assert response.status_code == 422
 
@@ -843,7 +845,7 @@ def test_solve_flop_cached_returns_200_with_well_formed_response(client):
     body = response.json()
     assert body["board"] == "Jh7d2c"
     assert body["stack_bb"] == 40.0
-    assert body["pot"] == api_main.FLOP_QUERY_POT
+    assert body["pot"] == api_config.FLOP_QUERY_POT
     assert body["hit"] is False  # a never-before-seen board is always a miss
     assert body["elapsed_seconds"] >= 0.0
     assert body["position"] == "OOP"
@@ -1118,7 +1120,7 @@ def test_solve_flop_multiway_from_path_rejects_flop_iterations_above_the_cap(cli
     response = client.post(
         "/solve_flop_multiway_from_path",
         json=_multiway_path_body(
-            _THREE_LIVE_PATH, flop_iterations=api_main.MAX_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS + 1
+            _THREE_LIVE_PATH, flop_iterations=api_config.MAX_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS + 1
         ),
     )
     assert response.status_code == 422
@@ -1309,7 +1311,7 @@ def _derive(**overrides):
         "max_classes_per_position": 2,
     }
     kwargs.update(overrides)
-    return api_main._derive_path_situation(**kwargs)
+    return api_solving._derive_path_situation(**kwargs)
 
 
 def test_derive_path_situation_returns_a_well_formed_two_position_situation():
@@ -1537,7 +1539,7 @@ def test_advise_no_cell_is_left_unsupported(client):
     # M53: the matrix is complete. Kept as a live assertion rather than a
     # comment so that re-adding an unsupported cell is a deliberate,
     # visible act rather than something that quietly reappears.
-    assert api_main._ADVISE_UNSUPPORTED_CELLS == {}
+    assert api_solving._ADVISE_UNSUPPORTED_CELLS == {}
 
 
 def test_advise_routes_a_multiway_origin_folded_to_two_survivors_to_the_exact_solver(client):
@@ -1630,14 +1632,14 @@ def test_advise_enforces_the_per_cell_solve_iterations_cap(client):
     response = client.post(
         "/advise",
         json=_advise_body(board="2h6d9c", flop_action_path=["call_or_check", "call_or_check"],
-                          turn_card="Ts", solve_iterations=api_main.MAX_FLOP_TURN_ITERATIONS + 1),
+                          turn_card="Ts", solve_iterations=api_config.MAX_FLOP_TURN_ITERATIONS + 1),
     )
     assert response.status_code == 422
     assert "solve_iterations must be between" in response.json()["detail"]
 
 
 def test_advise_rejects_a_too_long_action_path(client):
-    too_long = ["call_or_check"] * (api_main.MAX_PATH_LENGTH + 1)
+    too_long = ["call_or_check"] * (api_config.MAX_PATH_LENGTH + 1)
     response = client.post("/advise", json=_advise_body(too_long))
     assert response.status_code == 422
     assert "too long" in response.json()["detail"]
@@ -1681,7 +1683,7 @@ def test_preflop_walk_rejects_an_unknown_action_kind(client):
 
 
 def test_preflop_walk_rejects_a_too_long_action_path(client):
-    too_long = ["call_or_check"] * (api_main.MAX_PATH_LENGTH + 1)
+    too_long = ["call_or_check"] * (api_config.MAX_PATH_LENGTH + 1)
     response = client.post("/preflop_walk", json=_walk_body(too_long))
     assert response.status_code == 422
 
@@ -1941,13 +1943,13 @@ def test_solve_turn_from_path_rejects_a_non_terminal_preflop_path(client):
 
 
 def test_solve_turn_from_path_rejects_a_too_long_flop_action_path(client):
-    too_long = ["call_or_check"] * (api_main.MAX_PATH_LENGTH + 1)
+    too_long = ["call_or_check"] * (api_config.MAX_PATH_LENGTH + 1)
     response = client.post("/solve_turn_from_path", json=_turn_body(["raise", "call_or_check"], too_long))
     assert response.status_code == 422
 
 
 def test_solve_turn_from_path_rejects_a_too_long_preflop_action_path(client):
-    too_long = ["call_or_check"] * (api_main.MAX_PATH_LENGTH + 1)
+    too_long = ["call_or_check"] * (api_config.MAX_PATH_LENGTH + 1)
     response = client.post(
         "/solve_turn_from_path", json=_turn_body(too_long, ["call_or_check", "call_or_check"])
     )
@@ -1959,7 +1961,7 @@ def test_solve_turn_from_path_rejects_out_of_range_turn_iterations(client):
         "/solve_turn_from_path",
         json=_turn_body(
             ["raise", "call_or_check"], ["call_or_check", "call_or_check"],
-            turn_iterations=api_main.MAX_FLOP_TURN_ITERATIONS + 1,
+            turn_iterations=api_config.MAX_FLOP_TURN_ITERATIONS + 1,
         ),
     )
     assert response.status_code == 422
@@ -2204,7 +2206,7 @@ def test_solve_river_from_path_rejects_a_non_terminal_preflop_path(client):
 
 
 def test_solve_river_from_path_rejects_a_too_long_turn_action_path(client):
-    too_long = ["call_or_check"] * (api_main.MAX_PATH_LENGTH + 1)
+    too_long = ["call_or_check"] * (api_config.MAX_PATH_LENGTH + 1)
     response = client.post(
         "/solve_river_from_path",
         json=_river_body(["raise", "call_or_check"], ["call_or_check", "call_or_check"], too_long),
@@ -2219,7 +2221,7 @@ def test_solve_river_from_path_rejects_out_of_range_river_iterations(client):
             ["raise", "call_or_check"],
             ["call_or_check", "call_or_check"],
             ["call_or_check", "call_or_check"],
-            river_iterations=api_main.MAX_RIVER_PATH_QUERY_ITERATIONS + 1,
+            river_iterations=api_config.MAX_RIVER_PATH_QUERY_ITERATIONS + 1,
         ),
     )
     assert response.status_code == 422
@@ -2380,7 +2382,7 @@ def test_solve_turn_multiway_from_path_rejects_flop_iterations_above_the_cap(cli
     response = client.post(
         "/solve_turn_multiway_from_path",
         json=_multiway_turn_body(
-            _THREE_LIVE_PATH, flop_iterations=api_main.MAX_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS + 1
+            _THREE_LIVE_PATH, flop_iterations=api_config.MAX_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS + 1
         ),
     )
     assert response.status_code == 422
@@ -2429,7 +2431,7 @@ def test_solve_turn_multiway_from_path_builds_and_returns_an_untrained_strategy_
 
     # Find the real terminal object this flop_action_path resolves to,
     # then a card that terminal's own chance_data has never sampled.
-    _actions, flop_terminal = api_main._resolve_action_path(result.root, _THREE_LIVE_FLOP_PATH)
+    _actions, flop_terminal = api_solving._resolve_action_path(result.root, _THREE_LIVE_FLOP_PATH)
     already_sampled = {card for (tid, card) in result.chance_data if tid == id(flop_terminal)}
     unsampled_card = next(c for c in remaining_deck(board_cards) if c not in already_sampled)
 

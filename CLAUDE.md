@@ -4213,6 +4213,49 @@ street chaining needs.
     monkeypatch targets accordingly — a real, deliberate test change,
     unlike this half.
 
+- **M62 — audit recommendation #4 (second half): extract
+  `api/solving.py`.** `api/main.py` **3,441 -> 1,273 lines** across
+  M61+M62 (a 63% reduction), now four modules in a one-way chain:
+
+        config (450)  <-  caches (174)  <-  solving (1,776)  <-  main (1,273)
+
+  `main.py` is finally the HTTP surface it should be — routes,
+  validation, response shaping, app wiring — with every
+  `_get_or_solve_*`/`_query_*`/`_advise*` orchestrator in `solving.py`,
+  which imports no FastAPI and knows nothing about HTTP.
+  - **The constants decision M61 deferred, now made the deep way:**
+    constants are read as `cfg.X` **at call time from one canonical
+    module**, never copied into any other module's namespace. M61 had to
+    keep the orchestrators in `main.py` precisely because copies would
+    have made `monkeypatch.setattr(api_main, X)` silently stop reaching
+    the real reader. With one location, a patch reaches every reader —
+    routes and orchestrators alike. **This is the change M61 named as
+    requiring a real, deliberate test change**, and it did: 14 patch
+    targets moved from `api_main` to `api_config`.
+  - **A real bug the change introduced and the tests caught immediately
+    — worth recording because it is a genuine hazard of this pattern:**
+    `config` is a very common LOCAL name in this codebase (`config =
+    GameConfig(...)`, `config = StreetConfig(...)`), so a module-level
+    `from . import config` was silently shadowed inside exactly those
+    functions, surfacing as `UnboundLocalError: cannot access local
+    variable 'config'`. Fixed by aliasing to `cfg` (verified unused
+    anywhere first). A qualified-module-reference refactor should always
+    check the alias against local names — the collision is invisible
+    until the shadowing function actually runs.
+  - **Two more mechanical slips, both caught by running rather than
+    reading:** the route section wasn't included in the first
+    qualification pass (routes use constants as default argument values,
+    evaluated at import), and `_ADVISE_UNSUPPORTED_CELLS` was rewritten
+    to `api_config` by an ALL_CAPS regex before the solving-specific
+    replacement could claim it. Neither could have been caught by
+    inspection alone at this scale.
+  - **Verification:** `python -m pytest tests/ -v` — 749 passed, zero
+    regressions. Unlike M61, the test file DID change (14 monkeypatch
+    targets plus three module references) — that was the known,
+    deliberate cost of putting constants in one canonical place, named
+    in advance in M61's own entry rather than discovered here.
+  - **Audit recommendation #4 is now complete.** No frontend changes.
+
 ## v3 vision (future) — live-table advisor
 
 Discussed with the user while scoping M16, recorded here rather than
