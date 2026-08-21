@@ -21,7 +21,7 @@ import numpy as np
 from .abstraction import BucketedPool, bucket_reach_vector, build_bucket_equity_table, build_hand_buckets
 from .board_equity import DEFAULT_SEED as DEFAULT_EQUITY_SEED
 from .board_equity import build_board_equity_table
-from .chance import build_chance_node
+from .chance import build_chance_node, build_mccfr_chance_branch
 from .cfr import InfoSetTable, mccfr_solve, solve
 from .equity import MultiwayEquityCache, get_equity_table
 from .multiway_board_equity import NwayBoardEquityCache
@@ -750,6 +750,135 @@ def solve_flop_multiway(
         node_data=node_data,
         iterations=actual_iterations,
         elapsed_seconds=elapsed,
+    )
+
+
+# Measured during M36's own scoping pass, not assumed — directly against
+# M35's own solve_flop_multiway numbers at matching configs, to isolate
+# what chance dispatch itself actually costs on top of the flop-only case:
+# a 6-combo pool (2/position), max_raises=1, 20 iterations -> 0.16s. A
+# 9-combo pool (3/position), the exact config M35 measured at 0.34s
+# flop-only, 30 iterations -> 0.38s here — only ~12% slower, not the much
+# larger overhead a naive "chance dispatch adds real cost" guess would
+# predict. Traced, not just observed: each dispatched branch's own
+# NwayBoardEquityCache is scoped to a 4-card (turn) board, resolved
+# EXACTLY (remaining_needed==1, per multiway_board_equity.py's own
+# optimization) rather than the FLOP-level board's remaining_needed==2
+# Monte Carlo averaging — so chance dispatch mostly *replaces* an
+# expensive Monte Carlo lookup with several cheaper exact ones, not
+# stacks a new cost on top of an unavoidable one. That relief doesn't
+# eliminate the real bottleneck, though: pool size is still the dominant
+# cost driver regardless of dispatch, confirmed directly — a 24-combo
+# pool (8/position), the exact config M35 measured exceeding 100s
+# flop-only, exceeded 120s here too (killed, not waited out). Kept
+# conservative (below solve_flop_multiway's own 200) given chance
+# dispatch's extra construction cost per distinct sampled (terminal,
+# card) pair is real even if smaller than expected.
+DEFAULT_FLOP_TURN_MULTIWAY_ITERATIONS = 50
+
+
+def solve_flop_turn_multiway(
+    board: tuple,
+    position_ranges: dict,
+    pot: float,
+    effective_stack_bb: float,
+    positions: tuple,
+    raise_sizes: tuple = (2.5, 3.0, 2.2),
+    max_raises: int = 4,
+    iterations: int = None,
+    equity_samples: int = None,
+    equity_seed: int = DEFAULT_EQUITY_SEED,
+    seed: int = 0,
+) -> StrategyResult:
+    """Solve a multiway flop betting round that, whenever action is
+    capped without a fold, chains into a real multiway turn betting
+    round (dealt via a real, sampled chance branch — cfr.mccfr_solve's
+    own board/chance_fn/chance_data params, M32) instead of solve_flop_
+    multiway's "average every remaining runout inside NwayBoardEquityCache
+    itself" shortcut — the direct N-position generalization of
+    solve_flop_turn (M12, 2-position-only exact-CFR), the same way
+    solve_flop_multiway generalizes solve_flop.
+
+    Same parameters as solve_flop_multiway; `equity_samples` now applies
+    to every chance branch's own NwayBoardEquityCache too (each scoped to
+    a real 4-card board, remaining_needed=1 — resolved exactly per
+    multiway_board_equity.py's own optimization, so this is mostly inert
+    for a flop->turn-only chain, mirroring solve_flop_turn's own note
+    about its board_equity tables).
+
+    The returned StrategyResult's chance_data maps each showdown-eligible
+    flop terminal actually reached during solving to the SPECIFIC sampled
+    card's chance.SampledChanceBranch, keyed by (id(terminal), card) — not
+    one entry per terminal the way solve_flop_turn's chance_data is,
+    since chance.build_mccfr_chance_branch only ever builds the one
+    branch actually sampled that iteration (see cfr._mccfr_recurse's own
+    docstring for why).
+    """
+    if set(positions) != set(position_ranges):
+        raise ValueError(
+            f"positions {positions!r} and position_ranges' keys {tuple(position_ranges)!r} "
+            "must cover exactly the same positions"
+        )
+
+    combos = sorted(set().union(*(r.keys() for r in position_ranges.values())), key=str)
+    initial_reach = {
+        position: np.array([position_ranges[position].get(combo, 0.0) for combo in combos])
+        for position in positions
+    }
+
+    config = StreetConfig(
+        positions=positions,
+        pot=pot,
+        stack_bb=effective_stack_bb,
+        raise_sizes=raise_sizes,
+        max_raises=max_raises,
+    )
+    root = build_street_tree(config)
+
+    equity_kwargs = {"seed": equity_seed}
+    if equity_samples is not None:
+        equity_kwargs["samples"] = equity_samples
+    equity_cache = NwayBoardEquityCache(board, combos, **equity_kwargs)
+
+    def chance_fn(terminal, card):
+        return build_mccfr_chance_branch(
+            terminal,
+            card=card,
+            board=board,
+            combos=combos,
+            positions=positions,
+            effective_stack_bb=effective_stack_bb,
+            raise_sizes=raise_sizes,
+            max_raises=max_raises,
+            equity_seed=equity_seed,
+            **({"equity_samples": equity_samples} if equity_samples is not None else {}),
+        )
+
+    chance_data: dict = {}
+    actual_iterations = iterations if iterations is not None else DEFAULT_FLOP_TURN_MULTIWAY_ITERATIONS
+    start = time.perf_counter()
+    node_data = mccfr_solve(
+        root,
+        combos,
+        positions,
+        equity_cache,
+        iterations=actual_iterations,
+        seed=seed,
+        initial_reach=initial_reach,
+        board=board,
+        chance_fn=chance_fn,
+        chance_data=chance_data,
+    )
+    elapsed = time.perf_counter() - start
+
+    return StrategyResult(
+        config=config,
+        root=root,
+        hands=combos,
+        node_data=node_data,
+        iterations=actual_iterations,
+        elapsed_seconds=elapsed,
+        chance_data=chance_data,
     )
 
 

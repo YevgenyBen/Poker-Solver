@@ -2494,6 +2494,64 @@ street chaining needs.
     M32's `build_mccfr_chance_branch` machinery) and a live endpoint are
     natural next milestones, each needing their own dedicated cost
     measurement before scoping further — not attempted here.
+- **M36 — `solve_flop_turn_multiway`: chaining a multiway flop into a
+  real multiway turn decision.** The direct N-position generalization
+  of `solve_flop_turn` (M12), mirroring `solve_flop_multiway`'s own
+  relationship to `solve_flop` — `mccfr_solve`'s `board`/`chance_fn`/
+  `chance_data` params (M32) wired to `chance.build_mccfr_chance_branch`
+  instead of `solve_flop_multiway`'s "average every remaining runout
+  inside `NwayBoardEquityCache` itself" shortcut.
+  - **A real, encouraging cost finding from this milestone's own
+    scoping pass, measured directly against M35's own numbers at
+    matching configs — the opposite of the "chance dispatch adds real
+    cost" assumption a naive read of M12's own history would predict:**
+    a 9-combo pool (3/position), `max_raises=1`, 30 iterations — the
+    exact config M35 measured at 0.34s flop-only — costs **0.38s** with
+    chance dispatch active, only ~12% more. Traced, not just observed:
+    each dispatched branch's own `NwayBoardEquityCache` is scoped to a
+    4-card (turn) board, resolved *exactly* (`remaining_needed==1`, per
+    `multiway_board_equity.py`'s own optimization) rather than the
+    flop-level board's `remaining_needed==2` Monte Carlo averaging — so
+    chance dispatch mostly *replaces* one expensive Monte Carlo lookup
+    with several cheaper exact ones, not stacks new cost on top of an
+    unavoidable one. **That relief doesn't eliminate the real
+    bottleneck, though — confirmed directly, not assumed away:** a
+    24-combo pool (8/position), the exact config M35 measured exceeding
+    100s flop-only, exceeded 120s here too (killed, not waited out).
+    Pool size remains the dominant cost driver regardless of dispatch —
+    `DEFAULT_FLOP_TURN_MULTIWAY_ITERATIONS = 50` (below `solve_flop_
+    multiway`'s own 200) reflects that dispatch's extra per-(terminal,
+    card) construction cost is real even though smaller than expected.
+  - `StrategyResult.chance_data`'s own shape differs from `solve_flop_
+    turn`'s, documented explicitly rather than left as a surprise: keyed
+    by `(id(terminal), card)` — M32's own per-sampled-card memoization
+    — not one `chance.ChanceNode` per terminal the way the exact
+    solver's `chance_data` is, since `mccfr_solve` only ever builds the
+    ONE branch actually sampled that iteration, never all ~49 possible
+    next cards.
+  - **Tests:** `tests/test_solver.py` gained a full `solve_flop_turn_
+    multiway` section mirroring `solve_flop_turn`'s own M12 tests
+    (deliberately the smallest possible combo pool — 1 combo per
+    position, matching `solve_flop_turn`'s own precedent, not M35's
+    slightly larger 2-per-position fixture, since chance dispatch's own
+    extra cost per (terminal, card) pair still adds up even at a modest
+    3-combo pool): union of all three ranges, frequencies-sum-to-one,
+    root sanity, the direct proof chaining actually happened (`chance_
+    data` non-empty, at least one branch reaches a real turn-street
+    `DecisionNode`, that node's own strategy is well-formed), determinism
+    given a seed, default-iterations fallback, the `positions`/
+    `position_ranges` mismatch `ValueError`.
+  - **Verification:** `python -m pytest tests/ -v` — 637 passed, zero
+    regressions (up from M35's 630). `npm test` (frontend) — 139 passed,
+    zero regressions (engine-only change).
+  - **Scope:** engine only, no `api/main.py`/frontend changes, no
+    turn->river chaining (a second hop — `chance.build_mccfr_chance_
+    branch`'s own one-hop-only M32 scope carries through unchanged), no
+    live endpoint. A live endpoint remains the one natural next
+    milestone this thread hasn't closed — needing its own cost-vs-
+    request-latency scoping decision (mirroring M14's own "ship both
+    endpoints, accept the real measured cost" precedent, or a curated-
+    demo-pool-sized-to-be-fast approach instead), not attempted here.
 
 ## v3 vision (future) — live-table advisor
 
