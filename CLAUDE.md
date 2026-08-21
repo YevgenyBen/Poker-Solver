@@ -2629,6 +2629,83 @@ street chaining needs.
     milestone, matching this session's own established "engine, then
     API, then frontend" three-step pattern (M30-M32 engine-only, M35-M36
     engine-only, this milestone API-only).
+- **M38 — Frontend for the multiway flop endpoints: `MultiwayFlopSolver.
+  tsx`.** Closes the "engine, then API, then frontend" three-step arc
+  M37 named as its own remaining piece — the first UI in this project
+  for a genuinely 3+ live position postflop solve.
+  - **A new, separate component, not a 3rd position bolted onto
+    `FlopSolver.tsx`** — mirrors `CachedFlopSolver`'s own M22 "different
+    interaction shape -> separate component" precedent exactly, traced
+    (not assumed) before building: neither `FlopSolver.tsx`'s own
+    2-option position `<select>` nor `TableModeControl`'s own preflop-
+    seat/table-size selector fit a fixed 3-option (OOP/MID/IP) postflop
+    selector paired with a *narrower* (2-, not 3-entry) depth selector
+    — `TableModeControl` in particular is a table-size + preflop-seat
+    component (`BTN`/`SB`/`BB` at 3-max), a different concept entirely
+    from these endpoints' fixed `OOP`/`MID`/`IP` postflop roles.
+  - **Everything else reused as-is, not reinvented:** the actual form/
+    result markup, CSS classes (`.flop-solver`, `.detail-row`, `.bar-
+    fill`, `.trained-indicator.untrained`), and `colors.ts`'s `gradient
+    For`/`sortedEntries` helpers are copied from `FlopSolver.tsx`
+    verbatim — the interaction *shape* differs (3 positions, 2 depths),
+    the actual rendering doesn't need to. New `MultiwayFlopSolveDepth`
+    type (`'flop' | 'flop_turn'`, deliberately not `FlopSolveDepth`
+    reused/widened — no multiway analog of `'flop_to_river'` exists) and
+    `fetchMultiwayFlopStrategy` + `MULTIWAY_FLOP_DEPTH_ENDPOINTS` in
+    `api.ts`, mirroring `fetchFlopStrategy`/`FLOP_DEPTH_ENDPOINTS`'s
+    exact shape. No `vite.config.ts` proxy change needed — both new
+    routes start with `/solve`, already covered by the existing prefix
+    entry (confirmed by tracing Vite's own prefix-match proxy behavior,
+    not assumed — the exact class of gap M10's own `/equity` bug and
+    M25's own `/preflop_walk` entry both had to fix for routes that
+    *didn't* start with `/solve`).
+  - **Hint copy grounded in M37's own real measured numbers**, not
+    copied from `FlopSolver.tsx`'s unrelated ones: "typically a few
+    seconds" for flop-only (M37 measured ~3.0-3.5s), "up to about 15
+    seconds" for flop+turn (M37 measured up to ~13.8s at its own
+    iteration cap) — deliberately different phrasing from `FlopSolver.
+    tsx`'s own "up to about a minute"/"two minutes" copy, since these
+    two endpoints are genuinely cheaper.
+  - **Verified live, end to end, through the real browser and a real
+    API server** (not just the mocked unit tests) — both `preview_start`
+    servers running together (`frontend-dev` proxying to `api-dev`):
+    a real flop-only solve returned 11 combos (4 AKs + 3 QJs, one QJs
+    combo correctly blocked by the board's own `Jh` + 4 T9s — matching
+    M37's own CLI-measured pool size exactly), OOP's own combos showing
+    a real trained strategy while MID's/IP's own combos correctly show
+    "low data" when viewing OOP's strategy (M28's own documented "zero
+    reach weight -> untrained" pattern, now visible live in this UI for
+    the first time); switching to MID reused the identical cached
+    `elapsed_seconds` while MID's own combos flipped to a real trained
+    strategy and AKs/T9s correctly went to "low data" instead; switching
+    depth to "Flop + turn" correctly relabeled the button/hint, cleared
+    the stale result, and a real chance-dispatched solve returned "50
+    iterations, 1.35s" — matching `DEFAULT_FLOP_TURN_MULTIWAY_
+    ITERATIONS`'s own measured default exactly; a malformed 2-card board
+    correctly surfaced the real server-side 422 error message and
+    cleared the stale result.
+  - **Tests:** `MultiwayFlopSolver.test.tsx` (new, 10 tests) mirrors
+    `FlopSolver.test.tsx`'s own mocking convention (raw `fetch`
+    stubbing via `vi.stubGlobal`, not module mocking) — default-inputs
+    rendering (including the 3-option position list and the *absence*
+    of a flop-to-river depth option), solving and calling the correct
+    endpoint per depth, a chosen `MID` position reaching the query
+    string correctly, depth-appropriate button/loading copy, clearing a
+    stale result on depth change, the untrained-indicator pill, error
+    handling, and the 3-position status line.
+  - **Verification:** `npm test` — 149 passed (up from M37's 139),
+    zero regressions. `npm run build` (`tsc -b && vite build`) — clean,
+    no type errors. `npm run lint` — clean. No backend files touched
+    this milestone, so the (unaffected) Python suite wasn't re-run —
+    the live end-to-end browser verification above exercises the real
+    API server directly, which is the more direct evidence for a
+    frontend-only change anyway.
+  - **Scope:** frontend only. Closes the loop this session's own
+    multiway-postflop thread opened at M30 — engine primitives (M30-
+    M32), the bridge from real derived ranges (M35), turn-chaining
+    (M36), a live endpoint (M37), and now a real UI (M38) — the first
+    complete engine-to-UI path for true multiway (3+ live position)
+    postflop solving in this project.
 
 ## v3 vision (future) — live-table advisor
 
