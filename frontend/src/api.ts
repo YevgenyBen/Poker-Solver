@@ -4,6 +4,7 @@ import type {
   FlopQueryResponse,
   FlopSolveDepth,
   FlopSolveResponse,
+  MultiwayFlopSolveDepth,
   PreflopWalkResponse,
   SolveResponse,
   TurnPathQueryResponse,
@@ -88,6 +89,32 @@ export async function fetchFlopStrategy(
     position,
   });
   return fetchJson<FlopSolveResponse>(`${FLOP_DEPTH_ENDPOINTS[depth]}?${query.toString()}`, { signal });
+}
+
+// M37: same one-endpoint-per-depth idiom as FLOP_DEPTH_ENDPOINTS above,
+// a separate lookup table (not a wider FLOP_DEPTH_ENDPOINTS) since
+// MultiwayFlopSolveDepth is its own, narrower type — no 'flop_to_river'
+// entry exists here.
+const MULTIWAY_FLOP_DEPTH_ENDPOINTS: Record<MultiwayFlopSolveDepth, string> = {
+  flop: '/solve_flop_multiway',
+  flop_turn: '/solve_flop_turn_multiway',
+};
+
+export async function fetchMultiwayFlopStrategy(
+  depth: MultiwayFlopSolveDepth,
+  board: string,
+  pot: number,
+  stackBb: number,
+  position: string,
+  signal?: AbortSignal,
+): Promise<FlopSolveResponse> {
+  const query = new URLSearchParams({
+    board,
+    pot: String(pot),
+    stack_bb: String(stackBb),
+    position,
+  });
+  return fetchJson<FlopSolveResponse>(`${MULTIWAY_FLOP_DEPTH_ENDPOINTS[depth]}?${query.toString()}`, { signal });
 }
 
 // M22: a standalone function, not folded into FLOP_DEPTH_ENDPOINTS/
