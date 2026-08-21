@@ -4322,6 +4322,16 @@ entry's own corrections before trusting its conclusions.
     contribution for an iteration entirely rather than feed it any
     placeholder value — a genuine architectural change to
     `_mccfr_recurse`, not a tuning exercise.
+
+    **Correction (M66): that was wrong.** The M27 fix named here was
+    built and measured, and it did not change the divergence at all. The
+    cause is `DEMO_MULTIWAY_HANDS` being 48.6% premium by combo weight,
+    not anything in `_mccfr_recurse` — over a realistically-weighted pool
+    the same solver is flat at 100x the budget. The characterization test
+    above was renamed to
+    `test_six_max_demo_pool_degrades_with_more_iterations` to say what it
+    actually pins, and paired with a convergence test that is the real
+    evidence. See M66's own entry.
   - **Verification:** `python -m pytest tests/ -v` — 750 passed, zero
     regressions (up from M62's 749 — 1 new). No production behavior
     changed; budgets are untouched by design.
@@ -4399,3 +4409,118 @@ entry's own corrections before trusting its conclusions.
     milestone changed only documentation.
 
   **This completes all seven of the audit's recommendations (M58-M65).**
+
+- **M66 — The 6-max "convergence defect" is a hand-pool artifact, not a
+  solver bug.** The longest-standing open correctness question in the
+  project: `?players=6` and `?players=9` ship with a 300-iteration budget
+  (against 3-max's 100,000) because more solving made the answer *worse*
+  — AKs's UTG-open fold rate climbing 15.6% -> 48.7% -> 92.4% across
+  300 / 3k / 30k iterations. M27 diagnosed a cause and named a fix but
+  scoped it out; M63 confirmed the effect was still live on current code.
+  This milestone implemented M27's named fix, measured it, found it was
+  **not** the cause, and then found what actually is.
+  - **M27's named fix, built and measured:** "restructure CFR+'s regret
+    update to mask out a hand's contribution for an iteration entirely
+    rather than feed it any placeholder value." Implemented in three
+    parts. `MultiwayEquityCache` gained `traverser_validity_mask` — a
+    boolean companion to `traverser_equity_vector` recording, per
+    candidate, whether that entry came from a real simulated showdown or
+    from `_pairwise_fallback_equity`; it is filled in the same pass and
+    cached under the same key, so it costs nothing extra.
+    `_mccfr_terminal_value` folds that mask into NaN, unifying it with
+    the representation `NwayBoardEquityCache` already uses natively
+    (M30's "no placeholder value, ever" convention), and **stops**
+    `nan_to_num`-ing to 0.5 (M32's choice, deliberately reversed here).
+    `_mccfr_recurse` then skips the regret and `strategy_sum` updates for
+    any hand whose value is non-finite.
+  - **A design note worth recording, because it made the change much
+    smaller than expected:** no signature anywhere needed to change. NaN
+    propagates conservatively for free — every arithmetic step from
+    terminal to decision node is per-hand (`einsum("ha,ha->h")` contracts
+    over actions, never over hands), so a NaN for hand h taints h's value
+    at every ancestor and touches no other hand. That is exactly the
+    desired semantics: if *any* line reachable this iteration priced h
+    with a fabricated number, h's regret is untrustworthy everywhere
+    above, not only at the terminal where the fabrication happened. It
+    also survives a zero strategy weight, since `0 * NaN` is still NaN,
+    so a tainted action cannot hide behind an action the strategy has
+    already abandoned.
+  - **Result: the divergence was unchanged.** AKs still ran 25.2% ->
+    67.8% -> 94.5%. Reported as a negative result rather than quietly
+    reframed, matching M18's own precedent for a predicted speedup that
+    did not materialize.
+  - **The actual cause, found by questioning the setup instead of the
+    solver: `DEMO_MULTIWAY_HANDS` is 48.6% premium by combo weight**
+    (AA/KK/QQ/AKs/AKo out of 8 classes). At 6-max the traverser faces
+    five opponents each drawn from that pool, so **~97% of the time at
+    least one holds a premium hand** — and under those conditions folding
+    AKs under the gun genuinely is close to correct. The solver was never
+    diverging. It was converging, correctly, to the right answer for a
+    game nobody meant to ask about. At 3-max only two opponents draw from
+    the same pool (~74%), which is why 3-max looked fine at 100,000
+    iterations and 6-max did not.
+  - **Measured, with a control, not asserted:** diluting to 34 classes /
+    10.2% premium makes AKs's UTG fold rate **2.5% -> 1.2% -> 1.7%**
+    across 300 / 3k / 30k — flat at 100x the shipped budget, where the
+    demo pool climbs to 94.5%. QQ likewise 1.3% -> 0.6% -> 0.7%. Because
+    that pool changed *two* variables at once (density and size), a
+    control was run at the demo pool's own size (8 classes) but
+    premium-light: it **still degraded** (KK 1.4% -> 1.6% -> 23.6%). So
+    density is the dominant factor but pool coarseness contributes too,
+    and the honest conclusion is that the instability is a property of
+    the demo pool being both small and premium-heavy — not of the CFR
+    implementation. Stated that way rather than as the cleaner
+    density-only story the first experiment alone would have supported.
+  - **The masking change shipped anyway, on its own merits, with its
+    failure to fix 6-max stated plainly.** A/B'd in the regime where
+    correctness is actually measurable (the diluted pool, which
+    converges): at 3,000 iterations the two arms are identical (AA
+    0.1%/0.1%, AKs 1.2%/1.2%, QQ 0.6%/0.6%) at identical cost (116.7s vs
+    115.8s), and the full suite runs 229.7s against a 230.2s baseline. So
+    it changes nothing well-determined and costs nothing — it only
+    differs where neither answer was trustworthy. What it buys: hands are
+    no longer trained on fabricated numbers, and a hand that never once
+    had a real value now correctly reports `trained_mask() == False`
+    (M28) instead of carrying a placeholder-derived strategy.
+  - **Why this matters more than a tuning fix would have:** CFR+ floors
+    regret at zero and never lets it decrease, so any persistent
+    one-sided bias accumulates forever instead of averaging out. That
+    ratchet is why "feed it a neutral value" is not a safe substitute for
+    "skip the update", and it is the reason M27's instinct was sound even
+    though the specific culprit was not.
+  - **Tests:** `test_cfr.py` — the M32 test asserting `nan -> 0.5` was
+    rewritten to assert NaN is now *preserved* (the behaviour it
+    deliberately replaces), plus new tests that a validity mask is folded
+    into NaN, that an unpriceable hand leaves `regret_sum`/`strategy_sum`
+    untouched and reports untrained, that NaN never enters either
+    accumulator, and — the necessary other half — that a hand which *is*
+    priceable still learns normally, so masking cannot "fix" divergence
+    by refusing to learn at all. `test_equity.py` — four tests for
+    `traverser_validity_mask` (a blocked candidate, an all-clear pool,
+    the all-false mutually-conflicting-opponents case, and that asking
+    for mask-then-vector or vector-then-mask gives identical answers with
+    only one entry computed). `test_solver.py` — the characterization
+    test was **renamed and rewritten**:
+    `test_six_max_convergence_still_diverges_with_more_iterations` is now
+    `test_six_max_demo_pool_degrades_with_more_iterations`, documenting
+    that it pins a property of the *pool*, not a solver defect, and it is
+    paired with a new `test_six_max_converges_with_a_realistic_pool` that
+    is the actual evidence. The new test uses the cheapest configuration
+    found that still shows the effect (14 classes / 23.9% premium, ~35s)
+    rather than the 34-class version's ~2.5 minutes.
+  - **Budgets left at 300, but the reason changed.** It is no longer
+    "MCCFR is broken at 6-max"; it is "this pool makes large counts
+    meaningless." Corrected in place in `api/config.py`,
+    `docs/project-audit-2026-08-21.md` (§6.1 and recommendation #5, whose
+    "the real fix remains the one M27 named" conclusion this milestone
+    disproves), and CLAUDE.md's known-constraints section.
+  - **Verification:** `python -m pytest tests/ -v` — full suite green.
+    No frontend files touched.
+  - **What this unlocks, and what it defers:** replacing
+    `DEMO_MULTIWAY_HANDS` with a larger, realistically-weighted pool is
+    now the identified path to raising the 6-max/9-max budgets. It is
+    deliberately *not* done here — it changes every multiway endpoint's
+    output and costs 3-9x more per solve at these table sizes, so it
+    needs its own cost-and-budget measurement pass. That is a product
+    change with a clear brief, which is a much better place to be than an
+    open-ended solver investigation.

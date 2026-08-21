@@ -468,6 +468,7 @@ class MultiwayEquityCache:
         self.samples = samples
         self.seed = seed
         self._cache: dict = {}
+        self._validity: dict = {}
         self._lock = threading.Lock()
 
     def traverser_equity_vector(self, opponent_hands: tuple) -> np.ndarray:
@@ -561,16 +562,22 @@ class MultiwayEquityCache:
             vector = np.array([
                 _pairwise_fallback_equity(hand, opponent_hands, rng) for hand in self.hands
             ])
+            # EVERY entry here is a fallback, so nothing in this vector is
+            # a real simulated equity (see traverser_validity_mask).
+            validity = np.zeros(len(self.hands), dtype=bool)
             with self._lock:
                 self._cache[key] = vector
+                self._validity[key] = validity
             return vector
         opponent_used = frozenset(card for pair in opponent_dealt for card in pair)
 
         values = []
+        valid_flags = []
         for hand in self.hands:
             try:
                 candidate_dealt = deal_n_hands([hand], avoiding=opponent_used, rng=rng)
                 equity = _simulate_equity(candidate_dealt + opponent_dealt, self.samples, rng)[0]
+                valid = True
             except RuntimeError:
                 # `hand` conflicts with the SHARED opponent assignment
                 # dealt above — but that assignment was chosen once,
@@ -591,6 +598,7 @@ class MultiwayEquityCache:
                 try:
                     joint_dealt = deal_n_hands([hand, *key], rng=rng)
                     equity = _simulate_equity(joint_dealt, self.samples, rng)[0]
+                    valid = True
                 except RuntimeError:
                     # A genuine structural conflict: no concrete
                     # assignment of `hand` plus these opponent classes can
@@ -602,12 +610,49 @@ class MultiwayEquityCache:
                     # flat constant, and for the honest limit of what that
                     # alone was found to fix.
                     equity = _pairwise_fallback_equity(hand, opponent_hands, rng)
+                    valid = False
             values.append(equity)
+            valid_flags.append(valid)
 
         vector = np.array(values)
+        validity = np.array(valid_flags, dtype=bool)
         with self._lock:
             self._cache[key] = vector
+            self._validity[key] = validity
         return vector
+
+    def traverser_validity_mask(self, opponent_hands: tuple) -> np.ndarray:
+        """Boolean companion to `traverser_equity_vector`: index i is True
+        iff that vector's entry i came from a REAL simulated showdown, and
+        False iff it came from `_pairwise_fallback_equity` — i.e. iff no
+        concrete deal of `self.hands[i]` alongside `opponent_hands` exists
+        at all (see `traverser_equity_vector`'s own docstring for the two
+        distinct ways that happens, and M27's investigation of why any
+        fallback *value*, hand-aware or not, is a problem for CFR+).
+
+        Added in M66. The point is to let a caller distinguish "this hand's
+        equity is a real number" from "this hand's equity is our best guess
+        at a number that has no true value," which `traverser_equity_vector`
+        alone cannot express — it has to return SOME float for every entry,
+        since it returns a dense array. M27 established that feeding CFR+ a
+        fallback value compounds destructively under its regret floor
+        (regret only ratchets up, so a persistent one-sided bias never
+        averages out); `cfr._mccfr_recurse` uses this mask to skip the
+        regret update for such hands entirely rather than learn from a
+        fabricated number.
+
+        Computing this is free if `traverser_equity_vector` has already run
+        for the same `opponent_hands` (both are filled in the same pass and
+        cached under the same key); otherwise it triggers that computation.
+        """
+        key = tuple(sorted(opponent_hands, key=str))
+        with self._lock:
+            cached = self._validity.get(key)
+        if cached is not None:
+            return cached
+        self.traverser_equity_vector(opponent_hands)  # fills self._validity[key]
+        with self._lock:
+            return self._validity[key]
 
     def __len__(self) -> int:
         """Number of distinct opponent-hand combinations cached so far."""

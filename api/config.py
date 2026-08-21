@@ -84,16 +84,37 @@ DEMO_MULTIWAY_HANDS = [
 # sufficient. Only AA's own fold rate held up consistently across seeds
 # at 300 (see tests/test_solver.py's six_max_result tests, which now
 # mirror 9-max's own "only assert what's actually reliable" pattern).
-# Fully resolving 6-max's convergence is real, separate future work.
-# M63 re-measured all of this on current code, because the finding below
+# M63 re-measured all of this on current code, because the finding above
 # predated M33/M34's equity fixes, M48's evaluator rewrite and M55's
 # memoization — any of which might plausibly have changed it. None did:
 # AKs's UTG fold rate still runs 15.6% (300) -> 48.7% (3k) -> 92.4%
 # (30k), and QQ's 19.3% -> 86.2%. So 300 is NOT a cost-conservative
 # number with headroom above it; it is the count at which the answer is
-# still sane. Raising it makes the output actively worse. Pinned by
-# tests/test_solver.py's
-# test_six_max_convergence_still_diverges_with_more_iterations.
+# still sane. Raising it makes the output actively worse.
+#
+# M66 FOUND THE CAUSE, and it changes what "fixing" this means. It is not
+# a solver defect — it is DEMO_MULTIWAY_HANDS itself. That pool is 48.6%
+# premium by combo weight (AA/KK/QQ/AKs/AKo out of 8 classes). At 6-max
+# the traverser faces 5 opponents drawn from it, so ~97% of the time at
+# least one holds a premium — and under those conditions folding AKs
+# under the gun genuinely is close to correct. More iterations converge
+# harder to a correct answer to a distorted question.
+#
+# Proof, measured directly (M66): rerun over a pool diluted to 10.2%
+# premium and AKs's UTG fold rate is 2.5% -> 1.2% -> 1.7% across
+# 300 / 3k / 30k — flat at 100x this budget. A control at the same POOL
+# SIZE (8 classes) but premium-light still degraded, so coarseness
+# contributes as well as density; the real fix is a pool that is both
+# larger and realistically weighted.
+#
+# So these budgets stay at 300 — but the reason is now "the pool makes
+# large counts meaningless", not "MCCFR is broken at 6-max". Replacing
+# DEMO_MULTIWAY_HANDS is what unlocks raising them, and that is a real
+# product change (it alters every multiway endpoint's output and costs
+# 3-9x more per solve at these sizes), scoped as its own milestone.
+# Pinned by tests/test_solver.py's paired
+# test_six_max_demo_pool_degrades_with_more_iterations and
+# test_six_max_converges_with_a_realistic_pool.
 MULTIWAY_TABLE_CONFIGS = {
     3: {"positions": ("BTN", "SB", "BB"), "iterations": 100_000},
     6: {"positions": ("UTG", "MP", "CO", "BTN", "SB", "BB"), "iterations": 300},
