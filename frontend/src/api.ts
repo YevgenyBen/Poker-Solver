@@ -8,6 +8,7 @@ import type {
   MultiwayFlopSolveDepth,
   PreflopWalkResponse,
   SolveResponse,
+  TurnMultiwayPathQueryResponse,
   TurnPathQueryResponse,
 } from './types';
 
@@ -223,6 +224,37 @@ export async function fetchTurnStrategyFromPath(
       flop_action_path: flopActionPath,
       turn_card: turnCard,
       players,
+    }),
+    signal,
+  });
+}
+
+// M44: the multiway analog of fetchTurnStrategyFromPath — for a real
+// preflop path that leaves 3+ live positions at the flop (a case
+// /solve_turn_from_path structurally can't serve, see api/main.py's
+// module docstring). `flopIterations` is optional (server defaults to
+// DEFAULT_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS when omitted).
+export async function fetchMultiwayTurnStrategyFromPath(
+  stackBb: number,
+  preflopActionPath: string[],
+  board: string,
+  flopActionPath: string[],
+  turnCard: string,
+  players: number,
+  flopIterations?: number,
+  signal?: AbortSignal,
+): Promise<TurnMultiwayPathQueryResponse> {
+  return fetchJson<TurnMultiwayPathQueryResponse>('/solve_turn_multiway_from_path', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      stack_bb: stackBb,
+      preflop_action_path: preflopActionPath,
+      board,
+      flop_action_path: flopActionPath,
+      turn_card: turnCard,
+      players,
+      flop_iterations: flopIterations,
     }),
     signal,
   });
