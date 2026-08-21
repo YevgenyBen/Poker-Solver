@@ -3843,6 +3843,52 @@ street chaining needs.
     speedup (M49 did the river's only); the two-phase-solve lever (M47);
     and live-table integration, which the user explicitly deferred.
 
+- **M54 — re-tune the four remaining path-derived caps against M48's
+  speedup, and find the one cell it barely helped.** M49 re-tuned only
+  the river's; its own note insisted each other cap needed its own
+  dedicated measurement rather than a blanket multiply. Done here.
+  - **A real measurement flaw caught and corrected before trusting any
+    number** — the same discipline M49 applied to itself: the first
+    sweep cleared the preflop cache in only ONE of its four loops, so
+    preflop-solve cost leaked into whichever measurement ran first. It
+    gave itself away by producing an impossible reading — flop-multiway
+    at cap=2 measuring 36.59s but cap=4 measuring 14.09s, a *larger* cap
+    running *faster*. Re-run with BOTH preflop legs pre-warmed, so every
+    number reflects only what the cap actually controls.
+  - **The corrected numbers** (preflop excluded throughout): flop
+    heads-up 6->3.47s, 10->11.17s, 14->22.56s. Turn heads-up 2->32.77s,
+    3->78.84s, 4->107.27s. Flop multiway 2->7.42s, 4->16.80s,
+    6->17.03s. Turn multiway 2->1.38s, 4->2.32s, 6->2.21s.
+  - **What changed:** `MAX_PATH_QUERY_CLASSES_PER_SIDE` 6 -> 10 (~67%
+    more range fidelity at ~11s, with cap=14 left as measured headroom);
+    `MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION` and `MAX_MULTIWAY_
+    TURN_PATH_QUERY_CLASSES_PER_POSITION` both 2 -> 6.
+  - **A real structural ceiling found, not assumed:** both multiway caps
+    measured cap=6 as costing essentially the SAME as cap=4 — because at
+    `players != 2` the preflop leg solves over `DEMO_MULTIWAY_HANDS`'
+    own 8 classes (per `_get_or_solve_preflop_raw`), and this path's
+    derived range has fewer than 6 with meaningful weight, so the extra
+    headroom simply doesn't bind. Raised to 6 anyway, precisely because
+    it's measured-free on this path while giving real extra fidelity on
+    a path whose derived range IS wider — with the honest caveat, in the
+    comment, that such a path would cost more than the number measured.
+  - **The one negative finding, kept rather than glossed:**
+    `MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE` stays at **2**. M48 helped
+    this cell only ~1.4x (M26's ~45.9s -> 32.77s), far less than the
+    3-8x every sibling saw, so the next class step (78.84s) still costs
+    more than the bracket M26 deliberately chose cap=2 to stay inside.
+    The speedup here is spent on LATENCY, not range width. Why it
+    benefited least is a useful pointer recorded in the constant's own
+    comment: M47's profile found `solve_flop_turn` dominated by
+    `cfr._solve_recurse`'s tree traversal (531K recursive calls), not by
+    hand evaluation — so M48 could only ever move part of it. That makes
+    this the cell the still-untried two-phase-solve lever would most
+    benefit, which is the next item on the list.
+  - **Verification:** `python -m pytest tests/ -v` — 739 passed, zero
+    regressions (constants-and-docs-only; the path-endpoint tests run
+    against fixture-patched caps independent of the production values).
+    No frontend changes.
+
 ## v3 vision (future) — live-table advisor
 
 Discussed with the user while scoping M16, recorded here rather than
