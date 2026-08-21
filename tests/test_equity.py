@@ -193,6 +193,63 @@ def test_deal_n_hands_matches_deal_two_hands_for_two_hands():
 
 
 # ---------------------------------------------------------------------------
+# M33: deal_n_hands's optional rng parameter — docs/full-table-diagnostic-
+# 2026-08.md's §3.5 (every suited hand in a multiway showdown was always
+# dealt the same two suits, since _suit_pairs_for's fixed first-fit order
+# means clubs — or whichever suit is first in SUITS — always wins when
+# available).
+# ---------------------------------------------------------------------------
+
+
+def test_deal_n_hands_without_rng_always_deals_the_same_suit_to_suited_hands():
+    # Pins the PRE-fix behavior explicitly (not just "every other test
+    # passes unchanged") — the exact bias §3.5 identified, confirmed here
+    # as the documented default, not an accident nobody verified.
+    hands = [StartingHand(a, b, suited=True) for a, b in [("A", "K"), ("Q", "J"), ("T", "9")]]
+    suits_seen = {deal_n_hands(hands)[0][0].suit for _ in range(50)}
+    assert suits_seen == {"c"}
+
+
+def test_deal_n_hands_with_rng_varies_which_suit_suited_hands_get():
+    hands = [StartingHand(a, b, suited=True) for a, b in [("A", "K"), ("Q", "J"), ("T", "9")]]
+    rng = random.Random(1)
+    suits_seen = {deal_n_hands(hands, rng=rng)[0][0].suit for _ in range(200)}
+    assert len(suits_seen) > 1  # no longer collapses onto a single suit
+
+
+def test_deal_n_hands_with_rng_still_returns_distinct_valid_cards():
+    # The shuffle changes WHICH suit-pair candidates get tried and in
+    # what order — it must not affect the underlying correctness
+    # guarantees (distinctness, suited/offsuit/pair respected).
+    hands = [
+        StartingHand("A", "K", suited=True),
+        StartingHand("Q", "J", suited=False),
+        StartingHand("2", "2"),
+    ]
+    rng = random.Random(3)
+    for _ in range(100):
+        (a1, a2), (b1, b2), (c1, c2) = deal_n_hands(hands, rng=rng)
+        assert a1.suit == a2.suit
+        assert b1.suit != b2.suit
+        assert c1.suit != c2.suit
+        assert len({a1, a2, b1, b2, c1, c2}) == 6
+
+
+def test_deal_n_hands_with_rng_is_deterministic_given_the_rng_seed():
+    hands = [StartingHand(a, b, suited=True) for a, b in [("A", "K"), ("Q", "J"), ("T", "9")]]
+    first = deal_n_hands(hands, rng=random.Random(9))
+    second = deal_n_hands(hands, rng=random.Random(9))
+    assert first == second
+
+
+def test_deal_n_hands_rng_defaults_to_none_matching_omitting_it_entirely():
+    hands = [StartingHand(a, b, suited=True) for a, b in [("A", "K"), ("Q", "J"), ("T", "9")]]
+    omitted = deal_n_hands(hands)
+    explicit_none = deal_n_hands(hands, rng=None)
+    assert omitted == explicit_none
+
+
+# ---------------------------------------------------------------------------
 # _provably_infeasible (M27's O(N) precheck ahead of deal_n_hands's
 # exponential backtracking)
 # ---------------------------------------------------------------------------
@@ -294,16 +351,50 @@ def test_monte_carlo_equity_n_is_deterministic_given_a_seed():
     assert first == second
 
 
+def test_monte_carlo_equity_n_threads_rng_into_dealing_for_suit_diversity(monkeypatch):
+    # M33: monte_carlo_equity_n already accepted an rng parameter, but
+    # only ever used it for the runout sampling — it never reached
+    # deal_n_hands itself, so simultaneously-suited hands still collapsed
+    # onto the same suit (§3.5) even when a caller supplied their own rng.
+    # Verified directly (not inferred): monte_carlo_equity_n's own call to
+    # deal_n_hands passes rng, spied on via monkeypatch.
+    import poker_solver.equity as equity_module
+
+    calls = []
+    real_deal_n_hands = equity_module.deal_n_hands
+
+    def spy(hands, avoiding=frozenset(), rng=None):
+        calls.append(rng)
+        return real_deal_n_hands(hands, avoiding=avoiding, rng=rng)
+
+    monkeypatch.setattr(equity_module, "deal_n_hands", spy)
+    hands = [StartingHand("A", "K", suited=True), StartingHand("Q", "J", suited=True)]
+    rng = random.Random(11)
+    equity_module.monte_carlo_equity_n(hands, samples=5, rng=rng)
+    assert len(calls) == 1
+    assert calls[0] is rng
+
+
 def test_monte_carlo_equity_n_matches_pairwise_for_two_hands():
     # With exactly 2 hands, monte_carlo_equity_n's tie/win logic reduces
-    # to the pairwise case exactly (deal_n_hands agrees with
-    # deal_two_hands for 2 hands, so the same rng seed drives an
-    # identical sequence of board draws).
+    # to the pairwise case — approximately, not bit-for-bit, as of M33
+    # (docs/full-table-diagnostic-2026-08.md's §3.5): monte_carlo_equity_n
+    # now threads its own rng into deal_n_hands itself (so simultaneously-
+    # suited hands don't all collapse onto the same suit), which consumes
+    # rng draws deal_two_hands (used by the plain pairwise monte_carlo_
+    # equity, which has no rng-shuffle to thread) never did — so the same
+    # seed no longer drives an *identical* sequence of board draws between
+    # the two, just an equally-valid one. Loosened from exact equality to
+    # a generous Monte Carlo tolerance (200 samples, a ~2-way matchup) —
+    # this test's original exact-match expectation was an artifact of
+    # deal_n_hands/deal_two_hands happening to consume rng identically
+    # pre-fix, not a property either function's own contract ever
+    # promised.
     hand_a, hand_b = StartingHand("A", "K", suited=True), StartingHand("Q", "Q")
     n_result = monte_carlo_equity_n([hand_a, hand_b], samples=200, rng=random.Random(42))
     pairwise_result = monte_carlo_equity(hand_a, hand_b, samples=200, rng=random.Random(42))
-    assert n_result[0] == pytest.approx(pairwise_result)
-    assert n_result[1] == pytest.approx(1.0 - pairwise_result)
+    assert n_result[0] == pytest.approx(pairwise_result, abs=0.1)
+    assert n_result[1] == pytest.approx(1.0 - pairwise_result, abs=0.1)
 
 
 # ---------------------------------------------------------------------------
@@ -410,6 +501,26 @@ def test_multiway_cache_is_order_independent_for_opponent_tuple():
     reversed_order = cache.traverser_equity_vector((opp_b, opp_a))
     assert np.array_equal(forward, reversed_order)
     assert len(cache) == 1  # both requests hit the same canonical entry
+
+
+def test_multiway_cache_is_order_independent_across_fresh_caches():
+    # M33 (docs/full-table-diagnostic-2026-08.md's §3.6): the test above
+    # only proves the SAME cache instance's own sorted-key lookup hits the
+    # same entry either way — trivially true from the cache key alone,
+    # regardless of whether the underlying deal is order-independent. The
+    # diagnostic's own confirmed reproduction needed TWO SEPARATE, fresh
+    # caches (no shared cache-hit shortcut possible) to actually surface
+    # the bug: (AKs, T9o, KK) vs. (KK, T9o, AKs), same seed, differed by
+    # up to 0.0069 pre-fix. This is the direct regression test for that.
+    hands = [StartingHand("A", "A"), StartingHand("K", "K"), StartingHand("Q", "Q")]
+    opp_a = StartingHand("A", "K", suited=True)
+    opp_b = StartingHand("T", "9", suited=False)
+    opp_c = StartingHand("K", "K")
+    cache_forward = MultiwayEquityCache(hands=hands, samples=200, seed=5)
+    cache_reversed = MultiwayEquityCache(hands=hands, samples=200, seed=5)
+    forward = cache_forward.traverser_equity_vector((opp_a, opp_b, opp_c))
+    reversed_order = cache_reversed.traverser_equity_vector((opp_c, opp_b, opp_a))
+    assert np.array_equal(forward, reversed_order)
 
 
 def test_multiway_cache_vector_length_matches_hands():

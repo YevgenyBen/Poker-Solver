@@ -90,6 +90,16 @@ the phased approach. Landed so far:
        problem, not something more optimization alone fixes), so it ships
        with a much smaller iteration budget and correspondingly noisier
        output — a real, measured tradeoff, not a hidden shortcut.
+       **Correction (M33, closing recommendation #6's second half):**
+       this cache-hit-collapse framing is real but was incomplete, per
+       `docs/full-table-diagnostic-2026-08.md`'s §3.2 — direct
+       measurement traced the actual dominant per-iteration cost driver
+       at 9-max to `deal_n_hands`'s exponential-time backtracking stall
+       on an infeasible opponent-hand tuple (up to 21.6s for one 8-hand
+       call), not the cache alone. M27 fixed that stall (an O(N)
+       feasibility precheck, ~0.02ms instead of up to 63s), which is
+       what actually made 9-max's iteration budget viable to raise above
+       a token amount at all — see M27's own entry below for the numbers.
   - **Iteration budgets, by table size** (`api/main.py`'s
     `MULTIWAY_TABLE_CONFIGS`, same numbers `test_solver.py`'s
     `six_max_result`/`nine_max_result` fixtures validate): 3-max 100K
@@ -2183,6 +2193,110 @@ street chaining needs.
     unscoped future work, the same "prove it small first, wire it up
     later" pattern the real-time-speed roadmap (M17-M21) and M15-M16
     each already established.
+- **M33 — Suit-assignment bias + the determinism-claim fix
+  (recommendation #7's first two items), plus closing recommendation
+  #6's leftover documentation correction.** `docs/full-table-diagnostic-
+  2026-08.md`'s §3.5 and §3.6 share one root cause: `deal_n_hands`'s
+  backtracking search always tries each hand's candidate suit-pairs in
+  `_suit_pairs_for`'s own fixed order, so a suited hand's first
+  available suit is always the same one — confirmed directly: dealing
+  several suited hands simultaneously (the real shape a 7-9 handed
+  multiway showdown produces) always deals every one of them clubs
+  (§3.5), and because `MultiwayEquityCache.traverser_equity_vector`
+  dealt the caller's *raw* opponent-tuple order rather than its own
+  already-canonicalized cache-key order, two orderings of the identical
+  opponent tuple, on fresh caches, produced measurably different equity
+  (§3.6 — the diagnostic's own reproduction: up to 0.0069 apart) even
+  though the docstring claimed order-independence.
+  - **The fix, one root cause, two changes:** `deal_n_hands` gained an
+    optional `rng: random.Random | None = None` parameter (default
+    `None`, every pre-M33 call site byte-for-byte unaffected — proven,
+    not argued, via a dedicated test) — when supplied, each hand's own
+    suit-pair candidates are shuffled (a fresh copy, not `_suit_pairs_
+    for`'s cached list) before the search tries them, so which suit
+    "wins" varies deterministically-given-`rng` instead of collapsing to
+    one suit every time. `MultiwayEquityCache.traverser_equity_vector`
+    now passes its own already-seeded `rng` into all three of its
+    `deal_n_hands` calls (§3.5's fix) and deals `key` — the sorted,
+    cache-key-canonical tuple — instead of the caller's raw
+    `opponent_hands` order (§3.6's fix), closing the gap between the
+    method's own docstring claim and what was actually true. `monte_
+    carlo_equity_n` already accepted an `rng` parameter but never
+    reached it into its own `deal_n_hands` call (only used it for the
+    runout afterward) — threaded through too, while in the area, and
+    caught by a spy-based test (`monkeypatch`), not inference.
+  - **Callers that don't need this stay untouched, correctly:** `cfr.py`'s
+    own opponent-feasibility checks (`_opponent_hands_are_dealable`)
+    discard the dealt cards entirely, so suit bias there is inert —
+    left as `rng=None`, no behavior change, no reason to pay any extra
+    cost. `deal_two_hands` (the 2-player pairwise path, used by the
+    heads-up preflop 169x169 table) is untouched too, matching the
+    diagnostic's own explicit framing: "at N=2 (the originally-validated
+    scale) this barely matters."
+  - **A real, pre-existing test gap the diagnostic's own framing
+    exposed, closed alongside the fix:** `test_multiway_cache_is_order_
+    independent_for_opponent_tuple` (already in the suite) only proves
+    the *same* cache instance's own sorted-key lookup hits one shared
+    entry either way — trivially true from the cache key alone,
+    regardless of whether the underlying deal is genuinely order-
+    independent, since a repeat call on the SAME cache is a guaranteed
+    hit no matter what. A new `test_multiway_cache_is_order_independent_
+    across_fresh_caches` uses two separate, fresh caches (no shared-hit
+    shortcut possible) — the diagnostic's own exact reproduction shape —
+    and is the actual regression test for §3.6.
+  - **A real, deliberate test-expectation break, fixed not glossed
+    over:** `test_monte_carlo_equity_n_matches_pairwise_for_two_hands`
+    asserted *exact* equality between `monte_carlo_equity_n` and the
+    plain pairwise `monte_carlo_equity` at N=2, on the assumption that
+    `deal_n_hands` and `deal_two_hands` consume `rng` identically for
+    two hands. That assumption is now false by design — `monte_carlo_
+    equity_n`'s own `deal_n_hands` call consumes extra `rng` draws for
+    the new suit-shuffle that `deal_two_hands` (no `rng` support, by
+    design, since N=2 doesn't need this fix) never did. Loosened to a
+    generous Monte Carlo tolerance (`abs=0.1`) with a comment recording
+    that the original exact-match expectation was an artifact of
+    pre-fix behavior, not a property either function's contract ever
+    promised.
+  - **Measured, not assumed — including a real, controlled A/B check
+    of the one performance question this fix could plausibly have
+    raised:** isolated micro-benchmark (20,000 calls, 5 simultaneously-
+    suited hands): `deal_n_hands` costs ~14.3μs/call without `rng`,
+    ~17.8μs/call with it — a real but small (~24%) per-call overhead,
+    negligible next to a real `traverser_equity_vector` cache-miss's own
+    ~26ms. Confirmed the fix actually works, not just that it doesn't
+    crash: 200 calls dealing the same 3 simultaneously-suited hands
+    showed exactly one suit (`{'c'}`) without `rng`, all four suits with
+    it. The full backend suite's own wall-clock time (617 tests, this
+    milestone's own isolated run) measured ~46% higher than M32's own
+    504s baseline (734s) — large enough to investigate properly rather
+    than hand-wave as noise. Investigated with a real controlled
+    comparison, not left as a guess: `git stash`/`git stash pop` around
+    `tests/test_solver.py` alone (the single heaviest file — every
+    6-max/9-max MCCFR fixture lives there, the actual workload that
+    would show a real `deal_n_hands`-driven slowdown if one existed)
+    measured **221.36s pre-fix, 220.90s post-fix** — statistically
+    indistinguishable, well within normal run-to-run noise. This rules
+    out the fix itself as the cause of the full-suite delta; the
+    remaining, most likely explanation is ordinary machine-load
+    variance between two measurements taken hours apart (M32's 504s
+    baseline and this run), not a real per-call cost this milestone's
+    change introduced — the micro-benchmark and the controlled
+    single-file A/B both agree on that conclusion independently.
+  - **Recommendation #6, closed in full:** its N>=3 Nash-equilibrium
+    documentation half landed in M29; this milestone closes the other
+    half the diagnostic named — correcting CLAUDE.md's own M9 entry,
+    which attributed 9-max's small iteration budget to `MultiwayEquity
+    Cache`'s cache-hit-rate collapse without also crediting what direct
+    measurement (§3.2) found was the actual dominant cost driver (the
+    `deal_n_hands` backtracking stall M27 later fixed) — see the
+    correction inline in M9's own entry above.
+  - **Scope:** engine only, no `api/main.py`/frontend changes. The third
+    recommendation-#7 item — §3.10's three thread-safety gaps (an
+    unlocked on-disk equity-table cache race, `MultiwayEquityCache.
+    _cache`'s unlocked dict, `InfoSetTable`'s unguarded read-modify-
+    write) — is a mechanically different kind of fix (locking, not
+    equity computation) and is deliberately left for its own milestone,
+    matching this project's "one coherent improvement per PR" rule.
 
 ## v3 vision (future) — live-table advisor
 

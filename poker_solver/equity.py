@@ -210,7 +210,7 @@ def _provably_infeasible(hands: list, avoiding: frozenset) -> bool:
     return any(count > 4 - used_by_rank.get(rank, 0) for rank, count in demand.items())
 
 
-def deal_n_hands(hands: list, avoiding: frozenset = frozenset()) -> list:
+def deal_n_hands(hands: list, avoiding: frozenset = frozenset(), rng: random.Random | None = None) -> list:
     """Pick concrete, mutually-distinct cards for N StartingHand classes,
     additionally avoiding any card already in `avoiding`.
 
@@ -226,6 +226,25 @@ def deal_n_hands(hands: list, avoiding: frozenset = frozenset()) -> list:
     opponents once and reuses that instead of re-dealing them from
     scratch for every candidate hand it evaluates.
 
+    `rng` (default `None`, every pre-existing call site unaffected —
+    docs/full-table-diagnostic-2026-08.md's §3.5): when omitted, each
+    hand's candidate suit-pairs are tried in `_suit_pairs_for`'s own
+    fixed order, so a suited hand's first available suit is always the
+    same one (confirmed: dealing several suited hands simultaneously
+    with no `rng` deals every one of them the identical suit) —
+    harmless for a feasibility check (the specific cards are discarded),
+    but a real, systematic bias for a multiway equity computation that
+    actually uses the dealt cards (distorts flush/chop frequency at
+    7-9 handed, where several suited opponents are common). When `rng`
+    is supplied, each hand's own suit-pair candidates are shuffled
+    (a fresh copy, not `_suit_pairs_for`'s cached list) before the
+    search tries them, so which suit "wins" varies — deterministically,
+    given `rng`'s own seed — instead of collapsing to one suit every
+    time. Callers that only care whether a deal exists at all (e.g.
+    cfr.py's own opponent-feasibility checks) can safely omit `rng`;
+    callers that use the actual dealt cards for equity (MultiwayEquity
+    Cache) should supply their own already-seeded `rng`.
+
     Before searching, `_provably_infeasible` short-circuits the common
     case where some rank is simply overcommitted — see its own
     docstring. Measured during M27: this turns a search that can take
@@ -240,7 +259,11 @@ def deal_n_hands(hands: list, avoiding: frozenset = frozenset()) -> list:
     def backtrack(index: int, used: set) -> bool:
         if index == len(hands):
             return True
-        for suit_a, suit_b in _suit_pairs_for(hands[index]):
+        candidates = _suit_pairs_for(hands[index])
+        if rng is not None:
+            candidates = list(candidates)
+            rng.shuffle(candidates)
+        for suit_a, suit_b in candidates:
             card_a = Card(hands[index].high_rank, suit_a)
             card_b = Card(hands[index].low_rank, suit_b)
             if card_a == card_b or card_a in used or card_b in used:
@@ -314,10 +337,13 @@ def monte_carlo_equity_n(
     the others simultaneously, via random shared-board runouts.
 
     Returned list is the same length and order as `hands`. Deterministic
-    for a given `rng` seed.
+    for a given `rng` seed — including which concrete suit each hand
+    gets dealt (§3.5's fix: `rng` is threaded into `deal_n_hands` itself,
+    not just used for the runout afterward, so several simultaneously-
+    suited hands don't all collapse onto the same suit).
     """
     rng = rng if rng is not None else random.Random(DEFAULT_SEED)
-    dealt = deal_n_hands(hands)
+    dealt = deal_n_hands(hands, rng=rng)
     return _simulate_equity(dealt, samples, rng)
 
 
@@ -395,6 +421,23 @@ class MultiwayEquityCache:
         `opponent_hands` (in any order — the result doesn't depend on
         which opponent holds which hand, only the traverser's own).
 
+        Two determinism/bias fixes from docs/full-table-diagnostic-2026-
+        08.md's §3.5/§3.6, both rooted in the same underlying cause
+        (deal_n_hands's fixed, first-fit suit-pair order — see its own
+        docstring): (1) every `deal_n_hands` call below passes this
+        method's own seeded `rng`, so several simultaneously-suited
+        opponents no longer collapse onto the identical suit every time
+        (confirmed pre-fix: dealing 5 suited hands together always
+        produced clubs for every one of them); (2) the opponents' own
+        joint deal uses `key` (the already-sorted, cache-key-canonical
+        tuple), not the caller's raw `opponent_hands` order, so which
+        concrete cards get dealt — and therefore this method's own
+        result — genuinely doesn't depend on which order the caller
+        happened to list opponents in, closing the gap between this
+        docstring's own claim and what §3.6 confirmed was actually true
+        pre-fix (two orderings of the same opponent tuple, fresh caches,
+        producing equity vectors differing by up to 0.0069).
+
         Deals the (fixed) opponents' concrete cards *once*, then deals
         just each candidate hand's own 2 cards around that — not once
         per candidate hand via a full monte_carlo_equity_n(hand,
@@ -445,7 +488,7 @@ class MultiwayEquityCache:
         rng = random.Random(_stable_seed(self.seed, *key))
 
         try:
-            opponent_dealt = deal_n_hands(list(opponent_hands))
+            opponent_dealt = deal_n_hands(list(key), rng=rng)
         except RuntimeError:
             # The opponents' own hands are mutually incompatible (e.g.
             # two opponents both holding KK exhausts all 4 kings) — no
@@ -469,7 +512,7 @@ class MultiwayEquityCache:
         values = []
         for hand in self.hands:
             try:
-                candidate_dealt = deal_n_hands([hand], avoiding=opponent_used)
+                candidate_dealt = deal_n_hands([hand], avoiding=opponent_used, rng=rng)
                 equity = _simulate_equity(candidate_dealt + opponent_dealt, self.samples, rng)[0]
             except RuntimeError:
                 # `hand` conflicts with the SHARED opponent assignment
@@ -489,7 +532,7 @@ class MultiwayEquityCache:
                 # together (not reusing the fixed assignment), which finds
                 # ANY mutually-compatible assignment if one exists at all.
                 try:
-                    joint_dealt = deal_n_hands([hand, *opponent_hands])
+                    joint_dealt = deal_n_hands([hand, *key], rng=rng)
                     equity = _simulate_equity(joint_dealt, self.samples, rng)[0]
                 except RuntimeError:
                     # A genuine structural conflict: no concrete
