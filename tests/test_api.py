@@ -1307,6 +1307,200 @@ def test_derive_path_situation_multiway_mode_accepts_three_live():
     assert len(stacks) == 1
 
 
+# ---------------------------------------------------------------------------
+# M51: POST /advise — one front door for the whole real-situation
+# advisor. Street depth inferred from which fields are present; each
+# (street, table size) cell delegates to the sibling endpoint that
+# already serves it. Adds two things no sibling has: a `hero_cards`
+# answer (force-included before capping) and a `source` field naming
+# which backend actually answered.
+# ---------------------------------------------------------------------------
+
+
+def _advise_body(preflop_action_path=None, **overrides):
+    body = {
+        "stack_bb": 100.0,
+        "preflop_action_path": ["raise", "call_or_check"] if preflop_action_path is None else preflop_action_path,
+        "iterations": _PATH_ITERATIONS,
+    }
+    body.update(overrides)
+    return body
+
+
+def test_advise_preflop_needs_no_board_and_reads_off_the_cached_solve(client):
+    response = client.post("/advise", json=_advise_body(preflop_action_path=[]))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["street"] == "preflop"
+    assert body["source"] == "preflop"
+    assert body["is_terminal"] is False
+    assert body["player_to_act"] == "BTN"
+    assert body["position"] == "BTN"
+    assert isinstance(body["trained"], dict)
+    assert body["hero"] is None
+    for freqs in body["strategy"].values():
+        assert sum(freqs.values()) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_advise_preflop_hero_is_keyed_by_hand_class_not_combo(client):
+    # The real bug a smoke test caught during M51: preflop strategies are
+    # keyed by CLASS ("AKs"), every postflop street by concrete combo
+    # ("AsKs"), so a route that assumed one shape silently returned no
+    # hero advice at all. in_range is always True preflop — the solve
+    # covers all 169 classes, so there's no cap to fall outside of.
+    response = client.post("/advise", json=_advise_body(preflop_action_path=[], hero_cards="AsKs"))
+    assert response.status_code == 200
+    hero = response.json()["hero"]
+    assert hero["cards"] == "AsKs"
+    assert hero["in_range"] is True
+    assert hero["trained"] is True
+    assert sum(hero["strategy"].values()) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_advise_preflop_rejects_an_already_terminal_path(client):
+    # Deliberately the INVERSE requirement of every postflop cell: those
+    # need the preflop action closed, preflop advice needs it still open.
+    response = client.post("/advise", json=_advise_body(["raise", "fold"]))
+    assert response.status_code == 422
+    assert "no preflop decision left" in response.json()["detail"]
+
+
+def test_advise_flop_heads_up_reports_library_miss_then_hit_and_null_trained(client):
+    body = _advise_body(board="2h6d9c")
+    first = client.post("/advise", json=body)
+    assert first.status_code == 200
+    assert first.json()["source"] == "library_miss"
+    # The canonical library persists only a flattened strategy dict, so
+    # per-hand confidence structurally isn't available — an explicit
+    # null, not a silently-omitted field (M28's documented boundary).
+    assert first.json()["trained"] is None
+    assert first.json()["street"] == "flop"
+
+    second = client.post("/advise", json=body)
+    assert second.json()["source"] == "library_hit"
+
+
+def test_advise_force_includes_hero_outside_the_cap_and_says_so(client):
+    # The whole point of force-inclusion: a hand outside the derived
+    # range's top-K still gets real advice, and `in_range: False` reports
+    # honestly that it had to be added rather than earning its place.
+    body = _advise_body(board="2h6d9c", hero_cards="AsKs")
+    response = client.post("/advise", json=body)
+    assert response.status_code == 200
+    hero = response.json()["hero"]
+    assert hero["cards"] == "AsKs"
+    assert hero["in_range"] is False
+    assert hero["strategy"] is not None
+    assert sum(hero["strategy"].values()) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_advise_rejects_hero_cards_that_share_a_card_with_the_board(client):
+    response = client.post("/advise", json=_advise_body(board="2h6d9c", hero_cards="2hKs"))
+    assert response.status_code == 422
+    assert "shares a card with the board" in response.json()["detail"]
+
+
+def test_advise_rejects_malformed_hero_cards(client):
+    response = client.post("/advise", json=_advise_body(board="2h6d9c", hero_cards="AsKsQd"))
+    assert response.status_code == 422
+
+
+def test_advise_flop_multiway_dispatches_to_mccfr_with_real_trained(client):
+    response = client.post(
+        "/advise",
+        json=_advise_body(
+            _THREE_LIVE_PATH, players=3, board="2h6d9c",
+            solve_iterations=FAST_MULTIWAY_PATH_FLOP_ITERATIONS,
+        ),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["street"] == "flop"
+    assert body["source"] == "mccfr"
+    assert isinstance(body["trained"], dict)  # unlike the library-backed heads-up cell
+    assert len(body["positions"]) == 3
+
+
+def test_advise_turn_heads_up_dispatches_to_the_exact_solver(client):
+    response = client.post(
+        "/advise",
+        json=_advise_body(
+            board="2h6d9c", flop_action_path=["call_or_check", "call_or_check"], turn_card="Ts",
+            solve_iterations=_TURN_PATH_ITERATIONS,
+        ),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["street"] == "turn"
+    assert body["source"] == "exact"
+    assert isinstance(body["trained"], dict)
+
+
+def test_advise_river_heads_up_dispatches_to_the_exact_solver(client):
+    response = client.post(
+        "/advise",
+        json=_advise_body(
+            board="2h6d9c", flop_action_path=["call_or_check", "call_or_check"], turn_card="Ts",
+            turn_action_path=["call_or_check", "call_or_check"], river_card="4h",
+            iterations=_RIVER_PATH_ITERATIONS, solve_iterations=_RIVER_PATH_ITERATIONS,
+        ),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["street"] == "river"
+    assert body["source"] == "exact"
+
+
+def test_advise_river_multiway_is_the_one_unfilled_cell_and_says_why(client):
+    response = client.post(
+        "/advise",
+        json=_advise_body(
+            _THREE_LIVE_PATH, players=3, board="2h6d9c",
+            flop_action_path=_THREE_LIVE_FLOP_PATH, turn_card="Ts",
+            turn_action_path=_THREE_LIVE_FLOP_PATH, river_card="4h",
+        ),
+    )
+    assert response.status_code == 422
+    assert "2-position only" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"flop_action_path": ["call_or_check"]},  # no board at all
+        {"turn_card": "Ts"},  # no board
+        {"river_card": "4h"},  # no board
+        {"board": "2h6d9c", "river_card": "4h"},  # river without turn
+        {"board": "2h6d9c", "flop_action_path": ["call_or_check", "call_or_check"]},  # flop action, no turn card
+        {"board": "2h6d9c", "turn_card": "Ts"},  # turn card without flop action
+        {
+            "board": "2h6d9c", "flop_action_path": ["call_or_check", "call_or_check"],
+            "turn_card": "Ts", "turn_action_path": ["call_or_check", "call_or_check"],
+        },  # turn action without river card
+    ],
+)
+def test_advise_rejects_partial_or_skipped_street_field_combinations(client, overrides):
+    response = client.post("/advise", json=_advise_body(**overrides))
+    assert response.status_code == 422
+
+
+def test_advise_enforces_the_per_cell_solve_iterations_cap(client):
+    response = client.post(
+        "/advise",
+        json=_advise_body(board="2h6d9c", flop_action_path=["call_or_check", "call_or_check"],
+                          turn_card="Ts", solve_iterations=api_main.MAX_FLOP_TURN_ITERATIONS + 1),
+    )
+    assert response.status_code == 422
+    assert "solve_iterations must be between" in response.json()["detail"]
+
+
+def test_advise_rejects_a_too_long_action_path(client):
+    too_long = ["call_or_check"] * (api_main.MAX_PATH_LENGTH + 1)
+    response = client.post("/advise", json=_advise_body(too_long))
+    assert response.status_code == 422
+    assert "too long" in response.json()["detail"]
+
+
 def test_derive_path_situation_rejects_a_board_that_blocks_a_whole_capped_range():
     # A real, constructible case, not a contrived one: at a 1-class cap
     # on this path, BB's single top class is the pair 22 — and a board of

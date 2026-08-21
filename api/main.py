@@ -470,6 +470,57 @@ cap mirrors MAX_FLOP_TO_RIVER_ITERATIONS' own "==default, zero
 headroom" discipline, for the identical reason: cost at this scale is
 already at the outer edge of tolerable at the default alone.
 
+POST /advise (M51) is the unified front door over all of the above: one
+request describing a whole real situation (stack, table size, the
+preflop action path, and — as the hand progresses — a board, flop
+action, turn card, turn action, river card), one response with advice
+for the decision actually faced. Street depth is INFERRED from which
+fields are present rather than client-declared, so there's no second
+source of truth to disagree with the card/action fields; _infer_street
+rejects every partial or skipped combination (a river card with no turn
+card, a turn card with no flop action, and so on).
+
+Each (street, table size) cell delegates to whichever sibling
+orchestrator already serves it — this is a front door, not a second
+implementation to keep in sync — so every cell keeps its own cache, its
+own separately-measured cap constant, and its own solver choice.
+_ADVISE_ITERATION_CAPS maps each cell to that sibling's own default/max
+rather than inventing one blended value.
+
+Two things no sibling endpoint offers:
+
+  * `hero_cards` — advice for YOUR specific hand. Force-included in
+    every live position's derived range BEFORE the cap is applied (and,
+    for the library-backed cell, at class level in capped_scenario too,
+    per library.query_strategy_from_path's own class-dicts-only
+    contract). Without that, a hand outside the top-K would be silently
+    absent from the very solve meant to advise it — exactly the
+    marginal case advice matters most for. `hero.in_range` reports
+    honestly whether it survived the cap on its own weight. NOTE the
+    real cost: force-inclusion adds at most one combo per live
+    position, which is a genuine (if small) solve-cost increase.
+  * `source` — names which backend answered ("exact", "mccfr",
+    "library_hit", "library_miss", "preflop"). This makes the family's
+    one real asymmetry visible instead of hidden: the heads-up-flop
+    cell goes through the canonical library, which persists only a
+    flattened strategy dict and so returns `trained: null` (an explicit
+    null, not a silently-omitted field — M28's documented boundary).
+    Kept rather than dropped for uniformity because the library's own
+    hit is ~0.2ms against a ~20s miss; trading that for a tidier table
+    would be a bad deal, but hiding it would be worse.
+
+One cell is deliberately unfilled: ("river", multiway). See
+_ADVISE_UNSUPPORTED_CELLS for the real reason (a second chained
+chance-hop needs an on-demand branch build whose design question M44's
+own entry named and left open).
+
+/advise also adds the one street no path-derived endpoint ever served:
+PREFLOP advice, read straight off the cached preflop solve at whatever
+node the action path reaches. Note its deliberately INVERTED terminal
+requirement — every postflop cell needs the preflop action to have
+CLOSED before a board is dealt, whereas preflop advice needs it still
+open, with someone left to act.
+
 Pre-warmed, unlike every other path-derived endpoint in this file — its
 own cost (~43s at default) is a meaningfully worse cold-start tax than
 any of them, the same "worth pre-warming" bar solve_flop_turn/solve_
@@ -525,6 +576,8 @@ from poker_solver.strategy_format import format_flop_response, format_solve_resp
 
 from .schemas import (
     ActionPathRequest,
+    AdviseRequest,
+    AdviseResponse,
     EquityResponse,
     FlopMultiwayPathQueryResponse,
     FlopPathQueryResponse,
@@ -1520,6 +1573,21 @@ def _cap_range_to_combos(class_frequencies: dict, max_combos: int, exclude: froz
     return dict(top_items)
 
 
+def _combo_to_class(combo) -> StartingHand:
+    """The StartingHand class a concrete HandCombo belongs to (M51).
+
+    Safe because HandCombo.__post_init__ (M10) normalizes card_a to the
+    higher (value, suit) pair, so card_a.rank is always the high rank.
+    No pair special-case is needed: two distinct cards of the same rank
+    must differ in suit, so `suited` is already False for every pair.
+    """
+    return StartingHand(
+        combo.card_a.rank,
+        combo.card_b.rank,
+        suited=combo.card_a.suit == combo.card_b.suit,
+    )
+
+
 @dataclasses.dataclass(frozen=True)
 class _PathSituation:
     """Everything the five path-derived endpoints' shared front half
@@ -1540,6 +1608,10 @@ class _PathSituation:
     effective_stack_bb: float
     position_ranges: dict  # position -> {HandCombo: weight}
     capped_scenario: object | None
+    # M51: True when `hero_combo` was supplied AND survived the cap on
+    # its own derived weight; False when it had to be force-included.
+    # None when no hero_combo was supplied at all.
+    hero_in_range: bool | None = None
 
 
 def _derive_path_situation(
@@ -1554,6 +1626,7 @@ def _derive_path_situation(
     max_classes_per_position: int | None = None,
     max_combos_per_position: int | None = None,
     path_field_name: str = "action_path",
+    hero_combo=None,
 ) -> _PathSituation:
     """The shared front half of every path-derived endpoint (M50).
 
@@ -1581,6 +1654,15 @@ def _derive_path_situation(
       * `path_field_name` — the flop endpoints call their own field
         `action_path`, the deeper ones `preflop_action_path`; error text
         names whichever the client actually sent.
+
+    `hero_combo` (M51, None for every pre-M51 caller) is force-included
+    in EVERY live position's capped range — deliberately not just the
+    acting position's, since which seat hero occupies isn't knowable
+    here for the deeper streets (the acting position isn't determined
+    until after solving and walking chance_data). The real cost of that
+    choice is honest and small: at most one extra combo per position.
+    Without it, a hand outside the top-K would be silently absent from
+    the very solve meant to advise it.
     """
     if (max_classes_per_position is None) == (max_combos_per_position is None):
         raise RuntimeError("exactly one of max_classes_per_position/max_combos_per_position must be set")
@@ -1649,6 +1731,40 @@ def _derive_path_situation(
                 f"{position}'s derived (capped) range"
             )
 
+    hero_in_range = None
+    if hero_combo is not None:
+        if hero_combo.blocks(frozenset(board_cards)):
+            raise ValueError(f"hero_cards {hero_combo} shares a card with the board — impossible to hold")
+        # "In range" means hero's own combo survived the cap on its own
+        # derived weight, in EVERY live position — not "it's present
+        # after we added it". Computed before any force-inclusion below.
+        hero_in_range = all(hero_combo in combo_dict for combo_dict in position_ranges.values())
+        for combo_dict in position_ranges.values():
+            if hero_combo not in combo_dict:
+                # Weight it at the range's own minimum rather than an
+                # invented constant: present enough to be solved for,
+                # never dominating a range it didn't earn a place in.
+                combo_dict[hero_combo] = min(combo_dict.values())
+        if capped_scenario is not None:
+            # The canonical-library path (_query_flop_from_path) solves
+            # from capped_scenario's CLASS-level ranges, not from
+            # position_ranges — so hero has to be force-included there
+            # too, or the force-inclusion above would silently have no
+            # effect on exactly that one endpoint. Class-level, not
+            # combo-level, because library.query_strategy_from_path's own
+            # contract is class-dicts-only (M20's crux design finding:
+            # a suit-asymmetric combo dict breaks canonical reuse).
+            hero_class = _combo_to_class(hero_combo)
+            hero_ranges = {
+                position: (
+                    range_dict
+                    if hero_class in range_dict
+                    else {**range_dict, hero_class: min(range_dict.values())}
+                )
+                for position, range_dict in capped_scenario.ranges.items()
+            }
+            capped_scenario = dataclasses.replace(capped_scenario, ranges=hero_ranges)
+
     return _PathSituation(
         preflop_result=preflop_result,
         path_scenario=path_scenario,
@@ -1656,11 +1772,13 @@ def _derive_path_situation(
         effective_stack_bb=effective_stack_bb,
         position_ranges=position_ranges,
         capped_scenario=capped_scenario,
+        hero_in_range=hero_in_range,
     )
 
 
 def _query_flop_from_path(
-    action_kinds: list, stack_bb: float, board_cards: tuple, iterations: int, players: int = 2
+    action_kinds: list, stack_bb: float, board_cards: tuple, iterations: int, players: int = 2,
+    hero_combo=None,
 ) -> dict:
     """Orchestrates POST /solve_flop_from_path end to end: a real
     (cached, raw) preflop solve -> resolve the client's bare action
@@ -1700,6 +1818,7 @@ def _query_flop_from_path(
         multiway=False,
         sibling_endpoint="/solve_flop_multiway_from_path",
         max_classes_per_position=MAX_PATH_QUERY_CLASSES_PER_SIDE,
+        hero_combo=hero_combo,
     )
     oop_position, ip_position = situation.postflop_positions
     effective_stack_bb = situation.effective_stack_bb
@@ -1733,11 +1852,13 @@ def _query_flop_from_path(
         "position": oop_position,
         "positions": [oop_position, ip_position],
         "players": players,
+        "hero_in_range": situation.hero_in_range,
     }
 
 
 def _query_flop_multiway_from_path(
-    action_kinds: list, stack_bb: float, board_cards: tuple, iterations: int, flop_iterations: int, players: int = 3
+    action_kinds: list, stack_bb: float, board_cards: tuple, iterations: int, flop_iterations: int,
+    players: int = 3, hero_combo=None,
 ) -> dict:
     """Orchestrates POST /solve_flop_multiway_from_path end to end: a
     real (cached, raw) preflop solve -> resolve the client's bare action
@@ -1768,6 +1889,7 @@ def _query_flop_multiway_from_path(
         multiway=True,
         sibling_endpoint="/solve_flop_from_path",
         max_classes_per_position=MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION,
+        hero_combo=hero_combo,
     )
     path_scenario = situation.path_scenario
     position_ranges = situation.position_ranges
@@ -1806,6 +1928,7 @@ def _query_flop_multiway_from_path(
         "position": formatted["position"],
         "positions": formatted["positions"],
         "players": players,
+        "hero_in_range": situation.hero_in_range,
     }
 
 
@@ -1818,6 +1941,7 @@ def _query_turn_from_path(
     iterations: int,
     turn_iterations: int,
     players: int = 2,
+    hero_combo=None,
 ) -> dict:
     """Orchestrates POST /solve_turn_from_path end to end: a real
     (cached, raw) preflop solve -> resolve the client's preflop action
@@ -1846,6 +1970,7 @@ def _query_turn_from_path(
         sibling_endpoint="/solve_turn_multiway_from_path",
         max_classes_per_position=MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE,
         path_field_name="preflop_action_path",
+        hero_combo=hero_combo,
     )
     oop_position, ip_position = situation.postflop_positions
     effective_stack_bb = situation.effective_stack_bb
@@ -1892,6 +2017,7 @@ def _query_turn_from_path(
         "positions": [oop_position, ip_position],
         "players": players,
         "elapsed_seconds": result.elapsed_seconds,
+        "hero_in_range": situation.hero_in_range,
     }
 
     if id(flop_node) not in result.chance_data:
@@ -1963,6 +2089,7 @@ def _query_turn_multiway_from_path(
     iterations: int,
     flop_iterations: int,
     players: int = 3,
+    hero_combo=None,
 ) -> dict:
     """Orchestrates POST /solve_turn_multiway_from_path end to end — the
     multiway analog of _query_turn_from_path (M26): a real (cached, raw)
@@ -1991,6 +2118,7 @@ def _query_turn_multiway_from_path(
         sibling_endpoint="/solve_turn_from_path",
         max_classes_per_position=MAX_MULTIWAY_TURN_PATH_QUERY_CLASSES_PER_POSITION,
         path_field_name="preflop_action_path",
+        hero_combo=hero_combo,
     )
     path_scenario = situation.path_scenario
     position_ranges = situation.position_ranges
@@ -2036,6 +2164,7 @@ def _query_turn_multiway_from_path(
         "positions": list(postflop_positions),
         "players": players,
         "elapsed_seconds": result.elapsed_seconds,
+        "hero_in_range": situation.hero_in_range,
     }
 
     if not flop_node.is_showdown:
@@ -2115,6 +2244,7 @@ def _query_river_from_path(
     iterations: int,
     river_iterations: int,
     players: int = 2,
+    hero_combo=None,
 ) -> dict:
     """Orchestrates POST /solve_river_from_path end to end — one street
     further than _query_turn_from_path, whose structure this mirrors
@@ -2148,6 +2278,7 @@ def _query_river_from_path(
         sibling_endpoint="/solve_turn_multiway_from_path",
         max_combos_per_position=RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE,
         path_field_name="preflop_action_path",
+        hero_combo=hero_combo,
     )
     oop_position, ip_position = situation.postflop_positions
     effective_stack_bb = situation.effective_stack_bb
@@ -2197,6 +2328,7 @@ def _query_river_from_path(
         "players": players,
         "river_iterations": river_iterations,
         "elapsed_seconds": result.elapsed_seconds,
+        "hero_in_range": situation.hero_in_range,
     }
 
     if id(flop_node) not in result.chance_data:
@@ -2296,6 +2428,201 @@ def _query_river_from_path(
         "pot": river_node.pot,
         "effective_stack_bb": remaining_stack_after_turn,
     }
+
+
+_ADVISE_STREETS = ("preflop", "flop", "turn", "river")
+
+# Per-(street, is-multiway) postflop iteration cap, reusing each sibling
+# endpoint's own separately-measured constant rather than inventing one
+# blended value — that per-cell measurement work (M24/M26/M42/M44/M46,
+# re-tuned at M49) is real and cell-specific. Preflop has no postflop
+# leg, so no entry.
+_ADVISE_ITERATION_CAPS = {
+    ("flop", False): (PATH_QUERY_ITERATIONS, PATH_QUERY_ITERATIONS),
+    ("flop", True): (DEFAULT_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS, MAX_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS),
+    ("turn", False): (DEFAULT_FLOP_TURN_ITERATIONS, MAX_FLOP_TURN_ITERATIONS),
+    ("turn", True): (
+        DEFAULT_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS,
+        MAX_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS,
+    ),
+    ("river", False): (DEFAULT_RIVER_PATH_QUERY_ITERATIONS, MAX_RIVER_PATH_QUERY_ITERATIONS),
+}
+
+# The (street, is-multiway) cells /advise deliberately does NOT serve
+# yet, each with the real reason — checked BEFORE the cap lookup above,
+# so the caller gets this explanation rather than the bare KeyError that
+# a missing cap entry would otherwise raise first (a real ordering bug
+# caught by this milestone's own test, not by review).
+_ADVISE_UNSUPPORTED_CELLS = {
+    ("river", True): (
+        "river advice is 2-position only so far — a 3+-survivor river needs an on-demand "
+        "second-hop chance-branch build that doesn't exist yet (solve_flop_to_river_multiway "
+        "exists, but its MCCFR chance_data only holds sampled (terminal, card) pairs; whether a "
+        "SECOND chained hop needs ensure_flop_turn_multiway_branch's identical treatment or a "
+        "structurally different one is a real open design question, see CLAUDE.md's M44 entry)"
+    ),
+}
+
+
+def _infer_street(request) -> str:
+    """Which street an AdviseRequest describes, from which fields it
+    actually carries (M51) — plus rejection of every partial/skipped
+    combination, so a client can't silently get advice for a shallower
+    street than it thought it asked about.
+
+    Deliberately inferred rather than client-declared: a `street` field
+    the client sets independently of its own board/card fields is a
+    second source of truth that can disagree with them.
+    """
+    if request.board is None:
+        for field in ("flop_action_path", "turn_card", "turn_action_path", "river_card"):
+            if getattr(request, field) is not None:
+                raise ValueError(f"{field} was supplied without a board — a preflop query takes neither")
+        return "preflop"
+
+    if request.turn_card is None:
+        for field in ("turn_action_path", "river_card"):
+            if getattr(request, field) is not None:
+                raise ValueError(f"{field} was supplied without a turn_card")
+        if request.flop_action_path is not None:
+            raise ValueError("flop_action_path was supplied without a turn_card — a flop query takes neither")
+        return "flop"
+
+    if request.flop_action_path is None:
+        raise ValueError("turn_card requires flop_action_path — the flop's action has to close first")
+
+    if request.river_card is None:
+        if request.turn_action_path is not None:
+            raise ValueError("turn_action_path was supplied without a river_card — a turn query takes neither")
+        return "turn"
+
+    if request.turn_action_path is None:
+        raise ValueError("river_card requires turn_action_path — the turn's action has to close first")
+    return "river"
+
+
+def _advise_preflop(request, iterations: int, hero_combo=None) -> dict:
+    """The one /advise cell with no sibling endpoint behind it (M51):
+    real preflop strategy at whatever node the action path reaches.
+
+    Note the deliberately INVERTED terminal requirement relative to
+    every postflop cell: those need the preflop action to have CLOSED
+    (a TerminalNode) before a board is dealt, whereas preflop advice
+    needs the opposite — a live DecisionNode with someone still to act.
+    A path that already closed has no preflop decision left to advise.
+    """
+    preflop_result = _get_or_solve_preflop_raw(request.stack_bb, iterations, players=request.players)
+    _actions, node = _resolve_action_path(preflop_result.root, request.preflop_action_path)
+
+    if isinstance(node, TerminalNode):
+        raise ValueError(
+            "preflop_action_path already reaches a terminal — no preflop decision left to advise. "
+            "Supply a board for postflop advice, or shorten the path."
+        )
+
+    strategy = preflop_result.strategy_at(node)
+    trained = preflop_result.trained_hands(node)
+    live_positions = [p for p in preflop_result.config.positions if p not in node.folded]
+    return {
+        "street": "preflop",
+        "players": request.players,
+        "positions": live_positions,
+        "position": node.player_to_act,
+        "player_to_act": node.player_to_act,
+        "is_terminal": False,
+        "pot": node.pot,
+        "effective_stack_bb": preflop_result.config.stack_bb - max(node.invested.values()),
+        "strategy": strategy,
+        "trained": trained,
+        "source": "preflop",
+        "solve_iterations": preflop_result.iterations,
+        "elapsed_seconds": preflop_result.elapsed_seconds,
+        # Preflop strategies are keyed by hand CLASS ("AKs"), not by
+        # concrete combo ("AsKs") the way every postflop street is — the
+        # preflop solver works over the 169-class abstraction (v1's own
+        # foundational choice). So hero's lookup key differs by street,
+        # and the route must not assume one shape; it reads hero_key.
+        # in_range is unconditionally True here: a preflop solve covers
+        # every class, so there's no cap for hero to fall outside of.
+        "hero_key": None if hero_combo is None else str(_combo_to_class(hero_combo)),
+        "hero_in_range": None if hero_combo is None else True,
+    }
+
+
+def _advise(request, street: str, iterations: int, solve_iterations: int, hero_combo) -> dict:
+    """Dispatches one AdviseRequest to whichever sibling orchestrator
+    already serves its (street, table size) cell, then normalizes the
+    result into AdviseResponse's own shape (M51).
+
+    Deliberately delegates rather than reimplements: every cell's own
+    cache, cap constant, and solver choice stays exactly as its sibling
+    endpoint already had it — this is a unified FRONT DOOR, not a second
+    implementation to keep in sync.
+    """
+    if street == "preflop":
+        return _advise_preflop(request, iterations, hero_combo)
+
+    # Postflop streets key their strategy dicts by concrete combo,
+    # unlike preflop's 169-class abstraction handled above.
+    hero_key = None if hero_combo is None else str(hero_combo)
+
+    board_cards = tuple(parse_cards(request.board))
+    if len(board_cards) != 3:
+        raise ValueError(f"board must have exactly 3 cards for a flop, got {len(board_cards)}")
+    multiway = request.players != 2
+
+    if street == "flop" and not multiway:
+        raw = _query_flop_from_path(
+            request.preflop_action_path, request.stack_bb, board_cards, iterations, request.players,
+            hero_combo=hero_combo,
+        )
+        # The canonical library persists only a flattened strategy dict,
+        # so per-hand confidence structurally isn't available here — an
+        # explicit null, not a silently-omitted field (M28's boundary).
+        return {**raw, "trained": None, "source": "library_hit" if raw["hit"] else "library_miss",
+                "solve_iterations": None, "is_terminal": False, "player_to_act": raw["position"],
+                "street": street, "hero_key": hero_key}
+
+    if street == "flop":
+        raw = _query_flop_multiway_from_path(
+            request.preflop_action_path, request.stack_bb, board_cards, iterations, solve_iterations,
+            request.players, hero_combo=hero_combo,
+        )
+        return {**raw, "source": "mccfr", "solve_iterations": raw["flop_iterations"],
+                "is_terminal": False, "player_to_act": raw["position"], "street": street,
+                "hero_key": hero_key}
+
+    turn_cards = tuple(parse_cards(request.turn_card))
+    if len(turn_cards) != 1:
+        raise ValueError(f"turn_card must have exactly 1 card, got {len(turn_cards)}")
+
+    if street == "turn":
+        query = _query_turn_multiway_from_path if multiway else _query_turn_from_path
+        raw = query(
+            request.preflop_action_path, request.flop_action_path, turn_cards[0], request.stack_bb,
+            board_cards, iterations, solve_iterations, request.players, hero_combo=hero_combo,
+        )
+        return {**raw, "source": "mccfr" if multiway else "exact",
+                "solve_iterations": raw.get("flop_iterations", solve_iterations), "street": street,
+                "hero_key": hero_key}
+
+    river_cards = tuple(parse_cards(request.river_card))
+    if len(river_cards) != 1:
+        raise ValueError(f"river_card must have exactly 1 card, got {len(river_cards)}")
+    if multiway:
+        # Unreachable via the route (_ADVISE_UNSUPPORTED_CELLS rejects
+        # this cell with a full explanation before dispatch), but kept as
+        # a real guard for any direct caller of _advise — the same
+        # belt-and-braces discipline query_strategy's own post-insert
+        # RuntimeError check uses for a provably-unreachable state.
+        raise ValueError(_ADVISE_UNSUPPORTED_CELLS[("river", True)])
+    raw = _query_river_from_path(
+        request.preflop_action_path, request.flop_action_path, turn_cards[0], request.turn_action_path,
+        river_cards[0], request.stack_bb, board_cards, iterations, solve_iterations, request.players,
+        hero_combo=hero_combo,
+    )
+    return {**raw, "source": "exact", "solve_iterations": raw["river_iterations"], "street": street,
+            "hero_key": hero_key}
 
 
 def _prewarm_common_depths() -> None:
@@ -2680,6 +3007,88 @@ async def solve_turn_from_path_endpoint(request: TurnPathRequest):
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/advise", response_model=AdviseResponse)
+async def advise_endpoint(request: AdviseRequest):
+    """M51: one front door for the whole real-situation advisor — your
+    cards, the board, your position (implied by the action path), and
+    what everyone did, in; GTO advice for the decision you actually
+    face, out. Street depth is inferred from which fields are present
+    (see AdviseRequest); each (street, table size) cell delegates to
+    whichever sibling endpoint already serves it, so this adds a unified
+    entry point without becoming a second implementation to keep in
+    sync. `source` names which backend actually answered."""
+    try:
+        for field in ("preflop_action_path", "flop_action_path", "turn_action_path"):
+            path = getattr(request, field)
+            if path is not None and len(path) > MAX_PATH_LENGTH:
+                raise ValueError(f"{field} is too long ({len(path)} > {MAX_PATH_LENGTH})")
+
+        street = _infer_street(request)
+
+        iterations = request.iterations if request.iterations is not None else DEFAULT_ITERATIONS
+        if not 0 < iterations <= MAX_ITERATIONS:
+            raise ValueError(f"iterations must be between 1 and {MAX_ITERATIONS}, got {iterations}")
+
+        cell = (street, request.players != 2)
+        if cell in _ADVISE_UNSUPPORTED_CELLS:
+            raise ValueError(_ADVISE_UNSUPPORTED_CELLS[cell])
+
+        solve_iterations = None
+        if street != "preflop":
+            default_iters, max_iters = _ADVISE_ITERATION_CAPS[cell]
+            solve_iterations = request.solve_iterations if request.solve_iterations is not None else default_iters
+            if not 0 < solve_iterations <= max_iters:
+                raise ValueError(
+                    f"solve_iterations must be between 1 and {max_iters} for a {street} "
+                    f"{'multiway' if request.players != 2 else 'heads-up'} query, got {solve_iterations}"
+                )
+
+        hero_combo = None
+        if request.hero_cards is not None:
+            hero_cards = tuple(parse_cards(request.hero_cards))
+            if len(hero_cards) != 2:
+                raise ValueError(f"hero_cards must have exactly 2 cards, got {len(hero_cards)}")
+            hero_combo = HandCombo(hero_cards[0], hero_cards[1])
+
+        raw = await run_in_threadpool(_advise, request, street, iterations, solve_iterations, hero_combo)
+
+        hero = None
+        if hero_combo is not None:
+            # hero_key, not str(hero_combo) — preflop keys strategies by
+            # hand CLASS, every postflop street by concrete combo, and
+            # the cell that answered is the only thing that knows which.
+            hero_key = raw.get("hero_key") or str(hero_combo)
+            hero = {
+                "cards": str(hero_combo),
+                "in_range": bool(raw.get("hero_in_range", False)),
+                "strategy": raw["strategy"].get(hero_key),
+                "trained": None if raw.get("trained") is None else raw["trained"].get(hero_key),
+            }
+
+        return {
+            "street": raw["street"],
+            "players": request.players,
+            "positions": raw["positions"],
+            "position": raw["position"],
+            "player_to_act": raw.get("player_to_act"),
+            "is_terminal": raw.get("is_terminal", False),
+            "pot": raw["pot"],
+            "effective_stack_bb": raw["effective_stack_bb"],
+            "strategy": raw["strategy"],
+            "trained": raw.get("trained"),
+            "hero": hero,
+            "source": raw["source"],
+            "solve_iterations": raw.get("solve_iterations"),
+            "elapsed_seconds": raw["elapsed_seconds"],
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except KeyError as exc:
+        # An unsupported (street, table size) cell — e.g. players=6 at a
+        # street whose own cap table has no entry. A clear 422, not a 500.
+        raise HTTPException(status_code=422, detail=f"unsupported street/table-size combination: {exc}") from exc
 
 
 @app.post("/solve_river_from_path", response_model=RiverPathQueryResponse)

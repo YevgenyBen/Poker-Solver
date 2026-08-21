@@ -3622,6 +3622,109 @@ street chaining needs.
     The missing multiway-river cell becomes a dispatch case, not a 6th
     duplicate.
 
+- **M51 — `POST /advise`: the unified front door the whole v3 vision
+  needed.** One request describing a real situation (your cards, the
+  board, table size, and what everyone did across every street), one
+  response with advice for the decision actually faced. Built on M50's
+  extracted core; each (street, table size) cell delegates to whichever
+  sibling orchestrator already serves it, so this is a front door, not
+  a second implementation to keep in sync.
+  - **Street depth is INFERRED, not client-declared** — from which
+    fields are present, mirroring how a hand actually unfolds. A
+    `street` field the client sets independently of its own board/card
+    fields would be a second source of truth that can disagree with
+    them. `_infer_street` rejects every partial or skipped combination
+    (a river card with no turn card, a turn card with no flop action,
+    an action path with no board, and so on) — 7 such combinations are
+    parametrized in tests.
+  - **`hero_cards` — the feature the product actually needed, plus the
+    trap underneath it.** Every prior endpoint returns a strategy for
+    EVERY combo in the range, leaving the caller to find their own hand.
+    The naive fix (accept hero's cards, look them up) has a real trap
+    found while scoping, not after shipping: the derived range is capped
+    to the top-K combos, so a hand outside K would be silently ABSENT
+    from the very solve meant to advise it — exactly the marginal case
+    advice matters most for. Fixed by force-including hero's combo in
+    every live position's range BEFORE capping, with `hero.in_range`
+    reporting honestly whether it survived the cap on its own weight.
+    Verified live: `AsKs` on a real 3-bet-call line came back
+    `in_range: false` WITH real advice (check 27% / bet 43% / jam 30%)
+    — with no force-inclusion it would have returned nothing at all.
+    The real cost is stated, not hidden: at most one extra combo per
+    live position, a genuine if small solve-cost increase.
+  - **Force-inclusion had to reach TWO places, not one** — a real
+    subtlety caught by tracing the library path rather than assuming
+    symmetry: the heads-up-flop cell solves from `capped_scenario`'s
+    CLASS-level ranges, not from `position_ranges`, so combo-level
+    force-inclusion alone would have silently had no effect on exactly
+    that one endpoint. Hero's CLASS is force-included there too — class
+    level, not combo level, because `library.query_strategy_from_path`'s
+    contract is class-dicts-only (M20's crux finding: a suit-asymmetric
+    combo dict breaks canonical reuse).
+  - **`source` makes the family's one real asymmetry visible instead of
+    hidden** (`"exact"` / `"mccfr"` / `"library_hit"` / `"library_miss"`
+    / `"preflop"`). Per the user's own chosen option: keep the canonical
+    library for the heads-up-flop cell — its hit is ~0.2ms against a
+    ~20s miss, and trading that for a tidier uniform table would be a
+    bad deal — but surface `trained: null` as an EXPLICIT null rather
+    than a silently-omitted field, so a caller can tell "no confidence
+    data available here" from "every hand is trained". Verified live:
+    first call `library_miss`, repeat `library_hit`.
+  - **A whole new street, nearly free: PREFLOP advice** — no
+    path-derived endpoint ever served it, yet it's the most common
+    decision in poker and the advisor is useless without it. Reads
+    straight off the cached preflop solve. Note the deliberately
+    INVERTED terminal requirement: every postflop cell needs the
+    preflop action to have CLOSED before a board is dealt, whereas
+    preflop advice needs it still OPEN with someone left to act.
+  - **A real bug the smoke test caught before any test was written:**
+    preflop strategies are keyed by hand CLASS (`"AKs"`), every postflop
+    street by concrete combo (`"AsKs"`) — the 169-class abstraction is
+    v1's own foundational choice. A route assuming one key shape
+    silently returned `strategy: null` for hero preflop. Fixed with a
+    `hero_key` the answering cell supplies, since only it knows which
+    shape its own strategy dict uses; pinned by its own test.
+  - **A second real bug, caught by this milestone's own test rather
+    than review:** the unsupported ("river", multiway) cell raised a
+    bare `KeyError` from the iteration-cap lookup BEFORE reaching its
+    carefully-worded explanation, so callers got `"unsupported
+    street/table-size combination: ('river', True)"`. Fixed by checking
+    `_ADVISE_UNSUPPORTED_CELLS` before the cap lookup, so the real
+    reason wins.
+  - **One cell deliberately unfilled, with the real reason recorded:**
+    ("river", multiway). `solve_flop_to_river_multiway` (M39) exists,
+    but its MCCFR `chance_data` holds only SAMPLED `(terminal, card)`
+    pairs, so a legal-but-unsampled river card needs the on-demand
+    branch build `ensure_flop_turn_multiway_branch` (M44) provides one
+    hop shallower — and whether a SECOND chained hop needs that
+    identical treatment or a structurally different one is the real
+    open design question M44's own entry already named. Scoping this
+    milestone corrected an earlier optimistic claim that the missing
+    cell would "fall out as a dispatch case": it falls out
+    structurally, but that design question is real work, not free.
+  - **Tests:** 20 new — all six served cells (preflop, flop HU/MW, turn
+    HU/MW, river HU) asserting the right `source` and `trained` shape;
+    hero force-inclusion returning real advice at `in_range: false`;
+    hero keyed by class preflop; hero blocked by the board; malformed
+    hero cards; the unfilled river-multiway cell naming its reason; 7
+    parametrized partial/skipped street combinations; the per-cell
+    `solve_iterations` cap; and an over-long action path.
+  - **Verification:** `python -m pytest tests/ -v` — 732 passed, zero
+    regressions (up from M50's 712 — 20 new). No frontend changes; per
+    the user's own stated priority the frontend is a secondary tool, so
+    an `/advise`-backed UI is a natural follow-up, not part of closing
+    this capability.
+  - **What this closes, and what it doesn't:** the engine now answers
+    the exact question the v3 vision opens with — hole cards, board,
+    position, action history in; GTO advice out — through ONE endpoint,
+    at every street, heads-up or multiway (bar the one named cell).
+    Still open: the river-multiway cell above; re-tuning the remaining
+    caps against M48's speedup (M49 did the river's only); the
+    two-phase-solve speed lever (M47); surfacing `path_scenario.trained`
+    (now a one-place change thanks to M50, still needing its own
+    response-shape decision); and live-table integration, which the
+    user explicitly deferred.
+
 ## v3 vision (future) — live-table advisor
 
 Discussed with the user while scoping M16, recorded here rather than
