@@ -90,6 +90,7 @@ export interface FlopPathQueryResponse {
   strategy: OpeningRange;
   position: string;
   positions: string[];
+  players: number;
 }
 
 // Mirrors api/schemas.py's LegalActionOption. size/to_call use `| null`,
@@ -112,6 +113,7 @@ export interface PreflopWalkResponse {
   is_terminal: boolean;
   player_to_act: string | null;
   live_positions: string[];
+  positions: string[];
   pot: number;
   legal_actions: LegalActionOption[];
 }
@@ -136,5 +138,6 @@ export interface TurnPathQueryResponse {
   trained: TrainedMap;
   position: string;
   positions: string[];
+  players: number;
   elapsed_seconds: number;
 }

@@ -1,12 +1,22 @@
 import { useState } from 'react';
 import { fetchTurnStrategyFromPath, SolveError } from '../api';
 import { gradientFor, sortedEntries } from '../colors';
+import { MULTIWAY_TABLE_SIZES, type MultiwayTableSize } from '../hands';
 import { usePreflopWalk } from '../usePreflopWalk';
 import type { TurnPathQueryResponse } from '../types';
 
 const DEFAULT_STACK_BB = 100;
 const DEFAULT_BOARD = 'Jh7d2c';
 const DEFAULT_TURN_CARD = '2h';
+
+// M29: mirrors ActionPathSolver.tsx's own table-size toggle exactly —
+// same reasoning for not reusing TableModeControl (no per-position
+// browsing concept in a step-by-step wizard).
+const TABLE_SIZE_LABELS: Record<MultiwayTableSize, string> = {
+  3: '3-max',
+  6: '6-max',
+  9: '9-max',
+};
 
 // Quick-jump shortcuts into the SAME growing preflop path usePreflopWalk
 // (M25) already builds interactively — mirrors ActionPathSolver.tsx's
@@ -69,6 +79,7 @@ const DEFAULT_FLOP_PRESET: FlopPresetId = 'bet_call';
  * curated preset dropdown for now — see FLOP_PRESETS above. */
 export function TurnPathSolver() {
   const [stackBb, setStackBb] = useState(DEFAULT_STACK_BB);
+  const [players, setPlayers] = useState(2);
   const [actionPath, setActionPath] = useState<string[]>([]);
   const [board, setBoard] = useState(DEFAULT_BOARD);
   const [flopPreset, setFlopPreset] = useState<FlopPresetId>(DEFAULT_FLOP_PRESET);
@@ -77,7 +88,7 @@ export function TurnPathSolver() {
   const [solveError, setSolveError] = useState('');
   const [solveLoading, setSolveLoading] = useState(false);
 
-  const walk = usePreflopWalk(stackBb, actionPath);
+  const walk = usePreflopWalk(stackBb, actionPath, players);
 
   function clearSolveState() {
     setSolveResult(null);
@@ -86,6 +97,15 @@ export function TurnPathSolver() {
 
   function handleStackChange(newStack: number) {
     setStackBb(newStack);
+    setActionPath([]);
+    clearSolveState();
+  }
+
+  function handlePlayersChange(newPlayers: number) {
+    // Same reset-on-change discipline as handleStackChange — a preflop
+    // path walked against one table size's tree isn't meaningful
+    // against a different one.
+    setPlayers(newPlayers);
     setActionPath([]);
     clearSolveState();
   }
@@ -125,6 +145,8 @@ export function TurnPathSolver() {
         board,
         FLOP_PRESETS[flopPreset].actionPath,
         turnCard,
+        undefined,
+        players,
       );
       setSolveResult(response);
     } catch (err) {
@@ -168,13 +190,34 @@ export function TurnPathSolver() {
         </label>
       </div>
 
-      <div className="presets">
-        {Object.entries(PRESETS).map(([id, config]) => (
-          <button key={id} type="button" onClick={() => handlePresetClick(id as PresetId)} disabled={walk.loading}>
-            {config.label}
+      <div className="players-toggle" role="group" aria-label="Table size">
+        <button type="button" className={players === 2 ? 'active' : ''} onClick={() => handlePlayersChange(2)}>
+          Heads-up
+        </button>
+        {MULTIWAY_TABLE_SIZES.map((size) => (
+          <button
+            key={size}
+            type="button"
+            className={players === size ? 'active' : ''}
+            onClick={() => handlePlayersChange(size)}
+          >
+            {TABLE_SIZE_LABELS[size]}
           </button>
         ))}
       </div>
+
+      {players === 2 && (
+        // Hand-authored against the heads-up (2-position) preflop tree
+        // shape — see ActionPathSolver.tsx's identical reasoning for
+        // hiding these rather than showing them broken at a 3+ table.
+        <div className="presets">
+          {Object.entries(PRESETS).map(([id, config]) => (
+            <button key={id} type="button" onClick={() => handlePresetClick(id as PresetId)} disabled={walk.loading}>
+              {config.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       <p className="status action-path-trail" aria-label="Preflop action path so far">
         {actionPath.length === 0 ? 'Root' : actionPath.join(' → ')}

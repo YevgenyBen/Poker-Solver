@@ -8,6 +8,7 @@ const ROOT_WALK = {
   is_terminal: false,
   player_to_act: 'BTN',
   live_positions: ['BTN', 'BB'],
+  positions: ['BTN', 'BB'],
   pot: 1.5,
   legal_actions: [
     { kind: 'fold', size: null, to_call: 0.5 },
@@ -131,9 +132,50 @@ describe('TurnPathSolver', () => {
           board: 'Jh7d2c',
           flop_action_path: ['raise', 'call_or_check'], // the default flop preset, "Bet, call"
           turn_card: '2h',
+          players: 2,
         }),
       }),
     );
+  });
+
+  it('switching table size resets the preflop path, hides heads-up presets, and re-walks with the new players value', async () => {
+    const THREE_MAX_ROOT_WALK = {
+      stack_bb: 100,
+      action_path: [],
+      is_terminal: false,
+      player_to_act: 'BTN',
+      live_positions: ['BTN', 'SB', 'BB'],
+      positions: ['BTN', 'SB', 'BB'],
+      pot: 1.5,
+      legal_actions: [
+        { kind: 'fold', size: null, to_call: 0.5 },
+        { kind: 'call_or_check', size: null, to_call: 0.5 },
+        { kind: 'raise', size: 2.5, to_call: null },
+        { kind: 'all_in', size: 100, to_call: null },
+      ],
+    };
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url === '/preflop_walk') {
+        const body = JSON.parse(init?.body as string) as { action_path: string[]; players: number };
+        const response = body.players === 3 ? THREE_MAX_ROOT_WALK : walkFor(body.action_path);
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(response) });
+      }
+      throw new Error(`unexpected fetch to ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TurnPathSolver />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'BTN opens, BB calls' })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: '3-max' }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenLastCalledWith(
+        '/preflop_walk',
+        expect.objectContaining({ body: JSON.stringify({ stack_bb: 100, action_path: [], players: 3 }) }),
+      ),
+    );
+    expect(screen.queryByRole('button', { name: 'BTN opens, BB calls' })).not.toBeInTheDocument();
   });
 
   it('marks an untrained combo with a low-data indicator', async () => {

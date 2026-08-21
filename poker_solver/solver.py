@@ -325,11 +325,27 @@ class PathScenario:
     float like `FlopScenario.effective_stack_bb`, since an arbitrary
     path can leave live positions with unequal investments (e.g. a
     3-way pot reached mid-round, action not yet closed).
+
+    `trained` (M29) mirrors `ranges`' own shape exactly: position ->
+    {hand: bool}. A hand's entry is True only if *every* node this
+    position acted at along the path had real accumulated solving for
+    that hand (StrategyResult.trained_hands) — one untrained step is
+    enough to make the whole derived frequency suspect, the same way
+    one bad factor corrupts a product. A position that never acted
+    along the path (still 1.0/unconditioned in `ranges`) is trivially
+    True for every hand — nothing derived from solving touched their
+    range at all, so there's nothing to distrust. Measured, not assumed,
+    to actually matter: a real 6-max path (folds to a 3-bet) left a
+    derived range *exactly* uniform (0.25 for every hand checked) —
+    confident-looking, fabricated, and — before this field existed —
+    silently indistinguishable from a genuinely converged one. See
+    CLAUDE.md's M29 entry for the full measurement.
     """
 
     node: object  # DecisionNode | TerminalNode
     live_positions: tuple
     ranges: dict  # position -> {hand: frequency}
+    trained: dict  # position -> {hand: bool}
     pot: float
     stacks: dict  # position -> remaining effective stack
 
@@ -382,6 +398,7 @@ def derive_ranges_from_path(result: StrategyResult, action_path: list) -> PathSc
     """
     node = result.root
     reach = {position: {hand: 1.0 for hand in result.hands} for position in result.config.positions}
+    trained = {position: {hand: True for hand in result.hands} for position in result.config.positions}
 
     for step_idx, action in enumerate(action_path):
         if not isinstance(node, DecisionNode):
@@ -396,7 +413,15 @@ def derive_ranges_from_path(result: StrategyResult, action_path: list) -> PathSc
             )
         actor = node.player_to_act
         freqs = result.continuing_frequencies(node, action_kind=action.kind)
+        # trained_hands is str(hand)-keyed (mirrors strategy_at's own
+        # display-label convention) — remapped to the real hand objects
+        # here so it composes with `reach`/`ranges`, which (like
+        # continuing_frequencies) are keyed by the objects themselves.
+        node_trained_by_label = result.trained_hands(node)
         reach[actor] = {hand: reach[actor][hand] * freqs[hand] for hand in result.hands}
+        trained[actor] = {
+            hand: trained[actor][hand] and node_trained_by_label[str(hand)] for hand in result.hands
+        }
         node = node.children[action]
 
     live_positions = tuple(p for p in result.config.positions if p not in node.folded)
@@ -410,6 +435,7 @@ def derive_ranges_from_path(result: StrategyResult, action_path: list) -> PathSc
         node=node,
         live_positions=live_positions,
         ranges={p: reach[p] for p in live_positions},
+        trained={p: trained[p] for p in live_positions},
         pot=node.pot,
         stacks={p: result.config.stack_bb - node.invested[p] for p in live_positions},
     )

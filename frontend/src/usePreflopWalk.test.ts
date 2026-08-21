@@ -9,6 +9,7 @@ function walkPayload(overrides: Partial<Record<string, unknown>> = {}) {
     is_terminal: false,
     player_to_act: 'BTN',
     live_positions: ['BTN', 'BB'],
+    positions: ['BTN', 'BB'],
     pot: 1.5,
     legal_actions: [{ kind: 'fold', size: null, to_call: 0.5 }],
     ...overrides,
@@ -33,7 +34,7 @@ describe('usePreflopWalk', () => {
     expect(result.current.error).toBe('');
   });
 
-  it('POSTs stack_bb and action_path in the request body', async () => {
+  it('POSTs stack_bb, action_path, and players (defaulted to 2) in the request body', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(walkPayload()) });
     vi.stubGlobal('fetch', fetchMock);
 
@@ -43,9 +44,40 @@ describe('usePreflopWalk', () => {
       expect(fetchMock).toHaveBeenCalledWith('/preflop_walk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stack_bb: 100, action_path: ['raise', 'call_or_check'] }),
+        body: JSON.stringify({ stack_bb: 100, action_path: ['raise', 'call_or_check'], players: 2 }),
         signal: expect.anything(),
       }),
+    );
+  });
+
+  it('POSTs an explicit players value when given one', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(walkPayload()) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderHook(() => usePreflopWalk(100, [], 6));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/preflop_walk',
+        expect.objectContaining({ body: JSON.stringify({ stack_bb: 100, action_path: [], players: 6 }) }),
+      ),
+    );
+  });
+
+  it('re-fetches when players changes but stackBb and actionPath do not', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(walkPayload()) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { result, rerender } = renderHook(({ players }) => usePreflopWalk(100, [], players), {
+      initialProps: { players: 2 },
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    rerender({ players: 3 });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/preflop_walk',
+      expect.objectContaining({ body: JSON.stringify({ stack_bb: 100, action_path: [], players: 3 }) }),
     );
   });
 
@@ -89,7 +121,7 @@ describe('usePreflopWalk', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock).toHaveBeenLastCalledWith(
       '/preflop_walk',
-      expect.objectContaining({ body: JSON.stringify({ stack_bb: 100, action_path: ['raise'] }) }),
+      expect.objectContaining({ body: JSON.stringify({ stack_bb: 100, action_path: ['raise'], players: 2 }) }),
     );
   });
 

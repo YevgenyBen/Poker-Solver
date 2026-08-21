@@ -78,7 +78,7 @@ from .canonicalize import (
 )
 from .cards import Card
 from .combos import HandCombo, range_from_class_frequencies
-from .game_tree import GameConfig, TerminalNode
+from .game_tree import GameConfig, TerminalNode, postflop_action_order
 from .solver import PathScenario, StrategyResult, solve_flop
 
 LIBRARY_FORMAT_VERSION = 1
@@ -390,13 +390,19 @@ def query_strategy_from_path(
     StartingHand-keyed class dicts query_strategy requires, and would
     otherwise fail confusingly several frames deep instead of here.
 
-    Requires len(result.config.positions) == 2 (heads-up-origin only —
-    mirrors derive_flop_scenario's (M15) own multiway-out-of-scope cut:
-    mapping a surviving subset of a larger table to postflop OOP/IP
-    depends on the full original seating order, not just which of two
-    survivors posted the bigger blind — poker_solver's postflop
-    machinery is heads-up-only regardless, so this costs nothing real
-    today).
+    Requires len(path_scenario.live_positions) == 2 (solve_flop's own
+    postflop machinery is 2-position only, regardless of how many
+    players the ORIGIN table had) — M29 corrected an earlier, stricter
+    guard here that rejected any multiway-origin `result` outright. That
+    guard's own stated justification ("mapping a surviving subset of a
+    larger table to postflop OOP/IP depends on the full original seating
+    order") was right about the *input* needed and wrong about the
+    conclusion: `result.config.positions` already **is** that full
+    original seating order — it's sitting right there on the object
+    passed in — so the real, correct constraint is about the survivor
+    *count*, not the origin table size. See game_tree.button_position/
+    postflop_action_order for the actual derivation, once a real poker
+    rule (not a heads-up-only guess) resolves it.
 
     Requires path_scenario.node to be a TerminalNode — the proven,
     minimal, sufficient signal that the betting round genuinely closed.
@@ -413,11 +419,24 @@ def query_strategy_from_path(
     with an explicit RuntimeError, not re-derived as an independent
     condition.
 
-    Position mapping is a verified poker-mechanics fact, not an
-    assumption: result.config.positions[0] (the button-equivalent,
-    first to act preflop) maps to postflop "IP"; positions[1] (the
-    big-blind-equivalent) maps to "OOP" — real heads-up poker's button
-    acts first preflop but last (in position) every street after.
+    Position mapping uses game_tree.postflop_action_order — a real,
+    general poker-mechanics rule (action starts with the first live
+    seat left of the button, at any table size, with heads-up as the
+    one genuine exception since the button IS the small blind there),
+    not the heads-up-only "positions[0]->IP, positions[1]->OOP" guess
+    this function used before M29, which was only ever correct because
+    every caller so far happened to originate heads-up.
+
+    A caveat this function inherits, not introduces: query_strategy's
+    own canonical key excludes `positions` (see its docstring's "Known,
+    deliberate limitations" — the same fixed-menu reasoning already
+    applied to pot/raise_sizes/max_raises there). For a multiway-origin
+    result, `positions` genuinely varies with the action path (different
+    paths survive to different (OOP, IP) pairs), so a caller sharing one
+    `library` dict across multiple distinct action paths needs its own
+    partition key that accounts for this — exactly the discipline
+    api/main.py's own per-(action_path, stack_bb, iterations) library
+    partitioning already provides, unchanged by this fix.
     """
     if not isinstance(result.config, GameConfig):
         raise ValueError(
@@ -426,11 +445,11 @@ def query_strategy_from_path(
             "ranges are HandCombo-keyed, not the StartingHand-keyed class dicts "
             "query_strategy requires"
         )
-    if len(result.config.positions) != 2:
+    if len(path_scenario.live_positions) != 2:
         raise ValueError(
-            f"query_strategy_from_path only models a heads-up-origin result, not "
-            f"a {len(result.config.positions)}-player one — mirrors derive_flop_"
-            "scenario's (M15) own multiway-out-of-scope cut"
+            f"query_strategy_from_path only models a 2-live-position result at the "
+            f"end of the path, not {len(path_scenario.live_positions)} — solve_flop's "
+            "postflop machinery is 2-position only, regardless of the origin table size"
         )
     if not isinstance(path_scenario.node, TerminalNode):
         raise ValueError(
@@ -439,7 +458,7 @@ def query_strategy_from_path(
             "remaining stacks aren't provably equal yet; walk action_path further"
         )
 
-    ip_position, oop_position = result.config.positions
+    oop_position, ip_position = postflop_action_order(result.config.positions, path_scenario.live_positions)
     oop_stack = path_scenario.stacks[oop_position]
     ip_stack = path_scenario.stacks[ip_position]
     if oop_stack != ip_stack:

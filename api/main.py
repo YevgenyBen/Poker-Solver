@@ -313,7 +313,14 @@ from poker_solver.canonicalize import canonical_stack_depth, canonicalize_board
 from poker_solver.cards import parse_cards
 from poker_solver.combos import HandCombo, range_from_class_frequencies
 from poker_solver.equity import MultiwayEquityCache
-from poker_solver.game_tree import CALL_OR_CHECK, DecisionNode, GameConfig, TerminalNode, resolve_action
+from poker_solver.game_tree import (
+    CALL_OR_CHECK,
+    DecisionNode,
+    GameConfig,
+    TerminalNode,
+    postflop_action_order,
+    resolve_action,
+)
 from poker_solver.library import query_strategy, query_strategy_from_path
 from poker_solver.solver import (
     DEFAULT_FLOP_ITERATIONS,
@@ -826,16 +833,35 @@ def _query_flop(board_cards: tuple, stack_bb: float) -> dict:
     }
 
 
-def _get_or_solve_preflop_raw(stack_bb: float, iterations: int) -> StrategyResult:
-    """Solves (or returns the cached result of solving) a real heads-up
-    preflop spot, caching the RAW StrategyResult — unlike _get_or_solve
-    above, which formats the result and discards it. M24 needs the real
+def _get_or_solve_preflop_raw(stack_bb: float, iterations: int, players: int = 2) -> StrategyResult:
+    """Solves (or returns the cached result of solving) a real preflop
+    spot, caching the RAW StrategyResult — unlike _get_or_solve above,
+    which formats the result and discards it. M24 needs the real
     tree/node_data to walk with derive_ranges_from_path, the same
     reason _get_or_solve_multiway already caches its own raw result
     rather than a formatted one. Its own cache dict, not _cache — a
     formatted dict and a raw StrategyResult are different
     representations, never mixed in one dict (mirrors every other
-    cache-dict boundary in this file)."""
+    cache-dict boundary in this file).
+
+    `players` (M29): 2 (the original, still-default behavior) solves
+    heads-up with the CALLER's own `iterations` — unchanged. `players`
+    in MULTIWAY_TABLE_CONFIGS instead delegates outright to
+    _get_or_solve_multiway, ignoring `iterations` entirely — the same
+    "fixed menu" discipline M9's own MULTIWAY_TABLE_CONFIGS budgets
+    exist to enforce (a client-controllable iteration count at
+    multiway scale reopens exactly the cost/safety question those
+    budgets were tuned to close), and it reuses THE SAME cached
+    StrategyResult `GET /solve/{stack_bb}?players=N` already solves and
+    caches — a user who's already loaded that table size's range chart
+    triggers no redundant second solve when they open the wizard next.
+    """
+    if players != 2:
+        if players not in MULTIWAY_TABLE_CONFIGS:
+            valid = ", ".join(str(p) for p in [2, *MULTIWAY_TABLE_CONFIGS])
+            raise ValueError(f"players must be one of {valid}")
+        return _get_or_solve_multiway(stack_bb, players)
+
     key = _cache_key(stack_bb, iterations)
     with _preflop_raw_lock:
         cached = _preflop_raw_cache.get(key)
@@ -885,7 +911,7 @@ def _resolve_action_path(root: DecisionNode, action_kinds: list) -> tuple:
     return actions, node
 
 
-def _preflop_walk(stack_bb: float, action_kinds: list, iterations: int) -> dict:
+def _preflop_walk(stack_bb: float, action_kinds: list, iterations: int, players: int = 2) -> dict:
     """Orchestrates POST /preflop_walk: a real (cached, raw) preflop
     solve -> resolve the client's bare action kinds into real Actions,
     walking to the resulting node -> report what's legal from there.
@@ -893,8 +919,13 @@ def _preflop_walk(stack_bb: float, action_kinds: list, iterations: int) -> dict:
     No range derivation, no board, no query_strategy — this is a pure
     tree-state query, so none of _query_flop_from_path's range-capping
     or partitioned-library machinery applies here.
+
+    `players` (M29): defaults to 2 (heads-up, unchanged); any other
+    supported table size walks that size's own real tree instead — see
+    _get_or_solve_preflop_raw's own docstring for what that changes
+    (a fixed iteration budget, not the caller's `iterations`).
     """
-    preflop_result = _get_or_solve_preflop_raw(stack_bb, iterations)
+    preflop_result = _get_or_solve_preflop_raw(stack_bb, iterations, players=players)
     _actions, node = _resolve_action_path(preflop_result.root, action_kinds)
     live_positions = [p for p in preflop_result.config.positions if p not in node.folded]
 
@@ -905,6 +936,7 @@ def _preflop_walk(stack_bb: float, action_kinds: list, iterations: int) -> dict:
             "is_terminal": True,
             "player_to_act": None,
             "live_positions": live_positions,
+            "positions": list(preflop_result.config.positions),
             "pot": node.pot,
             "legal_actions": [],
         }
@@ -936,6 +968,7 @@ def _preflop_walk(stack_bb: float, action_kinds: list, iterations: int) -> dict:
         "is_terminal": False,
         "player_to_act": node.player_to_act,
         "live_positions": live_positions,
+        "positions": list(preflop_result.config.positions),
         "pot": node.pot,
         "legal_actions": legal_actions,
     }
@@ -953,14 +986,27 @@ def _cap_range(range_dict: dict, max_classes: int) -> dict:
     return dict(top_items)
 
 
-def _query_flop_from_path(action_kinds: list, stack_bb: float, board_cards: tuple, iterations: int) -> dict:
+def _query_flop_from_path(
+    action_kinds: list, stack_bb: float, board_cards: tuple, iterations: int, players: int = 2
+) -> dict:
     """Orchestrates POST /solve_flop_from_path end to end: a real
     (cached, raw) preflop solve -> resolve the client's bare action
     kinds into real Actions -> derive_ranges_from_path (M16) -> cap
     both sides to MAX_PATH_QUERY_CLASSES_PER_SIDE (Finding 1) -> a
-    private, per-(action_path, stack_bb, iterations) library (Finding
-    2, not the shared _flop_query_library _query_flop above uses) ->
-    query_strategy_from_path (M23).
+    private, per-(action_path, stack_bb, iterations, players) library
+    (Finding 2, not the shared _flop_query_library _query_flop above
+    uses) -> query_strategy_from_path (M23).
+
+    `players` (M29): part of the partition key, not just a solve
+    parameter — two DIFFERENT origin table sizes can legitimately share
+    the exact same literal action-kind path (e.g. ["raise",
+    "call_or_check"] is valid at both heads-up and 6-max), so omitting
+    it from the key would let one silently serve the other's cached
+    answer. DEMO_MULTIWAY_HANDS' own 8-class pool is already far
+    smaller than MAX_PATH_QUERY_CLASSES_PER_SIDE would even cap to, so
+    Finding 1's own uncapped-169-class-pool cost blowup doesn't recur
+    here — multiway's curated pool was already the safe side of that
+    finding before this milestone existed.
 
     Holds _path_query_lock for the entire query_strategy_from_path
     call, mirroring _query_flop's own stricter-than-the-hand-rolled-
@@ -972,10 +1018,21 @@ def _query_flop_from_path(action_kinds: list, stack_bb: float, board_cards: tupl
     design (a demo, not a high-throughput service), so the extra
     complexity of per-partition locking isn't earning its keep yet.
     """
-    preflop_result = _get_or_solve_preflop_raw(stack_bb, iterations)
+    preflop_result = _get_or_solve_preflop_raw(stack_bb, iterations, players=players)
     actions, _node = _resolve_action_path(preflop_result.root, action_kinds)
     path_scenario = derive_ranges_from_path(preflop_result, actions)
 
+    # Known, deliberate gap (M29): path_scenario.trained (whether each
+    # derived-range hand was genuinely backed by real solving along the
+    # path, not the untrained default — see PathScenario's own
+    # docstring) isn't surfaced in this endpoint's response. Real and
+    # measured to matter at 6/9-max specifically (a deep 3-bet line's
+    # derived range came back exactly uniform in testing), but exposing
+    # it well needs its own response-shape decision (per-hand, like
+    # `trained` below, or a per-position summary) — deferred rather than
+    # bolted on here, the same "prove the core capability, name what's
+    # deferred" discipline this project's own bridge milestones already
+    # follow throughout (see CLAUDE.md's M29 entry).
     capped_ranges = {
         position: _cap_range(range_dict, MAX_PATH_QUERY_CLASSES_PER_SIDE)
         for position, range_dict in path_scenario.ranges.items()
@@ -994,8 +1051,12 @@ def _query_flop_from_path(action_kinds: list, stack_bb: float, board_cards: tupl
                 f"{position}'s derived (capped) range"
             )
 
-    ip_position, oop_position = preflop_result.config.positions
-    partition_key = (tuple(action_kinds), round(stack_bb), iterations)
+    # M29: postflop_action_order, not a raw positions[0]/[1] unpack —
+    # correct at any origin table size, not just heads-up (see its own
+    # docstring for the real poker rule this replaces a heads-up-only
+    # guess with).
+    oop_position, ip_position = postflop_action_order(preflop_result.config.positions, path_scenario.live_positions)
+    partition_key = (tuple(action_kinds), round(stack_bb), iterations, players)
     with _path_query_lock:
         library = _path_query_libraries.setdefault(partition_key, {})
         result = query_strategy_from_path(
@@ -1023,6 +1084,7 @@ def _query_flop_from_path(action_kinds: list, stack_bb: float, board_cards: tupl
         "strategy": result.strategy,
         "position": oop_position,
         "positions": [oop_position, ip_position],
+        "players": players,
     }
 
 
@@ -1034,6 +1096,7 @@ def _query_turn_from_path(
     board_cards: tuple,
     iterations: int,
     turn_iterations: int,
+    players: int = 2,
 ) -> dict:
     """Orchestrates POST /solve_turn_from_path end to end: a real
     (cached, raw) preflop solve -> resolve the client's preflop action
@@ -1043,10 +1106,16 @@ def _query_turn_from_path(
     against *that* result's own root -> deal the client's real turn
     card -> read whatever real strategy solve_flop_turn already computed
     there. See the module docstring for the full design writeup.
+
+    `players` (M29): part of `_turn_path_cache`'s own key below, for the
+    identical collision reason `_query_flop_from_path`'s partition key
+    now includes it.
     """
-    preflop_result = _get_or_solve_preflop_raw(stack_bb, iterations)
+    preflop_result = _get_or_solve_preflop_raw(stack_bb, iterations, players=players)
     preflop_actions, _node = _resolve_action_path(preflop_result.root, preflop_action_kinds)
     path_scenario = derive_ranges_from_path(preflop_result, preflop_actions)
+    # Known, deliberate gap: path_scenario.trained isn't surfaced here
+    # either — see _query_flop_from_path's identical note above.
 
     # Ported from library.query_strategy_from_path (bypassed here — its
     # canonical-library machinery doesn't fit this endpoint's per-turn-
@@ -1055,7 +1124,20 @@ def _query_turn_from_path(
     # preflop action to have closed.
     if not isinstance(path_scenario.node, TerminalNode):
         raise ValueError("preflop_action_path does not reach a terminal — action isn't capped yet")
-    ip_position, oop_position = preflop_result.config.positions
+    if len(path_scenario.live_positions) != 2:
+        # Only reachable once players != 2 is actually possible here
+        # (M29) — a multiway-origin preflop path can close with 3+ live
+        # positions (e.g. a 3-way pot nobody folds out of), which
+        # solve_flop_turn's 2-position-only postflop machinery can't
+        # model. Checked explicitly rather than let postflop_action_
+        # order's own unpack fail with a confusing "too many values".
+        raise ValueError(
+            f"preflop_action_path leaves {len(path_scenario.live_positions)} live positions, not 2 — "
+            "postflop solving is 2-position only, regardless of the origin table size"
+        )
+    # M29: postflop_action_order, not a raw positions[0]/[1] unpack —
+    # correct at any origin table size, not just heads-up.
+    oop_position, ip_position = postflop_action_order(preflop_result.config.positions, path_scenario.live_positions)
     oop_stack = path_scenario.stacks[oop_position]
     ip_stack = path_scenario.stacks[ip_position]
     if oop_stack != ip_stack:
@@ -1083,7 +1165,14 @@ def _query_turn_from_path(
     hero_range = range_from_class_frequencies(capped_ranges[oop_position], exclude=exclude)
     villain_range = range_from_class_frequencies(capped_ranges[ip_position], exclude=exclude)
 
-    turn_solve_key = (tuple(preflop_action_kinds), round(stack_bb), iterations, board_cards, turn_iterations)
+    turn_solve_key = (
+        tuple(preflop_action_kinds),
+        round(stack_bb),
+        iterations,
+        board_cards,
+        turn_iterations,
+        players,
+    )
     with _turn_path_lock:
         result = _turn_path_cache.get(turn_solve_key)
     if result is None:
@@ -1113,6 +1202,7 @@ def _query_turn_from_path(
         "stack_bb": stack_bb,
         "position": oop_position,
         "positions": [oop_position, ip_position],
+        "players": players,
         "elapsed_seconds": result.elapsed_seconds,
     }
 
@@ -1368,7 +1458,7 @@ async def solve_flop_from_path_endpoint(request: ActionPathRequest):
         if not 0 < iterations <= MAX_ITERATIONS:
             raise ValueError(f"iterations must be between 1 and {MAX_ITERATIONS}, got {iterations}")
         return await run_in_threadpool(
-            _query_flop_from_path, request.action_path, request.stack_bb, board_cards, iterations
+            _query_flop_from_path, request.action_path, request.stack_bb, board_cards, iterations, request.players
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1382,7 +1472,9 @@ async def preflop_walk_endpoint(request: PreflopWalkRequest):
         iterations = request.iterations if request.iterations is not None else DEFAULT_ITERATIONS
         if not 0 < iterations <= MAX_ITERATIONS:
             raise ValueError(f"iterations must be between 1 and {MAX_ITERATIONS}, got {iterations}")
-        return await run_in_threadpool(_preflop_walk, request.stack_bb, request.action_path, iterations)
+        return await run_in_threadpool(
+            _preflop_walk, request.stack_bb, request.action_path, iterations, request.players
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -1421,6 +1513,7 @@ async def solve_turn_from_path_endpoint(request: TurnPathRequest):
             board_cards,
             iterations,
             turn_iterations,
+            request.players,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

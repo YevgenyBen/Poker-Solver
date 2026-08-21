@@ -19,7 +19,11 @@ interface PreflopWalkState {
 // generic handling) to match ActionPathSolver.tsx's own existing
 // convention — a deliberate deviation from the hook this mirrors, kept
 // for consistency with its sibling component instead.
-export function usePreflopWalk(stackBb: number, actionPath: string[]): PreflopWalkState {
+//
+// `players` (M29, default 2) walks that table size's own real tree —
+// included in the effect's own dependency array so switching table
+// size re-walks from the root the same way a stack-depth change does.
+export function usePreflopWalk(stackBb: number, actionPath: string[], players: number = 2): PreflopWalkState {
   const [data, setData] = useState<PreflopWalkResponse | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -29,7 +33,7 @@ export function usePreflopWalk(stackBb: number, actionPath: string[]): PreflopWa
     const controller = new AbortController();
     setLoading(true);
     setError('');
-    fetchPreflopWalk(stackBb, actionPath, controller.signal)
+    fetchPreflopWalk(stackBb, actionPath, controller.signal, players)
       .then((response) => {
         setData(response);
       })
@@ -41,7 +45,7 @@ export function usePreflopWalk(stackBb: number, actionPath: string[]): PreflopWa
       .finally(() => setLoading(false));
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stackBb, pathKey]);
+  }, [stackBb, pathKey, players]);
 
   return { data, error, loading };
 }

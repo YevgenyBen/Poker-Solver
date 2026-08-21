@@ -1,11 +1,27 @@
 import { useState } from 'react';
 import { fetchFlopStrategyFromPath, SolveError } from '../api';
 import { gradientFor, sortedEntries } from '../colors';
+import { MULTIWAY_TABLE_SIZES, type MultiwayTableSize } from '../hands';
 import { usePreflopWalk } from '../usePreflopWalk';
 import type { FlopPathQueryResponse, LegalActionOption } from '../types';
 
 const DEFAULT_STACK_BB = 100;
 const DEFAULT_BOARD = 'Jh7d2c';
+
+// M29: origin table size for the preflop leg — a plain toggle, not
+// TableModeControl (that component also always renders a position
+// selector for browsing one specific position's own strategy, a
+// concept this step-by-step wizard doesn't have; a real-hand walk
+// visits whichever position is actually to act at each step, not a
+// user-chosen one to view). Mirrors this project's own established
+// "different interaction shape -> separate component" precedent
+// (CachedFlopSolver vs. FlopSolver) rather than forcing a reuse that
+// doesn't quite fit.
+const TABLE_SIZE_LABELS: Record<MultiwayTableSize, string> = {
+  3: '3-max',
+  6: '6-max',
+  9: '9-max',
+};
 
 // M25: the general step-by-step wizard M24's own docstring (and
 // CLAUDE.md's v3 vision) flagged as remaining — action_path is now
@@ -51,13 +67,14 @@ function labelFor(action: LegalActionOption): string {
  * tree instead of only chosen from a curated preset. */
 export function ActionPathSolver() {
   const [stackBb, setStackBb] = useState(DEFAULT_STACK_BB);
+  const [players, setPlayers] = useState(2);
   const [actionPath, setActionPath] = useState<string[]>([]);
   const [board, setBoard] = useState(DEFAULT_BOARD);
   const [solveResult, setSolveResult] = useState<FlopPathQueryResponse | null>(null);
   const [solveError, setSolveError] = useState('');
   const [solveLoading, setSolveLoading] = useState(false);
 
-  const walk = usePreflopWalk(stackBb, actionPath);
+  const walk = usePreflopWalk(stackBb, actionPath, players);
 
   function clearSolveState() {
     // A stale result/error from a different path would otherwise sit
@@ -68,6 +85,16 @@ export function ActionPathSolver() {
 
   function handleStackChange(newStack: number) {
     setStackBb(newStack);
+    setActionPath([]);
+    clearSolveState();
+  }
+
+  function handlePlayersChange(newPlayers: number) {
+    // A path walked against one table size's tree isn't meaningful
+    // against a different one (even the SAME literal action kinds can
+    // mean something different, or not reach a real node at all) — the
+    // same reset-on-change discipline handleStackChange already uses.
+    setPlayers(newPlayers);
     setActionPath([]);
     clearSolveState();
   }
@@ -100,7 +127,7 @@ export function ActionPathSolver() {
     setSolveError('');
     setSolveLoading(true);
     try {
-      const response = await fetchFlopStrategyFromPath(stackBb, actionPath, board);
+      const response = await fetchFlopStrategyFromPath(stackBb, actionPath, board, undefined, players);
       setSolveResult(response);
     } catch (err) {
       setSolveResult(null);
@@ -137,13 +164,36 @@ export function ActionPathSolver() {
         </label>
       </div>
 
-      <div className="presets">
-        {Object.entries(PRESETS).map(([id, config]) => (
-          <button key={id} type="button" onClick={() => handlePresetClick(id as PresetId)} disabled={walk.loading}>
-            {config.label}
+      <div className="players-toggle" role="group" aria-label="Table size">
+        <button type="button" className={players === 2 ? 'active' : ''} onClick={() => handlePlayersChange(2)}>
+          Heads-up
+        </button>
+        {MULTIWAY_TABLE_SIZES.map((size) => (
+          <button
+            key={size}
+            type="button"
+            className={players === size ? 'active' : ''}
+            onClick={() => handlePlayersChange(size)}
+          >
+            {TABLE_SIZE_LABELS[size]}
           </button>
         ))}
       </div>
+
+      {players === 2 && (
+        // The curated presets below are hand-authored against the
+        // heads-up (2-position) tree shape specifically — the identical
+        // literal action kinds don't reach the same node (or any real
+        // terminal at all) at a 3+ table, where more positions have to
+        // act first, so they're hidden rather than shown-but-wrong.
+        <div className="presets">
+          {Object.entries(PRESETS).map(([id, config]) => (
+            <button key={id} type="button" onClick={() => handlePresetClick(id as PresetId)} disabled={walk.loading}>
+              {config.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       <p className="status action-path-trail" aria-label="Action path so far">
         {actionPath.length === 0 ? 'Root' : actionPath.map(pathStepLabel).join(' → ')}

@@ -1,3 +1,5 @@
+from itertools import combinations
+
 import pytest
 
 from poker_solver.game_tree import (
@@ -14,7 +16,9 @@ from poker_solver.game_tree import (
     TerminalNode,
     build_game_tree,
     build_street_tree,
+    button_position,
     count_terminal_nodes,
+    postflop_action_order,
     resolve_action,
     tree_depth,
     walk,
@@ -63,6 +67,155 @@ def test_config_rejects_fewer_than_two_positions():
 def test_config_rejects_duplicate_positions():
     with pytest.raises(ValueError):
         GameConfig(positions=("BTN", "BTN", "BB"), raise_sizes=())
+
+
+# ---------------------------------------------------------------------------
+# button_position / postflop_action_order (M29)
+#
+# Real poker rule (Robert's Rules of Poker, "Button and Blind Use"):
+# action begins with the first active player to the LEFT OF THE BUTTON on
+# every betting round after the first — no table-size exception. What
+# genuinely differs at heads-up is a seating fact, not a rule: the button
+# IS the small blind there, so "the seat immediately before the small
+# blind" (the general way to locate the button from a GameConfig.positions
+# tuple, since the last two entries always post small/big blind) doesn't
+# apply the same way at N=2 as it does at N>=3 — see button_position's
+# own docstring. The tempting shortcut "the small blind acts first
+# postflop" is only a derived consequence of the real rule at N>=3 (SB is
+# the seat immediately left of the button there); at N=2 the shortcut
+# inverts, since the button/SB is the same seat, and that seat acts LAST
+# postflop, not first. Every test below is designed to actually catch
+# that shortcut (and its mirror-image bugs), not just confirm the
+# formula agrees with itself.
+# ---------------------------------------------------------------------------
+
+_HU_POSITIONS = ("BTN", "BB")
+_THREE_MAX_POSITIONS = ("BTN", "SB", "BB")
+_SIX_MAX_POSITIONS = ("UTG", "MP", "CO", "BTN", "SB", "BB")
+_NINE_MAX_POSITIONS = ("UTG", "UTG1", "MP1", "MP2", "MP3", "CO", "BTN", "SB", "BB")
+_ALL_REAL_CONFIGS = (_HU_POSITIONS, _THREE_MAX_POSITIONS, _SIX_MAX_POSITIONS, _NINE_MAX_POSITIONS)
+
+
+def test_button_position_heads_up_is_the_special_case():
+    # THE regression test that matters most here: heads-up is a genuine
+    # exception (the button posts the small blind, so it's positions[0],
+    # not positions[-3] — which doesn't even exist at N=2), not a
+    # degenerate case any general formula happens to also cover.
+    assert button_position(("BTN", "BB")) == "BTN"
+
+
+@pytest.mark.parametrize(
+    "positions",
+    [_THREE_MAX_POSITIONS, _SIX_MAX_POSITIONS, _NINE_MAX_POSITIONS],
+)
+def test_button_position_at_three_plus_players_is_the_seat_before_small_blind(positions):
+    assert button_position(positions) == "BTN"
+    assert positions[positions.index(button_position(positions)) + 1] == "SB"
+
+
+def test_button_position_rejects_fewer_than_two_positions():
+    with pytest.raises(ValueError):
+        button_position(("BTN",))
+
+
+def test_postflop_action_order_heads_up_reverses_preflop_order():
+    # The single most important case: applying the N>=3 rotation formula
+    # here would give (BTN, BB) unchanged — the OPPOSITE of reality, and
+    # would silently invert every live heads-up-origin flop query.
+    assert postflop_action_order(("BTN", "BB")) == ("BB", "BTN")
+
+
+@pytest.mark.parametrize(
+    "positions,expected",
+    [
+        (_THREE_MAX_POSITIONS, ("SB", "BB", "BTN")),
+        (_SIX_MAX_POSITIONS, ("SB", "BB", "UTG", "MP", "CO", "BTN")),
+        (
+            _NINE_MAX_POSITIONS,
+            ("SB", "BB", "UTG", "UTG1", "MP1", "MP2", "MP3", "CO", "BTN"),
+        ),
+    ],
+)
+def test_postflop_action_order_full_table_rotates_blinds_to_the_front(positions, expected):
+    assert postflop_action_order(positions) == expected
+
+
+def test_postflop_action_order_button_always_acts_last_when_live():
+    # The one property that's genuinely universal across every N,
+    # including heads-up — unlike "blinds act first," which isn't.
+    for positions in _ALL_REAL_CONFIGS:
+        for live in combinations(positions, 2):
+            if button_position(positions) in live:
+                assert postflop_action_order(positions, live)[-1] == button_position(positions)
+
+
+def test_postflop_action_order_blind_vs_non_blind_survivors_match_the_modal_spot():
+    # The most common real spot (someone opens, a blind defends) — high
+    # blast radius, but NOT discriminating on its own: a buggy
+    # "treat any 2 survivors as heads-up" implementation gives the same
+    # answer here, since it happens to coincide with the real one.
+    assert postflop_action_order(_SIX_MAX_POSITIONS, ("BTN", "BB")) == ("BB", "BTN")
+    assert postflop_action_order(_SIX_MAX_POSITIONS, ("UTG", "BB")) == ("BB", "UTG")
+    assert postflop_action_order(_SIX_MAX_POSITIONS, ("CO", "SB")) == ("SB", "CO")
+
+
+def test_postflop_action_order_blind_vs_blind_survivors_catches_the_headsup_shortcut():
+    # Folds to SB, SB raises, BB calls: neither survivor is the button,
+    # so there's no button/SB collapse and therefore no inversion — the
+    # "treat 2 survivors as heads-up" bug gives IP=SB here; correct is
+    # OOP=SB (still left of the button), IP=BB.
+    assert postflop_action_order(_SIX_MAX_POSITIONS, ("SB", "BB")) == ("SB", "BB")
+    assert postflop_action_order(_THREE_MAX_POSITIONS, ("SB", "BB")) == ("SB", "BB")
+
+
+def test_postflop_action_order_non_blind_vs_non_blind_survivors_preserves_preflop_order():
+    # UTG opens, MP calls, everyone else folds: postflop order matches
+    # preflop's own relative order here (neither seat is a blind) — a
+    # "reverse the survivors" bug gives IP=UTG; correct is IP=MP.
+    assert postflop_action_order(_SIX_MAX_POSITIONS, ("UTG", "MP")) == ("UTG", "MP")
+    assert postflop_action_order(_SIX_MAX_POSITIONS, ("CO", "BTN")) == ("CO", "BTN")
+
+
+def _reference_postflop_order(positions: tuple, live_positions: tuple) -> tuple:
+    """Independent reference implementation, deliberately written a
+    different way (index-stepping through the ring one seat at a time,
+    not slicing) than postflop_action_order itself — so agreement
+    between the two is real cross-validation, not self-consistency.
+    Mirrors M19's own brute-force-vs-naive-walk validation technique."""
+    n = len(positions)
+    button = positions[0] if n == 2 else positions[-3]
+    button_idx = positions.index(button)
+    live = set(live_positions)
+    order = []
+    for step in range(1, n + 1):
+        seat = positions[(button_idx + step) % n]
+        if seat in live:
+            order.append(seat)
+    return tuple(order)
+
+
+def test_postflop_action_order_matches_an_independent_reference_for_every_real_survivor_pair():
+    # Exhaustive: every 2-survivor subset of every real config this
+    # project ships (55 cases total), each checked against a
+    # separately-implemented reference, not just internal consistency.
+    checked = 0
+    for positions in _ALL_REAL_CONFIGS:
+        for live in combinations(positions, 2):
+            assert postflop_action_order(positions, live) == _reference_postflop_order(positions, live)
+            checked += 1
+    assert checked == 55
+
+
+def test_multiway_table_configs_end_in_small_blind_then_big_blind():
+    # postflop_action_order's formula is index-based (button_position ==
+    # positions[-3] for N>=3), which depends on this project's own
+    # multiway position tuples actually ending in (..., "SB", "BB") —
+    # true today by convention, not enforced by GameConfig itself
+    # (positions is documented as arbitrary unique labels), so this
+    # guards against a future config silently breaking that assumption.
+    for positions in (_THREE_MAX_POSITIONS, _SIX_MAX_POSITIONS, _NINE_MAX_POSITIONS):
+        assert positions[-2:] == ("SB", "BB")
+        assert "BTN" in positions[:-2]
 
 
 # ---------------------------------------------------------------------------

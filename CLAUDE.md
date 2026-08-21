@@ -1652,6 +1652,117 @@ street chaining needs.
     own `trained` map has at least one `false` entry — the diagnostic's
     88%-untrained finding, now visible in the actual API response a
     real caller receives, not just an internal measurement.
+- **M29 — The heads-up-flop-after-multiway-preflop unlock (diagnostic
+  recommendation #4), fully wired live.** §4's own "one piece of good
+  news": the single most common way a real full-ring hand actually
+  reaches a flop — everyone folds except two players — was already
+  ~95% wired (range derivation was already N-general, the stack-
+  equality guarantee already held at any N), blocked only by "one
+  overly strict guard" plus "three separate places each doing their
+  own brittle two-position unpack." Closes all of it, plus the live
+  endpoint + frontend wiring the diagnostic explicitly left for later.
+  - **The real poker rule, verified before writing any code, not
+    guessed:** `game_tree.py` gained `button_position`/
+    `postflop_action_order`. A design-validation pass caught the
+    naive framing backwards: there's no "small blind acts first
+    postflop, except at heads-up" rule — the universal rule (Robert's
+    Rules of Poker) is stated relative to the **button** ("action
+    begins with the first active player to the left of the button,"
+    no table-size exception, ever). What's genuinely heads-up-specific
+    is a *seating* fact, not a betting-order exception: the button
+    posts the small blind and *is* the small blind at N=2, so
+    `button_position` is `positions[0]` there and `positions[-3]`
+    (the seat immediately before the small blind) at N>=3 — one real
+    exception, cleanly isolated to locating the button, not smeared
+    across the postflop-order formula itself. Verified exhaustively,
+    not just on hand-picked examples: every 2-survivor subset of every
+    real table size this project ships (55 cases) checked against an
+    independently-written reference implementation (a different code
+    shape — index-stepping the ring one seat at a time, not slicing —
+    mirroring M19's own brute-force-vs-naive-walk validation
+    technique), all 55 agreeing.
+  - **A correction to the diagnostic's own accounting, caught by
+    tracing the real call sites, not assumed from its prose:** the
+    diagnostic attributed one of the "three duplicated unpack" sites to
+    `solver.py`'s `derive_flop_scenario` — that function does no
+    position unpacking at all (it takes `raiser_position`/
+    `caller_position` as explicit parameters). The real third site is
+    `api/main.py`'s `_query_turn_from_path` (M26), added *after* the
+    diagnostic's own snapshot. All three real sites —
+    `poker_solver/library.py`'s `query_strategy_from_path`, and
+    `api/main.py`'s `_query_flop_from_path` (M24) and
+    `_query_turn_from_path` (M26) — now share `postflop_action_order`
+    instead of each guessing `positions[0]`/`positions[1]`.
+    `query_strategy_from_path`'s own guard changed from rejecting any
+    multiway-*origin* result outright to the real constraint: fewer
+    than 2 live positions surviving *to the terminal* — a fact about
+    the survivors, not the origin table size (its own stated
+    justification for the old guard was right about needing the full
+    seating order, and wrong about the conclusion: `result.config.
+    positions` already *is* that order, sitting right there on the
+    object passed in).
+  - **A second, real blocker found during design validation, not in
+    the original diagnostic — and directly acted on, not just noted:**
+    `derive_ranges_from_path`'s reach-multiplication has no confidence
+    signal (M28 stops at a single node's `trained_hands`). Measured on
+    a real 6-max solve at its shipped budget: a shallow "everyone folds
+    to a call" path was cleanly 6/6 trained with well-differentiated
+    ranges, but a deeper 3-bet line left both actors' own decision
+    nodes 0/6 trained, with one derived range coming back *exactly*
+    uniform (0.25 for every hand checked) — confident-looking,
+    fabricated, and silently indistinguishable from a real one. Fixed
+    at the source, not routed around: `PathScenario` gained a `trained`
+    field (position -> {hand: bool}), mirroring `ranges`' own shape,
+    computed the identical way reach itself composes — the AND, not
+    just the last step, across every node a position acts at along the
+    path (one untrained step anywhere is enough to make the whole
+    derived frequency suspect, the same way one bad factor corrupts a
+    product). 3-max (100K-iteration budget) stayed clean on every path
+    traced, including the same deep-3-bet shape — this is specifically
+    a 6/9-max (small iteration budget) finding, not a general one.
+  - **Live wiring, the user's own explicitly-chosen "most thorough"
+    option — not deferred to a follow-up milestone the way M23-before-
+    M24's own precedent might have suggested:** `_get_or_solve_
+    preflop_raw` (`api/main.py`) gained a `players` parameter — 2
+    (unchanged) solves heads-up with the caller's own `iterations`;
+    any other supported size delegates outright to `_get_or_solve_
+    multiway`, reusing (not duplicating) its cache — a user who already
+    loaded that table size's range chart triggers no redundant second
+    solve opening the wizard next, and vice versa (same fixed-iteration-
+    budget discipline `MULTIWAY_TABLE_CONFIGS` already enforces
+    elsewhere, extended here rather than reopened). `POST /preflop_
+    walk`, `/solve_flop_from_path`, `/solve_turn_from_path` all gained
+    a `players` request field (default 2); every partition/cache key
+    that keys on the action path (`_path_query_libraries`,
+    `_turn_path_cache`) now also keys on `players` — a real, not
+    hypothetical, collision risk: the identical literal action-kind
+    path can be legal at two different table sizes and mean two
+    different things (proven with a live test: the same path partitions
+    separately at players=2 vs. players=3).
+  - **Frontend:** `ActionPathSolver.tsx`/`TurnPathSolver.tsx` both
+    gained a table-size toggle (mirroring `TableModeControl`'s own
+    visual language, but not the component itself — a step-by-step
+    wizard has no "which position am I viewing" concept, the whole
+    reason that component also always renders a position selector,
+    which wouldn't fit here). Switching table size resets the action
+    path (a path walked against one tree isn't meaningful against
+    another) and re-walks live. Each component's own curated *preflop*
+    presets (hand-authored against the heads-up 2-position tree shape)
+    are hidden — not shown-broken — at any other table size; `TurnPath
+    Solver`'s separate *flop*-line presets stay unconditional at every
+    table size, correctly, since the flop-level tree `solve_flop_turn`
+    builds is always 2-position regardless of how many players the
+    origin hand started with. Live-verified end to end: a real 3-max
+    hand (BTN opens, SB folds, BB calls) reaches a real heads-up flop
+    and turn decision through both wizards.
+  - **A known, deliberate gap, named rather than silently left:**
+    `PathScenario.trained` (the fix above) isn't yet surfaced in either
+    live endpoint's response — a real, measured-to-matter signal at
+    6/9-max specifically, but exposing it well needs its own response-
+    shape decision (per-hand, like `format_solve_response`'s own
+    `trained`, or a per-position summary), deferred rather than bolted
+    on to an already-large milestone. The engine-level fact is real and
+    tested regardless of whether the API surfaces it yet.
 
 ## v3 vision (future) — live-table advisor
 
@@ -1701,6 +1812,22 @@ flop-action wizard (this milestone's own flop-line input is a curated
 preset dropdown, mirroring `ActionPathSolver.tsx`'s own M24-before-M25
 history), and multiway postflop solving — the only thing across this
 entire multi-milestone thread that has never been scoped at all.
+
+**M29 update — the specific, common exception to that last line ships:**
+true 3+-live-player postflop solving remains unscoped, but a real
+multiway-*origin* hand that folds down to two live players now gets
+real flop/turn advice through both live endpoints and both wizard
+frontends — `poker_solver/game_tree.py`'s new `postflop_action_order`
+(a real poker rule, not a heads-up-only guess) correctly maps whichever
+two positions actually survive, at any origin table size, closing the
+last of the "three duplicated position-unpack" sites the diagnostic's
+§4 named. A related, previously-unknown gap surfaced and fixed along
+the way: `derive_ranges_from_path`'s own reach-multiplication had no
+confidence signal, and a real deep 6-max line was measured producing an
+exactly-uniform, fabricated-looking derived range — `PathScenario`
+gained its own `trained` field for this reason, mirroring M28's signal
+one layer earlier in the pipeline (not yet threaded through to either
+endpoint's own response — a named, deliberate gap, not a silent one).
 
 ### The real-time-speed roadmap
 

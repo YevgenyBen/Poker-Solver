@@ -8,6 +8,7 @@ const ROOT_WALK = {
   is_terminal: false,
   player_to_act: 'BTN',
   live_positions: ['BTN', 'BB'],
+  positions: ['BTN', 'BB'],
   pot: 1.5,
   legal_actions: [
     { kind: 'fold', size: null, to_call: 0.5 },
@@ -120,7 +121,7 @@ describe('ActionPathSolver', () => {
     expect(fetchMock).toHaveBeenCalledWith('/preflop_walk', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ stack_bb: 100, action_path: [] }),
+      body: JSON.stringify({ stack_bb: 100, action_path: [], players: 2 }),
       signal: expect.anything(),
     });
   });
@@ -137,7 +138,7 @@ describe('ActionPathSolver', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Call 1.5' })).toBeInTheDocument());
     expect(fetchMock).toHaveBeenLastCalledWith(
       '/preflop_walk',
-      expect.objectContaining({ body: JSON.stringify({ stack_bb: 100, action_path: ['raise'] }) }),
+      expect.objectContaining({ body: JSON.stringify({ stack_bb: 100, action_path: ['raise'], players: 2 }) }),
     );
     expect(screen.getByText('Raise')).toBeInTheDocument(); // the breadcrumb trail
   });
@@ -156,7 +157,7 @@ describe('ActionPathSolver', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Raise to 2.5' })).toBeInTheDocument());
     expect(fetchMock).toHaveBeenLastCalledWith(
       '/preflop_walk',
-      expect.objectContaining({ body: JSON.stringify({ stack_bb: 100, action_path: [] }) }),
+      expect.objectContaining({ body: JSON.stringify({ stack_bb: 100, action_path: [], players: 2 }) }),
     );
   });
 
@@ -174,7 +175,7 @@ describe('ActionPathSolver', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Raise to 2.5' })).toBeInTheDocument());
     expect(fetchMock).toHaveBeenLastCalledWith(
       '/preflop_walk',
-      expect.objectContaining({ body: JSON.stringify({ stack_bb: 100, action_path: [] }) }),
+      expect.objectContaining({ body: JSON.stringify({ stack_bb: 100, action_path: [], players: 2 }) }),
     );
   });
 
@@ -201,7 +202,7 @@ describe('ActionPathSolver', () => {
     expect(fetchMock).toHaveBeenLastCalledWith(
       '/preflop_walk',
       expect.objectContaining({
-        body: JSON.stringify({ stack_bb: 100, action_path: ['raise', 'call_or_check'] }),
+        body: JSON.stringify({ stack_bb: 100, action_path: ['raise', 'call_or_check'], players: 2 }),
       }),
     );
   });
@@ -245,7 +246,7 @@ describe('ActionPathSolver', () => {
     await waitFor(() =>
       expect(fetchMock).toHaveBeenLastCalledWith(
         '/preflop_walk',
-        expect.objectContaining({ body: JSON.stringify({ stack_bb: 50, action_path: [] }) }),
+        expect.objectContaining({ body: JSON.stringify({ stack_bb: 50, action_path: [], players: 2 }) }),
       ),
     );
   });
@@ -264,6 +265,54 @@ describe('ActionPathSolver', () => {
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('stack_bb must be positive'));
     expect(screen.queryByRole('button', { name: 'Fold' })).not.toBeInTheDocument();
+  });
+
+  it('switching table size resets the path, hides heads-up presets, and re-walks with the new players value', async () => {
+    const THREE_MAX_ROOT_WALK = {
+      stack_bb: 100,
+      action_path: [],
+      is_terminal: false,
+      player_to_act: 'BTN',
+      live_positions: ['BTN', 'SB', 'BB'],
+      positions: ['BTN', 'SB', 'BB'],
+      pot: 1.5,
+      legal_actions: [
+        { kind: 'fold', size: null, to_call: 0.5 },
+        { kind: 'call_or_check', size: null, to_call: 0.5 },
+        { kind: 'raise', size: 2.5, to_call: null },
+        { kind: 'all_in', size: 100, to_call: null },
+      ],
+    };
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url === '/preflop_walk') {
+        const body = JSON.parse(init?.body as string) as { action_path: string[]; players: number };
+        const response = body.players === 3 ? THREE_MAX_ROOT_WALK : walkFor(body.action_path);
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(response) });
+      }
+      throw new Error(`unexpected fetch to ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<ActionPathSolver />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Raise to 2.5' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Raise to 2.5' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Call 1.5' })).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'BTN opens, BB calls' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '3-max' }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenLastCalledWith(
+        '/preflop_walk',
+        expect.objectContaining({ body: JSON.stringify({ stack_bb: 100, action_path: [], players: 3 }) }),
+      ),
+    );
+    // Reset back to root — the stale 2-position breadcrumb/legal actions
+    // from the heads-up walk must not linger under the new table size.
+    expect(screen.getByRole('button', { name: 'Raise to 2.5' })).toBeInTheDocument();
+    // Heads-up-shaped presets hidden — they don't reach a real terminal
+    // (or the same node at all) against a 3-max tree.
+    expect(screen.queryByRole('button', { name: 'BTN opens, BB calls' })).not.toBeInTheDocument();
   });
 
   it('a solve error after a real terminal does not clobber the walk state', async () => {
