@@ -8,7 +8,18 @@ from poker_solver.cards import Card
 from poker_solver.cfr import InfoSetTable
 from poker_solver.combos import HandCombo, combos_for_class, range_from_class_frequencies
 from poker_solver.equity import MultiwayEquityCache, build_equity_table
-from poker_solver.game_tree import ALL_IN, CALL_OR_CHECK, FOLD, RAISE, Action, DecisionNode, GameConfig, build_game_tree
+from poker_solver.game_tree import (
+    ALL_IN,
+    CALL_OR_CHECK,
+    FOLD,
+    RAISE,
+    Action,
+    DecisionNode,
+    GameConfig,
+    TerminalNode,
+    build_game_tree,
+    postflop_action_order,
+)
 from poker_solver.solver import (
     DEFAULT_ITERATIONS,
     FlopScenario,
@@ -20,6 +31,7 @@ from poker_solver.solver import (
     format_opening_range_grid,
     solve_flop,
     solve_flop_abstracted,
+    solve_flop_multiway,
     solve_flop_to_river,
     solve_flop_turn,
     solve_preflop,
@@ -584,6 +596,217 @@ def test_solve_flop_combo_missing_from_one_range_gets_zero_weight_there(small_fl
     villain_combos = {"9d8d", "Qc5c"}
     assert hero_combos.isdisjoint(villain_combos)
     assert set(small_flop_result.opening_range().keys()) == hero_combos | villain_combos
+
+
+# ---------------------------------------------------------------------------
+# M35: solve_flop_multiway — the direct N-position generalization of
+# solve_flop, via cfr.mccfr_solve + multiway_board_equity.
+# NwayBoardEquityCache (M30-M32) instead of cfr.solve + board_equity.
+# build_board_equity_table. Mirrors small_flop_result's own "one real
+# hand, one pure air" shape, per position, generalized to 3 positions.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def small_flop_multiway_result():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    position_ranges = {
+        "OOP": {
+            HandCombo(Card("7", "s"), Card("7", "c")): 1.0,  # flopped a set of sevens
+            HandCombo(Card("K", "s"), Card("Q", "d")): 1.0,  # complete air
+        },
+        "MID": {
+            HandCombo(Card("A", "h"), Card("A", "d")): 1.0,  # overpair
+            HandCombo(Card("3", "h"), Card("2", "h")): 1.0,  # complete air
+        },
+        "IP": {
+            HandCombo(Card("9", "d"), Card("8", "d")): 1.0,  # top pair + a straight draw
+            HandCombo(Card("Q", "c"), Card("5", "c")): 1.0,  # pure air
+        },
+    }
+    return solve_flop_multiway(
+        board=board,
+        position_ranges=position_ranges,
+        pot=9.0,
+        effective_stack_bb=15.0,
+        positions=("OOP", "MID", "IP"),
+        raise_sizes=(0.75, 2.5),
+        max_raises=3,
+        iterations=300,
+        equity_samples=50,
+        equity_seed=1,
+    )
+
+
+def test_solve_flop_multiway_covers_the_union_of_all_ranges(small_flop_multiway_result):
+    opening = small_flop_multiway_result.opening_range()
+    expected = {"7s7c", "KsQd", "AhAd", "3h2h", "9d8d", "Qc5c"}
+    assert set(opening.keys()) == expected
+
+
+def test_solve_flop_multiway_frequencies_sum_to_one(small_flop_multiway_result):
+    opening = small_flop_multiway_result.opening_range()
+    for freqs in opening.values():
+        assert not any(np.isnan(freq) for freq in freqs.values())
+        assert pytest.approx(sum(freqs.values()), abs=1e-6) == 1.0
+
+
+def test_solve_flop_multiway_a_real_hand_folds_to_a_bet_far_less_than_air(small_flop_multiway_result):
+    # Same "value continues, air folds" pattern solve_flop's own test
+    # establishes, now at a node a 2-position test structurally can't
+    # reach: MID facing OOP's opening bet — the *second* actor at a
+    # genuine 3-position table, not the only other one.
+    root = small_flop_multiway_result.root
+    raise_action = next(a for a in root.legal_actions if a.kind == RAISE)
+    facing_bet_node = root.children[raise_action]
+    assert facing_bet_node.player_to_act == "MID"
+    strategy = small_flop_multiway_result.strategy_at(facing_bet_node)
+    assert strategy["3h2h"]["fold"] > strategy["AhAd"]["fold"]
+
+
+def test_solve_flop_multiway_config_reflects_pot_and_stack(small_flop_multiway_result):
+    assert small_flop_multiway_result.config.pot == pytest.approx(9.0)
+    assert small_flop_multiway_result.config.stack_bb == pytest.approx(15.0)
+    assert small_flop_multiway_result.config.positions == ("OOP", "MID", "IP")
+
+
+def test_solve_flop_multiway_root_is_oop_with_nothing_invested_yet(small_flop_multiway_result):
+    root = small_flop_multiway_result.root
+    assert root.player_to_act == "OOP"
+    assert root.invested == {"OOP": 0.0, "MID": 0.0, "IP": 0.0}
+    assert root.pot == pytest.approx(9.0)
+
+
+def test_solve_flop_multiway_deterministic_given_the_same_seed():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    position_ranges = {
+        "OOP": {HandCombo(Card("7", "s"), Card("7", "c")): 1.0},
+        "MID": {HandCombo(Card("A", "h"), Card("A", "d")): 1.0},
+        "IP": {HandCombo(Card("K", "h"), Card("K", "d")): 1.0},
+    }
+    kwargs = dict(
+        board=board, position_ranges=position_ranges, pot=9.0, effective_stack_bb=15.0,
+        positions=("OOP", "MID", "IP"), raise_sizes=(), max_raises=1,
+        iterations=50, equity_samples=50, equity_seed=7, seed=3,
+    )
+    result_1 = solve_flop_multiway(**kwargs)
+    result_2 = solve_flop_multiway(**kwargs)
+    assert result_1.opening_range() == result_2.opening_range()
+
+
+def test_solve_flop_multiway_uses_default_iterations_when_omitted():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    position_ranges = {
+        "OOP": {HandCombo(Card("7", "s"), Card("7", "c")): 1.0},
+        "MID": {HandCombo(Card("A", "h"), Card("A", "d")): 1.0},
+        "IP": {HandCombo(Card("K", "h"), Card("K", "d")): 1.0},
+    }
+    result = solve_flop_multiway(
+        board=board, position_ranges=position_ranges, pot=9.0, effective_stack_bb=15.0,
+        positions=("OOP", "MID", "IP"), raise_sizes=(), max_raises=1, equity_samples=50,
+    )
+    assert result.iterations > 0
+    assert result.elapsed_seconds >= 0.0
+
+
+def test_solve_flop_multiway_combo_missing_from_a_range_gets_zero_weight_there(small_flop_multiway_result):
+    # Mirrors solve_flop's own analogous test: each position's own
+    # combos are disjoint from every other position's, so the union
+    # pool is exactly the 6 combos, none shared.
+    oop_combos = {"7s7c", "KsQd"}
+    mid_combos = {"AhAd", "3h2h"}
+    ip_combos = {"9d8d", "Qc5c"}
+    assert oop_combos.isdisjoint(mid_combos)
+    assert mid_combos.isdisjoint(ip_combos)
+    assert set(small_flop_multiway_result.opening_range().keys()) == oop_combos | mid_combos | ip_combos
+
+
+def test_solve_flop_multiway_rejects_positions_and_position_ranges_mismatch():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    position_ranges = {
+        "OOP": {HandCombo(Card("7", "s"), Card("7", "c")): 1.0},
+        "MID": {HandCombo(Card("A", "h"), Card("A", "d")): 1.0},
+        # "IP" deliberately missing
+    }
+    with pytest.raises(ValueError):
+        solve_flop_multiway(
+            board=board, position_ranges=position_ranges, pot=9.0, effective_stack_bb=15.0,
+            positions=("OOP", "MID", "IP"), raise_sizes=(), max_raises=1,
+        )
+
+
+def test_derive_ranges_from_path_pipeline_open_call_call_feeds_solve_flop_multiway(three_max_result):
+    # The required end-to-end test: real (already-solved, module-scoped —
+    # no new slow preflop solve) 3-max preflop result -> a genuine 3-step
+    # path where BTN opens and BOTH SB and BB call, leaving all 3
+    # positions live (the shape a 2-position pipeline test structurally
+    # can't exercise) -> derive_ranges_from_path -> per-position combo
+    # expansion -> real solve_flop_multiway.
+    root = three_max_result.root
+    open_raise = next(a for a in root.legal_actions if a.kind == RAISE)
+    sb_node = root.children[open_raise]
+    sb_call = next(a for a in sb_node.legal_actions if a.kind == CALL_OR_CHECK)
+    bb_node = sb_node.children[sb_call]
+    bb_call = next(a for a in bb_node.legal_actions if a.kind == CALL_OR_CHECK)
+
+    scenario = derive_ranges_from_path(three_max_result, [open_raise, sb_call, bb_call])
+    assert isinstance(scenario.node, TerminalNode)
+    assert set(scenario.live_positions) == {"BTN", "SB", "BB"}
+
+    kk = StartingHand("K", "K")
+    trash = StartingHand("7", "2", suited=False)
+    # Measured directly (not assumed) before writing this assertion, the
+    # same discipline M15/M16 already established for this exact
+    # pipeline shape: AA is NOT the robust comparator here, even for
+    # BTN's own *opening* frequency — AA's own weight at BB (facing the
+    # open, deciding whether to call) is a tiny 0.0004, smaller than
+    # trash's own 0.305, because AA prefers 3-betting/jamming over flat-
+    # calling (M15's own already-documented "premium hands don't just
+    # call" pattern). KK, a real flatting/opening hand at every one of
+    # these 3 positions in this pool (measured: 0.69-0.85 across BTN/SB/
+    # BB, vs. trash's 0.0017-0.305), is the comparator that actually
+    # behaves the way naive "premium continues more" intuition expects —
+    # exactly the fix M15/M16 already reached for in the analogous
+    # 2-position case, applied here rather than re-discovering it the
+    # hard way a third time.
+    for position in scenario.live_positions:
+        assert scenario.ranges[position][kk] > scenario.ranges[position][trash]
+
+    # PathScenario.live_positions stays in preflop acting order (BTN,
+    # SB, BB) — postflop_action_order (M29) derives the correct postflop
+    # seating order from it, the same real bug M32's own design pass
+    # caught the tempting-but-wrong alternative for (see chance.py's
+    # build_mccfr_chance_branch, which explicitly does NOT reach for
+    # this function on an already-postflop tuple — this call site is the
+    # correct one: converting a *preflop* GameConfig.positions ordering).
+    postflop_positions = postflop_action_order(three_max_result.config.positions, scenario.live_positions)
+
+    board = (Card("2", "h"), Card("6", "d"), Card("9", "c"))
+    exclude = frozenset(board)
+    position_ranges = {
+        position: range_from_class_frequencies(scenario.ranges[position], exclude=exclude)
+        for position in postflop_positions
+    }
+
+    stacks = {scenario.stacks[p] for p in scenario.live_positions}
+    assert len(stacks) == 1  # every live position's remaining stack matches (proven N-general via M23)
+    effective_stack_bb = next(iter(stacks))
+
+    flop_result = solve_flop_multiway(
+        board=board,
+        position_ranges=position_ranges,
+        pot=scenario.pot,
+        effective_stack_bb=effective_stack_bb,
+        positions=postflop_positions,
+        max_raises=1,
+        raise_sizes=(),
+        iterations=50,
+        equity_samples=50,
+    )
+    opening = flop_result.opening_range()
+    assert len(opening) > 0
+    for freqs in opening.values():
+        assert pytest.approx(sum(freqs.values()), abs=1e-6) == 1.0
 
 
 # ---------------------------------------------------------------------------

@@ -2374,6 +2374,126 @@ street chaining needs.
     but-wrong approach to §3.7's fix, and this milestone's own finding
     that only one of §3.10's three named thread-safety gaps was
     actually live today, not all three equally).
+- **M35 — Connect `derive_ranges_from_path` to postflop combos: a real
+  N-position multiway flop solve.** M30-M32 built the full engine
+  machinery for true multiway postflop MCCFR solving but shipped it
+  engine-only, zero real callers — confirmed by direct search before
+  starting this milestone: `poker_solver/solver.py` had zero references
+  to `NwayBoardEquityCache`, `build_mccfr_chance_branch`, or
+  `SampledChanceBranch`. Separately, `derive_ranges_from_path` (M15/M16)
+  already produces exactly the per-position, N-general range data this
+  machinery needs, and `combos.range_from_class_frequencies` (M10)
+  already converts one position's class-frequency dict into a
+  board-legal combo-weight dict — the bridge *pattern* between these two
+  was already proven, just at N=2 (`solve_flop`'s own pipeline test).
+  **What was actually missing:** a solver.py-level function that runs a
+  real multiway MCCFR solve given N positions' worth of already-combo-
+  level ranges — the direct N-position generalization of `solve_flop`.
+  Once that exists, "connecting" `derive_ranges_from_path` to it needs
+  no new bridge *code* at all — the existing per-position `range_from_
+  class_frequencies` composition, already proven at N=2, generalizes to
+  N=3+ via a dict comprehension over `path_scenario.live_positions`
+  instead of two named variables.
+  - **New `solve_flop_multiway(board, position_ranges, pot, effective_
+    stack_bb, positions, ...)`** — reuses `solve_flop`'s exact combo-
+    pool-union pattern (generalized from two named `hero_range`/
+    `villain_range` params to a `position: {HandCombo: weight}` dict),
+    `mccfr_solve` + `NwayBoardEquityCache` (M30-M32) instead of `solve`
+    + `build_board_equity_table`. No `nan_to_num` call needed at this
+    layer, unlike `solve_flop` — `_mccfr_terminal_value` (M32) already
+    applies it internally, one layer deeper, so this function's body
+    stays a pure assembly step. `positions`/`position_ranges` must cover
+    exactly the same positions, checked with an explicit `ValueError`
+    (a mistyped position label would otherwise surface as a confusing
+    downstream `KeyError` instead).
+  - **The connection itself is a proven pipeline, not a new production
+    function** — deliberately mirrors `solve_flop`'s own precedent (no
+    dedicated "derive-and-solve" wrapper exists for it either), not
+    `query_strategy_from_path`'s (which exists specifically because
+    `query_strategy` has its own canonicalization/caching concerns this
+    function doesn't share): `derive_ranges_from_path` → per position,
+    `combos.range_from_class_frequencies` → `solve_flop_multiway`,
+    proven by a real end-to-end test generalizing the existing N=2
+    pipeline test.
+  - **A real subtlety, caught by tracing the actual code rather than
+    assumed:** `PathScenario.live_positions` stays in *preflop* acting
+    order (`derive_ranges_from_path`'s own plain filter over `result.
+    config.positions`) — it does not convert to postflop order itself.
+    A caller must apply `game_tree.postflop_action_order` (M29) to get
+    the correct N-position postflop seating order before calling
+    `solve_flop_multiway` — the exact same step `query_strategy_from_
+    path` (M23) already takes, now applied at N>=3 instead of being
+    restricted to exactly 2. `solve_flop_multiway` itself takes
+    `positions` as an explicit, caller-supplied parameter rather than
+    trying to derive it internally, so it stays agnostic to where the
+    order came from.
+  - **Stack/pot derivation N-generalizes M23's own proven guard, rather
+    than reinventing one:** requires `isinstance(path_scenario.node,
+    TerminalNode)` — M23's own proof that this guarantees equal
+    remaining stacks across every live position was already N-general
+    in its underlying argument (`game_tree._build`'s no-side-pots
+    invariant never mentions "2" anywhere); only its application was
+    narrow, because its own consumer (`solve_flop`) was 2-position.
+    Confirmed directly in the new pipeline test: `len({scenario.
+    stacks[p] for p in scenario.live_positions}) == 1` — every live
+    position's own remaining stack really does match at a genuine
+    3-position terminal, exactly as the N-general proof predicts.
+  - **A real, measured cost finding from this milestone's own scoping
+    pass, not assumed — and the reason this ships flop-only, no
+    chance dispatch:** flop-only multiway MCCFR (no turn-chaining at
+    all) is expensive even at a modest combo pool. A 9-combo pool (3
+    per position), `max_raises=1`, 30 iterations: **0.34s**. A 24-combo
+    pool (8 per position), the same tiny tree, only 50 iterations:
+    **exceeded 100s** (killed rather than waited out). Pool size is the
+    dominant cost driver — consistent with `multiway_board_equity.py`'s
+    own O(pool_size) finding (M30), compounded here by cache-miss rate
+    across the many distinct opponent tuples MCCFR samples iteration to
+    iteration (a bigger pool means a bigger space of distinct tuples,
+    so more expensive cache misses more often). `DEFAULT_FLOP_MULTIWAY_
+    ITERATIONS = 200` mirrors `DEFAULT_FLOP_TURN_ITERATIONS`'s own
+    "prove it small first" default (M14) — explicitly documented as not
+    validated at realistic combo-pool scale, the same honesty precedent
+    M9's own iteration-budget comments already established.
+  - **A real directional-assumption correction, measured before
+    shipping, mirroring M15/M16's own "AA prefers raising over calling"
+    finding resurfacing a third time:** the new pipeline test's first
+    draft asserted AA continues more than trash at all 3 positions along
+    a real "BTN opens, SB calls, BB calls" path — measured instead:
+    AA's own weight at BB (facing the open, deciding whether to call)
+    is a tiny 0.0004, *smaller* than trash's own 0.305, for the exact
+    reason M15 already documented (AA prefers 3-betting/jamming over
+    flat-calling). KK — a real flatting/opening hand at all 3 positions
+    in this pool, measured at 0.69-0.85 vs. trash's 0.0017-0.305 — is
+    the comparator that actually behaves the way naive "premium
+    continues more" intuition expects, applied here rather than
+    re-discovering the fix a third time.
+  - **Tests:** `tests/test_solver.py` gained a full `solve_flop_
+    multiway` section mirroring `solve_flop`'s own exactly (combo-pool
+    union, frequencies-sum-to-one, a real-hand-vs-air facing-a-bet
+    directional check — now at MID, the second actor at a genuine
+    3-position table, a node a 2-position test structurally can't
+    reach — config/root sanity, determinism given a seed, default-
+    iterations fallback, a missing-combo-gets-zero-weight check, the
+    `positions`/`position_ranges` mismatch `ValueError`), plus the
+    required end-to-end pipeline test described above, reusing the
+    existing `three_max_result` fixture (no new slow preflop solve).
+  - **Verification:** `python -m pytest tests/ -v` — 630 passed, zero
+    regressions (up from M34's 620), and notably *faster* than the
+    M33/M34 runs (387.54s vs. 734-786s) — consistent with those
+    earlier runs' own honestly-reported conclusion that the timing
+    variance was ordinary machine-load noise, not a real regression, now
+    further corroborated by a third data point. `npm test` (frontend) —
+    139 passed, zero regressions (engine-only change).
+  - **Scope:** engine only, no `api/main.py`/frontend changes, no
+    chance-dispatch (turn-chaining) variant, no live endpoint — matches
+    M30-M32's own "engine machinery first, live wiring is separate,
+    measured-later work" precedent, now reinforced by this milestone's
+    own real cost finding (flop-only multiway MCCFR is *already*
+    expensive at modest scale, before chance dispatch even enters the
+    picture). A `solve_flop_turn_multiway`-shaped follow-on (reusing
+    M32's `build_mccfr_chance_branch` machinery) and a live endpoint are
+    natural next milestones, each needing their own dedicated cost
+    measurement before scoping further — not attempted here.
 
 ## v3 vision (future) — live-table advisor
 
