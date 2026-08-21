@@ -3533,6 +3533,94 @@ street chaining needs.
     the same discipline this milestone applied to the river endpoint,
     not a blanket multiply-by-some-factor guess; and the OTHER M47-named
     speed lever (a restructured two-phase solve) remains unattempted.
+- **M50 — extract the five path-derived endpoints' shared front half
+  (`_derive_path_situation`).** Groundwork for a unified `POST /advise`
+  (M51), split into its own PR per this project's "one coherent
+  improvement per PR" rule — a pure, behavior-preserving refactor,
+  proven by the existing 62 path-endpoint tests passing **completely
+  unchanged**, before any new feature layers on top of it.
+  - **The problem, measured not asserted:** five orchestrators
+    (`_query_flop_from_path`, `_query_flop_multiway_from_path`,
+    `_query_turn_from_path`, `_query_turn_multiway_from_path`,
+    `_query_river_from_path`) each hand-rolled the SAME pipeline —
+    cached preflop solve -> resolve action kinds -> `derive_ranges_from_
+    path` -> terminal/live-count validation -> cap ranges -> expand to
+    board-legal combos -> `postflop_action_order` -> derive the shared
+    effective stack. Only the SOLVE stage and response shape genuinely
+    differ. Concrete before/after: `derive_ranges_from_path` had **5
+    call sites, now 1**.
+  - **Honest about what this did and didn't buy:** `api/main.py` is
+    roughly line-NEUTRAL (+218/-201) — the shared function carries a
+    substantial design docstring explaining what's parameterized and
+    why. The win isn't line count, it's that ~175 lines of five-times-
+    duplicated pipeline became ~85 lines existing once. Stated plainly
+    rather than dressed up as a size reduction it isn't.
+  - **The real payoff, and the reason this was worth doing before
+    M51:** `path_scenario.trained` — the confidence signal flagged as a
+    "known, deliberate gap" in M29, M42, AND M44, deferred every time —
+    kept needing a five-place change. It now has exactly ONE place that
+    would need to change. (Still deferred here: it needs its own
+    response-shape decision, which is M51's business, not a refactor's.)
+  - **Deliberately parameterized, NOT unified away — these are real
+    per-endpoint differences, not incidental drift:** the live-position
+    rule (exactly 2 for the exact solvers vs. 3+ for MCCFR, each
+    rejecting the other's case by name); class-level vs. combo-level
+    capping (M46's river endpoint needs the finer lever, for its own
+    measured reason); `path_field_name` (the flop endpoints call their
+    field `action_path`, the deeper ones `preflop_action_path`, and
+    error text should name whichever the client actually sent); and all
+    five separately-measured cap constants, kept as-is. This is the
+    exact failure mode this project has hit before (M32's `postflop_
+    action_order` misapplication, M47's rejected lazy-chance idea) —
+    unifying things that only LOOK the same.
+  - **A real, small behavior improvement that fell out of the
+    extraction, verified empirically:** a 3-live-position path sent to a
+    2-position endpoint previously reached `postflop_action_order`'s own
+    2-tuple unpack and surfaced as a bare `"too many values to unpack"`
+    ValueError — still a 422, but useless to a caller. The two flop
+    endpoints had no explicit check at all; only the deeper three did.
+    Now every endpoint gives the same real explanation naming the
+    sibling endpoint that DOES serve that case: `"action_path leaves 3
+    live positions, not 2 — use /solve_flop_multiway_from_path for a
+    3+-survivor situation"`. Confirmed live before pinning it in a test.
+  - **`_PathSituation.capped_scenario` is `None` for combo-level
+    capping, populated for class-level** — not an inconsistency: the
+    canonical-library path (`query_strategy_from_path`) has a documented
+    class-dicts-only contract (M20's crux design finding), so it needs a
+    real `StartingHand`-keyed `PathScenario`; a combo-capped range has
+    no meaningful class-level equivalent to hand it.
+  - **Tests:** 8 new — 7 direct unit tests of `_derive_path_situation`
+    itself (both capping modes, the exactly-one-mode `RuntimeError`
+    guard, non-terminal rejection naming the client's own field, both
+    live-count rejections naming the sibling, a real 3-live acceptance
+    including the N-general equal-stacks guarantee), plus the existing
+    3-live-survivor endpoint test strengthened from a bare 422 assertion
+    to pinning the improved message. The board-blocks-every-combo guard
+    test uses a real, empirically-verified constructible case (at a
+    1-class cap, BB's top class on this path is the pair `22`, and a
+    board of three deuces blocks all six of its combos — a pair being
+    the only class shape a 3-card flop can fully block) rather than a
+    contrived one; an initial placeholder version of this test that
+    asserted something trivially true was caught and replaced before
+    shipping.
+  - **Verification:** `python -m pytest tests/ -v` — 712 passed, zero
+    regressions (up from M49's 704 — 8 new tests). The 62 pre-existing
+    path-endpoint tests needed NO modification, which is the actual
+    proof the refactor preserved behavior. All five orchestrator
+    signatures verified unchanged, so `_prewarm_common_depths`' own
+    positional call sites (a path the test suite never exercises, since
+    pre-warm is disabled there) still bind correctly. No frontend
+    changes.
+  - **Next (M51, the reason this exists):** `POST /advise` — one
+    endpoint taking a full situation (street depth inferred from which
+    fields are present), dispatching into this core, adding `hero_cards`
+    (force-included BEFORE capping, so a hand outside the top-K isn't
+    silently absent from its own advice) and a `source` field naming
+    which backend answered (`exact`/`mccfr`/`library_hit`/`library_
+    miss`) so the canonical library's real ~7,000x hit speedup is kept
+    but its inability to report `trained` is visible rather than hidden.
+    The missing multiway-river cell becomes a dispatch case, not a 6th
+    duplicate.
 
 ## v3 vision (future) — live-table advisor
 
