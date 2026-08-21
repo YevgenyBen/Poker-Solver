@@ -1,7 +1,7 @@
 import { useState } from 'react';
+import { ComboRow } from './ComboRow';
 import { fetchCachedFlopStrategy, SolveError } from '../api';
 import { shuffleSuits } from '../boardSuits';
-import { gradientFor, sortedEntries } from '../colors';
 import type { FlopQueryResponse } from '../types';
 
 const DEFAULT_BOARD = 'Jh7d2c';
@@ -108,19 +108,7 @@ export function CachedFlopSolver() {
           </p>
           {combos.map((combo) => {
             const freqs = result.strategy[combo];
-            const breakdown = sortedEntries(freqs)
-              .filter(([, freq]) => freq > 0.005)
-              .map(([action, freq]) => `${action} ${(freq * 100).toFixed(0)}%`)
-              .join(', ');
-            return (
-              <div className="detail-row" key={combo}>
-                <span className="label">{combo}</span>
-                <span className="bar-track">
-                  <span className="bar-fill" style={{ width: '100%', background: gradientFor(freqs) }} />
-                </span>
-                <span className="breakdown">{breakdown}</span>
-              </div>
-            );
+            return <ComboRow key={combo} label={combo} freqs={freqs} />;
           })}
         </div>
       )}

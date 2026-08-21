@@ -1,6 +1,6 @@
 import { useState } from 'react';
+import { ComboRow } from './ComboRow';
 import { fetchAdvice, SolveError } from '../api';
-import { gradientFor, sortedEntries } from '../colors';
 import { MULTIWAY_TABLE_SIZES, type MultiwayTableSize } from '../hands';
 import { usePreflopWalk } from '../usePreflopWalk';
 import type { AdviseRequest, AdviseResponse, LegalActionOption } from '../types';
@@ -392,20 +392,7 @@ export function AdviseSolver() {
               <h3>Your hand: {result.hero.cards}</h3>
               {result.hero.strategy ? (
                 <>
-                  <div className="detail-row">
-                    <span className="bar-track">
-                      <span
-                        className="bar-fill"
-                        style={{ width: '100%', background: gradientFor(result.hero.strategy) }}
-                      />
-                    </span>
-                    <span className="breakdown">
-                      {sortedEntries(result.hero.strategy)
-                        .filter(([, freq]) => freq > 0.005)
-                        .map(([action, freq]) => `${action} ${(freq * 100).toFixed(0)}%`)
-                        .join(', ')}
-                    </span>
-                  </div>
+                  <ComboRow freqs={result.hero.strategy} />
                   {!result.hero.in_range && (
                     <p className="depth-hint">
                       Your hand wasn&rsquo;t in the top of the derived range — it was added so it could be solved
@@ -444,25 +431,7 @@ export function AdviseSolver() {
           {combos.map((combo) => {
             const freqs = result.strategy[combo];
             const isTrained = result.trained?.[combo] ?? true;
-            return (
-              <div className="detail-row" key={combo}>
-                <span className="label">{combo}</span>
-                <span className="bar-track">
-                  <span className="bar-fill" style={{ width: '100%', background: gradientFor(freqs) }} />
-                </span>
-                <span className="breakdown">
-                  {sortedEntries(freqs)
-                    .filter(([, freq]) => freq > 0.005)
-                    .map(([action, freq]) => `${action} ${(freq * 100).toFixed(0)}%`)
-                    .join(', ')}
-                </span>
-                {!isTrained && (
-                  <span className="trained-indicator untrained" title="Not enough data — the untrained default">
-                    low data
-                  </span>
-                )}
-              </div>
-            );
+            return <ComboRow key={combo} label={combo} freqs={freqs} trained={isTrained} />;
           })}
         </div>
       )}
