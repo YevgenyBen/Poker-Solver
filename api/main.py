@@ -333,6 +333,29 @@ than /solve_flop's own already-"not worth pre-warming" ~2.6s at their
 respective defaults, so a cold-start tax was never the concern
 /solve_flop_turn's/`/solve_flop_to_river`'s own pre-warming exists to
 avoid.
+
+GET /solve_flop_to_river_multiway is M40's deliverable: the same 3-max
+multiway flop as /solve_flop_multiway/`/solve_flop_turn_multiway`,
+chained all the way to a real multiway river decision — wiring up M39's
+solve_flop_to_river_multiway, the direct N-position generalization of
+`/solve_flop_to_river`. Own cache dict (_flop_to_river_multiway_cache),
+same reasoning as every other endpoint's own dict.
+
+Measured live, at the same 11-combo DEMO_MULTIWAY_FLOP_CLASSES pool:
+genuinely *cheaper* than solve_flop_turn_multiway at every iteration
+count compared (200 iters ~3.89s vs. ~5.8s; 500 iters, the most
+expensive point measured, ~9.54s vs. ~13.8s) — the OPPOSITE of what
+the 2-position solve_flop_to_river/`solve_flop_turn` pair found (M13/
+M14, where the second hop cost dramatically more). Traced to two
+independent reasons (see CLAUDE.md's M39 entry for the full
+explanation): build_mccfr_chance_branch's lazy, one-sampled-card-at-a-
+time design never pays build_chance_node's own eager combinatorial
+cost, and a complete-river-board equity lookup needs no enumeration at
+all, cheaper still than a turn-level lookup's own already-cheap exact
+enumeration. MAX_FLOP_TO_RIVER_MULTIWAY_ITERATIONS is therefore set
+equal to solve_flop_turn_multiway's own default/cap (50/500), not
+solve_flop_to_river's own tiny 2-position ones. Not pre-warmed, for the
+same reason as the two endpoints above.
 """
 
 import dataclasses
@@ -364,6 +387,7 @@ from poker_solver.solver import (
     DEFAULT_FLOP_ITERATIONS,
     DEFAULT_FLOP_MULTIWAY_ITERATIONS,
     DEFAULT_FLOP_TO_RIVER_ITERATIONS,
+    DEFAULT_FLOP_TO_RIVER_MULTIWAY_ITERATIONS,
     DEFAULT_FLOP_TURN_ITERATIONS,
     DEFAULT_FLOP_TURN_MULTIWAY_ITERATIONS,
     DEFAULT_ITERATIONS,
@@ -372,6 +396,7 @@ from poker_solver.solver import (
     solve_flop,
     solve_flop_multiway,
     solve_flop_to_river,
+    solve_flop_to_river_multiway,
     solve_flop_turn,
     solve_flop_turn_multiway,
     solve_preflop,
@@ -548,6 +573,24 @@ MULTIWAY_FLOP_RAISE_SIZES = (2.5,)
 MAX_FLOP_MULTIWAY_ITERATIONS = 2_000
 MAX_FLOP_TURN_MULTIWAY_ITERATIONS = 500
 
+# solve_flop_to_river_multiway's own cap (M40, wiring up M39's engine
+# work) — measured live at the same 11-combo pool: cheaper than solve_
+# flop_turn_multiway at every iteration count compared (200 iters
+# ~3.89s vs. ~5.8s; the most expensive point measured, 500 iterations,
+# was ~9.54s vs. solve_flop_turn_multiway's own ~13.8s at the same
+# count), the OPPOSITE of solve_flop_to_river's own 2-position finding
+# (M13/M14, where the second hop was dramatically MORE expensive than
+# the first — see CLAUDE.md's M39 entry for the two independent reasons
+# why: build_mccfr_chance_branch's lazy, one-sampled-card-at-a-time
+# design never pays build_chance_node's eager combinatorial cost, and a
+# complete-river-board equity lookup needs no enumeration at all, unlike
+# a turn-level lookup's own already-cheap exact enumeration). Set equal
+# to solve_flop_turn_multiway's own default/cap (50/500) rather than
+# solve_flop_to_river's tiny 2-position ones (20/=default, zero
+# headroom) — the cost profile that justified those numbers doesn't
+# hold here.
+MAX_FLOP_TO_RIVER_MULTIWAY_ITERATIONS = 500
+
 # Matches FlopSolver.tsx's DEFAULT_BOARD/DEFAULT_POT/DEFAULT_STACK_BB —
 # used only to pick what to pre-warm below; kept in sync manually (a
 # drift here just makes the pre-warm quietly stop helping the real
@@ -675,6 +718,10 @@ _flop_multiway_cache: dict = {}
 _flop_multiway_lock = threading.Lock()
 _flop_turn_multiway_cache: dict = {}
 _flop_turn_multiway_lock = threading.Lock()
+# /solve_flop_to_river_multiway's own dict (M40) — same "each endpoint
+# gets its own" reasoning as every dict above.
+_flop_to_river_multiway_cache: dict = {}
+_flop_to_river_multiway_lock = threading.Lock()
 # Not "_flop_query_cache" — this dict IS query_strategy's own `library`
 # parameter (poker_solver/library.py), held at module scope across
 # requests, a different granularity than the four dicts above (which
@@ -937,6 +984,42 @@ def _get_or_solve_flop_turn_multiway(board_cards: tuple, pot: float, stack_bb: f
 
     with _flop_turn_multiway_lock:
         _flop_turn_multiway_cache[key] = result
+    return result
+
+
+def _get_or_solve_flop_to_river_multiway(board_cards: tuple, pot: float, stack_bb: float, iterations: int) -> StrategyResult:
+    """Same idea as _get_or_solve_flop_turn_multiway, via solve_flop_to_
+    river_multiway (M39) and its own cache — see MAX_FLOP_TO_RIVER_
+    MULTIWAY_ITERATIONS' own comment for why this endpoint's cap matches
+    solve_flop_turn_multiway's rather than solve_flop_to_river's tiny
+    2-position ones."""
+    key = (board_cards, round(pot, 2), round(stack_bb), iterations)
+    with _flop_to_river_multiway_lock:
+        cached = _flop_to_river_multiway_cache.get(key)
+    if cached is not None:
+        return cached
+
+    exclude = frozenset(board_cards)
+    position_ranges = {
+        position: range_from_class_frequencies(classes, exclude=exclude)
+        for position, classes in DEMO_MULTIWAY_FLOP_CLASSES.items()
+    }
+    if any(not r for r in position_ranges.values()):
+        raise ValueError(f"board {''.join(str(c) for c in board_cards)!r} blocks every demo-range combo for at least one position")
+
+    result = solve_flop_to_river_multiway(
+        board=board_cards,
+        position_ranges=position_ranges,
+        pot=pot,
+        effective_stack_bb=stack_bb,
+        positions=DEMO_MULTIWAY_FLOP_POSITIONS,
+        raise_sizes=MULTIWAY_FLOP_RAISE_SIZES,
+        max_raises=MULTIWAY_FLOP_MAX_RAISES,
+        iterations=iterations,
+    )
+
+    with _flop_to_river_multiway_lock:
+        _flop_to_river_multiway_cache[key] = result
     return result
 
 
@@ -1648,6 +1731,29 @@ async def solve_flop_turn_multiway_endpoint(
         if len(board_cards) != 3:
             raise ValueError(f"board must have exactly 3 cards for a flop, got {len(board_cards)}")
         result = await run_in_threadpool(_get_or_solve_flop_turn_multiway, board_cards, pot, stack_bb, iterations)
+        return format_flop_response(result, board="".join(str(c) for c in board_cards), position=position)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/solve_flop_to_river_multiway", response_model=FlopSolveResponse)
+async def solve_flop_to_river_multiway_endpoint(
+    board: str = Query(..., description="Exactly 3 cards, e.g. Jh7d2c"),
+    pot: float = Query(10.0, gt=0, description="Pot entering the flop"),
+    stack_bb: float = Query(40.0, gt=0, description="Effective stack behind, in big blinds"),
+    iterations: int = Query(DEFAULT_FLOP_TO_RIVER_MULTIWAY_ITERATIONS, gt=0, le=MAX_FLOP_TO_RIVER_MULTIWAY_ITERATIONS),
+    position: str | None = Query(None, description="OOP, MID, or IP — defaults to OOP, the first to act"),
+):
+    """Same 3-max multiway flop as /solve_flop_multiway, chained all the
+    way to a real multiway river decision (M40, wiring up M39's solve_
+    flop_to_river_multiway) — the deepest runout this endpoint family
+    exposes for a multiway origin, mirroring /solve_flop_to_river's own
+    role at the 2-position endpoints."""
+    try:
+        board_cards = tuple(parse_cards(board))
+        if len(board_cards) != 3:
+            raise ValueError(f"board must have exactly 3 cards for a flop, got {len(board_cards)}")
+        result = await run_in_threadpool(_get_or_solve_flop_to_river_multiway, board_cards, pot, stack_bb, iterations)
         return format_flop_response(result, board="".join(str(c) for c in board_cards), position=position)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
