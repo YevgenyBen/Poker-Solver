@@ -101,6 +101,7 @@ def build_chance_node(
     raise_sizes: tuple = (2.5, 3.0, 2.2),
     max_raises: int = 4,
     chain_to_river: bool = False,
+    equity_table_cache: dict | None = None,
 ) -> ChanceNode:
     """Build the chance node that follows a showdown-eligible `terminal`
     (action capped without a fold on whatever street `terminal` belongs
@@ -146,8 +147,25 @@ def build_chance_node(
     branches = {}
     for card in remaining_deck(board):
         next_board = board + (card,)
-        equity_table = build_board_equity_table(next_board, combos)
-        equity_table = np.nan_to_num(equity_table, nan=0.5)
+        # M55: memoized across chance nodes. A branch's equity table is a
+        # pure function of (next_board, combos) — it does NOT depend on
+        # which `terminal` this chance node hangs off, since `terminal`
+        # only ever influences the branch's TREE (via remaining_stack),
+        # never its equity. A flop tree has several showdown-eligible
+        # terminals and each was independently rebuilding all ~46-49 of
+        # these identical tables: measured at exactly 7.00x redundancy on
+        # a real /solve_turn_from_path query (343 builds, 49 distinct
+        # inputs), against a bottleneck profiling put at ~74% of that
+        # endpoint's total time. Correct by construction, not an
+        # approximation — the same pure function, the same arguments.
+        cache_key = (next_board, tuple(combos))
+        cached = None if equity_table_cache is None else equity_table_cache.get(cache_key)
+        if cached is None:
+            equity_table = np.nan_to_num(build_board_equity_table(next_board, combos), nan=0.5)
+            if equity_table_cache is not None:
+                equity_table_cache[cache_key] = equity_table
+        else:
+            equity_table = cached
 
         if remaining_stack == 0:
             # Both players are already all-in — no more betting is
@@ -188,7 +206,7 @@ def build_chance_node(
                 chance_fn = lambda t, _b=next_board, _s=remaining_stack: build_chance_node(
                     t, board=_b, combos=combos, positions=positions,
                     effective_stack_bb=_s, raise_sizes=raise_sizes, max_raises=max_raises,
-                    chain_to_river=True,
+                    chain_to_river=True, equity_table_cache=equity_table_cache,
                 )
             else:
                 chance_fn = None

@@ -3889,6 +3889,70 @@ street chaining needs.
     against fixture-patched caps independent of the production values).
     No frontend changes.
 
+- **M55 — the speed lever that was actually there: memoize chance-node
+  equity tables. Scoped as the two-phase solve; became something better
+  and provably correct.** Item 3 on the user's own ordered list.
+  - **Scoping started by re-checking M54's own claim, and found it
+    WRONG.** M54's comment asserted `solve_flop_turn` was "dominated by
+    `cfr._solve_recurse`'s tree traversal, not by hand evaluation" —
+    derived from a stale pre-M48 profile AND by misreading cProfile's
+    CUMULATIVE time as self time. Re-profiled by SELF time on current
+    code: `build_board_equity_table` is 9.65s self / 30.52s cumulative
+    of 41.16s total (**~74%**), while `_solve_recurse`'s own self time is
+    just 5.05s (~12%). Equity-table CONSTRUCTION dominates, not
+    traversal. The corrected comment ships in `MAX_TURN_PATH_QUERY_
+    CLASSES_PER_SIDE`'s own docstring rather than being quietly fixed.
+  - **That correction is what found the real lever.** A chance branch's
+    equity table is a pure function of `(next_board, combos)` — it does
+    NOT depend on which `terminal` the chance node hangs off, since the
+    terminal only influences the branch's TREE (via `remaining_stack`).
+    But `build_chance_node` is called once per showdown-eligible flop
+    terminal, and each independently rebuilt all ~46-49 identical
+    tables. **Measured on a real `/solve_turn_from_path` query: 343
+    builds, 49 distinct inputs — exactly 7.00x redundancy**, against the
+    ~74% bottleneck above.
+  - **Chosen over the two-phase solve, and this was the decision point
+    the user's "widest, most future-proof base" instruction governed.**
+    The two-phase solve (solve flop+turn cheaply, then re-solve the one
+    requested turn subtree) is speculative: it changes the answer, needs
+    its own accuracy measurement, and risks repeating M17/M18's card
+    abstraction — machinery built, measured, found not to be the lever.
+    Memoization is correct BY CONSTRUCTION (same pure function, same
+    arguments), targets the same dominant cost, and helps every
+    chance-dispatching solver rather than one cell. Proven, not argued:
+    a same-inputs comparison came back **bit-identical** (max strategy
+    difference exactly 0.0) while running faster.
+  - **Per-solve cache, not a module global** — scoped so nothing leaks
+    across requests, pools, or threads, the same caller-supplied-dict
+    pattern `chance_data` itself already uses. Forwarded into the
+    chained river hop too, or the second level would silently lose the
+    benefit.
+  - **Measured payoff, and it landed hardest exactly where M54 said
+    there was no headroom:** turn heads-up cap=2 32.77s -> **10.18s**
+    (3.2x), cap=3 78.84s -> **19.93s** (4.0x), cap=4 107.27s ->
+    **25.04s** (4.3x). River heads-up cap=6 ~40s -> **17.18s**, cap=9 ->
+    31.72s. The full backend suite's own wall clock fell 457s -> 415s as
+    independent corroboration.
+  - **So two caps rose, and M54's own conclusion is now obsolete:**
+    `MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE` 2 -> **4** (cap=4 now costs
+    LESS than cap=2 did before — double the fidelity AND faster), and
+    `RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE` 6 -> **9** (50% more combo
+    fidelity, still faster than the previous setting).
+  - **Tests:** 3 new in `tests/test_chance.py` — that without a cache
+    each terminal rebuilds its own tables; that with a shared cache a
+    second, genuinely DIFFERENT terminal builds zero new tables while
+    still getting a different tree (proving the cache shares only what's
+    terminal-independent, and shares the same array objects rather than
+    merely equal ones); and that tables are identical with and without
+    the cache.
+  - **Verification:** `python -m pytest tests/ -v` — 742 passed, zero
+    regressions (up from M54's 739 — 3 new). No frontend changes.
+  - **The two-phase solve remains untried**, now with a much higher bar
+    to clear: it would have to beat a lever that is already 3-4x and
+    lossless. Whether the remaining `_solve_recurse` self time (~12%) is
+    worth an architectural change is a genuinely open question, and a
+    smaller prize than it looked before this profile.
+
 ## v3 vision (future) — live-table advisor
 
 Discussed with the user while scoping M16, recorded here rather than
