@@ -24,6 +24,7 @@ from .board_equity import build_board_equity_table
 from .chance import build_chance_node
 from .cfr import InfoSetTable, mccfr_solve, solve
 from .equity import MultiwayEquityCache, get_equity_table
+from .multiway_board_equity import NwayBoardEquityCache
 from .game_tree import (
     CALL_OR_CHECK,
     FOLD,
@@ -612,6 +613,133 @@ def solve_flop(
         iterations=actual_iterations,
         positions=positions,
         initial_reach={hero_position: hero_reach, villain_position: villain_reach},
+    )
+    elapsed = time.perf_counter() - start
+
+    return StrategyResult(
+        config=config,
+        root=root,
+        hands=combos,
+        node_data=node_data,
+        iterations=actual_iterations,
+        elapsed_seconds=elapsed,
+    )
+
+
+# Measured during M35's own scoping pass, not assumed: a 9-combo pool (3
+# per position), max_raises=1, 30 iterations, no chance dispatch at all ->
+# 0.34s. A 24-combo pool (8 per position), same tiny tree, only 50
+# iterations -> exceeded 100s (killed, not waited out). Pool size is the
+# dominant cost driver (consistent with multiway_board_equity.py's own
+# O(pool_size) finding, compounded here by cache-miss rate across many
+# distinct opponent tuples MCCFR samples iteration to iteration — a bigger
+# pool means a bigger space of distinct tuples, so more expensive cache
+# misses more often). DEFAULT_FLOP_MULTIWAY_ITERATIONS below mirrors
+# DEFAULT_FLOP_TURN_ITERATIONS's own "prove it small first" default (M14)
+# — NOT validated at a realistic combo-pool scale. A caller solving
+# anything wider than a handful of combos per position should measure
+# their own scale before trusting this default, and should expect this to
+# be materially slower than solve_flop's own 2-position exact-CFR path at
+# any iteration count.
+DEFAULT_FLOP_MULTIWAY_ITERATIONS = 200
+
+
+def solve_flop_multiway(
+    board: tuple,
+    position_ranges: dict,
+    pot: float,
+    effective_stack_bb: float,
+    positions: tuple,
+    raise_sizes: tuple = (2.5, 3.0, 2.2),
+    max_raises: int = 4,
+    iterations: int = None,
+    equity_samples: int = None,
+    equity_seed: int = DEFAULT_EQUITY_SEED,
+    seed: int = 0,
+) -> StrategyResult:
+    """Solve a single flop betting round for 2+ live positions and return
+    its strategy — the direct N-position generalization of `solve_flop`
+    (M11, 2-position-only) via `cfr.mccfr_solve` + `multiway_board_equity.
+    NwayBoardEquityCache` (M30-M32) instead of `cfr.solve` + `board_equity.
+    build_board_equity_table`.
+
+    `position_ranges` maps each entry of `positions` to a {combos.
+    HandCombo: weight} dict — see combos.range_from_class_frequencies for
+    the natural way to build one from a preflop solve's per-class
+    continue-frequency output (per position; `derive_ranges_from_path`,
+    already N-player-general since M16, is the natural source of those
+    per-class frequencies for an arbitrary real situation, not just a
+    fixed 2-step line). `positions` and `position_ranges` must cover
+    exactly the same positions — this is an explicit `ValueError`, not a
+    silently-ignored mismatch, since a caller who mistyped one position
+    label would otherwise get a confusing downstream KeyError instead.
+
+    All `positions`' ranges are combined into one shared combo pool (the
+    union of all of them, matching mccfr_solve's own single `hands`
+    list/per-position `initial_reach` design) — a combo missing from a
+    position's range gets 0 weight for that position, not an error,
+    exactly like solve_flop's own hero_range/villain_range handling. Some
+    (position A's combo, position B's combo) pairs in that pool
+    inevitably share a physical card — multiway_board_equity.
+    NwayBoardEquityCache reports these as NaN, and cfr._mccfr_terminal_
+    value already replaces NaN with a neutral 0.5 internally (see its own
+    docstring) — unlike solve_flop, this function does not need its own
+    nan_to_num call, since that replacement now happens one layer deeper.
+
+    Unlike solve_flop, board.and-beyond runouts are averaged inside
+    NwayBoardEquityCache itself (Monte Carlo, `remaining_needed=2`) —
+    the same "averaged at the terminal" approximation solve_flop's own
+    docstring already established for the 2-position case — not chained
+    into a real turn decision. Chaining into a real multiway turn
+    (reusing chance.build_mccfr_chance_branch, M32) is deliberately out
+    of scope here — see this function's own module-level DEFAULT_FLOP_
+    MULTIWAY_ITERATIONS comment for the measured cost reason a chance-
+    dispatched variant needs its own separate scoping pass, not a
+    speculative addition to this one.
+
+    `seed` controls mccfr_solve's own sampling (opponent hands, opponent
+    actions, and — via NwayBoardEquityCache's own internal seeding —
+    which specific runouts each candidate/opponent-tuple pairing
+    samples). Unlike solve_flop (which calls the exact, non-sampling
+    cfr.solve()), this result is only deterministic given a fixed `seed`,
+    not unconditionally — see mccfr_solve's own docstring.
+    """
+    if set(positions) != set(position_ranges):
+        raise ValueError(
+            f"positions {positions!r} and position_ranges' keys {tuple(position_ranges)!r} "
+            "must cover exactly the same positions"
+        )
+
+    combos = sorted(set().union(*(r.keys() for r in position_ranges.values())), key=str)
+    initial_reach = {
+        position: np.array([position_ranges[position].get(combo, 0.0) for combo in combos])
+        for position in positions
+    }
+
+    config = StreetConfig(
+        positions=positions,
+        pot=pot,
+        stack_bb=effective_stack_bb,
+        raise_sizes=raise_sizes,
+        max_raises=max_raises,
+    )
+    root = build_street_tree(config)
+
+    equity_kwargs = {"seed": equity_seed}
+    if equity_samples is not None:
+        equity_kwargs["samples"] = equity_samples
+    equity_cache = NwayBoardEquityCache(board, combos, **equity_kwargs)
+
+    actual_iterations = iterations if iterations is not None else DEFAULT_FLOP_MULTIWAY_ITERATIONS
+    start = time.perf_counter()
+    node_data = mccfr_solve(
+        root,
+        combos,
+        positions,
+        equity_cache,
+        iterations=actual_iterations,
+        seed=seed,
+        initial_reach=initial_reach,
     )
     elapsed = time.perf_counter() - start
 
