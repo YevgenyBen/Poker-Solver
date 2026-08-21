@@ -305,6 +305,20 @@ means the current figure is at *higher* range fidelity than the old one.
 
 ## 7. Prioritized recommendations
 
+> **STATUS (M58-M65): all seven resolved.** Worked in order. Each links
+> to its milestone entry in `docs/milestones.md`.
+>
+> | # | Item | Outcome |
+> |---|---|---|
+> | 1 | Unify preflop caches | **M58** — done; also fixed a second, unrecorded bug (`?position=BB` silently returned BTN's strategy). Test suite 415s -> 205s. |
+> | 2 | Extract `<ComboRow>` | **M59** — done; -164/+15 lines. The "11 duplications" were two different shapes; only the 9-use one was extracted. |
+> | 3 | Cache registry | **M60** — done; self-registering class, not a hand-maintained list. Found two "caches" that are engine-owned dicts. |
+> | 4 | Split `api/main.py` | **M61+M62** — done; 3,441 -> 1,273 lines across four modules. |
+> | 5 | 6/9-max iteration budgets | **M63** — **DO NOT RAISE.** §6.1's "real headroom" framing was wrong; corrected in place above. |
+> | 6 | Superseded endpoints/tabs | **M64** — 2 tabs retired (not 5 — the count here was imprecise), 5 routes deprecated but functional. |
+> | 7 | Restructure CLAUDE.md | **M65** — done; 4,628 -> 423 lines, history moved to `docs/milestones.md`. |
+
+
 Ranked by (value ÷ effort), with the reasoning that ranks them.
 
 ### #1 — Unify the two preflop caches (§2.1)
