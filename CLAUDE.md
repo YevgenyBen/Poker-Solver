@@ -2895,6 +2895,103 @@ street chaining needs.
     does connecting `derive_ranges_from_path`'s own multiway output
     (proven at 3-max in M35's own pipeline test) into either live
     multiway endpoint the way M23/M24 did for the 2-position family.
+- **M42 — `POST /solve_flop_multiway_from_path`: connecting
+  `derive_ranges_from_path`'s multiway output into a live endpoint,**
+  closing the gap M41's own entry named as still open. The multiway
+  analog of `/solve_flop_from_path` (M24), for the case that endpoint
+  structurally can't serve: a real action path leaving 3+ live
+  positions at the flop, not just 2 — `query_strategy_from_path` (M23)
+  is 2-position machinery all the way down (`query_strategy` ->
+  `solve_flop` -> `build_board_equity_table`), so this endpoint calls
+  `solve_flop_multiway` (M35) directly instead, behind its own plain,
+  unpartitioned dict cache (no canonical-library collision risk to
+  partition against, unlike `/solve_flop_from_path`'s own Finding 2).
+  - **Scope boundary, deliberate, not a gap:** requires a genuine
+    3+-live-position terminal; a 2-survivor path 422s with a message
+    pointing at `/solve_flop_from_path` instead — that endpoint's exact,
+    not MCCFR-approximate, 2-position solver is genuinely better for
+    that case, not just a narrower option, so this endpoint doesn't try
+    to also serve it.
+  - **A real, load-bearing consequence of reusing `_get_or_solve_
+    preflop_raw` unchanged, found before any cost measurement was
+    needed:** whenever `players != 2`, that helper already ignores its
+    own `iterations` argument and delegates to `_get_or_solve_multiway`,
+    which solves over `MULTIWAY_TABLE_CONFIGS`' own small `DEMO_
+    MULTIWAY_HANDS` pool (8 real classes) — not the full 169-class pool
+    `/solve_flop_from_path` solves over at `players=2`. So this
+    endpoint's own per-position class cap only ever ranks among 8
+    classes, not 169 — M24's own Finding 1 (an uncapped 169-class pool
+    costing hours) structurally cannot recur here, independent of
+    whatever cap value gets chosen.
+  - **Measured anyway, since `solve_flop_multiway`'s own cost curve is
+    far steeper than `solve_flop`'s at any pool size** (M35's own
+    finding: pool size is the dominant cost driver, compounded by
+    MCCFR's opponent-sampling cache-miss rate): at a real 3-max
+    open/call/call path reaching a genuine 3-live-position flop, at
+    `solve_flop_multiway`'s own default (200) iterations —
+    `MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION=1` -> 18 combos,
+    ~3.33s; `=2` -> 35 combos, ~22.46s; `=3` -> 62 combos, ~46.63s. Set
+    to 2, landing in the same "tolerable for a live request" bracket
+    `/solve_flop_from_path`'s own ~17-21s already established.
+    Iteration-count scaling at that cap's own 35-combo pool is NOT
+    close to flat, unlike `DEMO_MULTIWAY_FLOP_CLASSES`' own tiny
+    11-combo pool: 200 iters ~22.46s, 500 iters ~36.76s, 1000 iters
+    ~48.20s, 2000 iters ~58.13s — `MAX_MULTIWAY_PATH_QUERY_FLOP_
+    ITERATIONS` is therefore set to 500 (~37s), not `solve_flop_
+    multiway`'s own generous 2000-iteration ceiling (tuned against a
+    much smaller pool).
+  - **Reused, not rebuilt, at every step this session's own earlier
+    milestones already proved general:** `derive_ranges_from_path`
+    (M16) needed no changes — already N-position-general.
+    `postflop_action_order` (M29) needed no changes — its own docstring
+    had *already* anticipated this exact call shape ("Full, unfiltered
+    output is still N-general on purpose, at zero extra cost, for
+    whenever true multiway postflop solving... needs it"), confirmed
+    true by using it here unmodified. `_cap_range` (M24) and
+    `TerminalNode`-requires-equal-stacks (M23's own proven guard,
+    already stated N-generally) both reused verbatim. The only
+    genuinely new code this milestone wrote was the orchestration
+    (`_query_flop_multiway_from_path`) and the request/response shapes
+    — real evidence that M16/M23/M29's own "build it N-general even
+    though nothing needs it yet" calls were the right ones.
+  - **Response shape:** `FlopMultiwayPathQueryResponse` — no
+    `canonical_board`/`canonical_stack_bb`/`hit` (no canonicalized
+    library sits behind this endpoint); `positions` carries all of the
+    path's real surviving positions (3+) in real postflop acting order;
+    `flop_iterations` echoes what was actually used (unlike `/solve_
+    flop_from_path`'s own fixed, unreported `PATH_QUERY_ITERATIONS` —
+    this endpoint's flop-stage iteration count is real, request-
+    controllable input, not a hidden constant, so it's worth confirming
+    back).
+  - **Known, deliberate gap, same as `_query_flop_from_path`/`_query_
+    turn_from_path` before it:** `path_scenario.trained` isn't surfaced
+    in this endpoint's response either — the same M29-named, still-open
+    gap, not reopened or newly introduced here.
+  - **Tests:** `tests/test_api.py` gained 8 new tests — a real 3-live
+    line (BTN limps, SB calls, BB checks) returning 200 with a
+    well-formed strategy; a 2-survivor path correctly rejected with a
+    message pointing at `/solve_flop_from_path`; a non-terminal path; an
+    unknown action kind; a malformed board; `flop_iterations` above the
+    cap; a repeat query hitting the plain cache (identical
+    `elapsed_seconds`); and two different `flop_iterations` values
+    against the identical path producing two separate cache entries
+    (proving the cache key isn't missing a real cost-affecting input).
+  - **Verification:** `python -m pytest tests/ -v` — 672 passed, zero
+    regressions (up from M41's 664 — 8 new tests, no other file's
+    existing tests touched). No frontend changes this milestone (no
+    frontend consumes this endpoint yet) — matches M24's own "engine/API
+    only, frontend is a separate later milestone" precedent (M24 itself
+    got its own frontend two milestones later, at M25).
+  - **What's still open:** a frontend for this endpoint (mirroring
+    M24-then-M25's own precedent — a curated-preset or general wizard
+    UI is a separate, later decision); true 6-max/9-max multiway
+    postflop solving (unscoped, since the preflop leg here is
+    structurally capped to `DEMO_MULTIWAY_HANDS`' own 8 classes at any
+    `players != 2`, this endpoint doesn't change that ceiling); and
+    turn/river-depth versions of this same path-derived multiway
+    endpoint (mirroring M26's own flop-then-turn precedent for the
+    2-position family) — each a natural, separately-measurable next
+    milestone, none attempted here.
 
 ## v3 vision (future) — live-table advisor
 

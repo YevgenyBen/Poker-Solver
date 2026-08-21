@@ -356,6 +356,54 @@ enumeration. MAX_FLOP_TO_RIVER_MULTIWAY_ITERATIONS is therefore set
 equal to solve_flop_turn_multiway's own default/cap (50/500), not
 solve_flop_to_river's own tiny 2-position ones. Not pre-warmed, for the
 same reason as the two endpoints above.
+
+POST /solve_flop_multiway_from_path is M42's deliverable, closing the
+project's own long-named-open gap between derive_ranges_from_path's
+already-N-general output (M16) and a live multiway postflop endpoint —
+the multiway analog of /solve_flop_from_path (M24), for the case that
+endpoint structurally can't serve: a real action path leaving 3+ live
+positions at the flop, not just 2. Requires a genuine 3+-live-position
+terminal; a 2-survivor path 422s with a message pointing at
+/solve_flop_from_path instead (which uses the exact, not MCCFR-
+approximate, 2-position solver — genuinely better for that case, not
+just a narrower one). Calls solve_flop_multiway (M35) directly, not
+query_strategy_from_path (M23) — that function's own canonical-library
+machinery (query_strategy -> solve_flop -> build_board_equity_table) is
+2-position all the way down, so this endpoint instead uses its own
+plain, unpartitioned dict cache (_flop_multiway_path_cache), keyed on
+everything the derived situation and the solve actually depend on
+(action_path, players, stack_bb, board, both iteration counts).
+
+Two independent iteration fields, same TurnPathRequest-style split as
+/solve_turn_from_path: `iterations` (the preflop leg — inert whenever
+`players != 2`, per _get_or_solve_preflop_raw's own established
+behavior) and `flop_iterations` (this endpoint's own real cost driver).
+
+A real, load-bearing consequence of reusing _get_or_solve_preflop_raw
+unchanged: whenever `players != 2`, the preflop leg is already
+restricted to MULTIWAY_TABLE_CONFIGS' own small DEMO_MULTIWAY_HANDS
+pool (8 real classes), not the full 169-class pool /solve_flop_from_
+path solves over at players=2 — so this endpoint's own class cap
+(MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION) only ever ranks among
+those same 8 classes, not 169. Measured for real anyway, since solve_
+flop_multiway's own cost curve is far steeper than solve_flop's at any
+pool size (M35's own finding: pool size is the dominant cost driver,
+compounded by MCCFR's opponent-sampling cache-miss rate): at a real
+3-max open/call/call path reaching a genuine 3-live-position flop,
+solve_flop_multiway's own default (200) iterations — cap=1 -> 18
+combos, ~3.33s; cap=2 -> 35 combos, ~22.46s; cap=3 -> 62 combos,
+~46.63s. Set to 2, landing in the same "tolerable for a live request"
+bracket /solve_flop_from_path's own ~17-21s already established.
+Iteration-count scaling at this cap's own 35-combo pool is NOT close to
+flat, unlike DEMO_MULTIWAY_FLOP_CLASSES' own tiny 11-combo pool: 200
+iters ~22.46s, 500 iters ~36.76s, 1000 iters ~48.20s, 2000 iters
+~58.13s. MAX_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS is therefore set to
+500 (~37s), not solve_flop_multiway's own generous 2000-iteration
+ceiling (tuned against a much smaller pool).
+
+Not pre-warmed — the whole point is a real, client-supplied situation,
+the same reasoning /solve_flop_from_path's own module-docstring
+paragraph already established.
 """
 
 import dataclasses
@@ -407,9 +455,11 @@ from poker_solver.strategy_format import format_flop_response, format_solve_resp
 from .schemas import (
     ActionPathRequest,
     EquityResponse,
+    FlopMultiwayPathQueryResponse,
     FlopPathQueryResponse,
     FlopQueryResponse,
     FlopSolveResponse,
+    MultiwayFlopPathRequest,
     PreflopWalkRequest,
     PreflopWalkResponse,
     SolveResponse,
@@ -693,6 +743,39 @@ MAX_FLOP_TO_RIVER_ITERATIONS = DEFAULT_FLOP_TO_RIVER_ITERATIONS
 # than capping to a single class per side would.
 MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE = 2
 
+# /solve_flop_multiway_from_path's (M42) own cost controls — the
+# multiway analog of MAX_PATH_QUERY_CLASSES_PER_SIDE/PATH_QUERY_
+# ITERATIONS, separately measured since solve_flop_multiway's own cost
+# curve is far steeper than solve_flop's (M35's own finding: pool size
+# is the dominant cost driver, compounded by MCCFR's opponent-sampling
+# cache-miss rate). Unlike /solve_flop_from_path's preflop leg (which
+# solves over the FULL 169-class pool at players=2), this endpoint's
+# preflop leg is already restricted to MULTIWAY_TABLE_CONFIGS' own
+# small DEMO_MULTIWAY_HANDS pool (8 real classes) whenever players != 2
+# (see _get_or_solve_preflop_raw's own docstring) — so a much smaller
+# per-position cap than MAX_PATH_QUERY_CLASSES_PER_SIDE's 6 is both
+# necessary (this endpoint's own steep cost curve) and sufficient
+# (there are only 8 classes to rank from in the first place). Measured
+# for real, at a real 3-max open/call/call path reaching a genuine
+# 3-live-position flop, solve_flop_multiway's own default (200)
+# iterations: cap=1 -> 18 combos, ~3.33s; cap=2 -> 35 combos, ~22.46s;
+# cap=3 -> 62 combos, ~46.63s. Set to 2 — landing in the same
+# "tolerable for a live request" bracket /solve_flop_from_path's own
+# ~17-21s established, while keeping more range diversity than a
+# single top class per position would.
+MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION = 2
+
+# Iteration-count scaling at this cap's own 35-combo pool is NOT close
+# to flat, unlike DEMO_MULTIWAY_FLOP_CLASSES' own tiny 11-combo pool
+# (see MAX_FLOP_MULTIWAY_ITERATIONS' own comment) — measured, same
+# path/board as above: 200 iters ~22.46s, 500 iters ~36.76s, 1000 iters
+# ~48.20s, 2000 iters ~58.13s. Default kept at solve_flop_multiway's
+# own default (200); cap set to 500 (~37s) rather than solve_flop_
+# multiway's own generous 2000-iteration ceiling, which was tuned
+# against a much smaller (11-combo) pool.
+DEFAULT_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = DEFAULT_FLOP_MULTIWAY_ITERATIONS
+MAX_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = 500
+
 _cache: dict = {}
 _cache_lock = threading.Lock()
 _multiway_cache: dict = {}
@@ -732,6 +815,20 @@ _flop_to_river_multiway_lock = threading.Lock()
 # docstring for why that's a deliberate, stricter departure.
 _flop_query_library: dict = {}
 _flop_query_lock = threading.Lock()
+
+# /solve_flop_multiway_from_path's (M42) own plain dict cache —
+# deliberately not a partitioned "one library dict per situation" the
+# way _path_query_libraries is for /solve_flop_from_path: this endpoint
+# doesn't go through query_strategy/query_strategy_from_path at all (both
+# are 2-position machinery — solve_flop_multiway is called directly
+# instead), so there's no canonical-library collision risk to partition
+# against. Keyed on everything the derived situation and the solve
+# actually depend on: the action path, players, stack_bb, board, the
+# preflop-leg iterations, and flop_iterations — two different requests
+# that happen to derive an identical range/pot/stack still get correctly
+# separate cache entries if either iteration count differs.
+_flop_multiway_path_cache: dict = {}
+_flop_multiway_path_lock = threading.Lock()
 
 _preflop_raw_cache: dict = {}
 _preflop_raw_lock = threading.Lock()
@@ -1348,6 +1445,107 @@ def _query_flop_from_path(
     }
 
 
+def _query_flop_multiway_from_path(
+    action_kinds: list, stack_bb: float, board_cards: tuple, iterations: int, flop_iterations: int, players: int = 3
+) -> dict:
+    """Orchestrates POST /solve_flop_multiway_from_path end to end: a
+    real (cached, raw) preflop solve -> resolve the client's bare action
+    kinds -> derive_ranges_from_path (M16, already N-position-general)
+    -> require a genuine 3+-live-position terminal (a 2-survivor path
+    stays /solve_flop_from_path's own job) -> cap every position's range
+    to MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION -> postflop_action_
+    order (M29, already N-general per its own docstring) for the correct
+    real acting order -> solve_flop_multiway (M35) directly, behind a
+    plain per-(action_path, players, stack_bb, board, iterations,
+    flop_iterations) cache — not query_strategy_from_path, which is
+    2-position machinery all the way down (query_strategy -> solve_flop
+    -> build_board_equity_table, none of which accept a 3+-position
+    range dict).
+
+    `players` (M42, following M29's own precedent): part of the cache
+    key, for the identical collision reason /solve_flop_from_path's
+    partition key and /solve_turn_from_path's _turn_path_cache key both
+    already include it — two different origin table sizes can share the
+    same literal action-kind path.
+    """
+    preflop_result = _get_or_solve_preflop_raw(stack_bb, iterations, players=players)
+    actions, _node = _resolve_action_path(preflop_result.root, action_kinds)
+    path_scenario = derive_ranges_from_path(preflop_result, actions)
+
+    if not isinstance(path_scenario.node, TerminalNode):
+        raise ValueError("action_path does not reach a terminal — action isn't capped yet")
+    if len(path_scenario.live_positions) < 3:
+        raise ValueError(
+            f"action_path leaves only {len(path_scenario.live_positions)} live position(s) — "
+            "use /solve_flop_from_path for a 2-survivor situation"
+        )
+
+    # Known, deliberate gap (M29, same as _query_flop_from_path above):
+    # path_scenario.trained isn't surfaced in this endpoint's response.
+    capped_ranges = {
+        position: _cap_range(range_dict, MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION)
+        for position, range_dict in path_scenario.ranges.items()
+    }
+
+    exclude = frozenset(board_cards)
+    position_ranges = {
+        position: range_from_class_frequencies(range_dict, exclude=exclude)
+        for position, range_dict in capped_ranges.items()
+    }
+    for position, combo_dict in position_ranges.items():
+        if not combo_dict:
+            raise ValueError(
+                f"board {''.join(str(c) for c in board_cards)!r} blocks every combo in "
+                f"{position}'s derived (capped) range"
+            )
+
+    # M29: postflop_action_order, already N-general — a 2-player caller
+    # elsewhere in this file unpacks its first two entries; here the
+    # full 3+-entry tuple is exactly what solve_flop_multiway's own
+    # `positions` parameter needs.
+    postflop_positions = postflop_action_order(preflop_result.config.positions, path_scenario.live_positions)
+    effective_stack_bb = path_scenario.stacks[postflop_positions[0]]
+    if any(path_scenario.stacks[p] != effective_stack_bb for p in postflop_positions):
+        raise RuntimeError(
+            "derive_ranges_from_path's own TerminalNode guarantee (equal remaining stacks "
+            "across every live position) did not hold — this should be unreachable"
+        )
+
+    key = (tuple(action_kinds), players, round(stack_bb), iterations, board_cards, flop_iterations)
+    with _flop_multiway_path_lock:
+        cached = _flop_multiway_path_cache.get(key)
+    if cached is None:
+        result = solve_flop_multiway(
+            board=board_cards,
+            position_ranges=position_ranges,
+            pot=path_scenario.pot,
+            effective_stack_bb=effective_stack_bb,
+            positions=postflop_positions,
+            raise_sizes=MULTIWAY_FLOP_RAISE_SIZES,
+            max_raises=MULTIWAY_FLOP_MAX_RAISES,
+            iterations=flop_iterations,
+        )
+        with _flop_multiway_path_lock:
+            _flop_multiway_path_cache[key] = result
+        cached = result
+
+    formatted = format_flop_response(cached, board="".join(str(c) for c in board_cards))
+    return {
+        "board": formatted["board"],
+        "action_path": list(action_kinds),
+        "stack_bb": stack_bb,
+        "effective_stack_bb": effective_stack_bb,
+        "pot": path_scenario.pot,
+        "flop_iterations": formatted["iterations"],
+        "elapsed_seconds": formatted["elapsed_seconds"],
+        "strategy": formatted["strategy"],
+        "trained": formatted["trained"],
+        "position": formatted["position"],
+        "positions": formatted["positions"],
+        "players": players,
+    }
+
+
 def _query_turn_from_path(
     preflop_action_kinds: list,
     flop_action_kinds: list,
@@ -1786,6 +1984,48 @@ async def solve_flop_from_path_endpoint(request: ActionPathRequest):
             raise ValueError(f"iterations must be between 1 and {MAX_ITERATIONS}, got {iterations}")
         return await run_in_threadpool(
             _query_flop_from_path, request.action_path, request.stack_bb, board_cards, iterations, request.players
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/solve_flop_multiway_from_path", response_model=FlopMultiwayPathQueryResponse)
+async def solve_flop_multiway_from_path_endpoint(request: MultiwayFlopPathRequest):
+    """The multiway analog of /solve_flop_from_path (M24), closing this
+    project's own long-named-open gap: connecting derive_ranges_from_path's
+    already-N-general output (proven at 3-max in M35's own pipeline test)
+    into a live multiway postflop endpoint. Requires a genuine 3+-live-
+    position terminal — a 2-survivor path 422s here with a message
+    pointing at /solve_flop_from_path instead, the endpoint that already
+    serves that case (via the exact, not MCCFR-approximate, 2-position
+    solver)."""
+    try:
+        if len(request.action_path) > MAX_PATH_LENGTH:
+            raise ValueError(f"action_path is too long ({len(request.action_path)} > {MAX_PATH_LENGTH})")
+        board_cards = tuple(parse_cards(request.board))
+        if len(board_cards) != 3:
+            raise ValueError(f"board must have exactly 3 cards for a flop, got {len(board_cards)}")
+        iterations = request.iterations if request.iterations is not None else DEFAULT_ITERATIONS
+        if not 0 < iterations <= MAX_ITERATIONS:
+            raise ValueError(f"iterations must be between 1 and {MAX_ITERATIONS}, got {iterations}")
+        flop_iterations = (
+            request.flop_iterations
+            if request.flop_iterations is not None
+            else DEFAULT_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS
+        )
+        if not 0 < flop_iterations <= MAX_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS:
+            raise ValueError(
+                f"flop_iterations must be between 1 and {MAX_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS}, "
+                f"got {flop_iterations}"
+            )
+        return await run_in_threadpool(
+            _query_flop_multiway_from_path,
+            request.action_path,
+            request.stack_bb,
+            board_cards,
+            iterations,
+            flop_iterations,
+            request.players,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

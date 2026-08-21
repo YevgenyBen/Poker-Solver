@@ -94,6 +94,59 @@ class FlopPathQueryResponse(BaseModel):
     players: int
 
 
+class MultiwayFlopPathRequest(BaseModel):
+    """M42's request body — the multiway analog of ActionPathRequest,
+    for a genuine 3+ live-position postflop situation reached by a real
+    action path (a 2-survivor path stays served by ActionPathRequest/
+    /solve_flop_from_path — see api/main.py's module docstring for why
+    this is a deliberately separate endpoint, not a `players`-driven
+    branch inside that one). Two independent iteration fields, mirroring
+    TurnPathRequest's own preflop/turn split: `iterations` (the preflop
+    leg — inert whenever `players != 2`, since _get_or_solve_preflop_raw
+    already ignores it there in favor of MULTIWAY_TABLE_CONFIGS' own
+    fixed budget, same as every other path-based endpoint) and
+    `flop_iterations` (the solve_flop_multiway leg — this endpoint's own
+    real cost driver, see api/main.py's module docstring for the
+    measured numbers behind its cap). `players` defaults to 3, not 2 —
+    unlike every other path-based request model, a 2-player origin can
+    never reach a 3+-live-position flop, so 2 is not a meaningful
+    default here."""
+
+    stack_bb: float
+    action_path: list[str]
+    board: str
+    iterations: int | None = None
+    flop_iterations: int | None = None
+    players: int = 3
+
+
+class FlopMultiwayPathQueryResponse(BaseModel):
+    """The multiway analog of FlopPathQueryResponse — no `canonical_
+    board`/`canonical_stack_bb`/`hit`, since this endpoint has no
+    canonicalized library behind it (query_strategy/query_strategy_
+    from_path are both 2-position machinery, see api/main.py's module
+    docstring); `positions` carries all of the path's real surviving
+    positions (3+), in real postflop acting order, not a fixed 2-entry
+    OOP/IP pair. `flop_iterations` echoes what was actually used —
+    included here (unlike FlopPathQueryResponse's own fixed, unreported
+    PATH_QUERY_ITERATIONS) because this endpoint's own flop-stage
+    iteration count is real, request-controllable input, not a hidden
+    constant."""
+
+    board: str
+    action_path: list[str]
+    stack_bb: float
+    effective_stack_bb: float
+    pot: float
+    flop_iterations: int
+    elapsed_seconds: float
+    strategy: dict[str, dict[str, float]]
+    trained: dict[str, bool]
+    position: str
+    positions: list[str]
+    players: int
+
+
 class PreflopWalkRequest(BaseModel):
     """M25's request body — board-independent, unlike ActionPathRequest:
     a "what's legal from here" query is a pure preflop-tree-state check,
