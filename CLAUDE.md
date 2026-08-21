@@ -2992,6 +2992,65 @@ street chaining needs.
     endpoint (mirroring M26's own flop-then-turn precedent for the
     2-position family) — each a natural, separately-measurable next
     milestone, none attempted here.
+- **M43 — a frontend for `/solve_flop_multiway_from_path`,** closing
+  M42's own first-named open item — and, unlike M24-then-M25's own
+  two-milestone gap (a curated-preset frontend first, a general wizard
+  only later), this one goes straight to full wizard integration: since
+  `ActionPathSolver.tsx`'s wizard (M25, extended to any table size by
+  M29) already builds a real `action_path` one legal click at a time
+  against any table size's own tree, a genuine 3+-live-position
+  terminal was already reachable through the existing UI before this
+  milestone — it just had nowhere correct to go (`handleSolve` always
+  called `/solve_flop_from_path`, which 422s on exactly that case). This
+  milestone fixes that live gap, not just adds a new feature.
+  - **The routing fix:** `handleSolve` now branches on `walk.data.live_
+    positions.length` — `>= 3` calls the new `fetchMultiwayFlopStrategy
+    FromPath` (`/solve_flop_multiway_from_path`, M42) into its own
+    `multiwaySolveResult` state; exactly `2` keeps calling the existing
+    `fetchFlopStrategyFromPath` (`/solve_flop_from_path`) unchanged.
+    Kept as two separate result states/render blocks, not one unioned
+    type — `FlopMultiwayPathQueryResponse` and `FlopPathQueryResponse`
+    genuinely differ (no `hit`/`canonical_board` on the multiway side, a
+    3+-entry `positions` list instead of a fixed pair, a `trained` map
+    the 2-position response doesn't carry) — mirrors this project's own
+    "different response shape -> separate rendering, not a forced
+    union" precedent (`MultiwayFlopSolver` vs. `FlopSolver`,
+    `CachedFlopSolver` vs. `FlopSolver`). A new inline hint ("N live
+    positions reached the flop — this calls /solve_flop_multiway_from_
+    path, not the 2-position endpoint above") makes the routing visible
+    to whoever's using the wizard, not just correct under the hood.
+  - **The multiway result block reuses `MultiwayFlopSolver.tsx`'s own
+    `trained`/`.trained-indicator.untrained` idiom** (M37/M28) — the
+    first time this wizard's own rendering has needed to show untrained
+    combos at all, since every prior result it showed came from the
+    exact 2-position solver (`trained` always all-`True` there, per
+    `format_flop_response`'s own docstring).
+  - **Tests:** `frontend/src/api.test.ts` gained a `fetchMultiwayFlop
+    StrategyFromPath` section (2 tests: a real POST body including
+    `flop_iterations`, and a rejected request surfacing `SolveError`).
+    `ActionPathSolver.test.tsx` gained one new end-to-end test: walk a
+    real 3-max limp-call-check line to a genuine 3-live terminal,
+    confirm the inline routing hint appears, click Solve, and confirm
+    the request lands on `/solve_flop_multiway_from_path` (not
+    `/solve_flop_from_path`) with the right body, rendering the
+    multiway result block.
+  - **Verification:** `npm test` — 153 passed (up from 150 — 2 new
+    `api.test.ts` tests, 1 new `ActionPathSolver.test.tsx` test).
+    `npx tsc --noEmit` clean. No backend files touched, so the Python
+    suite wasn't re-run — matches M38/M41's own precedent. Live-verified
+    end to end in the browser: switched to 3-max, walked BTN limps → SB
+    calls → BB checks to a real terminal, confirmed the routing hint
+    text, entered a board, clicked Solve, and confirmed (via `read_
+    network_requests`) a real `POST /solve_flop_multiway_from_path ->
+    200 OK`, rendering SB's real strategy (200 iterations, 36.96s,
+    `SB/BB/BTN`) with trained AK-suited/KK combos carrying real
+    differentiated frequencies and every other combo correctly marked
+    "low data."
+  - **What's still open:** M42's own remaining two items (true 6/9-max
+    multiway postflop solving; turn/river-depth path-derived multiway
+    endpoints) are both untouched by this frontend-only milestone —
+    this closes the *frontend* gap specifically, not either of those
+    separately-scoped engine/API questions.
 
 ## v3 vision (future) — live-table advisor
 

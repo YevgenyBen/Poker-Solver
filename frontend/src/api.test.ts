@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchEquity, fetchFlopStrategy, fetchFlopStrategyFromPath, fetchOpeningRange, SolveError } from './api';
+import {
+  fetchEquity,
+  fetchFlopStrategy,
+  fetchFlopStrategyFromPath,
+  fetchMultiwayFlopStrategyFromPath,
+  fetchOpeningRange,
+  SolveError,
+} from './api';
 
 describe('fetchOpeningRange', () => {
   afterEach(() => {
@@ -240,5 +247,69 @@ describe('fetchFlopStrategyFromPath', () => {
     await expect(fetchFlopStrategyFromPath(100, ['not_a_kind'], 'Jh7d2c')).rejects.toThrow(
       "step 0: 'not_a_kind' is not legal at this node",
     );
+  });
+});
+
+describe('fetchMultiwayFlopStrategyFromPath', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('POSTs a JSON body (including flop_iterations) and returns the parsed response', async () => {
+    const payload = {
+      board: 'Jh7d2c',
+      action_path: ['call_or_check', 'call_or_check', 'call_or_check'],
+      stack_bb: 100,
+      effective_stack_bb: 99,
+      pot: 3,
+      flop_iterations: 200,
+      elapsed_seconds: 22.5,
+      strategy: {},
+      trained: {},
+      position: 'SB',
+      positions: ['SB', 'BB', 'BTN'],
+      players: 3,
+    };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(payload) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await fetchMultiwayFlopStrategyFromPath(
+      100,
+      ['call_or_check', 'call_or_check', 'call_or_check'],
+      'Jh7d2c',
+      3,
+      200,
+    );
+    expect(result).toEqual(payload);
+    expect(fetchMock).toHaveBeenCalledWith('/solve_flop_multiway_from_path', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        stack_bb: 100,
+        action_path: ['call_or_check', 'call_or_check', 'call_or_check'],
+        board: 'Jh7d2c',
+        players: 3,
+        flop_iterations: 200,
+      }),
+      signal: undefined,
+    });
+  });
+
+  it('throws SolveError with the server-provided detail on failure', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 422,
+        json: () =>
+          Promise.resolve({
+            detail: 'action_path leaves only 2 live position(s) — use /solve_flop_from_path for a 2-survivor situation',
+          }),
+      }),
+    );
+
+    await expect(
+      fetchMultiwayFlopStrategyFromPath(100, ['raise', 'fold', 'call_or_check'], 'Jh7d2c', 3),
+    ).rejects.toThrow(SolveError);
   });
 });

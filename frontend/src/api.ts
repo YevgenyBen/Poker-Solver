@@ -1,5 +1,6 @@
 import type {
   EquityResponse,
+  FlopMultiwayPathQueryResponse,
   FlopPathQueryResponse,
   FlopQueryResponse,
   FlopSolveDepth,
@@ -147,6 +148,34 @@ export async function fetchFlopStrategyFromPath(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ stack_bb: stackBb, action_path: actionPath, board, players }),
+    signal,
+  });
+}
+
+// M42: the multiway analog of fetchFlopStrategyFromPath — for a real
+// action path that leaves 3+ live positions at the flop (a case
+// /solve_flop_from_path structurally can't serve, see api/main.py's
+// module docstring). `flopIterations` is optional (server defaults to
+// DEFAULT_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS when omitted, mirroring
+// every other optional-iterations field in this file).
+export async function fetchMultiwayFlopStrategyFromPath(
+  stackBb: number,
+  actionPath: string[],
+  board: string,
+  players: number,
+  flopIterations?: number,
+  signal?: AbortSignal,
+): Promise<FlopMultiwayPathQueryResponse> {
+  return fetchJson<FlopMultiwayPathQueryResponse>('/solve_flop_multiway_from_path', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      stack_bb: stackBb,
+      action_path: actionPath,
+      board,
+      players,
+      flop_iterations: flopIterations,
+    }),
     signal,
   });
 }
