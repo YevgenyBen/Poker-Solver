@@ -3402,6 +3402,82 @@ street chaining needs.
     one. The bigger levers (a faster hand evaluator, a restructured
     two-phase solve) are named, not attempted, pending direction on
     which one to pursue next.
+- **M48 — the big speed lever: a prime-product lookup-table hand
+  evaluator, replacing `_rank_five_batch`'s per-hand counting/masking/
+  argsort pipeline.** The user chose this over the two levers M47 named
+  (a faster hand evaluator vs. a restructured two-phase solve) —
+  `hand_eval.best_hand_rank_batch`/`_rank_five_batch` was profiling's
+  own confirmed dominant cost (~60% of `solve_flop_to_river`'s runtime),
+  and this milestone attacks it directly with the same technique real
+  production poker evaluators (the "Cactus Kev"/"Two Plus Two" family)
+  use — adapted to stay fully vectorized across NumPy arrays, not a
+  scalar-only port.
+  - **The algorithm:** each of the 13 card values gets a distinct prime
+    (2, 3, 5, ..., 41). A 5-card hand's VALUES multiply to a product
+    that's unique per *value multiset* (order-independent) by the
+    fundamental theorem of arithmetic — so a hand's category and full
+    tiebreak (ignoring flush, which depends on suit, not value) is a
+    pure function of that one integer, looked up once instead of
+    recomputed via counting/sorting on every call. `_build_value_
+    lookup_table` precomputes this table ONCE, at import time, over all
+    `C(13+5-1, 5) = 6,188` distinct 5-value multisets (including some no
+    real 4-suit deck could ever deal, e.g. 5-of-a-kind — harmless, never
+    looked up), sorted by prime product for `np.searchsorted`-based
+    vectorized lookup (O(log 6,188) per hand, fully array-vectorized,
+    not a Python loop). `_rank_five_batch` computes each hand's prime
+    product (one vectorized elementwise multiply), looks it up, then
+    applies flush as a pure category relabel afterward.
+  - **A real mathematical guarantee, verified before relying on it, not
+    assumed:** a flush's value pattern is ALWAYS exactly 5 distinct
+    values — a real deck has only one card per (value, suit) pair, so 5
+    same-suit cards can never repeat a value. This means the value-only
+    lookup table (built ignoring suit entirely) can only ever return
+    `STRAIGHT` or `HIGH_CARD` for a flush hand — and `rank_five`'s own
+    `FLUSH`/`HIGH_CARD` tiebreak conventions are identical (both
+    `sorted(values, reverse=True)`), confirmed by reading the existing
+    scalar code, not assumed by analogy. So flush upgrade
+    (`STRAIGHT`->`STRAIGHT_FLUSH`, `HIGH_CARD`->`FLUSH`) never needs to
+    touch the tiebreak at all, just relabel the category — no other
+    category can ever coincide with `is_flush=True`, so no other case
+    needs handling.
+  - **The strongest correctness signal available, not a sample:**
+    `tests/test_hand_eval.py` gained `test_rank_five_batch_exhaustive_
+    over_every_value_multiset` — EVERY one of the 6,188 distinct 5-value
+    multisets a real hand can have (minus the physically-impossible
+    ones), cross-validated against the trusted scalar `rank_five`
+    reference, both without and (for the subset where it's physically
+    possible — exactly 5 distinct values) with a forced flush. Mirrors
+    this project's own "exhaustive enumeration where feasible" precedent
+    (M19's flop/turn canonicalization tests) rather than trusting a
+    random sample alone for a rewrite this central. Runs in well under a
+    second (6,188 scalar comparisons, not millions), so it's cheap
+    enough to run on every full-suite invocation, not a special one-off
+    validation script thrown away after use.
+  - **Measured, not assumed — the real payoff:** the identical
+    `solve_flop_to_river` benchmark M46/M47 both used (3 combos/side,
+    the production cap, at that iteration count): ~41.3s (M47's own
+    post-fix baseline) -> **~6.5-8s** — a real **~5-6x** speedup, not
+    the modest ~4% M47's own deck-precompute fix delivered. The full
+    backend test suite's own wall-clock time is a second, independent
+    confirmation: 401.60s, down from M47's 497.51s (both fresh runs, not
+    cherry-picked) — real evidence this isn't a benchmark-specific
+    artifact, since most of the suite doesn't touch `solve_flop_to_
+    river` at all but does exercise hand evaluation broadly (equity.py,
+    board_equity.py, cfr.py's multiway paths).
+  - **Tests:** `python -m pytest tests/ -v` — 704 passed, zero
+    regressions (up from M47's 703 — 1 new exhaustive test). No frontend
+    changes.
+  - **Scope:** engine only. `rank_five`/`best_hand_rank` (the scalar
+    reference) are completely unchanged — still the permanent trusted
+    ground truth every evaluator is validated against, per this
+    project's own established discipline. The OTHER lever M47 named (a
+    restructured two-phase solve, avoiding ~44x49 branches' worth of
+    chance-tree construction when a caller only reads out one path)
+    remains a real, separate, unattempted future direction — this
+    milestone's own ~5-6x win came from a different part of the cost
+    entirely (hand evaluation, not chance-tree construction), so the two
+    levers are independent and could in principle compound if the
+    second is ever pursued.
 
 ## v3 vision (future) — live-table advisor
 
