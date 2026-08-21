@@ -3312,6 +3312,96 @@ street chaining needs.
     and — per the user's own stated next priority — solve speed work
     generally, now that every street through the river has a real,
     working (if slow) path-derived answer.
+- **M47 — first solve-speed pass: profile before guessing, ship the
+  real (if modest) win, name the real (if bigger) one honestly.**
+  Per the user's own stated priority (river coverage done at M46, solve
+  speed next), this milestone starts the speed thread with a real
+  `cProfile` run of `solve_flop_to_river` at M46's own real derived-
+  range scale (3 combos/side, the production cap) — not a guess about
+  where the cost lives.
+  - **What profiling found:** `poker_solver.cards.remaining_deck`
+    (called once per combo PAIR inside `board_equity.build_board_
+    equity_table`'s own O(N²) loop — 73,062 calls at this scale) was
+    rebuilding the *entire* 52-card deck from scratch on every single
+    call, constructing up to two fresh `Card()` instances per candidate
+    slot (one to test set membership, one to keep) — `Card.__post_
+    init__`'s own validation work alone accounted for ~6.9M redundant
+    calls in the profile. Fixed: `_ALL_CARDS`, all 52 `Card` objects
+    built exactly once at module import (safe — `Card` is a frozen/
+    immutable dataclass, so sharing the same objects across every
+    caller can never cause a mutation bug) — `remaining_deck` now
+    filters this precomputed list instead of reconstructing cards;
+    `Deck.__init__` reuses the same list for the identical reason.
+  - **The honest, measured result: real, but far smaller than the raw
+    profile numbers suggested.** `cProfile`'s own cumulative-time
+    figures made this look like a ~25-30% win (`remaining_deck`'s
+    profiled cumulative time dropped from 16.9s to 2.2s) — but a real,
+    unprofiled wall-clock timing comparison at the identical scale told
+    a different story: ~43.0s (M46's own measurement) -> ~41.3s
+    (average of two fresh runs) — only ~4% faster. Traced, not left
+    unexplained: `cProfile` adds real per-call instrumentation overhead
+    that compounds across millions of calls, so a function's *profiled*
+    cumulative time can substantially overstate its *true* contribution
+    when its call count is this extreme — a genuinely useful
+    methodological lesson for any future profiling pass in this
+    codebase, not just a footnote. The fix itself is still correct,
+    real, and free (zero behavior change, `remaining_deck`'s own
+    contract unchanged) — it's just not the big lever.
+  - **A bigger idea, considered and correctly rejected before writing
+    any code, not discovered as a bug later:** since `_query_river_
+    from_path`'s own caller already knows the *specific* `turn_card`/
+    `river_card` they want, could `chance.build_chance_node`'s own
+    eager, all-~44-49-branches-at-every-level construction be made
+    lazy — building only the one requested branch, mirroring `chance.
+    build_mccfr_chance_branch`'s own lazy design (M32)? No — and the
+    reason is load-bearing, not incidental: `cfr.solve()`'s own EXACT
+    CFR+ recursion needs the true *expected value* across every
+    possible next card to correctly compute the FLOP-level (and every
+    intermediate) node's regret/strategy — skipping unrequested
+    branches would silently turn an exact solve into a biased partial
+    average, corrupting correctness at every street above the one the
+    client asked about, not just saving unused work. This is
+    fundamentally different from MCCFR's own chance-sampling, where
+    sampling one card at a time *is* the algorithm's own unbiased-in-
+    expectation strategy — the same "sampled vs. exact" distinction
+    `EXPLORATION_EPSILON`'s own docstring already draws elsewhere in
+    this codebase, now re-confirmed in a new context rather than
+    re-learned the hard way by shipping something broken.
+  - **The real remaining levers, named for whichever future milestone
+    picks this thread back up, not attempted here:** profiling's own
+    numbers point at `hand_eval.best_hand_rank_batch`/`_rank_five_batch`
+    (real vectorized hand-strength computation, the genuine dominant
+    cost — `best_hand_rank_batch` already evaluates all `C(7,5)=21`
+    five-card sub-hands per 7-card hand, so this is correctness-
+    necessary work, not accidental waste) as the true bottleneck. A
+    materially faster hand evaluator (e.g., a precomputed lookup-table
+    design, the "2+2 evaluator" pattern real production poker tools
+    use, trading memory for O(1) lookups instead of O(21) combo
+    enumeration + sorting) is the biggest real lever identified — but
+    it's a substantial, standalone rewrite needing its own careful
+    design and the same cross-validate-against-the-trusted-scalar-
+    reference discipline `best_hand_rank_batch` itself was already held
+    to at its own introduction, not a quick fix to bolt onto this
+    milestone. A restructured two-phase solve (solve the flop+first-
+    turn cheaply via `solve_flop_turn`, then a small, separate, on-
+    demand solve of just the one requested turn subtree to the river)
+    was also considered as a way to avoid paying for ~44x49 branches'
+    worth of construction when a caller only ever reads out one path —
+    real and promising in principle, but a genuinely new solve
+    architecture, correctly scoped as its own future milestone rather
+    than attempted inline here.
+  - **Tests:** `tests/test_cards.py` gained 3 new tests — `_ALL_CARDS`
+    has exactly 52 unique cards; `remaining_deck` returns the shared
+    objects themselves (identity, not just equality — a real regression
+    guard against silently reverting to fresh construction); and two
+    separate `Deck()` instances share card objects but never share (or
+    corrupt) each other's own list.
+  - **Verification:** `python -m pytest tests/ -v` — 703 passed, zero
+    regressions (up from M46's 700 — 3 new tests). No frontend changes.
+  - **Scope:** a real, shipped, measured win — just an honestly modest
+    one. The bigger levers (a faster hand evaluator, a restructured
+    two-phase solve) are named, not attempted, pending direction on
+    which one to pursue next.
 
 ## v3 vision (future) — live-table advisor
 

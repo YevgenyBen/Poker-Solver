@@ -1,6 +1,6 @@
 import pytest
 
-from poker_solver.cards import Card, Deck, SUITS, parse_cards, remaining_deck
+from poker_solver.cards import _ALL_CARDS, Card, Deck, SUITS, parse_cards, remaining_deck
 
 
 def test_deck_has_52_cards():
@@ -110,3 +110,29 @@ def test_remaining_deck_excludes_given_cards():
 def test_remaining_deck_accepts_a_plain_list_not_just_a_set():
     deck = remaining_deck([Card("2", "c")])
     assert len(deck) == 51
+
+
+def test_all_cards_has_exactly_52_unique_cards():
+    assert len(_ALL_CARDS) == 52
+    assert len(set(_ALL_CARDS)) == 52
+
+
+def test_remaining_deck_reuses_the_shared_all_cards_objects():
+    # M47: a real regression guard for the perf fix — remaining_deck used
+    # to build fresh Card() instances on every call (profiled as a real
+    # hot-path cost, see CLAUDE.md's M47 entry); it must now filter the
+    # shared _ALL_CARDS list instead of reconstructing cards.
+    deck = remaining_deck(frozenset())
+    assert all(any(card is shared for shared in _ALL_CARDS) for card in deck)
+
+
+def test_deck_instances_share_card_objects_but_not_the_list():
+    # Deck() also reuses _ALL_CARDS (M47) — safe only because Card is
+    # frozen/immutable; each Deck still gets its own independent list, so
+    # draining one deck can't affect another's.
+    deck_a = Deck()
+    deck_b = Deck()
+    assert deck_a.cards[0] is deck_b.cards[0]
+    deck_a.draw(5)
+    assert len(deck_a) == 47
+    assert len(deck_b) == 52
