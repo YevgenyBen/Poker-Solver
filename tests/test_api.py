@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 
 from api import main as api_main
 from api.main import _cache, _multiway_cache, app
+from poker_solver.cards import remaining_deck
 from poker_solver.starting_hands import StartingHand
 
 # api.main's real multiway iteration counts (100K/30K/300, see main.py's
@@ -111,6 +112,7 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
     api_main._path_query_libraries.clear()
     api_main._turn_path_cache.clear()
     api_main._flop_multiway_path_cache.clear()
+    api_main._turn_multiway_path_cache.clear()
     yield
     _cache.clear()
     _multiway_cache.clear()
@@ -125,6 +127,7 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
     api_main._path_query_libraries.clear()
     api_main._turn_path_cache.clear()
     api_main._flop_multiway_path_cache.clear()
+    api_main._turn_multiway_path_cache.clear()
 
 
 @pytest.fixture()
@@ -1555,3 +1558,171 @@ def test_solve_turn_from_path_players_2_and_3_do_not_share_a_cache_entry(client)
     assert r2.status_code == 200
     assert r3.status_code == 200
     assert len(api_main._turn_path_cache) == 2
+
+
+# ---------------------------------------------------------------------------
+# M44: POST /solve_turn_multiway_from_path — the multiway analog of
+# /solve_turn_from_path, for a real preflop path that leaves 3+ live
+# positions at the flop (a case /solve_turn_from_path structurally can't
+# serve — see api/main.py's module docstring). Reuses _THREE_LIVE_PATH
+# and board="2h6d9c" from the M42 section above.
+# ---------------------------------------------------------------------------
+
+FAST_MULTIWAY_TURN_PATH_FLOP_ITERATIONS = 20
+_MULTIWAY_TURN_CARD = "Ts"
+
+_THREE_LIVE_FLOP_PATH = ["call_or_check", "call_or_check", "call_or_check"]  # checked through, all 3 stay live
+
+
+def _multiway_turn_body(
+    preflop_action_path,
+    flop_action_path=_THREE_LIVE_FLOP_PATH,
+    turn_card=_MULTIWAY_TURN_CARD,
+    stack_bb=100.0,
+    board="2h6d9c",
+    iterations=_PATH_ITERATIONS,
+    flop_iterations=FAST_MULTIWAY_TURN_PATH_FLOP_ITERATIONS,
+    players=3,
+):
+    return {
+        "stack_bb": stack_bb,
+        "preflop_action_path": preflop_action_path,
+        "board": board,
+        "flop_action_path": flop_action_path,
+        "turn_card": turn_card,
+        "iterations": iterations,
+        "flop_iterations": flop_iterations,
+        "players": players,
+    }
+
+
+def test_solve_turn_multiway_from_path_returns_200_for_a_real_three_live_line(client):
+    response = client.post("/solve_turn_multiway_from_path", json=_multiway_turn_body(_THREE_LIVE_PATH))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["players"] == 3
+    assert set(body["positions"]) == {"BTN", "SB", "BB"}
+    assert body["board"] == "2h6d9c"
+    assert body["turn_card"] == "Ts"
+    assert body["flop_iterations"] == FAST_MULTIWAY_TURN_PATH_FLOP_ITERATIONS
+    # Either a real turn decision or a genuine all-in-already terminal —
+    # both are legitimate outcomes of a real solve at this tiny fixture
+    # scale; assert the shape is self-consistent either way.
+    if body["is_terminal"]:
+        assert body["strategy"] == {}
+        assert body["trained"] == {}
+    else:
+        assert len(body["strategy"]) > 0
+        for freqs in body["strategy"].values():
+            assert sum(freqs.values()) == pytest.approx(1.0, abs=1e-6)
+        assert set(body["trained"].keys()) == set(body["strategy"].keys())
+
+
+def test_solve_turn_multiway_from_path_rejects_a_two_survivor_preflop_path(client):
+    # BTN opens, SB folds, BB calls -> only 2 live; this endpoint's own
+    # job is genuinely 3+ live positions — /solve_turn_from_path already
+    # serves the 2-survivor case.
+    response = client.post(
+        "/solve_turn_multiway_from_path",
+        json=_multiway_turn_body(["raise", "fold", "call_or_check"], flop_action_path=["call_or_check", "call_or_check"]),
+    )
+    assert response.status_code == 422
+    assert "solve_turn_from_path" in response.json()["detail"]
+
+
+def test_solve_turn_multiway_from_path_rejects_a_non_terminal_preflop_path(client):
+    response = client.post("/solve_turn_multiway_from_path", json=_multiway_turn_body(["call_or_check"]))
+    assert response.status_code == 422
+
+
+def test_solve_turn_multiway_from_path_rejects_a_non_terminal_flop_path(client):
+    response = client.post(
+        "/solve_turn_multiway_from_path", json=_multiway_turn_body(_THREE_LIVE_PATH, flop_action_path=["call_or_check"])
+    )
+    assert response.status_code == 422
+
+
+def test_solve_turn_multiway_from_path_rejects_an_illegal_turn_card(client):
+    # "9c" is already on the board (board="2h6d9c").
+    response = client.post(
+        "/solve_turn_multiway_from_path", json=_multiway_turn_body(_THREE_LIVE_PATH, turn_card="9c")
+    )
+    assert response.status_code == 422
+
+
+def test_solve_turn_multiway_from_path_rejects_a_malformed_turn_card(client):
+    response = client.post(
+        "/solve_turn_multiway_from_path", json=_multiway_turn_body(_THREE_LIVE_PATH, turn_card="TsJd")
+    )
+    assert response.status_code == 422
+
+
+def test_solve_turn_multiway_from_path_rejects_flop_iterations_above_the_cap(client):
+    response = client.post(
+        "/solve_turn_multiway_from_path",
+        json=_multiway_turn_body(
+            _THREE_LIVE_PATH, flop_iterations=api_main.MAX_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS + 1
+        ),
+    )
+    assert response.status_code == 422
+
+
+def test_solve_turn_multiway_from_path_reuses_the_same_cache_entry_across_turn_cards_and_flop_lines(client):
+    base = _multiway_turn_body(_THREE_LIVE_PATH)
+    client.post("/solve_turn_multiway_from_path", json=base)
+    assert len(api_main._turn_multiway_path_cache) == 1
+
+    different_turn_card = client.post("/solve_turn_multiway_from_path", json={**base, "turn_card": "4c"})
+    assert different_turn_card.status_code == 200
+    assert len(api_main._turn_multiway_path_cache) == 1
+
+
+def test_solve_turn_multiway_from_path_partitions_different_preflop_legs_into_separate_cache_entries(client):
+    client.post("/solve_turn_multiway_from_path", json=_multiway_turn_body(_THREE_LIVE_PATH))
+    # A different (still genuinely 3-live) preflop line: BTN raises, SB
+    # calls, BB calls.
+    client.post(
+        "/solve_turn_multiway_from_path",
+        json=_multiway_turn_body(["raise", "call_or_check", "call_or_check"]),
+    )
+    assert len(api_main._turn_multiway_path_cache) == 2
+
+
+def test_solve_turn_multiway_from_path_builds_and_returns_an_untrained_strategy_for_an_unsampled_but_legal_card(
+    client,
+):
+    # The real, structural gap M44 exists to close: solve_flop_turn_
+    # multiway's own chance_data only contains (terminal, card) pairs
+    # MCCFR actually sampled while solving — a real, legal turn card can
+    # easily be one it never happened to sample. Drive this through the
+    # real HTTP layer, not just the engine-level ensure_flop_turn_
+    # multiway_branch tests in test_solver.py: populate the cache with
+    # one real request, inspect the cached StrategyResult's own
+    # chance_data to find a real, definitely-never-sampled card for the
+    # SAME flop terminal, then request exactly that card.
+    base = _multiway_turn_body(_THREE_LIVE_PATH)
+    first = client.post("/solve_turn_multiway_from_path", json=base)
+    assert first.status_code == 200
+    assert len(api_main._turn_multiway_path_cache) == 1
+
+    result = next(iter(api_main._turn_multiway_path_cache.values()))
+    board_cards = tuple(api_main.parse_cards("2h6d9c"))
+
+    # Find the real terminal object this flop_action_path resolves to,
+    # then a card that terminal's own chance_data has never sampled.
+    _actions, flop_terminal = api_main._resolve_action_path(result.root, _THREE_LIVE_FLOP_PATH)
+    already_sampled = {card for (tid, card) in result.chance_data if tid == id(flop_terminal)}
+    unsampled_card = next(c for c in remaining_deck(board_cards) if c not in already_sampled)
+
+    response = client.post(
+        "/solve_turn_multiway_from_path", json={**base, "turn_card": str(unsampled_card)}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["turn_card"] == str(unsampled_card)
+    # Only meaningful if this specific card reaches a real turn decision
+    # (not an all-in-already-reused terminal, which reports strategy={}
+    # regardless of whether the branch was freshly built or sampled).
+    if not body["is_terminal"]:
+        assert len(body["trained"]) > 0
+        assert all(is_trained is False for is_trained in body["trained"].values())

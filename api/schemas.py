@@ -227,3 +227,50 @@ class TurnPathQueryResponse(BaseModel):
     positions: list[str]
     players: int
     elapsed_seconds: float
+
+
+class MultiwayTurnPathRequest(BaseModel):
+    """M44's request body — the multiway analog of TurnPathRequest, for
+    a preflop path that leaves 3+ live positions at the flop (mirroring
+    MultiwayFlopPathRequest's own M42 relationship to ActionPathRequest).
+    `flop_iterations`, not `turn_iterations` — matches solve_flop_turn_
+    multiway's own single-solve design (M36): unlike the exact 2-position
+    solver, there's no SEPARATE turn-stage solve to name a second
+    iteration count for; the same solve_flop_turn_multiway call that
+    solves the flop also produces the turn strategy this endpoint reads
+    back out. `players` defaults to 3, same reasoning as
+    MultiwayFlopPathRequest's own default — a 2-player origin can never
+    reach a 3+-live-position flop."""
+
+    stack_bb: float
+    preflop_action_path: list[str]
+    board: str
+    flop_action_path: list[str]
+    turn_card: str
+    iterations: int | None = None
+    flop_iterations: int | None = None
+    players: int = 3
+
+
+class TurnMultiwayPathQueryResponse(BaseModel):
+    """The multiway analog of TurnPathQueryResponse — `positions` carries
+    all of the path's real surviving positions (3+), not a fixed 2-entry
+    pair; `flop_iterations` echoes what was actually used, same reasoning
+    FlopMultiwayPathQueryResponse's own field already established."""
+
+    board: str
+    turn_card: str
+    preflop_action_path: list[str]
+    flop_action_path: list[str]
+    stack_bb: float
+    effective_stack_bb: float
+    pot: float
+    flop_iterations: int
+    is_terminal: bool
+    player_to_act: str | None
+    strategy: dict[str, dict[str, float]]
+    trained: dict[str, bool]
+    position: str
+    positions: list[str]
+    players: int
+    elapsed_seconds: float
