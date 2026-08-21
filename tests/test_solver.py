@@ -34,6 +34,7 @@ from poker_solver.solver import (
     solve_flop_multiway,
     solve_flop_to_river,
     solve_flop_turn,
+    solve_flop_turn_multiway,
     solve_preflop,
 )
 from poker_solver.starting_hands import StartingHand
@@ -807,6 +808,128 @@ def test_derive_ranges_from_path_pipeline_open_call_call_feeds_solve_flop_multiw
     assert len(opening) > 0
     for freqs in opening.values():
         assert pytest.approx(sum(freqs.values()), abs=1e-6) == 1.0
+
+
+# ---------------------------------------------------------------------------
+# M36: solve_flop_turn_multiway — a flop showdown-eligible terminal chains
+# into a real multiway turn betting round (via a real, sampled chance
+# branch — cfr.mccfr_solve's own board/chance_fn/chance_data, M32)
+# instead of solve_flop_multiway's "average every remaining runout inside
+# NwayBoardEquityCache" shortcut. The direct N-position generalization of
+# solve_flop_turn, mirroring solve_flop_multiway's own relationship to
+# solve_flop.
+#
+# Deliberately the smallest possible combo pool (1 combo per position, 3
+# total) — measured during M36's own scoping pass (see DEFAULT_FLOP_TURN_
+# MULTIWAY_ITERATIONS's own comment in solver.py): pool size is still the
+# dominant cost driver for this solving path, exactly as M35 already
+# found for the flop-only case, so this stays at the same tiny scale
+# solve_flop_turn's own M12 tests do.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def tiny_flop_turn_multiway_result():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    position_ranges = {
+        "OOP": {HandCombo(Card("7", "s"), Card("7", "c")): 1.0},
+        "MID": {HandCombo(Card("A", "h"), Card("A", "d")): 1.0},
+        "IP": {HandCombo(Card("9", "d"), Card("8", "d")): 1.0},
+    }
+    return solve_flop_turn_multiway(
+        board=board,
+        position_ranges=position_ranges,
+        pot=9.0,
+        effective_stack_bb=15.0,
+        positions=("OOP", "MID", "IP"),
+        raise_sizes=(),
+        max_raises=1,
+        iterations=30,
+        equity_samples=50,
+    )
+
+
+def test_solve_flop_turn_multiway_covers_all_three_ranges(tiny_flop_turn_multiway_result):
+    opening = tiny_flop_turn_multiway_result.opening_range()
+    assert set(opening.keys()) == {"7s7c", "AhAd", "9d8d"}
+
+
+def test_solve_flop_turn_multiway_frequencies_sum_to_one(tiny_flop_turn_multiway_result):
+    opening = tiny_flop_turn_multiway_result.opening_range()
+    for freqs in opening.values():
+        assert not any(np.isnan(freq) for freq in freqs.values())
+        assert pytest.approx(sum(freqs.values()), abs=1e-6) == 1.0
+
+
+def test_solve_flop_turn_multiway_root_is_the_flop_root(tiny_flop_turn_multiway_result):
+    root = tiny_flop_turn_multiway_result.root
+    assert isinstance(root, DecisionNode)
+    assert root.player_to_act == "OOP"
+    assert root.pot == pytest.approx(9.0)
+
+
+def test_solve_flop_turn_multiway_chance_data_reaches_a_real_turn_decision_node(tiny_flop_turn_multiway_result):
+    # Proves chaining actually happened, not just "ran without crashing".
+    # chance_data is keyed by (id(terminal), card) — M32's own per-
+    # sampled-card memoization, unlike solve_flop_turn's own one-
+    # ChanceNode-per-terminal shape: mccfr_solve only ever builds the ONE
+    # branch actually sampled that iteration, never all ~49 possible next
+    # cards, so chance_data's own entry count reflects distinct sampled
+    # (terminal, card) pairs, not distinct terminals.
+    chance_data = tiny_flop_turn_multiway_result.chance_data
+    assert len(chance_data) > 0
+    real_decisions = [b.root for b in chance_data.values() if isinstance(b.root, DecisionNode)]
+    assert real_decisions  # at least one branch reached a genuine turn decision, not just an all-in-reused terminal
+    strategy = tiny_flop_turn_multiway_result.strategy_at(real_decisions[0])
+    for freqs in strategy.values():
+        assert not any(np.isnan(freq) for freq in freqs.values())
+        assert pytest.approx(sum(freqs.values()), abs=1e-6) == 1.0
+
+
+def test_solve_flop_turn_multiway_deterministic_given_the_same_seed():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    position_ranges = {
+        "OOP": {HandCombo(Card("7", "s"), Card("7", "c")): 1.0},
+        "MID": {HandCombo(Card("A", "h"), Card("A", "d")): 1.0},
+        "IP": {HandCombo(Card("9", "d"), Card("8", "d")): 1.0},
+    }
+    kwargs = dict(
+        board=board, position_ranges=position_ranges, pot=9.0, effective_stack_bb=15.0,
+        positions=("OOP", "MID", "IP"), raise_sizes=(), max_raises=1,
+        iterations=20, equity_samples=50, equity_seed=7, seed=3,
+    )
+    result_1 = solve_flop_turn_multiway(**kwargs)
+    result_2 = solve_flop_turn_multiway(**kwargs)
+    assert result_1.opening_range() == result_2.opening_range()
+
+
+def test_solve_flop_turn_multiway_uses_default_iterations_when_omitted():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    position_ranges = {
+        "OOP": {HandCombo(Card("7", "s"), Card("7", "c")): 1.0},
+        "MID": {HandCombo(Card("A", "h"), Card("A", "d")): 1.0},
+        "IP": {HandCombo(Card("9", "d"), Card("8", "d")): 1.0},
+    }
+    result = solve_flop_turn_multiway(
+        board=board, position_ranges=position_ranges, pot=9.0, effective_stack_bb=15.0,
+        positions=("OOP", "MID", "IP"), raise_sizes=(), max_raises=1, equity_samples=50,
+    )
+    assert result.iterations > 0
+    assert result.elapsed_seconds >= 0.0
+
+
+def test_solve_flop_turn_multiway_rejects_positions_and_position_ranges_mismatch():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    position_ranges = {
+        "OOP": {HandCombo(Card("7", "s"), Card("7", "c")): 1.0},
+        "MID": {HandCombo(Card("A", "h"), Card("A", "d")): 1.0},
+        # "IP" deliberately missing
+    }
+    with pytest.raises(ValueError):
+        solve_flop_turn_multiway(
+            board=board, position_ranges=position_ranges, pot=9.0, effective_stack_bb=15.0,
+            positions=("OOP", "MID", "IP"), raise_sizes=(), max_raises=1,
+        )
 
 
 # ---------------------------------------------------------------------------
