@@ -714,8 +714,14 @@ def test_solve_flop_cached_different_boards_are_not_confused(client):
 _PATH_ITERATIONS = 200  # a real per-request preflop solve, not fixture-capped — kept small for test speed
 
 
-def _path_body(action_path, stack_bb=100.0, board="2h6d9c", iterations=_PATH_ITERATIONS):
-    return {"stack_bb": stack_bb, "action_path": action_path, "board": board, "iterations": iterations}
+def _path_body(action_path, stack_bb=100.0, board="2h6d9c", iterations=_PATH_ITERATIONS, players=2):
+    return {
+        "stack_bb": stack_bb,
+        "action_path": action_path,
+        "board": board,
+        "iterations": iterations,
+        "players": players,
+    }
 
 
 def test_solve_flop_from_path_returns_200_for_a_real_open_call_line(client):
@@ -828,8 +834,8 @@ def test_solve_flop_from_path_hits_a_board_isomorphic_to_a_previous_miss(client)
 # ---------------------------------------------------------------------------
 
 
-def _walk_body(action_path, stack_bb=100.0, iterations=_PATH_ITERATIONS):
-    return {"stack_bb": stack_bb, "action_path": action_path, "iterations": iterations}
+def _walk_body(action_path, stack_bb=100.0, iterations=_PATH_ITERATIONS, players=2):
+    return {"stack_bb": stack_bb, "action_path": action_path, "iterations": iterations, "players": players}
 
 
 def _by_kind(legal_actions):
@@ -919,6 +925,83 @@ def test_preflop_walk_shares_the_raw_preflop_cache_with_solve_flop_from_path(cli
     assert len(api_main._preflop_raw_cache) == 1
 
 
+# ---------------------------------------------------------------------------
+# M29: players != 2 walks a real multiway-origin tree — the same
+# capability query_strategy_from_path/postflop_action_order unlocked at
+# the engine level, now reachable live. Uses the SAME MULTIWAY_TABLE_
+# CONFIGS this fixture already shrinks to FAST_MULTIWAY_ITERATIONS, so
+# these stay fast without any new fixture patch.
+# ---------------------------------------------------------------------------
+
+
+def test_preflop_walk_with_players_3_walks_the_three_max_tree(client):
+    response = client.post("/preflop_walk", json=_walk_body([], players=3))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["player_to_act"] == "BTN"
+    assert body["live_positions"] == ["BTN", "SB", "BB"]
+    assert body["positions"] == ["BTN", "SB", "BB"]
+
+
+def test_preflop_walk_players_defaults_to_two_and_reports_the_heads_up_positions(client):
+    body = client.post("/preflop_walk", json=_walk_body([])).json()
+    assert body["positions"] == ["BTN", "BB"]
+
+
+def test_preflop_walk_rejects_an_unsupported_players_value(client):
+    response = client.post("/preflop_walk", json=_walk_body([], players=5))
+    assert response.status_code == 422
+
+
+def test_preflop_walk_shares_the_multiway_cache_with_get_solve(client):
+    # _get_or_solve_preflop_raw(players=3) now delegates to
+    # _get_or_solve_multiway outright — a user who already loaded the
+    # 3-max range chart triggers no redundant second solve opening the
+    # wizard next, and vice versa.
+    client.get("/solve/100?players=3")
+    client.post("/preflop_walk", json=_walk_body([], players=3))
+    assert len(api_main._multiway_cache) == 1
+
+
+def test_solve_flop_from_path_accepts_a_multiway_origin_narrowed_to_two_survivors(client):
+    # BTN opens, SB folds, BB calls — a real 3-max hand folding down to
+    # a heads-up flop. BB is left of the button (SB folded) and is
+    # therefore OOP; BTN is IP.
+    response = client.post(
+        "/solve_flop_from_path", json=_path_body(["raise", "fold", "call_or_check"], players=3)
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["players"] == 3
+    assert set(body["positions"]) == {"BTN", "BB"}
+    assert body["position"] == "BB"
+    assert len(body["strategy"]) > 0
+    for freqs in body["strategy"].values():
+        assert sum(freqs.values()) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_solve_flop_from_path_rejects_a_multiway_path_with_three_live_survivors(client):
+    # BTN limps, SB calls, BB checks — everyone stays live. solve_flop's
+    # postflop machinery is 2-position only, regardless of origin size.
+    response = client.post(
+        "/solve_flop_from_path", json=_path_body(["call_or_check", "call_or_check", "call_or_check"], players=3)
+    )
+    assert response.status_code == 422
+
+
+def test_solve_flop_from_path_players_2_and_3_partition_separately(client):
+    # A players=3 path needs its own real terminal (3 steps, one more
+    # position to act than heads-up) — reusing the 2-step heads-up path
+    # verbatim at players=3 would leave BB's decision still pending
+    # (a non-terminal node), rejected before ever reaching the library,
+    # which wouldn't actually prove the two partition separately.
+    r2 = client.post("/solve_flop_from_path", json=_path_body(["raise", "call_or_check"], players=2))
+    r3 = client.post("/solve_flop_from_path", json=_path_body(["raise", "fold", "call_or_check"], players=3))
+    assert r2.status_code == 200
+    assert r3.status_code == 200
+    assert len(api_main._path_query_libraries) == 2
+
+
 def test_preflop_walk_fold_option_serializes_size_as_null_not_an_omitted_key(client):
     body = client.post("/preflop_walk", json=_walk_body([])).json()
     fold_option = next(option for option in body["legal_actions"] if option["kind"] == "fold")
@@ -956,6 +1039,7 @@ def _turn_body(
     board="2h6d9c",
     iterations=_TURN_PATH_ITERATIONS,
     turn_iterations=_TURN_PATH_ITERATIONS,
+    players=2,
 ):
     return {
         "stack_bb": stack_bb,
@@ -965,6 +1049,7 @@ def _turn_body(
         "turn_card": turn_card,
         "iterations": iterations,
         "turn_iterations": turn_iterations,
+        "players": players,
     }
 
 
@@ -1096,3 +1181,43 @@ def test_solve_turn_from_path_rejects_out_of_range_turn_iterations(client):
         ),
     )
     assert response.status_code == 422
+
+
+def test_solve_turn_from_path_accepts_a_multiway_origin_narrowed_to_two_survivors(client):
+    # BTN opens, SB folds, BB calls, closing a real 3-max preflop leg
+    # down to a heads-up flop+turn line — same check-check flop line
+    # the heads-up tests above already use.
+    response = client.post(
+        "/solve_turn_from_path",
+        json=_turn_body(["raise", "fold", "call_or_check"], ["call_or_check", "call_or_check"], players=3),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["players"] == 3
+    assert set(body["positions"]) == {"BTN", "BB"}
+    assert body["is_terminal"] is False
+    assert len(body["strategy"]) > 0
+
+
+def test_solve_turn_from_path_rejects_a_multiway_preflop_path_with_three_live_survivors(client):
+    response = client.post(
+        "/solve_turn_from_path",
+        json=_turn_body(
+            ["call_or_check", "call_or_check", "call_or_check"], ["call_or_check", "call_or_check"], players=3
+        ),
+    )
+    assert response.status_code == 422
+
+
+def test_solve_turn_from_path_players_2_and_3_do_not_share_a_cache_entry(client):
+    r2 = client.post(
+        "/solve_turn_from_path",
+        json=_turn_body(["raise", "call_or_check"], ["call_or_check", "call_or_check"], players=2),
+    )
+    r3 = client.post(
+        "/solve_turn_from_path",
+        json=_turn_body(["raise", "fold", "call_or_check"], ["call_or_check", "call_or_check"], players=3),
+    )
+    assert r2.status_code == 200
+    assert r3.status_code == 200
+    assert len(api_main._turn_path_cache) == 2

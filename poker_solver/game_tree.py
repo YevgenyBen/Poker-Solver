@@ -7,8 +7,12 @@ differently: `GameConfig` for preflop (`positions`' last two entries post
 blinds, the first raise is sized off the big blind) and `StreetConfig`
 for postflop (nobody posts anything — the pot already exists from prior
 streets — and the first raise is sized off the pot). Heads-up (2
-players) is just the N=2 special case of either — this module makes no
-HU-specific assumptions.
+players) is just the N=2 special case of either for tree *construction*
+— true without exception. `button_position`/`postflop_action_order`
+below are the one place this module does carry a genuine, real-poker-
+rule heads-up exception (the button and small blind are the same seat
+at N=2) — see their own docstrings for why that's a fact about seating,
+not something either config's tree-building logic needs to know about.
 
 It deliberately does not branch on hole cards or hand classes anywhere —
 the same tree is reused for every combination of hands across all N
@@ -120,6 +124,66 @@ class GameConfig:
         already built on earlier streets, which *isn't* attributable to
         any position's *this-street* `invested`)."""
         return 0.0
+
+
+def button_position(positions: tuple) -> str:
+    """The seat holding the dealer button, given a preflop acting order
+    (GameConfig.positions — see its own docstring: the *last two*
+    entries post the small/big blind, in that order).
+
+    Real poker rule, not a convention this project invented: the button
+    is the seat immediately before the small blind, at any table size —
+    `positions[-3]`. Heads-up is a single, genuine exception, not a
+    degenerate case of that rule: with only two players, the button
+    *is* the small blind (Robert's Rules of Poker, "Button and Blind
+    Use"), so `positions[-2] == positions[0]` there and the button is
+    `positions[0]`, not `positions[-3]` (which doesn't even exist at
+    N=2). See postflop_action_order's own docstring for why this
+    exception matters beyond just naming the button correctly.
+    """
+    if len(positions) < 2:
+        raise ValueError("positions must have at least 2 entries")
+    if len(positions) == 2:
+        return positions[0]
+    return positions[-3]
+
+
+def postflop_action_order(positions: tuple, live_positions: tuple | None = None) -> tuple:
+    """`positions` (a preflop acting order) reordered into postflop
+    acting order: starting with the first live seat after the button,
+    proceeding around the table, ending with the button itself (last,
+    if still live) — the universal postflop rule ("Robert's Rules of
+    Poker": action begins with the first active player to the left of
+    the button, on every betting round after the first), with no
+    table-size exception. `positions` is treated as the same circular
+    seating ring `_reopened_order` already relies on for reopening
+    logic — a genuinely new fact about *this* module, not assumed.
+
+    Optionally filtered to `live_positions` (any subset, in any order —
+    the *output* order is what carries the postflop-acting-order
+    information, not the input order), for turning a real hand's
+    surviving 2+ players into a real postflop acting order. Full,
+    unfiltered output is still N-general on purpose, at zero extra
+    cost, for whenever true multiway postflop solving (this project's
+    own named, still-unscoped next structural gap) needs it — a 2-player
+    caller just unpacks the first two entries.
+
+    The common, seductive-but-wrong shortcut is "the small blind acts
+    first postflop" — true for 3+ players (SB is the seat immediately
+    left of the button there), false at heads-up, where the button
+    *is* the small blind and therefore acts LAST postflop, not first.
+    Applying a "rotate blinds to the front" formula uniformly across
+    all N gets heads-up backwards for exactly this reason; anchoring
+    on the button instead (which has no exception) is what makes one
+    formula correct at every N.
+    """
+    button = button_position(positions)
+    start = positions.index(button) + 1
+    order = positions[start:] + positions[:start]
+    if live_positions is None:
+        return order
+    live = set(live_positions)
+    return tuple(p for p in order if p in live)
 
 
 @dataclass(frozen=True)

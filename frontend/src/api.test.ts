@@ -221,7 +221,7 @@ describe('fetchFlopStrategyFromPath', () => {
     expect(fetchMock).toHaveBeenCalledWith('/solve_flop_from_path', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ stack_bb: 100, action_path: ['raise', 'call_or_check'], board: 'Jh7d2c' }),
+      body: JSON.stringify({ stack_bb: 100, action_path: ['raise', 'call_or_check'], board: 'Jh7d2c', players: 2 }),
       signal: undefined,
     });
   });

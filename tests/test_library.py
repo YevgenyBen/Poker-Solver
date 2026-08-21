@@ -4,7 +4,7 @@ from poker_solver.canonicalize import canonical_stack_depth, canonicalize_board,
 from poker_solver.cards import Card
 from poker_solver.combos import range_from_class_frequencies
 from poker_solver.equity import build_equity_table
-from poker_solver.game_tree import CALL_OR_CHECK, RAISE, GameConfig, TerminalNode, build_game_tree
+from poker_solver.game_tree import CALL_OR_CHECK, FOLD, RAISE, GameConfig, TerminalNode
 from poker_solver.library import (
     build_library,
     load_library,
@@ -13,7 +13,7 @@ from poker_solver.library import (
     query_strategy_from_path,
     save_library,
 )
-from poker_solver.solver import StrategyResult, derive_ranges_from_path, solve_flop, solve_preflop
+from poker_solver.solver import derive_ranges_from_path, solve_flop, solve_preflop
 from poker_solver.starting_hands import StartingHand
 
 
@@ -410,16 +410,70 @@ def test_query_strategy_from_path_rejects_a_non_terminal_path(preflop_pipeline_r
         query_strategy_from_path({}, preflop_pipeline_result, path_scenario, _PATH_BOARD)
 
 
-def test_query_strategy_from_path_rejects_a_multiway_origin_result():
-    config = GameConfig(positions=("BTN", "SB", "BB"))
-    root = build_game_tree(config)
-    # A stub (node_data={}) is sufficient — the multiway guard fires on
-    # result.config.positions alone, before touching solved frequencies.
-    stub_result = StrategyResult(config=config, root=root, hands=_PATH_HANDS, node_data={}, iterations=0, elapsed_seconds=0.0)
-    path_scenario = derive_ranges_from_path(stub_result, [])
+@pytest.fixture(scope="module")
+def three_max_pipeline_result():
+    config = GameConfig(positions=("BTN", "SB", "BB"), raise_sizes=(2.5,), max_raises=2)
+    return solve_preflop(iterations=300, config=config, hands=_PATH_HANDS)
+
+
+def test_query_strategy_from_path_rejects_more_than_two_live_positions(three_max_pipeline_result):
+    # M29 replaced the old "reject any multiway-origin result outright"
+    # guard with the real constraint: solve_flop's postflop machinery is
+    # 2-position only, regardless of how many players the ORIGIN table
+    # had. A limped-around pot (BTN limps, SB calls, BB checks) reaches
+    # a genuine TerminalNode with all 3 still live — correctly still
+    # rejected, but now for the right reason (too many live positions),
+    # not simply because the origin wasn't heads-up.
+    root = three_max_pipeline_result.root
+    btn_limp = next(a for a in root.legal_actions if a.kind == CALL_OR_CHECK)
+    sb_node = root.children[btn_limp]
+    sb_call = next(a for a in sb_node.legal_actions if a.kind == CALL_OR_CHECK)
+    bb_node = sb_node.children[sb_call]
+    bb_check = next(a for a in bb_node.legal_actions if a.kind == CALL_OR_CHECK)
+    path_scenario = derive_ranges_from_path(three_max_pipeline_result, [btn_limp, sb_call, bb_check])
+    assert isinstance(path_scenario.node, TerminalNode)
+    assert path_scenario.live_positions == ("BTN", "SB", "BB")
 
     with pytest.raises(ValueError):
-        query_strategy_from_path({}, stub_result, path_scenario, _PATH_BOARD)
+        query_strategy_from_path({}, three_max_pipeline_result, path_scenario, _PATH_BOARD)
+
+
+def test_query_strategy_from_path_accepts_a_multiway_origin_result_narrowed_to_two_survivors(
+    three_max_pipeline_result,
+):
+    # The actual point of M29: a real 3-max hand that folds down to 2
+    # live players (BTN opens, SB folds, BB calls) now gets real
+    # flop-level advice, not a rejection just because the table started
+    # 3-handed. BB is left of the button (SB folded) and is therefore
+    # OOP; BTN is IP — exactly game_tree.postflop_action_order's own
+    # answer for this survivor pair, proven end to end here rather than
+    # only at the unit level (test_game_tree.py already covers the
+    # formula itself exhaustively).
+    root = three_max_pipeline_result.root
+    btn_raise = next(a for a in root.legal_actions if a.kind == RAISE)
+    sb_node = root.children[btn_raise]
+    sb_fold = next(a for a in sb_node.legal_actions if a.kind == FOLD)
+    bb_node = sb_node.children[sb_fold]
+    bb_call = next(a for a in bb_node.legal_actions if a.kind == CALL_OR_CHECK)
+    path_scenario = derive_ranges_from_path(three_max_pipeline_result, [btn_raise, sb_fold, bb_call])
+    assert isinstance(path_scenario.node, TerminalNode)
+    assert path_scenario.live_positions == ("BTN", "BB")
+
+    result = query_strategy_from_path(
+        {},
+        three_max_pipeline_result,
+        path_scenario,
+        _PATH_BOARD,
+        raise_sizes=RAISE_SIZES,
+        max_raises=MAX_RAISES,
+        iterations=ITERATIONS,
+        equity_samples=EQUITY_SAMPLES,
+        equity_seed=EQUITY_SEED,
+    )
+    assert result.hit is False
+    assert len(result.strategy) > 0
+    for freqs in result.strategy.values():
+        assert sum(freqs.values()) == pytest.approx(1.0, abs=1e-6)
 
 
 def test_query_strategy_from_path_rejects_a_postflop_rooted_result():

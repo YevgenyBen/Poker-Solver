@@ -60,6 +60,21 @@ Two solving paths live here, sharing InfoSetTable:
    a precomputed table, since a full N-way equity table is never viable
    to build eagerly.
 
+   **A caveat worth stating plainly, not left implicit** (flagged by
+   docs/full-table-diagnostic-2026-08.md's SS3.8): CFR/CFR+'s proof that
+   the average strategy converges to a Nash equilibrium is a two-player
+   zero-sum result. At N>=3, nothing here (or in the general CFR+
+   literature) guarantees convergence to a Nash equilibrium — only, at
+   best, to a coarse-correlated equilibrium, and that's before counting
+   this module's own additional approximations above (no importance-
+   sampling correction, MultiwayEquityCache's blocker-ignoring pairwise
+   approximation). This doesn't make mccfr_solve's output meaningless —
+   M9-M27's own directional GTO sanity checks (premium hands rarely
+   fold, weak hands fold far more, etc.) hold up empirically at every
+   player count tested — but "converges toward good play" and "provably
+   reaches equilibrium" are different claims, and only the first one is
+   actually backed by a proof at N>=3.
+
 3. `solve()`'s exact path also optionally walks through `chance.ChanceNode`s
    (M12) — a "deal the next community card" point, e.g. flop->turn — via
    the `chance_fn`/`chance_data` parameters. See `_solve_recurse`'s

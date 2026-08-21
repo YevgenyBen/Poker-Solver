@@ -113,11 +113,12 @@ export async function fetchFlopStrategyFromPath(
   actionPath: string[],
   board: string,
   signal?: AbortSignal,
+  players: number = 2,
 ): Promise<FlopPathQueryResponse> {
   return fetchJson<FlopPathQueryResponse>('/solve_flop_from_path', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ stack_bb: stackBb, action_path: actionPath, board }),
+    body: JSON.stringify({ stack_bb: stackBb, action_path: actionPath, board, players }),
     signal,
   });
 }
@@ -126,15 +127,19 @@ export async function fetchFlopStrategyFromPath(
 // legal at the node action_path resolves to. POST/JSON-body for the
 // same reason fetchFlopStrategyFromPath is: action_path is a
 // variable-length structured sequence.
+//
+// M29: `players` (default 2, heads-up) walks that table size's own
+// real tree instead — see api/main.py's PreflopWalkRequest.
 export async function fetchPreflopWalk(
   stackBb: number,
   actionPath: string[],
   signal?: AbortSignal,
+  players: number = 2,
 ): Promise<PreflopWalkResponse> {
   return fetchJson<PreflopWalkResponse>('/preflop_walk', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ stack_bb: stackBb, action_path: actionPath }),
+    body: JSON.stringify({ stack_bb: stackBb, action_path: actionPath, players }),
     signal,
   });
 }
@@ -149,6 +154,7 @@ export async function fetchTurnStrategyFromPath(
   flopActionPath: string[],
   turnCard: string,
   signal?: AbortSignal,
+  players: number = 2,
 ): Promise<TurnPathQueryResponse> {
   return fetchJson<TurnPathQueryResponse>('/solve_turn_from_path', {
     method: 'POST',
@@ -159,6 +165,7 @@ export async function fetchTurnStrategyFromPath(
       board,
       flop_action_path: flopActionPath,
       turn_card: turnCard,
+      players,
     }),
     signal,
   });

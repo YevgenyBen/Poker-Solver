@@ -8,7 +8,7 @@ from poker_solver.cards import Card
 from poker_solver.cfr import InfoSetTable
 from poker_solver.combos import HandCombo, combos_for_class, range_from_class_frequencies
 from poker_solver.equity import MultiwayEquityCache, build_equity_table
-from poker_solver.game_tree import CALL_OR_CHECK, FOLD, RAISE, Action, DecisionNode, GameConfig, build_game_tree
+from poker_solver.game_tree import ALL_IN, CALL_OR_CHECK, FOLD, RAISE, Action, DecisionNode, GameConfig, build_game_tree
 from poker_solver.solver import (
     DEFAULT_ITERATIONS,
     FlopScenario,
@@ -1388,6 +1388,73 @@ def test_derive_ranges_from_path_multiplies_reach_across_a_positions_own_nodes()
     direct_bb_freqs = result.continuing_frequencies(bb_node, action_kind=RAISE)
     assert scenario.ranges["BB"][aa] == pytest.approx(direct_bb_freqs[aa])
     assert scenario.ranges["BB"][aa] == pytest.approx(0.7)
+
+
+def test_derive_ranges_from_path_trained_true_for_a_position_that_never_acted():
+    # A position still waiting their own turn at the resulting node has
+    # an unconditioned (1.0) range for every hand — nothing derived from
+    # solving touched it, so it's trivially trained=True, regardless of
+    # whether the *other* position's own nodes were trained or not.
+    config = GameConfig(raise_sizes=(), max_raises=1)
+    root = build_game_tree(config)
+    open_jam = next(a for a in root.legal_actions if a.kind == ALL_IN)
+    node_data = {}  # root itself untrained too — irrelevant to BB, who hasn't acted
+    result = StrategyResult(
+        config=config, root=root, hands=_SMALL_HANDS, node_data=node_data, iterations=0, elapsed_seconds=0.0
+    )
+    scenario = derive_ranges_from_path(result, [open_jam])
+    assert scenario.live_positions == ("BTN", "BB")
+    assert all(scenario.trained["BB"].values())
+
+
+def test_derive_ranges_from_path_trained_reflects_node_training_and_composes_across_steps():
+    # BTN opens, BB 3-bets, BTN calls the 3-bet — BTN acts twice. Only
+    # the root gets real node_data; btn_node is left untrained
+    # (absent from node_data entirely, mirroring an MCCFR path a
+    # sampled solve never happened to reach). The direct proof this is
+    # meant to be: BTN's own overall trained status is the AND across
+    # BOTH of its nodes, not just its last one — one untrained step
+    # anywhere along the path is enough to mark the whole derived
+    # frequency suspect, the same way one bad factor corrupts a product.
+    config = GameConfig(raise_sizes=(2.5, 2.5), max_raises=3)
+    root = build_game_tree(config)
+    open_raise = next(a for a in root.legal_actions if a.kind == RAISE)
+    bb_node = root.children[open_raise]
+    three_bet_raise = next(a for a in bb_node.legal_actions if a.kind == RAISE)
+    btn_node = bb_node.children[three_bet_raise]
+    call_action = next(a for a in btn_node.legal_actions if a.kind == CALL_OR_CHECK)
+
+    real_table = InfoSetTable.zeros(len(_SMALL_HANDS), len(root.legal_actions))
+    real_table.strategy_sum[:, root.legal_actions.index(open_raise)] = 1.0
+    bb_table = InfoSetTable.zeros(len(_SMALL_HANDS), len(bb_node.legal_actions))
+    bb_table.strategy_sum[:, bb_node.legal_actions.index(three_bet_raise)] = 1.0
+    # btn_node deliberately absent from node_data — untrained.
+    node_data = {id(root): real_table, id(bb_node): bb_table}
+    result = StrategyResult(
+        config=config, root=root, hands=_SMALL_HANDS, node_data=node_data, iterations=0, elapsed_seconds=0.0
+    )
+
+    scenario = derive_ranges_from_path(result, [open_raise, three_bet_raise, call_action])
+    aa = _SMALL_HANDS[0]
+
+    # BTN acted at root (trained) and at btn_node (untrained) — overall
+    # False, even though its FIRST node was genuinely trained.
+    assert scenario.trained["BTN"][aa] is False
+    # BB only acted at bb_node, which was trained — overall True.
+    assert scenario.trained["BB"][aa] is True
+
+
+def test_derive_ranges_from_path_trained_keys_match_ranges_keys():
+    config = GameConfig(raise_sizes=(), max_raises=1)
+    root = build_game_tree(config)
+    open_jam = next(a for a in root.legal_actions if a.kind == ALL_IN)
+    result = StrategyResult(
+        config=config, root=root, hands=_SMALL_HANDS, node_data={}, iterations=0, elapsed_seconds=0.0
+    )
+    scenario = derive_ranges_from_path(result, [open_jam])
+    assert set(scenario.trained.keys()) == set(scenario.ranges.keys())
+    for position in scenario.live_positions:
+        assert set(scenario.trained[position].keys()) == set(scenario.ranges[position].keys())
 
 
 def test_derive_ranges_from_path_pipeline_open_3bet_call_feeds_solve_flop():
