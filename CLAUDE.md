@@ -3953,6 +3953,56 @@ street chaining needs.
     worth an architectural change is a genuinely open question, and a
     smaller prize than it looked before this profile.
 
+- **M56 — a frontend for `/advise`: the app finally has a front door.**
+  `AdviseSolver.tsx` + an "Advisor" tab, placed FIRST in the tab bar —
+  the seven existing pages are narrower, single-purpose tools; this is
+  the one that answers the question the v3 vision actually opens with.
+  - **Deliberately ONE component, not a 4th/5th sibling of FlopSolver/
+    TurnPathSolver.** The whole point of `/advise` (M50-M53) is that
+    street depth and table size are one request shape; splitting the UI
+    back apart per street would reintroduce on the client exactly the
+    sprawl M50/M51 consolidated away on the server. A "how far did the
+    hand go" street toggle maps 1:1 onto the endpoint's own street
+    inference — the UI simply omits fields for streets that haven't
+    happened.
+  - **Surfaces three things no other page in this app does:** hero's OWN
+    hand's advice (the actual product question — every other page makes
+    you find your hand in a list); `source`, naming which backend
+    answered; and `range_confidence` (M52), flagging when part of the
+    solved-against range was the untrained default. Hero's card gets its
+    own visual weight (`.hero-advice`) rather than being one more row.
+  - **Both of hero's confidence signals are shown, and distinguished** —
+    `in_range: false` ("your hand was added to the range so it could be
+    solved for, treat it as thinner") and `range_trained: false` ("the
+    preflop derivation for its class wasn't fully backed by real
+    solving"). Easy to conflate; they mean different things.
+  - **Postflop action lines are deliberately generic** ("Checked
+    through", "Bet, everyone called") rather than `TurnPathSolver`'s own
+    hand-enumerated `FLOP_PRESETS`, which are calibrated against the
+    2-position tree and would silently drift at 3+. Both generic lines
+    stay structurally legal at ANY live-position count, which is what
+    lets one component serve every table size. The real fix remains a
+    "what's legal on this street from here" walker — an open gap since
+    M26, unchanged here.
+  - **A real bug caught ONLY by live browser verification, for the third
+    time in this project's history:** `/advise` 404'd in dev because
+    `frontend/vite.config.ts`'s proxy prefix-matches, and `/advise` is a
+    new prefix not covered by `/solve`. The unit tests stub `fetch`, so
+    they structurally cannot catch a proxy gap. That's now M10's
+    `/equity`, M25's `/preflop_walk`, and this — three separate
+    milestones where a route not named `/solve_something` silently fell
+    through to the SPA's index.html. The pattern is recorded in the
+    config's own comment; anything adding a new top-level route should
+    check it.
+  - **Verification:** `npm test` — 164 passed (up from M45's 154 — 10
+    new). `tsc --noEmit` and `npm run lint` both clean. No backend
+    changes. Live-verified end to end: the Advisor tab walks a real
+    preflop tree, and asking with `hero_cards=7c2d` returns "fold 99%,
+    call 1%" — a sane answer to the exact question the v3 vision opens
+    with — confirmed `POST /advise -> 200 OK` via network inspection
+    (with the earlier 404 still visible in the log as proof the proxy
+    fix was the thing that mattered).
+
 ## v3 vision (future) — live-table advisor
 
 Discussed with the user while scoping M16, recorded here rather than

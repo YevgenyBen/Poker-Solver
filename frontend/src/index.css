@@ -530,3 +530,19 @@ select:focus-visible {
   color: var(--text-muted);
   white-space: nowrap;
 }
+
+/* M56: the Advisor's hero-advice card — the one thing on that page a
+   user is actually there to read, so it gets its own visual weight
+   rather than being one more row in the per-combo list below it. */
+.hero-advice {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border, #3a3a3a);
+  border-radius: 6px;
+  background: rgba(127, 127, 127, 0.08);
+}
+
+.hero-advice h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
