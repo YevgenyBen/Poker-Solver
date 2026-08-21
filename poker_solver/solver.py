@@ -1297,10 +1297,17 @@ def solve_flop_turn(
     equity_table = build_board_equity_table(board, combos, rng=random.Random(equity_seed))
     equity_table = np.nan_to_num(equity_table, nan=0.5)
 
+    # M55: one equity-table memo per solve, shared by every chance node
+    # this solve builds. Scoped to the solve (not a module global) so
+    # nothing leaks across requests, pools, or threads — the same
+    # caller-supplied-dict pattern `chance_data` itself already uses.
+    equity_table_cache: dict = {}
+
     def chance_fn(terminal):
         return build_chance_node(
             terminal, board=board, combos=combos, positions=positions,
             effective_stack_bb=effective_stack_bb, raise_sizes=raise_sizes, max_raises=max_raises,
+            equity_table_cache=equity_table_cache,
         )
 
     chance_data: dict = {}
@@ -1405,11 +1412,17 @@ def solve_flop_to_river(
     equity_table = build_board_equity_table(board, combos, rng=random.Random(equity_seed))
     equity_table = np.nan_to_num(equity_table, nan=0.5)
 
+    # M55: one equity-table memo per solve, shared by every chance node
+    # this solve builds. Scoped to the solve (not a module global) so
+    # nothing leaks across requests, pools, or threads — the same
+    # caller-supplied-dict pattern `chance_data` itself already uses.
+    equity_table_cache: dict = {}
+
     def chance_fn(terminal):
         return build_chance_node(
             terminal, board=board, combos=combos, positions=positions,
             effective_stack_bb=effective_stack_bb, raise_sizes=raise_sizes, max_raises=max_raises,
-            chain_to_river=True,
+            chain_to_river=True, equity_table_cache=equity_table_cache,
         )
 
     chance_data: dict = {}

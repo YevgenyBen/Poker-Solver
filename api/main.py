@@ -881,22 +881,28 @@ MAX_FLOP_TO_RIVER_ITERATIONS = DEFAULT_FLOP_TO_RIVER_ITERATIONS
 # if not snappy, request" bracket /solve_flop_to_river was already
 # accepted in at M14 (~63-105s), while keeping more range diversity
 # than capping to a single class per side would.
-# M54: DELIBERATELY UNCHANGED, and the one real negative finding of that
-# re-tune. Re-measured post-M48 (preflop pre-warmed): cap=2 -> 32.77s,
-# cap=3 -> 78.84s, cap=4 -> 107.27s. M48's speedup DID help here (M26
-# measured cap=2 at ~45.9s), but only ~1.4x — far less than the 3-8x
-# every sibling cell saw — so the next class step still costs more than
-# the bracket M26 deliberately chose cap=2 to stay inside. The speedup
-# here is therefore spent on LATENCY (46s -> 33s at the same fidelity),
-# not on range width.
+# M55 re-tune, and a CORRECTION to what M54 claimed here.
 #
-# Why this cell benefited least is itself a useful pointer: M47's own
-# profile found solve_flop_turn dominated by cfr._solve_recurse's tree
-# traversal (531K recursive calls), not by hand evaluation — so M48,
-# which sped up hand evaluation, could only ever move part of it. That
-# makes this the cell the still-untried two-phase-solve lever (M47)
-# would most benefit.
-MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE = 2
+# M54 left this at 2 and asserted solve_flop_turn was "dominated by
+# cfr._solve_recurse's tree traversal (531K recursive calls), not by
+# hand evaluation". That was WRONG — derived from a stale pre-M48
+# profile, and by misreading cProfile's CUMULATIVE time as self time.
+# Re-profiled by SELF time on the current code: build_board_equity_table
+# is 9.65s self / 30.52s cumulative of 41.16s total (~74%), while
+# _solve_recurse's own self time is only 5.05s (~12%). Equity-table
+# CONSTRUCTION dominates, not traversal.
+#
+# That correction is what found M55's actual lever (see chance.py's
+# build_chance_node): those tables were being rebuilt identically once
+# per showdown-eligible flop terminal — measured at exactly 7.00x
+# redundancy (343 builds, 49 distinct inputs). Memoizing them is
+# provably lossless, and re-measured here: cap=2 32.77s -> 10.18s,
+# cap=3 78.84s -> 19.93s, cap=4 107.27s -> 25.04s.
+#
+# So M54's "no headroom here" conclusion is obsolete: cap=4 now costs
+# LESS (25.04s) than cap=2 did before (32.77s). Raised 2 -> 4 — double
+# the range fidelity AND faster than the old setting.
+MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE = 4
 
 # /solve_river_from_path's (M46) own cost controls — capped by COMBO
 # count directly, not by class the way every other path-derived
@@ -923,7 +929,13 @@ MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE = 2
 # tolerable for a live request" bracket this project has used
 # throughout. cap=9's own cliff is exactly why this wasn't pushed
 # further without more real measurement first.
-RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE = 6
+# M55 re-tune, on top of M49's own: the same equity-table memoization
+# (build_chance_node) helps here too, and more, since a chained river
+# solve builds two levels of chance nodes. Re-measured: cap=6 ~40s
+# (M49's number) -> 17.18s; cap=9 -> 31.72s, still cheaper than cap=6
+# cost before. Raised 6 -> 9: 50% more combo fidelity, still faster than
+# the previous setting.
+RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE = 9
 
 # solve_flop_to_river's own cost still scales meaningfully with
 # iteration count at this pool size (re-measured at M49's own new

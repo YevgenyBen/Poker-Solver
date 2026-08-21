@@ -452,3 +452,84 @@ def test_build_mccfr_chance_branch_chain_to_river_is_deterministic_across_calls(
     vector_1 = branch_1.equity_cache.traverser_equity_vector((kk,))
     vector_2 = branch_2.equity_cache.traverser_equity_vector((kk,))
     assert np.array_equal(vector_1, vector_2, equal_nan=True)
+
+
+# ---------------------------------------------------------------------------
+# M55: equity-table memoization across chance nodes. A branch's equity
+# table is a pure function of (next_board, combos) — it does NOT depend
+# on which terminal the chance node hangs off, since the terminal only
+# influences the branch's TREE (via remaining_stack). Measured at exactly
+# 7.00x redundancy on a real /solve_turn_from_path query before this.
+# ---------------------------------------------------------------------------
+
+
+def test_build_chance_node_without_a_cache_rebuilds_tables_for_each_terminal(monkeypatch):
+    import poker_solver.chance as chance_module
+
+    calls = []
+    original = chance_module.build_board_equity_table
+    monkeypatch.setattr(
+        chance_module, "build_board_equity_table",
+        lambda board, combos, *a, **k: (calls.append(board), original(board, combos, *a, **k))[1],
+    )
+    for _ in range(2):
+        build_chance_node(
+            _showdown_terminal(), board=_BOARD, combos=_COMBOS,
+            positions=_POSITIONS, effective_stack_bb=15.0,
+        )
+    # Two independent nodes, no shared cache -> every table built twice.
+    assert len(calls) == 2 * len(set(calls))
+
+
+def test_build_chance_node_shares_equity_tables_across_terminals_via_the_cache(monkeypatch):
+    import poker_solver.chance as chance_module
+
+    calls = []
+    original = chance_module.build_board_equity_table
+    monkeypatch.setattr(
+        chance_module, "build_board_equity_table",
+        lambda board, combos, *a, **k: (calls.append(board), original(board, combos, *a, **k))[1],
+    )
+    cache: dict = {}
+    # Two DIFFERENT terminals (different invested -> different remaining
+    # stack -> genuinely different trees), same board and combo pool.
+    first = build_chance_node(
+        _showdown_terminal(invested=5.0), board=_BOARD, combos=_COMBOS,
+        positions=_POSITIONS, effective_stack_bb=15.0, equity_table_cache=cache,
+    )
+    after_first = len(calls)
+    second = build_chance_node(
+        _showdown_terminal(invested=7.0), board=_BOARD, combos=_COMBOS,
+        positions=_POSITIONS, effective_stack_bb=15.0, equity_table_cache=cache,
+    )
+    # The second node built ZERO new tables — every one was a cache hit.
+    assert len(calls) == after_first
+    assert len(cache) == after_first
+
+    # ...and the tables really are shared, not merely equal: the branches
+    # hold the same array objects.
+    for card in first.branches:
+        assert second.branches[card].equity_table is first.branches[card].equity_table
+    # The trees, meanwhile, are genuinely different — proving the cache
+    # shares only what's terminal-independent.
+    assert first.branches[next(iter(first.branches))].root is not second.branches[
+        next(iter(second.branches))
+    ].root
+
+
+def test_chance_node_equity_tables_are_identical_with_and_without_the_cache():
+    # The correctness claim behind M55: memoizing changes nothing, because
+    # it's the same pure function called with the same arguments.
+    uncached = build_chance_node(
+        _showdown_terminal(), board=_BOARD, combos=_COMBOS,
+        positions=_POSITIONS, effective_stack_bb=15.0,
+    )
+    cached = build_chance_node(
+        _showdown_terminal(), board=_BOARD, combos=_COMBOS,
+        positions=_POSITIONS, effective_stack_bb=15.0, equity_table_cache={},
+    )
+    assert set(uncached.branches) == set(cached.branches)
+    for card in uncached.branches:
+        assert np.array_equal(
+            uncached.branches[card].equity_table, cached.branches[card].equity_table
+        )
