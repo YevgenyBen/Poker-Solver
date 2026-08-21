@@ -951,7 +951,11 @@ async def solve_flop_cached_endpoint(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@app.post("/solve_flop_from_path", response_model=FlopPathQueryResponse)
+@app.post(
+    "/solve_flop_from_path",
+    deprecated=True,  # M64: superseded by POST /advise (flop advice, heads-up)
+    response_model=FlopPathQueryResponse,
+)
 async def solve_flop_from_path_endpoint(request: ActionPathRequest):
     try:
         if len(request.action_path) > cfg.MAX_PATH_LENGTH:
@@ -969,7 +973,11 @@ async def solve_flop_from_path_endpoint(request: ActionPathRequest):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@app.post("/solve_flop_multiway_from_path", response_model=FlopMultiwayPathQueryResponse)
+@app.post(
+    "/solve_flop_multiway_from_path",
+    deprecated=True,  # M64: superseded by POST /advise (flop advice, 3+ live positions)
+    response_model=FlopMultiwayPathQueryResponse,
+)
 async def solve_flop_multiway_from_path_endpoint(request: MultiwayFlopPathRequest):
     """The multiway analog of /solve_flop_from_path (M24), closing this
     project's own long-named-open gap: connecting derive_ranges_from_path's
@@ -1026,7 +1034,11 @@ async def preflop_walk_endpoint(request: PreflopWalkRequest):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@app.post("/solve_turn_from_path", response_model=TurnPathQueryResponse)
+@app.post(
+    "/solve_turn_from_path",
+    deprecated=True,  # M64: superseded by POST /advise (turn advice, heads-up)
+    response_model=TurnPathQueryResponse,
+)
 async def solve_turn_from_path_endpoint(request: TurnPathRequest):
     try:
         if len(request.preflop_action_path) > cfg.MAX_PATH_LENGTH:
@@ -1161,7 +1173,11 @@ async def advise_endpoint(request: AdviseRequest):
         raise HTTPException(status_code=422, detail=f"unsupported street/table-size combination: {exc}") from exc
 
 
-@app.post("/solve_river_from_path", response_model=RiverPathQueryResponse)
+@app.post(
+    "/solve_river_from_path",
+    deprecated=True,  # M64: superseded by POST /advise (river advice, heads-up)
+    response_model=RiverPathQueryResponse,
+)
 async def solve_river_from_path_endpoint(request: RiverPathRequest):
     """Real river-level advice (M46) — one street further than
     /solve_turn_from_path, closing the last street this project's
@@ -1216,7 +1232,11 @@ async def solve_river_from_path_endpoint(request: RiverPathRequest):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@app.post("/solve_turn_multiway_from_path", response_model=TurnMultiwayPathQueryResponse)
+@app.post(
+    "/solve_turn_multiway_from_path",
+    deprecated=True,  # M64: superseded by POST /advise (turn advice, 3+ live positions)
+    response_model=TurnMultiwayPathQueryResponse,
+)
 async def solve_turn_multiway_from_path_endpoint(request: MultiwayTurnPathRequest):
     """The multiway analog of /solve_turn_from_path (M26), closing M42/
     M43's own remaining "turn-depth" open item — for a real preflop path

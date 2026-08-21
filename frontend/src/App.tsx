@@ -1,4 +1,3 @@
-import { ActionPathSolver } from './components/ActionPathSolver';
 import { AdviseSolver } from './components/AdviseSolver';
 import { CachedFlopSolver } from './components/CachedFlopSolver';
 import { EquityCalculator } from './components/EquityCalculator';
@@ -6,7 +5,6 @@ import { FlopSolver } from './components/FlopSolver';
 import { MultiwayFlopSolver } from './components/MultiwayFlopSolver';
 import { PreflopRangesPage } from './components/PreflopRangesPage';
 import { TabNav } from './components/TabNav';
-import { TurnPathSolver } from './components/TurnPathSolver';
 import { useHashRoute } from './useHashRoute';
 
 const TABS = [
@@ -16,8 +14,6 @@ const TABS = [
   { id: 'flop', label: 'Flop Solver' },
   { id: 'flop-cached', label: 'Cached Flop Solver' },
   { id: 'flop-multiway', label: 'Multiway Flop Solver' },
-  { id: 'action-path', label: 'Action-Path Wizard' },
-  { id: 'turn', label: 'Turn Advisor' },
 ] as const;
 
 const DEFAULT_TAB = 'preflop';
@@ -48,8 +44,6 @@ export function App() {
         {activeTab === 'flop' && <FlopSolver />}
         {activeTab === 'flop-cached' && <CachedFlopSolver />}
         {activeTab === 'flop-multiway' && <MultiwayFlopSolver />}
-        {activeTab === 'action-path' && <ActionPathSolver />}
-        {activeTab === 'turn' && <TurnPathSolver />}
       </main>
     </>
   );

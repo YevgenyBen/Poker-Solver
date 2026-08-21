@@ -55,22 +55,26 @@ describe('App', () => {
     expect(window.location.hash).toBe('#equity');
   });
 
+  // M64: these two used the (now-retired) Action-Path Wizard and Turn
+  // Advisor tabs as their examples. The hash-routing behavior they cover
+  // is unchanged and still worth testing, so they were repointed at
+  // surviving tabs rather than deleted along with those components.
   it('opens directly to the tab named in the URL hash on load, with no click needed', () => {
-    window.location.hash = '#action-path';
+    window.location.hash = '#advise';
 
     render(<App />);
 
-    expect(screen.getByRole('heading', { name: 'Action-path flop solver' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Action-Path Wizard' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('heading', { name: 'Advisor' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Advisor' })).toHaveAttribute('aria-selected', 'true');
   });
 
-  it('opens directly to the Turn Advisor tab named in the URL hash, with no click needed', () => {
-    window.location.hash = '#turn';
+  it('opens directly to a non-default tab named in the URL hash, with no click needed', () => {
+    window.location.hash = '#flop-multiway';
 
     render(<App />);
 
-    expect(screen.getByRole('heading', { name: 'Turn advisor' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Turn Advisor' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('heading', { name: /Multiway flop solver/ })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Multiway Flop Solver' })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('falls back to the default tab for an unknown hash', () => {

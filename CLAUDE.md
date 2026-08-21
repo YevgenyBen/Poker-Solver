@@ -4298,6 +4298,42 @@ street chaining needs.
     regressions (up from M62's 749 — 1 new). No production behavior
     changed; budgets are untouched by design.
 
+- **M64 — audit recommendation #6: retire the surface `/advise`
+  supersedes.** The user chose "deprecate the routes, retire the two
+  superseded tabs" from four options laid out with measured tradeoffs.
+  - **The audit's own count was imprecise, and checking it first changed
+    the shape of the work.** It said "5 tabs superseded". Mapping each
+    component to the endpoints it actually calls found three distinct
+    groups, not one: **genuinely superseded** (Action-Path Wizard, Turn
+    Advisor — same question, `/advise` does strictly more); **not
+    superseded, different question** (Flop Solver / Multiway Flop Solver
+    explore a board with a fixed curated demo range and no action path;
+    Cached Flop Solver exists specifically to demonstrate the canonical
+    library's hit/miss); and **genuinely distinct** (Preflop Ranges'
+    169-cell grid, Equity Calculator). Only **2** tabs were actually
+    superseded, not 5 — so only 2 were retired.
+  - **One route was already orphaned and nobody had noticed:**
+    `/solve_river_from_path` has no frontend consumer at all, reachable
+    only via `/advise` or a direct API call.
+  - **Routes deprecated, not deleted:** all five `*_from_path` routes
+    carry `deprecated=True`, which flags them in the OpenAPI spec and
+    strikes them through in `/docs` while leaving behavior completely
+    unchanged — verified by reading `/openapi.json` back (5 flagged) and
+    by their own test sections still passing untouched. External callers
+    keep working; the direction is signalled rather than imposed.
+  - **~1,300 frontend lines removed**, including 895 lines of tests
+    whose coverage `AdviseSolver.test.tsx` already provides.
+  - **Two `App.test.tsx` tests used the retired tabs as their examples**
+    for hash-routing. That behavior is unchanged and still worth
+    testing, so they were **repointed at surviving tabs rather than
+    deleted** — losing routing coverage as a side effect of removing
+    unrelated components would have been a silent regression in test
+    quality.
+  - **Verification:** `python -m pytest tests/ -v` — 750 passed, zero
+    regressions. `npm test` — 145 passed (down from 169: the 24 removed
+    are the two retired components' own tests, and no surviving test was
+    deleted). `tsc --noEmit` clean.
+
 ## v3 vision (future) — live-table advisor
 
 Discussed with the user while scoping M16, recorded here rather than
