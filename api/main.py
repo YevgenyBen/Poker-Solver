@@ -509,10 +509,14 @@ Two things no sibling endpoint offers:
     hit is ~0.2ms against a ~20s miss; trading that for a tidier table
     would be a bad deal, but hiding it would be worse.
 
-One cell is deliberately unfilled: ("river", multiway). See
-_ADVISE_UNSUPPORTED_CELLS for the real reason (a second chained
-chance-hop needs an on-demand branch build whose design question M44's
-own entry named and left open).
+As of M53 the (street x table size) matrix is COMPLETE — the last cell,
+("river", multiway), is served by the same generalized multiway walker
+the turn cell uses, one hop deeper. M44 had left open whether a SECOND
+chained chance-hop needs structurally different treatment; it does not
+(see solver.ensure_mccfr_chance_branch, renamed from M44's own
+flop_turn-specific name once that was proven). _ADVISE_UNSUPPORTED_CELLS
+is now empty, kept as the declared place any future unsupported cell
+would state its real reason.
 
 /advise also adds the one street no path-derived endpoint ever served:
 PREFLOP advice, read straight off the cached preflop solve at whatever
@@ -562,7 +566,7 @@ from poker_solver.solver import (
     DEFAULT_ITERATIONS,
     StrategyResult,
     derive_ranges_from_path,
-    ensure_flop_turn_multiway_branch,
+    ensure_mccfr_chance_branch,
     solve_flop,
     solve_flop_multiway,
     solve_flop_to_river,
@@ -2151,6 +2155,8 @@ def _query_turn_multiway_from_path(
     flop_iterations: int,
     players: int = 3,
     hero_combo=None,
+    turn_action_kinds: list | None = None,
+    river_card=None,
 ) -> dict:
     """Orchestrates POST /solve_turn_multiway_from_path end to end — the
     multiway analog of _query_turn_from_path (M26): a real (cached, raw)
@@ -2186,6 +2192,16 @@ def _query_turn_multiway_from_path(
     postflop_positions = situation.postflop_positions
     effective_stack_bb = situation.effective_stack_bb
 
+    # River depth is requested by supplying BOTH a turn action path and
+    # a river card; either alone is a caller error rejected upstream.
+    to_river = river_card is not None
+    solver = solve_flop_to_river_multiway if to_river else solve_flop_turn_multiway
+
+    # to_river is part of the key: the two solvers produce genuinely
+    # different results (chain_to_river populates a second level of
+    # chance_fn), so a turn-depth result must never be served to a
+    # river-depth query or vice versa — the same collision reasoning
+    # every other cache key in this file applies to `players`.
     turn_solve_key = (
         tuple(preflop_action_kinds),
         players,
@@ -2193,11 +2209,12 @@ def _query_turn_multiway_from_path(
         iterations,
         board_cards,
         flop_iterations,
+        to_river,
     )
     with _turn_multiway_path_lock:
         result = _turn_multiway_path_cache.get(turn_solve_key)
     if result is None:
-        result = solve_flop_turn_multiway(
+        result = solver(
             board=board_cards,
             position_ranges=position_ranges,
             pot=path_scenario.pot,
@@ -2217,8 +2234,10 @@ def _query_turn_multiway_from_path(
     response = {
         "board": "".join(str(c) for c in board_cards),
         "turn_card": str(turn_card),
+        "river_card": None if river_card is None else str(river_card),
         "preflop_action_path": list(preflop_action_kinds),
         "flop_action_path": list(flop_action_kinds),
+        "turn_action_path": list(turn_action_kinds or []),
         "stack_bb": stack_bb,
         "flop_iterations": result.iterations,
         "position": postflop_positions[0],
@@ -2248,18 +2267,18 @@ def _query_turn_multiway_from_path(
             "effective_stack_bb": effective_stack_bb,
         }
 
+    ensure_kwargs = {
+        "position_ranges": position_ranges,
+        "positions": postflop_positions,
+        "raise_sizes": MULTIWAY_FLOP_RAISE_SIZES,
+        "max_raises": MULTIWAY_FLOP_MAX_RAISES,
+        "chain_to_river": to_river,
+    }
     with _turn_multiway_path_lock:
         try:
-            branch = ensure_flop_turn_multiway_branch(
-                result,
-                flop_node,
-                turn_card,
-                board=board_cards,
-                position_ranges=position_ranges,
-                positions=postflop_positions,
-                effective_stack_bb=effective_stack_bb,
-                raise_sizes=MULTIWAY_FLOP_RAISE_SIZES,
-                max_raises=MULTIWAY_FLOP_MAX_RAISES,
+            branch = ensure_mccfr_chance_branch(
+                result, flop_node, turn_card, board=board_cards,
+                effective_stack_bb=effective_stack_bb, **ensure_kwargs,
             )
         except ValueError as exc:
             raise ValueError(f"{turn_card} is not a legal turn card here (already on the board)") from exc
@@ -2283,16 +2302,75 @@ def _query_turn_multiway_from_path(
             "effective_stack_bb": remaining_stack,
         }
 
-    strategy = result.strategy_at(turn_node)
-    trained = result.trained_hands(turn_node)
+    if not to_river:
+        strategy = result.strategy_at(turn_node)
+        trained = result.trained_hands(turn_node)
+        return {
+            **response,
+            "is_terminal": False,
+            "player_to_act": turn_node.player_to_act,
+            "strategy": strategy,
+            "trained": trained,
+            "pot": turn_node.pot,
+            "effective_stack_bb": remaining_stack,
+        }
+
+    # --- One hop further: the river (M53) -------------------------------
+    # Structurally identical to the turn hop above, which is exactly the
+    # finding: M44 left open whether a SECOND chained hop needs different
+    # treatment, and it does not — same ensure_mccfr_chance_branch, one
+    # card-richer board, one street-deeper remaining stack.
+    _turn_actions, turn_terminal = _resolve_action_path(turn_node, turn_action_kinds)
+    if not isinstance(turn_terminal, TerminalNode):
+        raise ValueError("turn_action_path does not reach a terminal — action isn't capped yet")
+
+    # The TURN street's own fresh, 0-based investment tracking, not
+    # cumulative with the flop's (game_tree.StreetConfig's per-street
+    # reset) — the same subtlety _query_river_from_path documents.
+    remaining_after_turn = remaining_stack - max(turn_terminal.invested.values())
+
+    if not turn_terminal.is_showdown:
+        return {
+            **response,
+            "is_terminal": True,
+            "player_to_act": None,
+            "strategy": {},
+            "trained": {},
+            "pot": turn_terminal.pot,
+            "effective_stack_bb": remaining_after_turn,
+        }
+
+    with _turn_multiway_path_lock:
+        try:
+            river_branch = ensure_mccfr_chance_branch(
+                result, turn_terminal, river_card, board=board_cards + (turn_card,),
+                effective_stack_bb=remaining_stack, **ensure_kwargs,
+            )
+        except ValueError as exc:
+            raise ValueError(f"{river_card} is not a legal river card here (already on the board)") from exc
+    river_node = river_branch.root
+
+    if isinstance(river_node, TerminalNode):
+        # Already all-in by the turn — nothing left to decide, just a
+        # showdown once the river lands.
+        return {
+            **response,
+            "is_terminal": True,
+            "player_to_act": None,
+            "strategy": {},
+            "trained": {},
+            "pot": river_node.pot,
+            "effective_stack_bb": remaining_after_turn,
+        }
+
     return {
         **response,
         "is_terminal": False,
-        "player_to_act": turn_node.player_to_act,
-        "strategy": strategy,
-        "trained": trained,
-        "pot": turn_node.pot,
-        "effective_stack_bb": remaining_stack,
+        "player_to_act": river_node.player_to_act,
+        "strategy": result.strategy_at(river_node),
+        "trained": result.trained_hands(river_node),
+        "pot": river_node.pot,
+        "effective_stack_bb": remaining_after_turn,
     }
 
 
@@ -2511,6 +2589,10 @@ _ADVISE_ITERATION_CAPS = {
         MAX_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS,
     ),
     ("river", False): (DEFAULT_RIVER_PATH_QUERY_ITERATIONS, MAX_RIVER_PATH_QUERY_ITERATIONS),
+    ("river", True): (
+        DEFAULT_FLOP_TO_RIVER_MULTIWAY_ITERATIONS,
+        MAX_FLOP_TO_RIVER_MULTIWAY_ITERATIONS,
+    ),
 }
 
 # The (street, is-multiway) cells /advise deliberately does NOT serve
@@ -2518,14 +2600,11 @@ _ADVISE_ITERATION_CAPS = {
 # so the caller gets this explanation rather than the bare KeyError that
 # a missing cap entry would otherwise raise first (a real ordering bug
 # caught by this milestone's own test, not by review).
-_ADVISE_UNSUPPORTED_CELLS = {
-    ("river", True): (
-        "river advice is 2-position only so far — a 3+-survivor river needs an on-demand "
-        "second-hop chance-branch build that doesn't exist yet (solve_flop_to_river_multiway "
-        "exists, but its MCCFR chance_data only holds sampled (terminal, card) pairs; whether a "
-        "SECOND chained hop needs ensure_flop_turn_multiway_branch's identical treatment or a "
-        "structurally different one is a real open design question, see CLAUDE.md's M44 entry)"
-    ),
+_ADVISE_UNSUPPORTED_CELLS: dict = {
+    # Empty as of M53, which filled the last cell — (river, multiway).
+    # Kept (rather than deleted) as the declared place any future
+    # unsupported cell states its real reason, and because the route's
+    # own check reads it unconditionally.
 }
 
 
@@ -2699,12 +2778,17 @@ def _advise(request, street: str, iterations: int, solve_iterations: int, hero_c
     if len(river_cards) != 1:
         raise ValueError(f"river_card must have exactly 1 card, got {len(river_cards)}")
     if multiway:
-        # Unreachable via the route (_ADVISE_UNSUPPORTED_CELLS rejects
-        # this cell with a full explanation before dispatch), but kept as
-        # a real guard for any direct caller of _advise — the same
-        # belt-and-braces discipline query_strategy's own post-insert
-        # RuntimeError check uses for a provably-unreachable state.
-        raise ValueError(_ADVISE_UNSUPPORTED_CELLS[("river", True)])
+        # M53: the last cell. Reuses the SAME generalized walker the turn
+        # cell uses, one hop deeper — see ensure_mccfr_chance_branch for
+        # why a second chained hop needed no structurally different
+        # treatment, only a chain_to_river passthrough.
+        raw = _query_turn_multiway_from_path(
+            request.preflop_action_path, request.flop_action_path, turn_cards[0], request.stack_bb,
+            board_cards, iterations, solve_iterations, request.players, hero_combo=hero_combo,
+            turn_action_kinds=request.turn_action_path, river_card=river_cards[0],
+        )
+        return {**raw, "source": "mccfr", "solve_iterations": raw["flop_iterations"],
+                "street": street, "hero_key": hero_key}
     raw = _query_river_from_path(
         request.preflop_action_path, request.flop_action_path, turn_cards[0], request.turn_action_path,
         river_cards[0], request.stack_bb, board_cards, iterations, solve_iterations, request.players,

@@ -882,7 +882,7 @@ def solve_flop_turn_multiway(
     )
 
 
-def ensure_flop_turn_multiway_branch(
+def ensure_mccfr_chance_branch(
     result: StrategyResult,
     terminal: TerminalNode,
     card,
@@ -894,6 +894,7 @@ def ensure_flop_turn_multiway_branch(
     max_raises: int = 4,
     equity_samples: int = None,
     equity_seed: int = DEFAULT_EQUITY_SEED,
+    chain_to_river: bool = False,
 ) -> SampledChanceBranch:
     """Returns `result.chance_data`'s entry for `(id(terminal), card)`,
     building and caching it on demand (via `chance.build_mccfr_chance_
@@ -938,6 +939,26 @@ def ensure_flop_turn_multiway_branch(
     Raises `ValueError` (propagated from `build_mccfr_chance_branch`) if
     `card` isn't legal here — already on the board, or `terminal` is a
     fold-out with nothing to deal a card for.
+
+    HOP-AGNOSTIC (M53, renamed from `ensure_flop_turn_multiway_branch`).
+    M44 left open a real design question: does a SECOND chained hop
+    (turn -> river) need this same on-demand treatment, or a structurally
+    different one? Answered by reading `build_mccfr_chance_branch`
+    rather than assuming: it is already fully hop-agnostic — it derives
+    the next board from whatever `board` it's handed and self-guards
+    `chain_to_river and len(next_board) < 5`, so handing it a 4-card
+    (flop+turn) board produces a river branch whose own `chance_fn` is
+    correctly `None` with no special-casing. So the answer is "the SAME
+    treatment", and this function needed only a rename plus the
+    `chain_to_river` passthrough below rather than a second near-copy.
+
+    `chain_to_river` must match whatever produced `result` — `False` for
+    a `solve_flop_turn_multiway` result, `True` for a `solve_flop_to_
+    river_multiway` one — for the same "identical inputs reproduce
+    exactly what MCCFR's own sampling would have built" contract the
+    parameter list above already depends on. Passing `False` against a
+    chained result would build a turn branch that dead-ends where the
+    real sampled one would have carried on to a river.
     """
     key = (id(terminal), card)
     if key in result.chance_data:
@@ -954,10 +975,19 @@ def ensure_flop_turn_multiway_branch(
         raise_sizes=raise_sizes,
         max_raises=max_raises,
         equity_seed=equity_seed,
+        chain_to_river=chain_to_river,
         **({"equity_samples": equity_samples} if equity_samples is not None else {}),
     )
     result.chance_data[key] = branch
     return branch
+
+
+# M44's original name, kept as an alias so the rename above isn't a
+# breaking change for anything that imported it directly. New callers
+# should use ensure_mccfr_chance_branch — the flop_turn-specific name
+# stopped being accurate once M53 proved the same function serves the
+# river hop too.
+ensure_flop_turn_multiway_branch = ensure_mccfr_chance_branch
 
 
 # Measured during M39's own scoping pass, not assumed — and the real
