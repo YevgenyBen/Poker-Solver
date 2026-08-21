@@ -1763,6 +1763,125 @@ street chaining needs.
     `trained`, or a per-position summary), deferred rather than bolted
     on to an already-large milestone. The engine-level fact is real and
     tested regardless of whether the API surfaces it yet.
+- **M30 — N-way, board-aware combo equity (Phase 1 of recommendation
+  #5, "true multiway postflop solving").** The diagnostic's own §4
+  scoped this out explicitly as needing *four* separate pieces, not
+  one: this equity primitive itself, plus three MCCFR-side changes —
+  a signature-level change threading a per-chance-branch equity source
+  through MCCFR's terminal-value computation; per-position range
+  seeding and opponent sampling (MCCFR currently has no way to seed a
+  position's real derived range, and samples every opponent from one
+  global preflop-style prior regardless of position); and a
+  chance-branch sampling case in the MCCFR recursion itself. M30 ships
+  only the first, mirroring this project's own M10-then-M11/M17-then-
+  M18 precedent of a measured, standalone primitive before any live
+  wiring — the other three remain explicitly unscoped future work, not
+  attempted here.
+  - **The gap, precisely stated:** neither existing equity primitive
+    has both properties true multiway postflop solving needs at once.
+    `equity.py`'s `MultiwayEquityCache` is N-way but always deals a
+    fresh random 5-card board from nothing (preflop-only, board-blind).
+    `board_equity.py`'s `build_board_equity_table` is board-aware but
+    strictly pairwise (two combos at a time, never more). New module
+    `poker_solver/multiway_board_equity.py` — not folded into either
+    existing module, matching `combos.py`/`board_equity.py`'s own M10
+    precedent of a fresh module rather than retrofitting one with a
+    different existing shape — is their intersection: given a real,
+    fixed board and a fixed tuple of opponent combos,
+    `nway_combo_equity_vector` computes each candidate in a pool's real
+    N-way win-share (a k-way tie splits 1/k) on that specific board;
+    `NwayBoardEquityCache` adds the same lazy, memoized-by-opponent-
+    tuple architecture `MultiwayEquityCache` already established at M8,
+    adapted for board-awareness and combo- (not class-) level
+    granularity.
+  - **Verified against the existing, trusted primitive before writing
+    any formal tests, not just trusting the new code on its own:** at
+    N=2 (1 fixed opponent), this module's output was compared directly
+    against `build_board_equity_table`'s already-shipped, already-
+    trusted pairwise result at the identical seed — an exact match
+    (0.9180 == 0.9180). Carried into the formal suite
+    (`tests/test_multiway_board_equity.py`, 22 tests, all passing) as a
+    permanent regression test, alongside a complete-river-board
+    exact-value cross-check, NaN handling for every impossible-
+    combination case (candidate blocked by the board, candidate blocked
+    by an opponent, opponents mutually conflicting with each other or
+    the board), N-way sanity checks (a hand-verifiable exact
+    quad-aces-vs-two-others river case; a genuine 3-way tie confirmed
+    to split exactly 1/3), exact — not sampled — resolution at
+    `remaining_needed<=1` for both turn and river boards (mirroring
+    `board_equity.py`'s own identical optimization), and a full
+    cache-behavior suite (starts empty, populates on touch, a hit
+    doesn't grow it, order-independent, deterministic across
+    separately-constructed caches sharing a seed, different boards
+    don't collide).
+  - **The load-bearing design call, carried forward from M27's own
+    lesson rather than rediscovered the hard way a second time: no
+    placeholder value, ever — NaN only.** A candidate that can't
+    physically coexist with the fixed board/opponents gets NaN, full
+    stop (the same convention `board_equity.py` already established for
+    its own impossible matchups) — never a flat `1/n_live` or any other
+    constant. M27 measured, at the preflop/class level, that injecting
+    *any* constant placeholder for a combination an opponent sampler
+    reaches without card-removal tracking compounds destructively under
+    CFR+'s regret flooring; what actually worked there was rejecting
+    and resampling *before* ever needing a placeholder. This module's
+    own docstring states explicitly, for whichever future milestone
+    wires it into MCCFR: apply that same reject-and-resample discipline
+    at the call site, don't invent a fresh placeholder-value question
+    this module's NaN convention has deliberately left unanswered.
+  - **A second, smaller precision call:** each candidate deals its
+    *own* Monte Carlo runouts, correctly excluding that candidate's own
+    two cards from its own deck — not shared across candidates the way
+    `chance.py`'s M12 entry names as an accepted, precisely-bounded
+    approximation elsewhere (uniform chance-branch weight regardless of
+    a hand's own blockers). This module didn't need to accept that
+    shortcut, since nothing here forces runout-sharing the way a
+    pre-built chance tree does.
+  - `_stable_seed` is a small, local, duplicate copy of `equity.py`'s
+    own private helper of the same name/shape, not a shared import —
+    confirmed, not assumed, that this is the actual established
+    practice: `cards.remaining_deck`'s own promotion (replacing a
+    private `_remaining_deck` in two places) was the one time this
+    project *did* share a utility, and it happened by promoting an
+    already-duplicated implementation after the fact, not by a new
+    module reaching back into an old one's private helpers up front.
+  - **Measured, not assumed — and a real, structurally better-scaling
+    shape than `board_equity.py`'s own bottleneck, found while
+    measuring, not before:** single-candidate cost vs. growing opponent
+    count (directly comparable to the diagnostic's own earlier
+    back-of-envelope prototype benchmark): N=2 players/500 samples
+    13.58ms, N=2/2000 55.25ms, N=9/500 57.78ms, N=9/2000 252.58ms — the
+    same ballpark as the diagnostic's own prototype numbers (14.75ms /
+    286.46ms at the matching two points), real production code landing
+    a little faster, not slower. The more realistic shape — a real
+    candidate pool against one fixed opponent tuple, mirroring
+    `traverser_equity_vector`'s own actual call pattern — costs 159ms
+    (2 opponents, 20-combo pool) up to 1.17s (8 opponents, 50-combo
+    pool), all at 200 samples: **linear in pool size**, not the O(N²)
+    pairwise cost that was M10/M17/M18's own real bottleneck, because
+    this module evaluates each candidate against one *fixed* opponent
+    tuple rather than building a full pairwise table. `NwayBoardEquity
+    Cache`'s hit/miss ratio, measured on the largest (8-opponent,
+    50-combo) case: a miss costs ~1.15s (matches the bare-function
+    number above, as expected — a miss *is* one bare-function call), a
+    hit averages **0.0037ms** across 1,000 repeats — a ~310,000x ratio,
+    the same "cache a fixed-opponent-tuple lookup, make repeats nearly
+    free" shape `MultiwayEquityCache`/`library.py`'s own caches already
+    established, now confirmed to hold for this new, differently-shaped
+    primitive too.
+  - Full suite re-run, not just the new module's own tests: 575 backend
+    (`python -m pytest tests/ -v`) + 139 frontend (`npm test`), zero
+    regressions — confirms this genuinely-standalone addition (zero
+    existing callers, zero existing files modified) didn't perturb
+    anything already shipped.
+  - Engine only, no `api/main.py`/frontend changes, zero changes to any
+    existing module — matches `combos.py` (M10)/`canonicalize.py`
+    (M19)/`library.py` (M20)'s own standalone-new-primitive precedent.
+    The three remaining recommendation-#5 prerequisites the diagnostic
+    named (MCCFR terminal-value threading, per-position range
+    seeding/opponent sampling, MCCFR chance-branch sampling) are each
+    likely their own milestone, mirroring the real-time-speed roadmap's
+    own M17-M21 multi-phase structure — none attempted here.
 
 ## v3 vision (future) — live-table advisor
 
