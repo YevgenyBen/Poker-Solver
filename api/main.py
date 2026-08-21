@@ -164,7 +164,7 @@ accepts a real, untrusted action-path description end to end (stack in,
 big blinds; a sequence of action *kinds* like "raise"/"call_or_check";
 a flop board out) rather than a fixed demo range. Chains a real preflop
 solve (cached raw, not just formatted, unlike /solve/{stack_bb}'s own
-`_get_or_solve`) through `derive_ranges_from_path` (M16) into `query_
+`_get_or_solve_preflop_raw`) through `derive_ranges_from_path` (M16) into `query_
 strategy_from_path` (M23) — the first endpoint to actually exercise
 that connection live. This is the first POST/request-body route in
 this app (every other route is GET-with-query-params) — variable-length
@@ -1022,8 +1022,11 @@ MAX_MULTIWAY_TURN_PATH_QUERY_CLASSES_PER_POSITION = 6
 DEFAULT_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS = DEFAULT_FLOP_TURN_MULTIWAY_ITERATIONS
 MAX_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS = 200
 
-_cache: dict = {}
-_cache_lock = threading.Lock()
+# M58: there is exactly ONE preflop solve cache, _preflop_raw_cache
+# below. A second, formatted-response cache (`_cache`) used to sit here
+# and independently re-solve the identical spot for GET /solve — see
+# CLAUDE.md's M58 entry and docs/project-audit-2026-08-21.md's SS2.1 for
+# the measured ~3.2s that wasted on the most common first user journey.
 _multiway_cache: dict = {}
 _multiway_lock = threading.Lock()
 _flop_cache: dict = {}
@@ -1136,21 +1139,6 @@ def _prewarm_enabled() -> bool:
 
 def _cache_key(stack_bb: float, iterations: int) -> tuple:
     return (round(stack_bb), iterations)
-
-
-def _get_or_solve(stack_bb: float, iterations: int) -> dict:
-    key = _cache_key(stack_bb, iterations)
-    with _cache_lock:
-        cached = _cache.get(key)
-    if cached is not None:
-        return cached
-
-    result = solve_preflop(stack_bb=stack_bb, iterations=iterations)
-    response = format_solve_response(result)
-
-    with _cache_lock:
-        _cache[key] = response
-    return response
 
 
 def _get_or_solve_multiway(stack_bb: float, players: int) -> StrategyResult:
@@ -2853,7 +2841,7 @@ def _prewarm_common_depths() -> None:
     for depth in PREWARM_STACK_DEPTHS:
         try:
             logger.info("pre-warming solve for stack_bb=%s", depth)
-            _get_or_solve(depth, DEFAULT_ITERATIONS)
+            _get_or_solve_preflop_raw(depth, DEFAULT_ITERATIONS)
         except Exception:
             logger.exception("pre-warm failed for stack_bb=%s", depth)
 
@@ -2951,10 +2939,14 @@ async def solve(
         valid = ", ".join(str(p) for p in [2, *MULTIWAY_TABLE_CONFIGS])
         raise HTTPException(status_code=422, detail=f"players must be one of {valid}")
     try:
-        if players == 2:
-            return await run_in_threadpool(_get_or_solve, stack_bb, iterations)
-
-        result = await run_in_threadpool(_get_or_solve_multiway, stack_bb, players)
+        # One helper for every table size (M58). _get_or_solve_preflop_raw
+        # already delegates to _get_or_solve_multiway when players != 2,
+        # so this is genuinely one cache, not a branch that happens to
+        # look unified — and formatting here rather than inside a second
+        # cache is what lets `position` be honored at EVERY table size.
+        # It previously was not: heads-up silently returned first-to-act
+        # regardless of what the caller asked for.
+        result = await run_in_threadpool(_get_or_solve_preflop_raw, stack_bb, iterations, players)
         return format_solve_response(result, position=position)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
