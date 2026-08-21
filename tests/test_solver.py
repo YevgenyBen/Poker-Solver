@@ -2161,3 +2161,55 @@ def test_derive_ranges_from_path_pipeline_open_3bet_call_feeds_solve_flop():
     assert len(opening) > 0
     for freqs in opening.values():
         assert pytest.approx(sum(freqs.values()), abs=1e-6) == 1.0
+
+
+# ---------------------------------------------------------------------------
+# M63: a CHARACTERIZATION test for a known, unresolved defect.
+#
+# It asserts that 6-max MCCFR convergence still DIVERGES with more
+# iterations — deliberately pinning broken behavior, so that:
+#   * the constraint behind MULTIWAY_TABLE_CONFIGS' small budgets is a
+#     live, runnable fact rather than a comment nobody executes, and
+#   * whoever eventually fixes convergence gets a LOUD failure here
+#     telling them the iteration budgets can finally be raised.
+#
+# If this test fails, that is very likely GOOD NEWS. Re-measure, then
+# revisit api/config.py's budgets and docs/project-audit-2026-08-21.md
+# recommendation #5.
+# ---------------------------------------------------------------------------
+
+
+def test_six_max_convergence_still_diverges_with_more_iterations():
+    # M27 measured AKs's UTG-open fold rate climbing 22.8% (300 iters) ->
+    # 69.2% (3k) -> 94.8% (30k) instead of settling. M63 re-measured on
+    # current code — AFTER M33/M34's equity fixes, M48's evaluator
+    # rewrite and M55's memoization — and reproduced it: 15.6% -> 48.7%
+    # -> 92.4%. None of those changes touched the cause.
+    hands = list(_M9_HANDS)
+    positions = ("UTG", "MP", "CO", "BTN", "SB", "BB")
+
+    def utg_fold_rate(iterations):
+        result = solve_preflop(
+            config=GameConfig(positions=positions, stack_bb=100.0),
+            hands=hands,
+            equity_cache=MultiwayEquityCache(hands=hands, seed=1),
+            iterations=iterations,
+            seed=1,
+        )
+        return result.opening_range()["AKs"]["fold"]
+
+    at_shipped_budget = utg_fold_rate(300)
+    at_ten_times = utg_fold_rate(3_000)
+
+    # The shipped budget is where the answer is still sane — that is the
+    # whole reason it is 300 rather than something larger.
+    assert at_shipped_budget < 0.35, (
+        f"AKs UTG fold rate at the shipped budget is {at_shipped_budget:.1%}; "
+        "if this ever drifts high, the budget itself is no longer a safe choice"
+    )
+    # ...and 10x more solving makes it materially WORSE, not better.
+    assert at_ten_times > at_shipped_budget + 0.15, (
+        f"AKs UTG fold rate went {at_shipped_budget:.1%} -> {at_ten_times:.1%} with 10x "
+        "the iterations. If this assertion now fails, 6-max convergence may be FIXED — "
+        "re-measure and revisit the iteration budgets in api/config.py."
+    )

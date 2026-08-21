@@ -85,6 +85,15 @@ DEMO_MULTIWAY_HANDS = [
 # at 300 (see tests/test_solver.py's six_max_result tests, which now
 # mirror 9-max's own "only assert what's actually reliable" pattern).
 # Fully resolving 6-max's convergence is real, separate future work.
+# M63 re-measured all of this on current code, because the finding below
+# predated M33/M34's equity fixes, M48's evaluator rewrite and M55's
+# memoization — any of which might plausibly have changed it. None did:
+# AKs's UTG fold rate still runs 15.6% (300) -> 48.7% (3k) -> 92.4%
+# (30k), and QQ's 19.3% -> 86.2%. So 300 is NOT a cost-conservative
+# number with headroom above it; it is the count at which the answer is
+# still sane. Raising it makes the output actively worse. Pinned by
+# tests/test_solver.py's
+# test_six_max_convergence_still_diverges_with_more_iterations.
 MULTIWAY_TABLE_CONFIGS = {
     3: {"positions": ("BTN", "SB", "BB"), "iterations": 100_000},
     6: {"positions": ("UTG", "MP", "CO", "BTN", "SB", "BB"), "iterations": 300},

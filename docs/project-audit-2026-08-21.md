@@ -263,9 +263,18 @@ finding a convergence instability, and 9-max was always conservative.
 
 The inversion is worth naming because it means **6-max and 9-max are
 getting ~333x less solving than 3-max**, and 6-max at 300 iterations
-costs only 11s — there is real headroom. M27's instability finding is
-the blocker, not cost, and that finding predates M48's and M55's
-speedups.
+costs only 11s — so there is real *cost* headroom.
+
+> **CORRECTION (M63).** The sentence above originally continued "there
+> is real headroom", implying the budgets could simply be raised. That
+> was wrong, and M63 disproved it by direct measurement: re-running
+> M27's exact experiment on current code — after M33/M34's equity fixes,
+> M48's evaluator rewrite and M55's memoization — reproduced the
+> divergence almost exactly (AKs's UTG fold rate 15.6% at 300 iterations
+> -> 48.7% at 3k -> 92.4% at 30k; QQ 19.3% -> 86.2%). **Cost was never
+> the constraint.** 300 is not a conservative budget, it is the count at
+> which the answer is still sane; raising it makes the output actively
+> worse. See recommendation #5 below, now resolved as "do not raise".
 
 ### 6.2 Multiway postflop is *faster* than heads-up — because its preflop pool is tiny
 
@@ -321,13 +330,22 @@ long-term payoff, but genuinely riskier than #1-#3 — it touches every
 endpoint at once. Worth doing *after* the cheaper wins, and with the
 same "existing tests unchanged" proof M50 used.
 
-### #5 — Revisit 6-max / 9-max preflop iteration budgets (§6.1)
-They sit at 300 iterations because of M27's convergence instability
-finding — which predates two major speedups. Re-testing whether higher
-counts are now both affordable *and* stable is a real fidelity
-opportunity. **Needs measurement first**, and M27's warning is that more
-iterations made things *worse*, so this is investigation, not a dial to
-turn.
+### #5 — Revisit 6-max / 9-max preflop iteration budgets (§6.1) — RESOLVED (M63): DO NOT RAISE
+Investigated as specified: measurement first, since M27's warning was
+that more iterations made things *worse*. **The warning holds.**
+Re-running M27's exact experiment on current code reproduced the
+divergence (AKs UTG fold 15.6% -> 48.7% -> 92.4% at 300 / 3k / 30k
+iterations; QQ 19.3% -> 86.2%). None of M33/M34's equity fixes, M48's
+evaluator rewrite, or M55's memoization touched the cause.
+
+Budgets left at 300. A characterization test
+(`test_six_max_convergence_still_diverges_with_more_iterations`) now
+pins this so the constraint is a runnable fact rather than a comment,
+and so a future convergence fix produces a loud failure pointing back
+here. **The real fix remains the one M27 named**: restructure CFR+'s
+regret update to mask out a hand's contribution for an iteration
+entirely rather than feed it any placeholder value — a genuine
+architectural change to `_mccfr_recurse`, not a tuning exercise.
 
 ### #6 — Decide the fate of the superseded endpoints and tabs (§2.2, §2.4)
 Not urgent, and there's a real argument for keeping them (isolating one

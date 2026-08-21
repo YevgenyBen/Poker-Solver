@@ -4256,6 +4256,48 @@ street chaining needs.
     in advance in M61's own entry rather than discovered here.
   - **Audit recommendation #4 is now complete.** No frontend changes.
 
+- **M63 — audit recommendation #5: 6/9-max iteration budgets.
+  RESOLVED AS "DO NOT RAISE" — and the audit's own reasoning corrected.**
+  The audit was explicit that this was investigation, not a dial to
+  turn, because M27 had found that MORE iterations made convergence
+  WORSE. Investigated exactly that way: measurement first, no change
+  until the measurement said so.
+  - **M27's finding survives, reproduced almost exactly.** Re-running
+    M27's own experiment on current code — AFTER M33/M34's equity fixes,
+    M48's evaluator rewrite and M55's memoization, any of which might
+    plausibly have changed it — gives AKs's UTG-open fold rate as 15.6%
+    (300 iterations) -> 48.7% (3k) -> **92.4%** (30k), against M27's own
+    22.8 -> 69.2 -> 94.8. QQ goes 19.3% -> 86.2%; AKo 27.4% -> 96.6%.
+    UTG folding QQ 86% of the time is not a strategy; it is divergence.
+    **None of the intervening speedups or equity fixes touched the
+    cause.**
+  - **The audit's §6.1 was WRONG and is corrected in place, not quietly
+    dropped.** It said "6-max at 300 iterations costs only 11s — there
+    is real headroom", implying the budgets could simply be raised. Cost
+    headroom is real; it was never the constraint. **300 is not a
+    conservative budget — it is the count at which the answer is still
+    sane.** `docs/project-audit-2026-08-21.md` now carries an explicit
+    CORRECTION block in §6.1 and a resolved recommendation #5, so a
+    future reader doesn't re-derive the same wrong conclusion from the
+    original text.
+  - **The forward-facing part, and why this milestone ships code at
+    all despite changing no behavior:** a *characterization test*,
+    `test_six_max_convergence_still_diverges_with_more_iterations`,
+    pins the divergence. Deliberately asserting broken behavior, for two
+    reasons: it turns the constraint behind `MULTIWAY_TABLE_CONFIGS`'
+    budgets from a comment nobody executes into a runnable fact, and it
+    gives whoever eventually fixes convergence a LOUD failure telling
+    them the budgets can finally be raised. Its own docstring says so:
+    "If this test fails, that is very likely GOOD NEWS."
+  - **The real fix remains the one M27 named** and this milestone does
+    not attempt: restructure CFR+'s regret update to mask out a hand's
+    contribution for an iteration entirely rather than feed it any
+    placeholder value — a genuine architectural change to
+    `_mccfr_recurse`, not a tuning exercise.
+  - **Verification:** `python -m pytest tests/ -v` — 750 passed, zero
+    regressions (up from M62's 749 — 1 new). No production behavior
+    changed; budgets are untouched by design.
+
 ## v3 vision (future) — live-table advisor
 
 Discussed with the user while scoping M16, recorded here rather than
