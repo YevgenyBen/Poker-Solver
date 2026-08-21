@@ -2791,6 +2791,53 @@ street chaining needs.
     finding already de-risked the "is this affordable for a live
     request" question M13's own 2-position finding had left as a real
     concern for the analogous endpoint.
+- **M40 — live `GET /solve_flop_to_river_multiway`, closing the endpoint
+  half of M39's own deferred follow-on.** Mirrors M37's own two-endpoint
+  pattern exactly: own cache dict/lock (`_flop_to_river_multiway_cache`/
+  `_flop_to_river_multiway_lock`, same "collision-unsafe if shared"
+  reasoning as every other `/solve_flop*` cache), own `_get_or_solve_
+  flop_to_river_multiway` helper (identical shape to `_get_or_solve_
+  flop_turn_multiway`, just calling `solve_flop_to_river_multiway`
+  instead), same `DEMO_MULTIWAY_FLOP_CLASSES`/board/pot/raise-sizing
+  menu the other two multiway endpoints already share (a runout-depth
+  comparison needs the same underlying matchup at every depth, the same
+  reasoning `DEMO_CHAINED_FLOP_HERO_/VILLAIN_CLASSES` already
+  established for the 2-position endpoint trio).
+  - **The one real decision this milestone made, and it was already
+    answered before any code was written:** `MAX_FLOP_TO_RIVER_
+    MULTIWAY_ITERATIONS`. M39's own engine-level measurement (at the
+    identical 11-combo pool this endpoint's demo range produces) already
+    showed `solve_flop_to_river_multiway` is *cheaper* than `solve_flop_
+    turn_multiway` at every iteration count compared, the opposite of
+    what the 2-position `solve_flop_to_river`/`solve_flop_turn` pair
+    found — so, unlike M14's own analogous moment (where `solve_flop_to_
+    river`'s materially worse cost curve forced a *stricter*, zero-
+    headroom cap relative to `solve_flop_turn`'s), this endpoint's cap
+    was set equal to `solve_flop_turn_multiway`'s own default/cap
+    (50/500) with no new measurement needed — M39 had already done the
+    measuring. Confirmed, not just inherited on faith: this endpoint's
+    own request-level tests exercise the real cap path
+    (`test_solve_flop_to_river_multiway_rejects_iterations_above_the_
+    cap`), same as every sibling endpoint's own test.
+  - **Frontend/docstring scope:** deliberately none this milestone — the
+    module docstring documents the new endpoint (mirroring the existing
+    `/solve_flop_multiway`/`/solve_flop_turn_multiway` paragraph's
+    voice), but `MultiwayFlopSolver.tsx`'s own runout-depth selector
+    stays at its current 2 options (Flop / Flop + turn). Adding a third
+    ("Flop + turn + river") is the natural next milestone this one
+    leaves open — the exact mirror of `FlopSolver.tsx`'s own 3-depth
+    selector, now that the backend supports all three multiway depths
+    the same way the 2-position family already did.
+  - **Verification:** `python -m pytest tests/ -v` — 664 passed, zero
+    regressions (up from M39's 659 — 5 new `test_api.py` tests: a happy-
+    path/cross-position-cache test, a bad-board test, a bad-pot-or-stack
+    test, an over-the-cap test, and a cache-independence test confirming
+    a river-level `chance_data` entry — `len(branch.board) == 5` —
+    actually appears through the real HTTP layer, not just at the
+    engine level M39 already proved it at). No frontend files touched,
+    so `npm test` wasn't re-run this milestone — matches M39's own
+    identical "engine/API-only change, frontend suite untouched"
+    reasoning.
 
 ## v3 vision (future) — live-table advisor
 

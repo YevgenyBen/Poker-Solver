@@ -105,6 +105,7 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
     api_main._flop_to_river_cache.clear()
     api_main._flop_multiway_cache.clear()
     api_main._flop_turn_multiway_cache.clear()
+    api_main._flop_to_river_multiway_cache.clear()
     api_main._flop_query_library.clear()
     api_main._preflop_raw_cache.clear()
     api_main._path_query_libraries.clear()
@@ -117,6 +118,7 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
     api_main._flop_to_river_cache.clear()
     api_main._flop_multiway_cache.clear()
     api_main._flop_turn_multiway_cache.clear()
+    api_main._flop_to_river_multiway_cache.clear()
     api_main._flop_query_library.clear()
     api_main._preflop_raw_cache.clear()
     api_main._path_query_libraries.clear()
@@ -753,6 +755,85 @@ def test_solve_flop_multiway_and_solve_flop_turn_multiway_are_cached_independent
     turn_result = next(iter(api_main._flop_turn_multiway_cache.values()))
     assert flop_result.chance_data == {}  # solve_flop_multiway never dispatches chance
     assert len(turn_result.chance_data) > 0  # solve_flop_turn_multiway does
+
+
+# ---------------------------------------------------------------------------
+# M40: GET /solve_flop_to_river_multiway — the same 3-max multiway flop as
+# /solve_flop_multiway/`/solve_flop_turn_multiway`, chained all the way to a
+# real multiway river decision (wiring up M39's solve_flop_to_river_
+# multiway). Same shape/pool/board as the M37 section above.
+# ---------------------------------------------------------------------------
+
+FAST_FLOP_TO_RIVER_MULTIWAY_ITERATIONS = 5
+
+
+def test_solve_flop_to_river_multiway_returns_200_well_formed_and_cached_across_positions(client):
+    url = (
+        f"/solve_flop_to_river_multiway?board={_MULTIWAY_FLOP_BOARD}&pot=10&stack_bb=40"
+        f"&iterations={FAST_FLOP_TO_RIVER_MULTIWAY_ITERATIONS}"
+    )
+    first = client.get(url)
+    assert first.status_code == 200
+    body = first.json()
+    assert body["board"] == _MULTIWAY_FLOP_BOARD
+    assert body["pot"] == 10.0
+    assert body["stack_bb"] == 40.0
+    assert body["iterations"] == FAST_FLOP_TO_RIVER_MULTIWAY_ITERATIONS
+    assert body["elapsed_seconds"] >= 0.0
+    assert body["position"] == "OOP"
+    assert body["positions"] == ["OOP", "MID", "IP"]
+    assert len(body["strategy"]) > 0
+    for freqs in body["strategy"].values():
+        assert sum(freqs.values()) == pytest.approx(1.0, abs=1e-6)
+
+    # A different live position must be served from the same cached
+    # StrategyResult, not trigger a second (real) solve.
+    ip_body = client.get(f"{url}&position=IP").json()
+    assert ip_body["elapsed_seconds"] == body["elapsed_seconds"]
+    assert ip_body["position"] == "IP"
+
+    bad_position = client.get(f"{url}&position=NOTAPOSITION")
+    assert bad_position.status_code == 422
+
+
+def test_solve_flop_to_river_multiway_rejects_a_board_that_isnt_exactly_three_cards(client):
+    response = client.get(
+        f"/solve_flop_to_river_multiway?board=Jh7d&pot=10&stack_bb=40&iterations={FAST_FLOP_TO_RIVER_MULTIWAY_ITERATIONS}"
+    )
+    assert response.status_code == 422
+
+
+def test_solve_flop_to_river_multiway_rejects_nonpositive_pot_or_stack(client):
+    bad_pot = client.get(f"/solve_flop_to_river_multiway?board={_MULTIWAY_FLOP_BOARD}&pot=0&stack_bb=40")
+    assert bad_pot.status_code == 422
+    bad_stack = client.get(f"/solve_flop_to_river_multiway?board={_MULTIWAY_FLOP_BOARD}&pot=10&stack_bb=0")
+    assert bad_stack.status_code == 422
+
+
+def test_solve_flop_to_river_multiway_rejects_iterations_above_the_cap(client):
+    response = client.get(
+        f"/solve_flop_to_river_multiway?board={_MULTIWAY_FLOP_BOARD}&pot=10&stack_bb=40"
+        f"&iterations={api_main.MAX_FLOP_TO_RIVER_MULTIWAY_ITERATIONS + 1}"
+    )
+    assert response.status_code == 422
+
+
+def test_solve_flop_to_river_multiway_is_cached_independently_from_the_other_two(client):
+    # Same collision-safety regression as test_solve_flop_multiway_and_
+    # solve_flop_turn_multiway_are_cached_independently, extended to the
+    # third endpoint's own dict.
+    shared_iterations = min(FAST_FLOP_TURN_MULTIWAY_ITERATIONS, FAST_FLOP_TO_RIVER_MULTIWAY_ITERATIONS)
+    client.get(
+        f"/solve_flop_turn_multiway?board={_MULTIWAY_FLOP_BOARD}&pot=10&stack_bb=40&iterations={shared_iterations}"
+    )
+    client.get(
+        f"/solve_flop_to_river_multiway?board={_MULTIWAY_FLOP_BOARD}&pot=10&stack_bb=40&iterations={shared_iterations}"
+    )
+    assert len(api_main._flop_turn_multiway_cache) == 1
+    assert len(api_main._flop_to_river_multiway_cache) == 1
+    river_result = next(iter(api_main._flop_to_river_multiway_cache.values()))
+    assert len(river_result.chance_data) > 0
+    assert any(len(branch.board) == 5 for branch in river_result.chance_data.values())
 
 
 # ---------------------------------------------------------------------------
