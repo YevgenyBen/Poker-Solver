@@ -73,11 +73,40 @@ function solveResponse(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
+// M43: a real 3+-live-position terminal's own response shape
+// (FlopMultiwayPathQueryResponse) — no hit/canonical_board, a 3-entry
+// positions list, a trained map.
+function multiwaySolveResponse(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    board: 'Jh7d2c',
+    action_path: ['call_or_check', 'call_or_check', 'call_or_check'],
+    stack_bb: 100,
+    effective_stack_bb: 99,
+    pot: 3,
+    flop_iterations: 200,
+    elapsed_seconds: 22.5,
+    position: 'SB',
+    positions: ['SB', 'BB', 'BTN'],
+    strategy: {
+      AdAc: { call_or_check: 0.5, 'raise:2.50': 0.5 },
+    },
+    trained: { AdAc: true },
+    players: 3,
+    ...overrides,
+  };
+}
+
 /** Routes a stubbed fetch by URL: /preflop_walk bodies are handed to
  * `walk(actionPath)`, /solve_flop_from_path calls are handed to `solve`
  * (a zero-arg thunk, since this component's solve request only ever
- * matters for its board/stack/path — no test here needs to branch on it). */
-function mockFetch(walk: (actionPath: string[]) => unknown, solve?: () => unknown) {
+ * matters for its board/stack/path — no test here needs to branch on it),
+ * and /solve_flop_multiway_from_path calls are handed to `multiwaySolve`
+ * (M43). */
+function mockFetch(
+  walk: (actionPath: string[]) => unknown,
+  solve?: () => unknown,
+  multiwaySolve?: () => unknown,
+) {
   return vi.fn().mockImplementation((url: string, init?: RequestInit) => {
     if (url === '/preflop_walk') {
       const body = JSON.parse(init?.body as string) as { action_path: string[] };
@@ -85,6 +114,12 @@ function mockFetch(walk: (actionPath: string[]) => unknown, solve?: () => unknow
     }
     if (url === '/solve_flop_from_path') {
       return Promise.resolve({ ok: true, json: () => Promise.resolve(solve ? solve() : solveResponse()) });
+    }
+    if (url === '/solve_flop_multiway_from_path') {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(multiwaySolve ? multiwaySolve() : multiwaySolveResponse()),
+      });
     }
     throw new Error(`unexpected fetch to ${url}`);
   });
@@ -342,5 +377,99 @@ describe('ActionPathSolver', () => {
     // be intact — a solve-step failure must not reset the wizard.
     expect(screen.getByLabelText('Board')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Solve' })).toBeInTheDocument();
+  });
+
+  it('a genuine 3+-live-position terminal (M43) routes Solve to /solve_flop_multiway_from_path, not the 2-position endpoint', async () => {
+    const THREE_MAX_ROOT_WALK = {
+      stack_bb: 100,
+      action_path: [],
+      is_terminal: false,
+      player_to_act: 'BTN',
+      live_positions: ['BTN', 'SB', 'BB'],
+      positions: ['BTN', 'SB', 'BB'],
+      pot: 1.5,
+      legal_actions: [
+        { kind: 'fold', size: null, to_call: 0.5 },
+        { kind: 'call_or_check', size: null, to_call: 0.5 },
+        { kind: 'raise', size: 2.5, to_call: null },
+        { kind: 'all_in', size: 100, to_call: null },
+      ],
+    };
+    const AFTER_LIMP_WALK = {
+      ...THREE_MAX_ROOT_WALK,
+      action_path: ['call_or_check'],
+      player_to_act: 'SB',
+      legal_actions: [
+        { kind: 'fold', size: null, to_call: 0.5 },
+        { kind: 'call_or_check', size: null, to_call: 0.5 },
+        { kind: 'raise', size: 2.5, to_call: null },
+        { kind: 'all_in', size: 100, to_call: null },
+      ],
+    };
+    const AFTER_LIMP_CALL_WALK = {
+      ...THREE_MAX_ROOT_WALK,
+      action_path: ['call_or_check', 'call_or_check'],
+      player_to_act: 'BB',
+      legal_actions: [
+        { kind: 'call_or_check', size: null, to_call: 0 },
+        { kind: 'raise', size: 2.5, to_call: null },
+        { kind: 'all_in', size: 100, to_call: null },
+      ],
+    };
+    // BTN limps, SB calls, BB checks back -> all 3 stay live.
+    const THREE_LIVE_TERMINAL_WALK = {
+      ...THREE_MAX_ROOT_WALK,
+      action_path: ['call_or_check', 'call_or_check', 'call_or_check'],
+      is_terminal: true,
+      player_to_act: null,
+      legal_actions: [],
+    };
+    function walkForThreeMax(path: string[]) {
+      if (path.length === 0) return THREE_MAX_ROOT_WALK;
+      if (path.length === 1) return AFTER_LIMP_WALK;
+      if (path.length === 2) return AFTER_LIMP_CALL_WALK;
+      if (path.length === 3) return THREE_LIVE_TERMINAL_WALK;
+      throw new Error(`no fixture walk response for path ${JSON.stringify(path)}`);
+    }
+    const fetchMock = mockFetch(walkForThreeMax);
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<ActionPathSolver />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Raise to 2.5' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: '3-max' }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenLastCalledWith(
+        '/preflop_walk',
+        expect.objectContaining({ body: JSON.stringify({ stack_bb: 100, action_path: [], players: 3 }) }),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Call 0.5' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Call 0.5' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Call 0.5' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Check' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Check' }));
+
+    await waitFor(() => expect(screen.getByLabelText('Board')).toBeInTheDocument());
+    expect(
+      screen.getByText(/3 live positions reached the flop.*\/solve_flop_multiway_from_path/),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Solve' }));
+
+    await waitFor(() => expect(screen.getByText('AdAc')).toBeInTheDocument());
+    expect(fetchMock).toHaveBeenLastCalledWith('/solve_flop_multiway_from_path', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        stack_bb: 100,
+        action_path: ['call_or_check', 'call_or_check', 'call_or_check'],
+        board: 'Jh7d2c',
+        players: 3,
+        flop_iterations: undefined,
+      }),
+      signal: undefined,
+    });
+    expect(screen.getByText(/SB's strategy on Jh7d2c.*\(SB\/BB\/BTN\)/)).toBeInTheDocument();
   });
 });

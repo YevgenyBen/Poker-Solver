@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { fetchFlopStrategyFromPath, SolveError } from '../api';
+import { fetchFlopStrategyFromPath, fetchMultiwayFlopStrategyFromPath, SolveError } from '../api';
 import { gradientFor, sortedEntries } from '../colors';
 import { MULTIWAY_TABLE_SIZES, type MultiwayTableSize } from '../hands';
 import { usePreflopWalk } from '../usePreflopWalk';
-import type { FlopPathQueryResponse, LegalActionOption } from '../types';
+import type { FlopMultiwayPathQueryResponse, FlopPathQueryResponse, LegalActionOption } from '../types';
 
 const DEFAULT_STACK_BB = 100;
 const DEFAULT_BOARD = 'Jh7d2c';
@@ -64,13 +64,31 @@ function labelFor(action: LegalActionOption): string {
  * derive_ranges_from_path (M16) into poker_solver.library.query_
  * strategy_from_path (M23). M25 adds the companion /preflop_walk
  * endpoint, so action_path is built interactively against the real
- * tree instead of only chosen from a curated preset. */
+ * tree instead of only chosen from a curated preset.
+ *
+ * M43: a real path can reach a genuine 3+-live-position flop at any
+ * table size >= 3 (e.g. a limped-and-checked-back pot) — /solve_flop_
+ * from_path structurally can't serve that (its own 2-position solve_
+ * flop/query_strategy chain), so handleSolve routes such a terminal to
+ * /solve_flop_multiway_from_path (M42, wiring up solve_flop_multiway's
+ * already-N-general engine work) instead, rendered into its own result
+ * block below rather than force-unioned into FlopPathQueryResponse's
+ * shape. */
 export function ActionPathSolver() {
   const [stackBb, setStackBb] = useState(DEFAULT_STACK_BB);
   const [players, setPlayers] = useState(2);
   const [actionPath, setActionPath] = useState<string[]>([]);
   const [board, setBoard] = useState(DEFAULT_BOARD);
   const [solveResult, setSolveResult] = useState<FlopPathQueryResponse | null>(null);
+  // M42/M43: a real path can leave 3+ live positions at the flop (any
+  // table size >= 3 makes this reachable, e.g. a limped-and-checked-
+  // back pot) — /solve_flop_from_path structurally can't serve that
+  // case (its own 2-position solve_flop/query_strategy chain), so a
+  // genuine 3+-live terminal routes to /solve_flop_multiway_from_path
+  // instead, into its own result state (a materially different response
+  // shape — no hit/canonical_board, an N-entry positions list — kept
+  // separate rather than force-unioned into one type).
+  const [multiwaySolveResult, setMultiwaySolveResult] = useState<FlopMultiwayPathQueryResponse | null>(null);
   const [solveError, setSolveError] = useState('');
   const [solveLoading, setSolveLoading] = useState(false);
 
@@ -80,6 +98,7 @@ export function ActionPathSolver() {
     // A stale result/error from a different path would otherwise sit
     // under a heading (position/pot) that no longer describes it.
     setSolveResult(null);
+    setMultiwaySolveResult(null);
     setSolveError('');
   }
 
@@ -127,10 +146,18 @@ export function ActionPathSolver() {
     setSolveError('');
     setSolveLoading(true);
     try {
-      const response = await fetchFlopStrategyFromPath(stackBb, actionPath, board, undefined, players);
-      setSolveResult(response);
+      if (isMultiwayTerminal) {
+        const response = await fetchMultiwayFlopStrategyFromPath(stackBb, actionPath, board, players);
+        setMultiwaySolveResult(response);
+        setSolveResult(null);
+      } else {
+        const response = await fetchFlopStrategyFromPath(stackBb, actionPath, board, undefined, players);
+        setSolveResult(response);
+        setMultiwaySolveResult(null);
+      }
     } catch (err) {
       setSolveResult(null);
+      setMultiwaySolveResult(null);
       setSolveError(err instanceof SolveError ? err.message : 'Something went wrong');
     } finally {
       setSolveLoading(false);
@@ -138,11 +165,16 @@ export function ActionPathSolver() {
   }
 
   const combos = solveResult ? Object.keys(solveResult.strategy).sort() : [];
+  const multiwayCombos = multiwaySolveResult ? Object.keys(multiwaySolveResult.strategy).sort() : [];
   const walkData = walk.data;
   // A terminal node isn't automatically postflop-eligible — a fold-out
-  // is also terminal, but with only 1 live position, which /solve_flop_
-  // from_path would 422 on. live_positions disambiguates the two.
+  // is also terminal, but with only 1 live position, which neither
+  // solve endpoint accepts. live_positions disambiguates the three real
+  // outcomes: fold-out (1 live), a real 2-position flop (/solve_flop_
+  // from_path), and a real 3+-position multiway flop (/solve_flop_
+  // multiway_from_path, M42).
   const isRealTerminal = walkData !== null && walkData.is_terminal && walkData.live_positions.length >= 2;
+  const isMultiwayTerminal = walkData !== null && walkData.is_terminal && walkData.live_positions.length >= 3;
   const isFoldOut = walkData !== null && walkData.is_terminal && walkData.live_positions.length === 1;
 
   return (
@@ -256,6 +288,12 @@ export function ActionPathSolver() {
           </button>
         </div>
       )}
+      {isMultiwayTerminal && (
+        <p className="depth-hint">
+          {walk.data?.live_positions.length} live positions reached the flop — this calls /solve_flop_multiway_from_path
+          (M42), not the 2-position endpoint above.
+        </p>
+      )}
 
       {solveError && (
         <p className="flop-error" role="alert">
@@ -286,6 +324,42 @@ export function ActionPathSolver() {
                   <span className="bar-fill" style={{ width: '100%', background: gradientFor(freqs) }} />
                 </span>
                 <span className="breakdown">{breakdown}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {multiwaySolveResult && (
+        <div className="flop-result">
+          <p className="status">
+            {multiwaySolveResult.position}'s strategy on {multiwaySolveResult.board}, pot{' '}
+            {multiwaySolveResult.pot} / {multiwaySolveResult.effective_stack_bb}bb effective (started at{' '}
+            {multiwaySolveResult.stack_bb}bb) — {multiwaySolveResult.flop_iterations} iterations,{' '}
+            {multiwaySolveResult.elapsed_seconds.toFixed(2)}s ({multiwaySolveResult.positions.join('/')})
+          </p>
+          {multiwayCombos.map((combo) => {
+            const freqs = multiwaySolveResult.strategy[combo];
+            const isTrained = multiwaySolveResult.trained[combo] ?? true;
+            const breakdown = sortedEntries(freqs)
+              .filter(([, freq]) => freq > 0.005)
+              .map(([action, freq]) => `${action} ${(freq * 100).toFixed(0)}%`)
+              .join(', ');
+            return (
+              <div className="detail-row" key={combo}>
+                <span className="label">{combo}</span>
+                <span className="bar-track">
+                  <span className="bar-fill" style={{ width: '100%', background: gradientFor(freqs) }} />
+                </span>
+                <span className="breakdown">{breakdown}</span>
+                {!isTrained && (
+                  <span
+                    className="trained-indicator untrained"
+                    title="Not enough data — the untrained default, not a real strategy"
+                  >
+                    low data
+                  </span>
+                )}
               </div>
             );
           })}
