@@ -461,19 +461,14 @@ Measured before shipping, and the real finding here: solve_flop_to_
 river's cost is dominated by combo-POOL SIZE far more steeply than any
 other path-derived endpoint in this file, to the point that even a
 single CLASS-level cap (the same lever every sibling endpoint uses) is
-already too coarse — a single class can expand to up to 12 combos, and
-capping to just one class per side (up to 16 combos total) measured
-224.43s at this function's own already-tight default iteration count
-(20). Capping by raw COMBO count instead, at that same iteration count:
-1 combo/side (2 total) -> 14.10s; 2/side (4 total) -> 27.94s; 3/side (6
-total) -> 43.00s — a real, roughly linear ~7s/combo relationship.
-RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE is set to 3 (~43s), landing in the
-same "slow but tolerable for a live request" bracket /solve_flop_to_
-river's own fixed-demo endpoint was accepted in at M14 (~63-105s).
-river_iterations' own cap mirrors MAX_FLOP_TO_RIVER_ITERATIONS' own
-"==default, zero headroom" discipline, for the identical reason: cost
-at this scale is already at the outer edge of tolerable at the default
-alone.
+already too coarse — a single class can expand to up to 12 combos.
+RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE (own comment has the full, twice-
+re-measured numbers) was set to 3 combos/side at M46, then doubled to 6
+at M49 once M48's ~5-6x hand-evaluator speedup made the same wall-clock
+budget afford a meaningfully wider real range. river_iterations' own
+cap mirrors MAX_FLOP_TO_RIVER_ITERATIONS' own "==default, zero
+headroom" discipline, for the identical reason: cost at this scale is
+already at the outer edge of tolerable at the default alone.
 
 Pre-warmed, unlike every other path-derived endpoint in this file — its
 own cost (~43s at default) is a meaningfully worse cold-start tax than
@@ -830,27 +825,34 @@ MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE = 2
 # POSITION). Real, measured reason: solve_flop_to_river's cost scales so
 # steeply with combo-pool size that even a single CLASS (which can
 # expand to up to 12 combos, e.g. an offsuit hand) is already too coarse
-# a lever — measured directly, same real preflop line/board/iterations
-# throughout: capping to the top class per side (up to 16 combos after
-# expansion) cost 224.43s at iterations=20, the solver's own already-
-# tight default. Capping by raw combo count instead: 1 combo/side (2
-# total) -> 14.10s; 2/side (4 total) -> 27.94s; 3/side (6 total) ->
-# 43.00s — a real, roughly linear ~7s/combo relationship, not the
-# unpredictable jump a class-sized cap produces. Set to 3 combos per
-# side (~43s), landing in the same "slow but tolerable for a live
-# request" bracket /solve_flop_to_river's own fixed-demo endpoint was
-# already accepted in at M14 (~63-105s), while still giving a caller
-# more than one real combo of range diversity per side.
-RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE = 3
+# a lever.
+#
+# Re-measured at M49, after M48's ~5-6x hand-evaluator speedup — the
+# cap below was never re-derived from scratch, just re-benchmarked
+# against the same real preflop line/board this endpoint's own cost
+# comments have always used. Combo-pool-size scaling is no longer close
+# to linear at this speed (measured: 1/side (2 total) ~14s pre-M48 vs.
+# a modest few seconds now; 3/side (6 total) ~11-39s; 6/side (12 total)
+# ~18-40s across repeated runs — a real, honestly-reported timing spread
+# this milestone hit and re-measured twice before trusting, not a single
+# cherry-picked number; 9/side (18 total) jumped to ~76-110s, a genuine
+# super-linear cliff, not just cap=6's own variance). Set to 6 combos
+# per side (~40s at the slower end of its own observed range) — DOUBLE
+# M46's original cap, at roughly the SAME wall-clock cost M46's own
+# narrower cap=3 used to cost pre-M48, landing in the same "slow but
+# tolerable for a live request" bracket this project has used
+# throughout. cap=9's own cliff is exactly why this wasn't pushed
+# further without more real measurement first.
+RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE = 6
 
-# solve_flop_to_river's own cost is dominated by combo-pool size, not
-# iteration count, at these tiny scales (see the measurement above — all
-# three combo-count points were measured at the SAME iterations=20).
-# Mirrors MAX_FLOP_TO_RIVER_ITERATIONS' own "==default, zero headroom"
-# discipline for the identical reason: this function's cost is already
-# at the outer edge of tolerable for a live request at its own default,
-# so `river_iterations` can only ever request a faster, noisier result,
-# never a slower one.
+# solve_flop_to_river's own cost still scales meaningfully with
+# iteration count at this pool size (re-measured at M49's own new
+# cap=6: 20 iters ~39-40s, 50 iters ~54s, 100 iters ~75-76s — twice
+# independently confirmed, not a one-off). Mirrors MAX_FLOP_TO_RIVER_
+# ITERATIONS' own "==default, zero headroom" discipline for the
+# identical reason: cost at this scale is already at the outer edge of
+# tolerable for a live request at its own default, so `river_iterations`
+# can only ever request a faster, noisier result, never a slower one.
 DEFAULT_RIVER_PATH_QUERY_ITERATIONS = DEFAULT_FLOP_TO_RIVER_ITERATIONS
 MAX_RIVER_PATH_QUERY_ITERATIONS = DEFAULT_FLOP_TO_RIVER_ITERATIONS
 

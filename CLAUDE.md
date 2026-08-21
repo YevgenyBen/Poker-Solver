@@ -3478,6 +3478,61 @@ street chaining needs.
     entirely (hand evaluation, not chance-tree construction), so the two
     levers are independent and could in principle compound if the
     second is ever pursued.
+- **M49 — spend M48's speedup on range quality, not just latency:
+  re-tune `/solve_river_from_path`'s own combo cap.** Every path-derived
+  endpoint's cap constants were calibrated against the OLD, much slower
+  hand evaluator — the most valuable, highest-leverage use of M48's
+  ~5-6x win isn't a faster response at the SAME range width, it's a
+  WIDER, less-approximated derived range at roughly the SAME wall-clock
+  budget this project has consistently accepted as "tolerable." Chose
+  the river endpoint first (not a blanket re-tune of every endpoint) —
+  it's the most recently built, most expensive, and benefits the most
+  from M48's win; the other endpoints' own caps are a natural, smaller
+  follow-up, not attempted here (ship one coherent improvement per PR).
+  - **Re-measured, not assumed to have simply scaled down 5-6x
+    uniformly:** combo-pool-size scaling is no longer close to linear
+    post-M48 — 3 combos/side (6 total) measured anywhere from ~11s to
+    ~39s across repeated runs (a real, wide, honestly-reported spread,
+    not a single cherry-picked number); 6/side (12 total) similarly
+    ~18-40s; 9/side (18 total) jumped to ~76-110s, a genuine super-
+    linear cliff distinct from ordinary run-to-run noise. Caught by
+    re-running the same config twice before trusting a number this
+    milestone would base a production constant on — the first K-sweep's
+    own cap=6 reading (~17.56s) looked unusually fast in isolation, and
+    a dedicated, twice-repeated re-measurement at cap=6 alone (~38.80s,
+    ~39.41s) confirmed the TRUE cost is closer to ~40s, not ~18s — the
+    honest number made it into the shipped comment, not the optimistic
+    one.
+  - **`RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE`: 3 -> 6** — DOUBLE the
+    combo diversity per side, landing at roughly the SAME wall-clock
+    cost (~40s) M46's own original cap=3 used to cost BEFORE M48's
+    speedup. `DEFAULT_RIVER_PATH_QUERY_ITERATIONS`/`MAX_RIVER_PATH_
+    QUERY_ITERATIONS` left unchanged (still `==default`, zero headroom)
+    — iteration-count scaling at the new cap is still real and
+    meaningful (20 iters ~39-40s, 50 iters ~54s, 100 iters ~75-76s,
+    twice independently confirmed), so there was no room found to relax
+    that side of the budget too, only the combo-cap side.
+  - **Deliberately not pushed to cap=9** despite the real per-combo
+    speedup, given the measured super-linear cliff there (~76-110s) —
+    a real, named boundary this milestone chose not to cross without
+    its own dedicated re-measurement pass, not an oversight.
+  - **Tests:** no new tests — the existing 14 `/solve_river_from_path`
+    tests already run against a fixture-patched cap
+    (`FAST_RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE=1`, independent of the
+    production constant), so they exercise HTTP plumbing correctness
+    regardless of the production cap's own value — nothing about this
+    change needed new coverage, only re-measurement.
+  - **Verification:** `python -m pytest tests/ -v` — 704 passed, zero
+    regressions (same count as M48 — no test additions, a constants-
+    and-docs-only change). No frontend changes.
+  - **What's still open:** re-tuning the OTHER path-derived endpoints'
+    own caps (`MAX_PATH_QUERY_CLASSES_PER_SIDE`, `MAX_TURN_PATH_QUERY_
+    CLASSES_PER_SIDE`, `MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION`,
+    `MAX_MULTIWAY_TURN_PATH_QUERY_CLASSES_PER_POSITION`) against M48's
+    same speedup — each would need its own dedicated re-measurement,
+    the same discipline this milestone applied to the river endpoint,
+    not a blanket multiply-by-some-factor guess; and the OTHER M47-named
+    speed lever (a restructured two-phase solve) remains unattempted.
 
 ## v3 vision (future) — live-table advisor
 
