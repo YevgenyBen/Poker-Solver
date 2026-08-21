@@ -47,6 +47,21 @@ class Card:
         return cls(text[0], text[1])
 
 
+# All 52 Card objects, built exactly once at import time — Card is a
+# frozen (immutable) dataclass, so these are safe to share and reuse
+# forever, never reconstructed. remaining_deck used to build up to two
+# fresh Card('rank', 'suit') instances per candidate slot (one to test
+# membership, one to keep) on every single call; profiling a real M46-
+# scale solve_flop_to_river run (see CLAUDE.md's M47 entry) found this
+# was a genuinely hot path — board_equity.build_board_equity_table calls
+# remaining_deck once per combo PAIR, and Card.__post_init__'s own
+# validation work alone accounted for ~19% of total wall-clock time
+# across ~6.9M redundant Card() calls. Filtering this precomputed list
+# instead turns each call into a cheap set-membership scan with zero new
+# object construction.
+_ALL_CARDS = [Card(rank, suit) for rank in RANK_ORDER for suit in SUITS]
+
+
 def remaining_deck(excluded) -> list:
     """Every card not in `excluded` (e.g. a board, or a board plus some
     already-dealt hole cards), in a fixed rank-then-suit order.
@@ -58,7 +73,7 @@ def remaining_deck(excluded) -> list:
     some known cards."
     """
     excluded_set = set(excluded)
-    return [Card(rank, suit) for rank in RANK_ORDER for suit in SUITS if Card(rank, suit) not in excluded_set]
+    return [card for card in _ALL_CARDS if card not in excluded_set]
 
 
 def parse_cards(text: str) -> list:
@@ -77,7 +92,11 @@ class Deck:
     """A standard 52-card deck."""
 
     def __init__(self):
-        self.cards = [Card(rank, suit) for rank in RANK_ORDER for suit in SUITS]
+        # A fresh list of the same 52 shared Card objects (safe — Card is
+        # frozen/immutable, so aliasing them across Deck instances can
+        # never cause a mutation bug; only the list itself, not the
+        # objects, is ever reordered/sliced below).
+        self.cards = list(_ALL_CARDS)
 
     def __len__(self) -> int:
         return len(self.cards)
