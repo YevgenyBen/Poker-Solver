@@ -3,6 +3,98 @@
 from pydantic import BaseModel
 
 
+class AdviseRequest(BaseModel):
+    """M51's request body — ONE shape describing a whole real situation,
+    replacing the need to pick among five street-specific endpoints.
+
+    Street depth is INFERRED from which fields are present, mirroring how
+    a hand actually unfolds rather than making the client name a street
+    it would then have to keep consistent with its own fields:
+      * no `board`                              -> preflop
+      * `board`                                 -> flop
+      * + `flop_action_path` + `turn_card`      -> turn
+      * + `turn_action_path` + `river_card`     -> river
+    api/main.py's own _infer_street validates that no partial/skipped
+    combination sneaks through (e.g. a river card with no turn card).
+
+    `hero_cards` (optional, e.g. "AsKs") asks for YOUR hand's advice
+    specifically. It's force-included in every live position's derived
+    range BEFORE the cap is applied — without that, a hand outside the
+    top-K would silently be absent from the very solve meant to advise
+    it, which is exactly the marginal case advice matters most for. The
+    response's own `hero.in_range` reports honestly whether your hand
+    survived the cap on its own merits or had to be added.
+
+    `iterations` is the preflop leg (inert when players != 2, per
+    _get_or_solve_preflop_raw); `solve_iterations` is the postflop leg,
+    capped per (street, table size) by whichever sibling endpoint's own
+    separately-measured constant applies. Same no-numeric-constraints-
+    here convention as every other request model in this file."""
+
+    stack_bb: float
+    preflop_action_path: list[str]
+    players: int = 2
+    board: str | None = None
+    flop_action_path: list[str] | None = None
+    turn_card: str | None = None
+    turn_action_path: list[str] | None = None
+    river_card: str | None = None
+    hero_cards: str | None = None
+    iterations: int | None = None
+    solve_iterations: int | None = None
+
+
+class HeroAdvice(BaseModel):
+    """Hero's own hand's advice, present iff `hero_cards` was supplied.
+
+    `in_range` is False when hero's combo did NOT survive the derived
+    range's own top-K cap on its own weight and had to be force-included
+    — a real, honest quality signal: the surrounding range is still the
+    solved one, but hero's own hand was rarer in it than the cap kept,
+    so treat the advice as thinner than an in-range hand's.
+
+    `strategy` is None only when the reached node is terminal (nobody
+    acts — the hand resolved before this street)."""
+
+    cards: str
+    in_range: bool
+    strategy: dict[str, float] | None
+    trained: bool | None
+
+
+class AdviseResponse(BaseModel):
+    """M51's unified response. `trained` is None (not {}) specifically
+    when the answer came from the canonical library (`source ==
+    "library_hit"`/`"library_miss"`), which persists only a flattened
+    strategy dict and structurally cannot report per-hand confidence —
+    see M28's own documented scope boundary. Surfaced as an explicit
+    null rather than silently omitted, so a caller can tell "no
+    confidence data available here" apart from "every hand is trained".
+
+    `source` names which backend actually answered:
+      * "exact"        — the exact CFR+ solver (2-position postflop)
+      * "mccfr"        — sampled MCCFR (3+ position postflop)
+      * "library_hit"  — a canonical-library hit (~0.2ms, no `trained`)
+      * "library_miss" — a library miss that solved on demand
+      * "preflop"      — read straight off the cached preflop solve
+    """
+
+    street: str
+    players: int
+    positions: list[str]
+    position: str
+    player_to_act: str | None
+    is_terminal: bool
+    pot: float
+    effective_stack_bb: float
+    strategy: dict[str, dict[str, float]]
+    trained: dict[str, bool] | None
+    hero: HeroAdvice | None
+    source: str
+    solve_iterations: int | None
+    elapsed_seconds: float
+
+
 class SolveResponse(BaseModel):
     stack_bb: float
     iterations: int
