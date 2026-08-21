@@ -4087,6 +4087,42 @@ street chaining needs.
   - **Verification:** `python -m pytest tests/ -v` — 746 passed, zero
     regressions (up from M57's 742). No frontend changes.
 
+- **M59 — audit recommendation #2: extract `<ComboRow>`.** Second item
+  of `docs/project-audit-2026-08-21.md`'s list. Nine hand-rolled copies
+  of the same strategy row, across seven components, become one.
+  **164 lines deleted, 15 added.**
+  - **The decision at the fork, and why the "deepest" answer was TWO
+    components rather than one:** the audit counted 11 similar-looking
+    rows, but reading them found **two structurally different shapes**,
+    not one. A *strategy row* (full-width bar, gradient across the
+    action mix, breakdown text, optional confidence indicator) answers
+    "how is this hand's action split". A *percentage row*
+    (`DetailPanel`/`EquityCalculator` — width tracks a value, single
+    flat color) answers "how much of the whole is this". Merging them
+    would produce a component whose bar means two different things
+    depending on props — exactly the "unify things that only look
+    alike" mistake this project has hit repeatedly (M32's `postflop_
+    action_order` misapplication, M47's rejected lazy-chance idea,
+    M50's own deliberately-parameterized differences). **Two honest
+    components beat one dishonest one**, so only the 9-user shape was
+    extracted and the reasoning is recorded in `ComboRow`'s own
+    docstring so the next person doesn't "finish the job" wrongly.
+  - **`label` is optional**, because `AdviseSolver`'s hero card names
+    the hand in its own heading — repeating it in the row would be
+    redundant. That variant would have been the easy thing to miss in a
+    blind find-and-replace; it's covered by its own test.
+  - **`trained` defaults to `true`** — an absent indicator means "trust
+    this", which is the common case, so callers that have no confidence
+    signal (e.g. the canonical-library-backed one, whose `trained` is
+    structurally `null`) need pass nothing.
+  - **Verification:** `npm test` — 169 passed (up from M56's 164 — 5
+    new `ComboRow` tests). **Every pre-existing component test passed
+    unmodified**, which is the actual proof the extraction preserved
+    behavior. `tsc --noEmit` and `oxlint` clean. Live-verified in the
+    browser: a real `/advise` query rendered 170 rows through the shared
+    component, including the label-less hero variant. No backend
+    changes.
+
 ## v3 vision (future) — live-table advisor
 
 Discussed with the user while scoping M16, recorded here rather than

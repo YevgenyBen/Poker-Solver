@@ -1,6 +1,6 @@
 import { useState } from 'react';
+import { ComboRow } from './ComboRow';
 import { fetchFlopStrategy, SolveError } from '../api';
-import { gradientFor, sortedEntries } from '../colors';
 import type { FlopSolveDepth, FlopSolveResponse } from '../types';
 
 const DEFAULT_BOARD = 'Jh7d2c';
@@ -155,24 +155,7 @@ export function FlopSolver() {
           {combos.map((combo) => {
             const freqs = result.strategy[combo];
             const isTrained = result.trained[combo] ?? true;
-            const breakdown = sortedEntries(freqs)
-              .filter(([, freq]) => freq > 0.005)
-              .map(([action, freq]) => `${action} ${(freq * 100).toFixed(0)}%`)
-              .join(', ');
-            return (
-              <div className="detail-row" key={combo}>
-                <span className="label">{combo}</span>
-                <span className="bar-track">
-                  <span className="bar-fill" style={{ width: '100%', background: gradientFor(freqs) }} />
-                </span>
-                <span className="breakdown">{breakdown}</span>
-                {!isTrained && (
-                  <span className="trained-indicator untrained" title="Not enough data — the untrained default, not a real strategy">
-                    low data
-                  </span>
-                )}
-              </div>
-            );
+            return <ComboRow key={combo} label={combo} freqs={freqs} trained={isTrained} />;
           })}
         </div>
       )}
