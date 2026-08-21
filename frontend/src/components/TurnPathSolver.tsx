@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { fetchTurnStrategyFromPath, SolveError } from '../api';
+import { fetchMultiwayTurnStrategyFromPath, fetchTurnStrategyFromPath, SolveError } from '../api';
 import { gradientFor, sortedEntries } from '../colors';
 import { MULTIWAY_TABLE_SIZES, type MultiwayTableSize } from '../hands';
 import { usePreflopWalk } from '../usePreflopWalk';
-import type { TurnPathQueryResponse } from '../types';
+import type { TurnMultiwayPathQueryResponse, TurnPathQueryResponse } from '../types';
 
 const DEFAULT_STACK_BB = 100;
 const DEFAULT_BOARD = 'Jh7d2c';
@@ -76,7 +76,21 @@ const DEFAULT_FLOP_PRESET: FlopPresetId = 'bet_call';
  * re-implementation of curated preflop presets, since ActionPathSolver.
  * tsx already generalized that once; duplicating it here would be a
  * real regression against what's already shipped. The flop leg is a
- * curated preset dropdown for now — see FLOP_PRESETS above. */
+ * curated preset dropdown for now — see FLOP_PRESETS above.
+ *
+ * M45: FLOP_PRESETS is hand-enumerated against the 2-position solve_
+ * flop_turn tree specifically (matching FLOP_TURN_MAX_RAISES/
+ * RAISE_SIZES's own values) — a real preflop path can also reach a
+ * genuine 3+-live-position flop at any table size >= 3 (mirroring
+ * ActionPathSolver.tsx's own M43 fix), which /solve_turn_from_path
+ * can't serve. handleSolve routes such a terminal to /solve_turn_
+ * multiway_from_path (M44) instead, using the ONE flop line guaranteed
+ * structurally valid at any live-position count — everyone checks —
+ * rather than trying to hand-enumerate a second FLOP_PRESETS-shaped set
+ * per table size (a real, stated scope cut: a general "what's legal on
+ * the flop from here" walker, already named as the natural next step by
+ * both M26's and M42/M43's own notes, is the eventual fix for this, not
+ * attempted here). */
 export function TurnPathSolver() {
   const [stackBb, setStackBb] = useState(DEFAULT_STACK_BB);
   const [players, setPlayers] = useState(2);
@@ -85,6 +99,7 @@ export function TurnPathSolver() {
   const [flopPreset, setFlopPreset] = useState<FlopPresetId>(DEFAULT_FLOP_PRESET);
   const [turnCard, setTurnCard] = useState(DEFAULT_TURN_CARD);
   const [solveResult, setSolveResult] = useState<TurnPathQueryResponse | null>(null);
+  const [multiwaySolveResult, setMultiwaySolveResult] = useState<TurnMultiwayPathQueryResponse | null>(null);
   const [solveError, setSolveError] = useState('');
   const [solveLoading, setSolveLoading] = useState(false);
 
@@ -92,6 +107,7 @@ export function TurnPathSolver() {
 
   function clearSolveState() {
     setSolveResult(null);
+    setMultiwaySolveResult(null);
     setSolveError('');
   }
 
@@ -139,18 +155,33 @@ export function TurnPathSolver() {
     setSolveError('');
     setSolveLoading(true);
     try {
-      const response = await fetchTurnStrategyFromPath(
-        stackBb,
-        actionPath,
-        board,
-        FLOP_PRESETS[flopPreset].actionPath,
-        turnCard,
-        undefined,
-        players,
-      );
-      setSolveResult(response);
+      if (isMultiwayTerminal) {
+        const response = await fetchMultiwayTurnStrategyFromPath(
+          stackBb,
+          actionPath,
+          board,
+          multiwayFlopActionPath,
+          turnCard,
+          players,
+        );
+        setMultiwaySolveResult(response);
+        setSolveResult(null);
+      } else {
+        const response = await fetchTurnStrategyFromPath(
+          stackBb,
+          actionPath,
+          board,
+          FLOP_PRESETS[flopPreset].actionPath,
+          turnCard,
+          undefined,
+          players,
+        );
+        setSolveResult(response);
+        setMultiwaySolveResult(null);
+      }
     } catch (err) {
       setSolveResult(null);
+      setMultiwaySolveResult(null);
       setSolveError(err instanceof SolveError ? err.message : 'Something went wrong');
     } finally {
       setSolveLoading(false);
@@ -158,12 +189,18 @@ export function TurnPathSolver() {
   }
 
   const combos = solveResult ? Object.keys(solveResult.strategy).sort() : [];
+  const multiwayCombos = multiwaySolveResult ? Object.keys(multiwaySolveResult.strategy).sort() : [];
   const walkData = walk.data;
   // A terminal node isn't automatically postflop-eligible — a fold-out
   // is also terminal, but with only 1 live position (mirrors Action
   // PathSolver.tsx's own identical distinction).
   const isRealTerminal = walkData !== null && walkData.is_terminal && walkData.live_positions.length >= 2;
+  const isMultiwayTerminal = walkData !== null && walkData.is_terminal && walkData.live_positions.length >= 3;
   const isFoldOut = walkData !== null && walkData.is_terminal && walkData.live_positions.length === 1;
+  // M45: the only multiway flop line this component supports — see the
+  // component's own top docstring for why (no per-table-size FLOP_
+  // PRESETS-shaped set exists yet).
+  const multiwayFlopActionPath = walkData ? Array(walkData.live_positions.length).fill('call_or_check') : [];
   // Known locally, not inferred from response data — the frontend
   // already controls which flop line it submitted, so it can tell a
   // flop fold-out from an already-all-in terminal directly, rather
@@ -281,20 +318,28 @@ export function TurnPathSolver() {
               aria-label="Board"
             />
           </label>
-          <label>
-            Flop line
-            <select
-              value={flopPreset}
-              onChange={(event) => handleFlopPresetChange(event.target.value as FlopPresetId)}
-              aria-label="Flop line"
-            >
-              {Object.entries(FLOP_PRESETS).map(([id, config]) => (
-                <option key={id} value={id}>
-                  {config.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          {isMultiwayTerminal ? (
+            <p className="depth-hint">
+              {walkData?.live_positions.length} live positions reached the flop — this calls
+              /solve_turn_multiway_from_path (M44) with everyone checking through (the only multiway flop line
+              supported so far), not the curated 2-position flop-line presets below.
+            </p>
+          ) : (
+            <label>
+              Flop line
+              <select
+                value={flopPreset}
+                onChange={(event) => handleFlopPresetChange(event.target.value as FlopPresetId)}
+                aria-label="Flop line"
+              >
+                {Object.entries(FLOP_PRESETS).map(([id, config]) => (
+                  <option key={id} value={id}>
+                    {config.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label>
             Turn card
             <input
@@ -346,6 +391,46 @@ export function TurnPathSolver() {
                 <span className="breakdown">{breakdown}</span>
                 {!isTrained && (
                   <span className="trained-indicator untrained" title="Not enough data — the untrained default, not a real strategy">
+                    low data
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {multiwaySolveResult?.is_terminal && (
+        <p className="status">Already resolved on the flop — no turn decision to make.</p>
+      )}
+
+      {multiwaySolveResult && !multiwaySolveResult.is_terminal && (
+        <div className="flop-result">
+          <p className="status">
+            {multiwaySolveResult.player_to_act}'s strategy on {multiwaySolveResult.board}, turn{' '}
+            {multiwaySolveResult.turn_card}, pot {multiwaySolveResult.pot} /{' '}
+            {multiwaySolveResult.effective_stack_bb}bb effective — {multiwaySolveResult.flop_iterations}{' '}
+            iterations, {multiwaySolveResult.elapsed_seconds.toFixed(2)}s ({multiwaySolveResult.positions.join('/')})
+          </p>
+          {multiwayCombos.map((combo) => {
+            const freqs = multiwaySolveResult.strategy[combo];
+            const isTrained = multiwaySolveResult.trained[combo] ?? true;
+            const breakdown = sortedEntries(freqs)
+              .filter(([, freq]) => freq > 0.005)
+              .map(([action, freq]) => `${action} ${(freq * 100).toFixed(0)}%`)
+              .join(', ');
+            return (
+              <div className="detail-row" key={combo}>
+                <span className="label">{combo}</span>
+                <span className="bar-track">
+                  <span className="bar-fill" style={{ width: '100%', background: gradientFor(freqs) }} />
+                </span>
+                <span className="breakdown">{breakdown}</span>
+                {!isTrained && (
+                  <span
+                    className="trained-indicator untrained"
+                    title="Not enough data — the untrained default, not a real strategy"
+                  >
                     low data
                   </span>
                 )}

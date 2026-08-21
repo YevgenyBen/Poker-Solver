@@ -154,6 +154,34 @@ export interface FlopMultiwayPathQueryResponse {
   players: number;
 }
 
+// Mirrors api/schemas.py's TurnMultiwayPathQueryResponse —
+// /solve_turn_multiway_from_path (M44), backed by poker_solver.solver.
+// solve_flop_turn_multiway (M36) directly, the multiway analog of
+// TurnPathQueryResponse below. `positions` carries all of a real
+// 3+-live-position path's surviving positions, in real postflop acting
+// order, not TurnPathQueryResponse's fixed 2-entry pair.
+// `flop_iterations` echoes what was actually used — this endpoint's own
+// flop-stage iteration count is real, request-controllable input,
+// mirroring FlopMultiwayPathQueryResponse's own identical field.
+export interface TurnMultiwayPathQueryResponse {
+  board: string;
+  turn_card: string;
+  preflop_action_path: string[];
+  flop_action_path: string[];
+  stack_bb: number;
+  effective_stack_bb: number;
+  pot: number;
+  flop_iterations: number;
+  is_terminal: boolean;
+  player_to_act: string | null;
+  strategy: OpeningRange;
+  trained: TrainedMap;
+  position: string;
+  positions: string[];
+  players: number;
+  elapsed_seconds: number;
+}
+
 // Mirrors api/schemas.py's TurnPathQueryResponse — /solve_turn_from_path
 // (M26). player_to_act/strategy reflect the turn decision reached after
 // preflop_action_path, a real flop board, flop_action_path, and a real

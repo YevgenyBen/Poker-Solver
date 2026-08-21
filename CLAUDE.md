@@ -3157,6 +3157,66 @@ street chaining needs.
     SECOND chained hop's own chance_data needs the identical fallback
     treatment `ensure_flop_turn_multiway_branch` provides here, or a
     structurally different one).
+- **M45 — a frontend for `/solve_turn_multiway_from_path`,** closing
+  M44's own first-named open item, mirroring M42-then-M43's precedent
+  (wire the new endpoint into the existing wizard the very next
+  milestone, not deferred). `TurnPathSolver.tsx`'s wizard already let a
+  user walk to a genuine 3-live-position flop at any 3+-max table
+  (`usePreflopWalk` is already N-general, M25/M29) — before this
+  milestone, clicking Solve there always called `/solve_turn_from_path`,
+  which 422s on exactly that case. Same "fixes a live gap" framing M43
+  used for its own analogous fix.
+  - **The one real design decision, resolved by NOT hand-enumerating a
+    second `FLOP_PRESETS`-shaped set:** `FLOP_PRESETS` is calibrated
+    against the 2-position `solve_flop_turn` tree specifically (matching
+    `FLOP_TURN_MAX_RAISES`/`RAISE_SIZES`'s own values) — a genuinely
+    different, N-position-dependent set of legal terminal paths exists
+    at 3+ live positions, and hand-curating one such set PER table size
+    (3/6/9-max) the way M26 curated the 2-position one would be fragile
+    and a real scope expansion. Instead, when `live_positions.length >=
+    3`, the flop-line dropdown is replaced with the ONE flop line
+    guaranteed structurally valid at any live-position count — everyone
+    checks (`Array(liveCount).fill('call_or_check')`) — with an inline
+    hint explaining the swap. A real general "what's legal on the flop
+    from here" walker (already named by both M26's and M42/M43's own
+    notes as the eventual fix for exactly this kind of curated-preset
+    limitation) remains the natural, larger follow-up; not attempted
+    here.
+  - Two separate result states/render blocks (`solveResult`/
+    `multiwaySolveResult`), same reasoning `ActionPathSolver.tsx`'s own
+    M43 fix already established — the response shapes genuinely differ
+    (`TurnMultiwayPathQueryResponse` has no `hit`, a 3+-entry `positions`
+    list, `flop_iterations` echoed back). The multiway "already
+    resolved" terminal message is deliberately simpler than the
+    2-position branch's fold-vs-all-in distinction (`flopPathFoldsOut`)
+    — the only multiway flop line this component ever submits (everyone
+    checks) structurally can't fold or go all-in, so that distinction
+    doesn't apply here.
+  - **Tests:** `TurnPathSolver.test.tsx` gained one new end-to-end test
+    (11 total, up from 10): switch to 3-max, walk BTN limps → SB calls
+    → BB checks to a genuine 3-live terminal, confirm the "Flop line"
+    dropdown is replaced by the routing hint, click Solve, and confirm
+    the request lands on `/solve_turn_multiway_from_path` (not
+    `/solve_turn_from_path`) with the everyone-checks flop line and the
+    right body, rendering the multiway result block.
+  - **Verification:** `npm test` — 154 passed (up from 153). `npx tsc
+    --noEmit` and `npm run lint` both clean. No backend files touched.
+    Live-verified end to end in the browser: walked a real 3-max
+    limp-call-check line to a genuine terminal, confirmed the routing
+    hint replaced the flop-line dropdown, entered a board and an
+    arbitrary turn card, clicked Solve, and confirmed (via network
+    inspection) a real `POST /solve_turn_multiway_from_path -> 200 OK`
+    (50 iterations, 11.33s, `SB/BB/BTN`) — and, a genuinely useful extra
+    confirmation neither planned nor scripted: the chosen turn card
+    happened to be one MCCFR never sampled during the real 50-iteration
+    solve, so EVERY combo rendered with the "low data" indicator,
+    live-demonstrating M44's own on-demand-build fallback firing through
+    the full UI, not just the test suite.
+  - **What's still open:** true 6/9-max multiway postflop solving
+    (unscoped); river-depth path-derived multiway advice (unscoped, with
+    the open on-demand-fallback design question M44's own entry already
+    named); and the general flop-action wizard both this milestone and
+    M26 before it deferred rather than re-attempted.
 
 ## v3 vision (future) — live-table advisor
 
