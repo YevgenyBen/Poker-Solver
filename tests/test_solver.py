@@ -29,6 +29,7 @@ from poker_solver.solver import (
     derive_flop_scenario,
     derive_ranges_from_path,
     ensure_flop_turn_multiway_branch,
+    ensure_mccfr_chance_branch,
     expand_bucket_strategy,
     format_opening_range_grid,
     solve_flop,
@@ -1049,6 +1050,56 @@ def test_ensure_flop_turn_multiway_branch_raises_for_an_illegal_card():
             board=board, position_ranges=position_ranges, positions=("OOP", "MID", "IP"),
             effective_stack_bb=15.0, raise_sizes=(), max_raises=1, equity_samples=50,
         )
+
+
+def test_ensure_mccfr_chance_branch_is_the_same_object_as_the_m44_alias():
+    # M53 renamed the function once it was proven hop-agnostic; the old
+    # name stays as an alias so nothing that imported it breaks.
+    assert ensure_flop_turn_multiway_branch is ensure_mccfr_chance_branch
+
+
+def test_ensure_mccfr_chance_branch_builds_a_river_hop_from_a_four_card_board():
+    # M44 left open whether a SECOND chained hop needs structurally
+    # different treatment. M53's answer, proven here rather than argued:
+    # the SAME function, handed a 4-card (flop+turn) board, produces a
+    # real river branch — 5-card board, and chance_fn correctly None
+    # because build_mccfr_chance_branch self-guards len(next_board) < 5.
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    position_ranges = {
+        "OOP": {HandCombo(Card("7", "s"), Card("7", "c")): 1.0},
+        "MID": {HandCombo(Card("A", "h"), Card("A", "d")): 1.0},
+        "IP": {HandCombo(Card("9", "d"), Card("8", "d")): 1.0},
+    }
+    positions = ("OOP", "MID", "IP")
+    result = solve_flop_to_river_multiway(
+        board=board, position_ranges=position_ranges, pot=9.0, effective_stack_bb=15.0,
+        positions=positions, raise_sizes=(), max_raises=1,
+        iterations=20, equity_samples=50, seed=1,
+    )
+    flop_terminal = _find_a_showdown_terminal(result.root)
+    turn_card = next(c for c in remaining_deck(board))
+    turn_branch = ensure_mccfr_chance_branch(
+        result, flop_terminal, turn_card, board=board, position_ranges=position_ranges,
+        positions=positions, effective_stack_bb=15.0, raise_sizes=(), max_raises=1,
+        equity_samples=50, chain_to_river=True,
+    )
+    assert len(turn_branch.board) == 4
+
+    turn_root = turn_branch.root
+    if isinstance(turn_root, DecisionNode):
+        turn_terminal = _find_a_showdown_terminal(turn_root)
+        four_card_board = board + (turn_card,)
+        river_card = next(c for c in remaining_deck(four_card_board))
+        river_branch = ensure_mccfr_chance_branch(
+            result, turn_terminal, river_card, board=four_card_board,
+            position_ranges=position_ranges, positions=positions,
+            effective_stack_bb=15.0, raise_sizes=(), max_raises=1, equity_samples=50,
+        )
+        assert len(river_branch.board) == 5
+        # No cards left to deal past a complete board — the guard that
+        # makes the second hop the LAST one, not an infinite chain.
+        assert river_branch.chance_fn is None
+        assert (id(turn_terminal), river_card) in result.chance_data
 
 
 # ---------------------------------------------------------------------------

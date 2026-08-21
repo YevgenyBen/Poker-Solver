@@ -1451,17 +1451,34 @@ def test_advise_river_heads_up_dispatches_to_the_exact_solver(client):
     assert body["source"] == "exact"
 
 
-def test_advise_river_multiway_is_the_one_unfilled_cell_and_says_why(client):
+def test_advise_river_multiway_completes_the_street_by_table_size_matrix(client):
+    # M53 filled the last cell. This test previously asserted a 422 with
+    # the reason it was unsupported — flipped, not deleted, so an
+    # accidental regression back to "unsupported" would still be caught.
     response = client.post(
         "/advise",
         json=_advise_body(
             _THREE_LIVE_PATH, players=3, board="2h6d9c",
             flop_action_path=_THREE_LIVE_FLOP_PATH, turn_card="Ts",
             turn_action_path=_THREE_LIVE_FLOP_PATH, river_card="4h",
+            solve_iterations=5,
         ),
     )
-    assert response.status_code == 422
-    assert "2-position only" in response.json()["detail"]
+    assert response.status_code == 200
+    body = response.json()
+    assert body["street"] == "river"
+    assert body["source"] == "mccfr"
+    assert len(body["positions"]) == 3
+    assert body["is_terminal"] is False
+    for freqs in body["strategy"].values():
+        assert sum(freqs.values()) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_advise_no_cell_is_left_unsupported(client):
+    # M53: the matrix is complete. Kept as a live assertion rather than a
+    # comment so that re-adding an unsupported cell is a deliberate,
+    # visible act rather than something that quietly reappears.
+    assert api_main._ADVISE_UNSUPPORTED_CELLS == {}
 
 
 def test_advise_routes_a_multiway_origin_folded_to_two_survivors_to_the_exact_solver(client):

@@ -3787,6 +3787,62 @@ street chaining needs.
     (M47); and live-table integration, which the user explicitly
     deferred.
 
+- **M53 — fill the last (street × table size) cell, by generalizing
+  rather than duplicating.** Answers the design question M44 named and
+  left open, and completes the matrix: every street (preflop → river)
+  now works at every supported table size through `/advise`.
+  - **M44's open question, answered by reading the code rather than
+    assuming:** does a SECOND chained chance-hop (turn → river) need
+    structurally different on-demand-build treatment than the first?
+    **No.** `chance.build_mccfr_chance_branch` was already fully
+    hop-agnostic — it derives the next board from whatever `board` it's
+    handed, and self-guards `chain_to_river and len(next_board) < 5`, so
+    handing it a 4-card (flop+turn) board produces a river branch whose
+    own `chance_fn` is correctly `None` with no special-casing at all.
+  - **So the choice at this decision point was generalize vs. duplicate,
+    and generalize won on every axis** (the "widest, most future-proof
+    base" the user asked for): `ensure_flop_turn_multiway_branch` →
+    `ensure_mccfr_chance_branch`, a rename plus a one-line
+    `chain_to_river` passthrough, serving BOTH hops — instead of a
+    second near-copy. M44's original name is kept as an alias so nothing
+    that imported it breaks; the flop_turn-specific name simply stopped
+    being accurate once the same function was proven to serve the river.
+  - **Same call made one level up:** rather than write a third multiway
+    orchestrator, `_query_turn_multiway_from_path` was generalized to
+    walk EITHER depth (`turn_action_kinds`/`river_card` optional; their
+    presence selects `solve_flop_to_river_multiway` over `solve_flop_
+    turn_multiway`). The river hop's code is visibly the turn hop's,
+    one card-richer board and one street-deeper remaining stack — which
+    is itself the evidence for the "same treatment" finding above.
+    Follows M50's precedent: the existing endpoint's own 10 tests pass
+    unchanged, which is the proof the generalization preserved it.
+  - **`to_river` is part of the solve cache key** — the two solvers
+    produce genuinely different results (`chain_to_river` populates a
+    second level of `chance_fn`), so a turn-depth result must never be
+    served to a river-depth query. Same collision reasoning every other
+    cache key in this file already applies to `players`.
+  - **A real subtlety carried over, not rediscovered:** the remaining
+    stack entering the river subtracts the TURN street's own fresh,
+    0-based `invested` (per `game_tree.StreetConfig`'s per-street reset),
+    not a cumulative figure — the same trap `_query_river_from_path`
+    already documents for the 2-position path.
+  - **Tests:** 3 new — the alias identity; a direct two-hop engine test
+    proving `ensure_mccfr_chance_branch` builds a real 5-card-board
+    river branch from a 4-card board with `chance_fn is None` (the
+    "second hop is the LAST hop, not an infinite chain" guard); and a
+    live `/advise` river-multiway test. The previous test asserting the
+    cell was UNSUPPORTED was flipped rather than deleted, so regressing
+    back to unsupported would still fail — joined by a live assertion
+    that `_ADVISE_UNSUPPORTED_CELLS` is empty, so re-adding a gap is a
+    deliberate, visible act rather than something that quietly reappears.
+  - **Verification:** `python -m pytest tests/ -v` — 739 passed, zero
+    regressions (up from M52's 736 — 3 new). Verified live end to end: a
+    real 3-way hand walked preflop → flop → turn → river, returning SB's
+    river decision with hero's own advice attached. No frontend changes.
+  - **What's still open:** re-tuning the remaining caps against M48's
+    speedup (M49 did the river's only); the two-phase-solve lever (M47);
+    and live-table integration, which the user explicitly deferred.
+
 ## v3 vision (future) — live-table advisor
 
 Discussed with the user while scoping M16, recorded here rather than
