@@ -2706,6 +2706,91 @@ street chaining needs.
     (M36), a live endpoint (M37), and now a real UI (M38) — the first
     complete engine-to-UI path for true multiway (3+ live position)
     postflop solving in this project.
+- **M39 — `solve_flop_to_river_multiway`: a second chance-branch hop,
+  chaining all the way to a real multiway river showdown.** The direct
+  N-position generalization of `solve_flop_to_river` (M13) — `chance.
+  build_mccfr_chance_branch` gains a `chain_to_river` flag mirroring
+  `build_chance_node`'s own identical M13 parameter/semantics exactly,
+  and `solve_flop_to_river_multiway` mirrors `solve_flop_turn_multiway`'s
+  own shape with that one flag added to its `chance_fn` closure.
+  - **A real simplification found while implementing, not assumed
+    going in:** `build_chance_node`'s own M13 closure needed the
+    `_b=next_board, _s=remaining_stack` default-argument trick
+    specifically because it builds *many* branches in one shared loop
+    (all ~44-49 undealt cards), so without it every branch's closure
+    would silently capture the *last* iteration's loop variables by
+    reference. `build_mccfr_chance_branch` builds exactly *one* branch
+    per call — `next_board`/`remaining_stack`/etc. are already that
+    call's own locals, not shared loop state — so the entire bug class
+    that trick exists to prevent structurally cannot occur here. No
+    equivalent guard was needed, and none was added.
+  - **A real, measured surprise — the opposite of M13's own finding for
+    the exact 2-position solver:** M13 measured the second hop as
+    *dramatically more* expensive than the first (`solve_flop_to_river`
+    ~63-105s vs. `solve_flop_turn`'s own ~18-26s, at a matching 12-combo
+    pool). Measured here, at the matching 11-combo pool M37's own live
+    endpoint uses: `solve_flop_to_river_multiway` is *cheaper* than
+    `solve_flop_turn_multiway` at every iteration count compared (200
+    iters: ~3.89s vs. ~5.8s; every point from 20 to 500 iterations
+    scales consistently linearly at ~0.019s/iteration, the cheapest
+    number being ~0.45s at 20 iterations and the most expensive ~9.54s
+    at 500). Traced, not just observed, to two independent reasons:
+    (1) `build_chance_node`'s own eager, all-branches-at-every-level
+    design pays a genuine combinatorial cost for a second hop (~44x49
+    equity-table builds for one flop terminal, roughly the ratio
+    M13's own numbers reflect) that `build_mccfr_chance_branch`'s lazy,
+    one-sampled-card-at-a-time design simply never incurs — each
+    iteration pays for at most one new turn dispatch and one new river
+    dispatch, never a product of both levels' full branch counts;
+    (2) a river-level equity lookup (`remaining_needed==0`, a complete
+    5-card board) needs no enumeration at all, cheaper still than a
+    turn-level lookup's own already-cheap `remaining_needed==1` exact
+    enumeration. `DEFAULT_FLOP_TO_RIVER_MULTIWAY_ITERATIONS` is set to
+    `solve_flop_turn_multiway`'s own default/cap (50/500) rather than
+    `solve_flop_to_river`'s own tiny 2-position ones (20/=default,
+    zero headroom) — the cost profile that justified those numbers
+    doesn't hold here.
+  - **`chance_data`'s own shape confirmed to compose across both hops
+    without any `cfr.py` changes**, mirroring M13's own "no cfr.py
+    changes needed" finding exactly, verified rather than assumed: a
+    real solve's `chance_data` naturally contains entries whose own
+    `board` field is a complete 5-card river even at a tiny 3-combo
+    pool and only 30 iterations (confirmed directly, not just reasoned
+    about: 20 of 56 total entries were river-level) — `_mccfr_recurse`
+    already threads `branch.chance_fn` (never the ambient one) into
+    every recursive call regardless of how many levels deep that
+    branch's own `chance_fn` itself came from, so a turn-level branch's
+    own populated `chance_fn` (from `chain_to_river`) gets used
+    correctly with zero new dispatch logic.
+  - **Tests:** `tests/test_chance.py` gained a `chain_to_river` section
+    mirroring `build_chance_node`'s own M13 tests structurally (defaults
+    to `False`; populates `chance_fn` when real stack remains; never
+    populates it for an all-in-already-reused branch (the same
+    structural, not incidental, guard `build_chance_node` established);
+    never populates it once the board is already complete; deterministic
+    across calls) plus the one genuinely new test the "no loop, no
+    shared state" finding above makes possible and necessary — a direct
+    two-hop invocation reaching a real 5-card board. `tests/test_solver.
+    py` gained a `solve_flop_to_river_multiway` section mirroring
+    `solve_flop_turn_multiway`'s own (same tiny 3-combo fixture, not a
+    further-shrunk one — this milestone's own cost finding means there
+    was no need to shrink further), plus the direct proof the second hop
+    happened for real: a naturally-reached (not hand-constructed) branch
+    whose own `board` field has 5 cards, with a well-formed strategy at
+    its own real river decision.
+  - **Verification:** `python -m pytest tests/ -v` — 659 passed, zero
+    regressions (up from M38's 646 — this milestone touched no frontend
+    files, so the frontend suite wasn't re-run; M38's own 149-pass
+    result stands unaffected). No frontend/`api/main.py` changes.
+  - **Scope:** engine only — matches this session's own established
+    "engine, then API, then frontend" three-step pattern (M30-M32,
+    M35-M36-now-M39 engine-only; M37 API; M38 frontend). A live
+    `GET /solve_flop_to_river_multiway` endpoint and its own frontend
+    depth option are the natural next milestones this one leaves open,
+    each a small, low-risk addition given this milestone's own cost
+    finding already de-risked the "is this affordable for a live
+    request" question M13's own 2-position finding had left as a real
+    concern for the analogous endpoint.
 
 ## v3 vision (future) — live-table advisor
 

@@ -351,3 +351,104 @@ def test_build_mccfr_chance_branch_excludes_the_folded_position_entirely():
         else:
             assert "MID" not in node.invested
             assert "MID" not in node.folded
+
+
+# ---------------------------------------------------------------------------
+# M39: chain_to_river — build_mccfr_chance_branch's own second-hop flag,
+# mirroring build_chance_node's identical M13 parameter/semantics. Unlike
+# build_chance_node's own closure (which needs the _b=/_s= default-
+# argument trick to avoid several branches sharing one loop's last
+# values by reference), this function builds exactly one branch per
+# call, so next_board/etc. are already this call's own locals — no loop
+# to share variables across. See the function's own docstring.
+# ---------------------------------------------------------------------------
+
+_ANOTHER_CARD = Card("3", "c")  # not on _BOARD or _A_CARD's own resulting board
+
+
+def test_build_mccfr_chance_branch_chain_to_river_defaults_to_false():
+    # Byte-for-byte the same as omitting the kwarg entirely — the M32
+    # backward-compat guarantee, restated for the new parameter.
+    terminal = _showdown_terminal(pot=10.0, invested=5.0)
+    kwargs = dict(
+        terminal=terminal, card=_A_CARD, board=_BOARD, combos=_COMBOS,
+        positions=_POSITIONS, effective_stack_bb=15.0,
+    )
+    branch_omitted = build_mccfr_chance_branch(**kwargs)
+    branch_explicit_false = build_mccfr_chance_branch(**kwargs, chain_to_river=False)
+    assert branch_omitted.chance_fn is None
+    assert branch_explicit_false.chance_fn is None
+
+
+def test_build_mccfr_chance_branch_chain_to_river_populates_chance_fn_when_a_real_tree_remains():
+    terminal = _showdown_terminal(pot=10.0, invested=5.0)  # 10bb behind at a 15bb stack
+    branch = build_mccfr_chance_branch(
+        terminal, card=_A_CARD, board=_BOARD, combos=_COMBOS,
+        positions=_POSITIONS, effective_stack_bb=15.0, chain_to_river=True,
+    )
+    assert isinstance(branch.root, DecisionNode)
+    assert callable(branch.chance_fn)
+
+
+def test_build_mccfr_chance_branch_chain_to_river_never_populates_chance_fn_for_a_reused_terminal_branch():
+    # The direct regression guard for the correctness pitfall M13 already
+    # named for build_chance_node: an all-in-already branch's own equity
+    # source already correctly averages over however many community
+    # cards remain, so it must never also get a chance_fn — enforced
+    # structurally (same if/else that decides root = terminal), not by a
+    # separate check that could drift.
+    terminal = _showdown_terminal(pot=30.0, invested=15.0)  # both already all-in at 15bb
+    branch = build_mccfr_chance_branch(
+        terminal, card=_A_CARD, board=_BOARD, combos=_COMBOS,
+        positions=_POSITIONS, effective_stack_bb=15.0, chain_to_river=True,
+    )
+    assert branch.root is terminal
+    assert branch.chance_fn is None
+
+
+def test_build_mccfr_chance_branch_chain_to_river_river_branch_chance_fn_is_none_even_with_stack_remaining():
+    # Isolates the "board already complete" half of the guard from the
+    # "no stack left" half above: plenty of stack remains, but the board
+    # passed in is already a turn board (4 cards) — the branch this
+    # produces is a complete 5-card river board, so there's nothing left
+    # to chain regardless of how much stack is behind.
+    turn_board = _BOARD + (Card("K", "s"),)
+    terminal = _showdown_terminal(pot=10.0, invested=5.0)
+    branch = build_mccfr_chance_branch(
+        terminal, card=_A_CARD, board=turn_board, combos=_COMBOS,
+        positions=_POSITIONS, effective_stack_bb=15.0, chain_to_river=True,
+    )
+    assert isinstance(branch.root, DecisionNode)  # real stack remained
+    assert branch.chance_fn is None  # but nothing left to deal
+
+
+def test_build_mccfr_chance_branch_chain_to_river_second_hop_reaches_a_complete_river_board():
+    turn_terminal = _showdown_terminal(pot=10.0, invested=5.0)
+    turn_branch = build_mccfr_chance_branch(
+        turn_terminal, card=_A_CARD, board=_BOARD, combos=_COMBOS,
+        positions=_POSITIONS, effective_stack_bb=15.0, chain_to_river=True,
+    )
+    assert len(turn_branch.board) == 4
+    assert callable(turn_branch.chance_fn)
+
+    # Mirrors how cfr.py's own _mccfr_recurse actually drives this: a
+    # real showdown terminal reached inside the turn branch's own
+    # subtree, handed straight back to that branch's own chance_fn.
+    river_showdown = TerminalNode(pot=turn_branch.root.pot, invested={"OOP": 5.0, "IP": 5.0}, folded=frozenset())
+    river_branch = turn_branch.chance_fn(river_showdown, _ANOTHER_CARD)
+
+    assert len(river_branch.board) == 5
+    assert river_branch.chance_fn is None  # nothing left to deal — the last possible hop
+
+
+def test_build_mccfr_chance_branch_chain_to_river_is_deterministic_across_calls():
+    kwargs = dict(
+        terminal=_showdown_terminal(pot=10.0, invested=5.0), card=_A_CARD, board=_BOARD, combos=_COMBOS,
+        positions=_POSITIONS, effective_stack_bb=15.0, chain_to_river=True,
+    )
+    branch_1 = build_mccfr_chance_branch(**kwargs)
+    branch_2 = build_mccfr_chance_branch(**kwargs)
+    aa, kk = _COMBOS
+    vector_1 = branch_1.equity_cache.traverser_equity_vector((kk,))
+    vector_2 = branch_2.equity_cache.traverser_equity_vector((kk,))
+    assert np.array_equal(vector_1, vector_2, equal_nan=True)

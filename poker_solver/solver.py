@@ -882,6 +882,149 @@ def solve_flop_turn_multiway(
     )
 
 
+# Measured during M39's own scoping pass, not assumed — and the real
+# surprise here is that this is CHEAPER than solve_flop_turn_multiway's
+# own numbers at a matching pool/tree, not more expensive, despite doing
+# strictly more work (two chance hops, not one). At the same 11-combo
+# pool M37's own live endpoint uses (max_raises=2): 20 iters ~0.45s, 50
+# iters ~1.14s, 100 iters ~2.19s, 200 iters ~3.89s, 500 iters ~9.54s —
+# consistently linear (~0.019s/iteration), and every single one of
+# those numbers is LOWER than solve_flop_turn_multiway's own equivalent
+# (e.g. 200 iters: ~3.89s here vs. ~5.8s there). Traced, not just
+# observed: the exact 2-player solver's own river-chaining cost
+# explosion (chance.build_chance_node eagerly builds ALL ~44-49 branches
+# at EACH of two levels, ~44x44 equity-table builds for one flop
+# terminal — the reason solve_flop_to_river measured ~63-105s at M13)
+# simply doesn't apply to chance.build_mccfr_chance_branch's lazy,
+# one-sampled-card-at-a-time design — each iteration pays for at most
+# ONE new turn dispatch and ONE new river dispatch, never a combinatorial
+# product of both levels' full branch counts. A river-level equity
+# lookup is also cheaper still than a turn-level one on its own terms
+# (remaining_needed==0 on a complete 5-card board needs no enumeration
+# at all, unlike remaining_needed==1's own ~44-46-card exact enumeration)
+# — a second, independent reason this doesn't compound the way the exact
+# solver's own two-hop cost did. Set equal to solve_flop_turn_multiway's
+# own default/cap, not solve_flop_to_river's tiny (20/=default) 2-position
+# ones — the cost profile that justified those tiny numbers simply
+# doesn't hold here.
+DEFAULT_FLOP_TO_RIVER_MULTIWAY_ITERATIONS = 50
+
+
+def solve_flop_to_river_multiway(
+    board: tuple,
+    position_ranges: dict,
+    pot: float,
+    effective_stack_bb: float,
+    positions: tuple,
+    raise_sizes: tuple = (2.5, 3.0, 2.2),
+    max_raises: int = 4,
+    iterations: int = None,
+    equity_samples: int = None,
+    equity_seed: int = DEFAULT_EQUITY_SEED,
+    seed: int = 0,
+) -> StrategyResult:
+    """Solve a multiway flop betting round that chains all the way to a
+    real multiway river showdown — flop->turn via a real sampled chance
+    branch (see solve_flop_turn_multiway), and now turn->river via a
+    second one (see chance.build_mccfr_chance_branch's `chain_to_river`,
+    M39) — the direct N-position generalization of solve_flop_to_river
+    (M13), the same way solve_flop_turn_multiway generalizes solve_flop_
+    turn. This is the last chance-branch hop possible starting from a
+    3-card flop board — a complete 5-card river board has no more cards
+    left to deal.
+
+    Identical parameters to solve_flop_turn_multiway — the only
+    difference is the single `chain_to_river=True` passed to build_mccfr_
+    chance_branch inside this function's own `chance_fn` closure; see
+    chance.py's own docstring for how that one flag lets the *same*
+    build_mccfr_chance_branch call recursively populate a second level
+    of `SampledChanceBranch.chance_fn` (the river hop) instead of
+    leaving it at `None` the way solve_flop_turn_multiway's call does.
+    No cfr.py changes were needed for this, mirroring solve_flop_to_
+    river's own M13 finding exactly — `_mccfr_recurse` already threads
+    `branch.chance_fn` (not the ambient one) into every recursive call,
+    regardless of how many levels deep that branch's own `chance_fn`
+    itself came from.
+
+    The returned StrategyResult's `chance_data` ends up flat but
+    genuinely two levels deep, keyed by `(id(terminal), card)` at each
+    level (M32's own per-sampled-card memoization, not solve_flop_to_
+    river's own one-ChanceNode-per-terminal shape): `chance_data[(id(
+    some_flop_terminal), some_card)]` gives the turn-level branch exactly
+    like solve_flop_turn_multiway, and — once that turn-level terminal
+    has actually been reached and sampled during solving —
+    `chance_data[(id(that_turn_terminal), some_other_card)]` gives the
+    river-level branch one hop further.
+    """
+    if set(positions) != set(position_ranges):
+        raise ValueError(
+            f"positions {positions!r} and position_ranges' keys {tuple(position_ranges)!r} "
+            "must cover exactly the same positions"
+        )
+
+    combos = sorted(set().union(*(r.keys() for r in position_ranges.values())), key=str)
+    initial_reach = {
+        position: np.array([position_ranges[position].get(combo, 0.0) for combo in combos])
+        for position in positions
+    }
+
+    config = StreetConfig(
+        positions=positions,
+        pot=pot,
+        stack_bb=effective_stack_bb,
+        raise_sizes=raise_sizes,
+        max_raises=max_raises,
+    )
+    root = build_street_tree(config)
+
+    equity_kwargs = {"seed": equity_seed}
+    if equity_samples is not None:
+        equity_kwargs["samples"] = equity_samples
+    equity_cache = NwayBoardEquityCache(board, combos, **equity_kwargs)
+
+    def chance_fn(terminal, card):
+        return build_mccfr_chance_branch(
+            terminal,
+            card=card,
+            board=board,
+            combos=combos,
+            positions=positions,
+            effective_stack_bb=effective_stack_bb,
+            raise_sizes=raise_sizes,
+            max_raises=max_raises,
+            equity_seed=equity_seed,
+            chain_to_river=True,
+            **({"equity_samples": equity_samples} if equity_samples is not None else {}),
+        )
+
+    chance_data: dict = {}
+    actual_iterations = iterations if iterations is not None else DEFAULT_FLOP_TO_RIVER_MULTIWAY_ITERATIONS
+    start = time.perf_counter()
+    node_data = mccfr_solve(
+        root,
+        combos,
+        positions,
+        equity_cache,
+        iterations=actual_iterations,
+        seed=seed,
+        initial_reach=initial_reach,
+        board=board,
+        chance_fn=chance_fn,
+        chance_data=chance_data,
+    )
+    elapsed = time.perf_counter() - start
+
+    return StrategyResult(
+        config=config,
+        root=root,
+        hands=combos,
+        node_data=node_data,
+        iterations=actual_iterations,
+        elapsed_seconds=elapsed,
+        chance_data=chance_data,
+    )
+
+
 def solve_flop_abstracted(
     board: tuple,
     hero_range: dict,
