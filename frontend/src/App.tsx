@@ -1,4 +1,5 @@
 import { ActionPathSolver } from './components/ActionPathSolver';
+import { AdviseSolver } from './components/AdviseSolver';
 import { CachedFlopSolver } from './components/CachedFlopSolver';
 import { EquityCalculator } from './components/EquityCalculator';
 import { FlopSolver } from './components/FlopSolver';
@@ -9,6 +10,7 @@ import { TurnPathSolver } from './components/TurnPathSolver';
 import { useHashRoute } from './useHashRoute';
 
 const TABS = [
+  { id: 'advise', label: 'Advisor' },
   { id: 'preflop', label: 'Preflop Ranges' },
   { id: 'equity', label: 'Equity Calculator' },
   { id: 'flop', label: 'Flop Solver' },
@@ -40,6 +42,7 @@ export function App() {
       <TabNav tabs={[...TABS]} activeTab={activeTab} onSelect={setHashRoute} />
 
       <main className="tab-page" id="tab-panel" role="tabpanel" aria-labelledby={`tab-${activeTab}`}>
+        {activeTab === 'advise' && <AdviseSolver />}
         {activeTab === 'preflop' && <PreflopRangesPage />}
         {activeTab === 'equity' && <EquityCalculator />}
         {activeTab === 'flop' && <FlopSolver />}

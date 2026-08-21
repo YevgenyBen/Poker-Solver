@@ -205,3 +205,63 @@ export interface TurnPathQueryResponse {
   players: number;
   elapsed_seconds: number;
 }
+
+// Mirrors api/schemas.py's RangeConfidence (M52) — how much of one
+// position's solved-against range was genuinely backed by real solving
+// along the preflop path, rather than the untrained uniform default.
+export interface RangeConfidence {
+  trained_classes: number;
+  total_classes: number;
+  fully_trained: boolean;
+}
+
+// Mirrors api/schemas.py's HeroAdvice (M51/M52). `trained` is about the
+// POSTFLOP solve node; `range_trained` is about the PREFLOP derivation
+// that produced the range fed into it — either can be untrustworthy
+// independently, so both are reported.
+export interface HeroAdvice {
+  cards: string;
+  in_range: boolean;
+  strategy: ActionFrequencies | null;
+  trained: boolean | null;
+  range_trained: boolean | null;
+}
+
+// Mirrors api/schemas.py's AdviseResponse (M51/M52/M53) — the unified
+// front door. `trained` is null (not {}) when the answer came from the
+// canonical library, which structurally cannot report per-hand
+// confidence; `source` names which backend actually answered.
+export interface AdviseResponse {
+  street: string;
+  players: number;
+  positions: string[];
+  position: string;
+  player_to_act: string | null;
+  is_terminal: boolean;
+  pot: number;
+  effective_stack_bb: number;
+  strategy: OpeningRange;
+  trained: TrainedMap | null;
+  hero: HeroAdvice | null;
+  source: string;
+  solve_iterations: number | null;
+  elapsed_seconds: number;
+  range_confidence: Record<string, RangeConfidence> | null;
+}
+
+// The request shape /advise takes — street depth is INFERRED from which
+// optional fields are present (see api/schemas.py's AdviseRequest), so
+// the UI simply omits what hasn't happened yet in the hand.
+export interface AdviseRequest {
+  stack_bb: number;
+  preflop_action_path: string[];
+  players?: number;
+  board?: string;
+  flop_action_path?: string[];
+  turn_card?: string;
+  turn_action_path?: string[];
+  river_card?: string;
+  hero_cards?: string;
+  iterations?: number;
+  solve_iterations?: number;
+}

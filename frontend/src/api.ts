@@ -1,4 +1,6 @@
 import type {
+  AdviseRequest,
+  AdviseResponse,
   EquityResponse,
   FlopMultiwayPathQueryResponse,
   FlopPathQueryResponse,
@@ -256,6 +258,22 @@ export async function fetchMultiwayTurnStrategyFromPath(
       players,
       flop_iterations: flopIterations,
     }),
+    signal,
+  });
+}
+
+
+// M56: the unified advisor. One POST describing a whole real situation
+// (street depth inferred from which fields are present), one response
+// with advice for the decision actually faced — including hero's own
+// hand when `hero_cards` is supplied. Undefined optional fields are
+// dropped by JSON.stringify, which is exactly what /advise's own street
+// inference expects ("absent" means "hasn't happened yet").
+export async function fetchAdvice(request: AdviseRequest, signal?: AbortSignal): Promise<AdviseResponse> {
+  return fetchJson<AdviseResponse>('/advise', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
     signal,
   });
 }
