@@ -42,9 +42,9 @@ describe('MultiwayFlopSolver', () => {
     expect(positionOptions.map((option) => option.value)).toEqual(['OOP', 'MID', 'IP']);
   });
 
-  it('does not offer a flop-to-river depth option', () => {
+  it('offers a flop-to-river depth option (M40)', () => {
     render(<MultiwayFlopSolver />);
-    expect(screen.queryByRole('option', { name: 'Flop + turn + river' })).not.toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Flop + turn + river' })).toBeInTheDocument();
   });
 
   it('solves and shows each combo on click, calling /solve_flop_multiway', async () => {
@@ -89,6 +89,21 @@ describe('MultiwayFlopSolver', () => {
     await waitFor(() => expect(screen.getByText('AsKs')).toBeInTheDocument());
     expect(fetchMock).toHaveBeenCalledWith(
       '/solve_flop_turn_multiway?board=Jh7d2c&pot=10&stack_bb=40&position=OOP',
+      { signal: undefined },
+    );
+  });
+
+  it('solves flop+turn+river and calls /solve_flop_to_river_multiway with the right query string', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockMultiwayFlopResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<MultiwayFlopSolver />);
+    fireEvent.change(screen.getByLabelText('Runout depth'), { target: { value: 'flop_to_river' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Solve flop + turn + river' }));
+
+    await waitFor(() => expect(screen.getByText('AsKs')).toBeInTheDocument());
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/solve_flop_to_river_multiway?board=Jh7d2c&pot=10&stack_bb=40&position=OOP',
       { signal: undefined },
     );
   });

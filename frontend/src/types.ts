@@ -50,15 +50,16 @@ export interface FlopSolveResponse {
 // fetchFlopStrategy.
 export type FlopSolveDepth = 'flop' | 'flop_turn' | 'flop_to_river';
 
-// M37: which of the two /solve_flop*_multiway endpoints to call — see
-// api.ts's fetchMultiwayFlopStrategy. Deliberately its own, narrower
-// type (not FlopSolveDepth reused/widened) — there is no multiway
-// analog of 'flop_to_river' yet (M35/M36 only chained flop->turn, one
-// hop, for 3+ live positions; see api/main.py's own module docstring).
-// The response shape is identical to FlopSolveResponse either way
-// (reused unchanged, per M37's own finding), just with `position`
-// legitimately carrying 'MID' too and `positions` holding 3 entries.
-export type MultiwayFlopSolveDepth = 'flop' | 'flop_turn';
+// M37/M40: which of the three /solve_flop*_multiway endpoints to call —
+// see api.ts's fetchMultiwayFlopStrategy. Deliberately its own type
+// (not FlopSolveDepth reused) even though the three depth labels now
+// match 1:1 — the response shape is identical to FlopSolveResponse
+// either way (reused unchanged, per M37's own finding), just with
+// `position` legitimately carrying 'MID' too and `positions` holding 3
+// entries, which is reason enough to keep this its own named type
+// rather than silently coupling the 2-position and multiway endpoint
+// families' depth options together.
+export type MultiwayFlopSolveDepth = 'flop' | 'flop_turn' | 'flop_to_river';
 
 // Mirrors api/schemas.py's FlopQueryResponse — /solve_flop_cached
 // (M22), backed by poker_solver.library.query_strategy (M21). A

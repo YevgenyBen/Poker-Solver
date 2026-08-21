@@ -2838,6 +2838,63 @@ street chaining needs.
     so `npm test` wasn't re-run this milestone — matches M39's own
     identical "engine/API-only change, frontend suite untouched"
     reasoning.
+- **M41 — a 3rd `MultiwayFlopSolver.tsx` runout-depth option
+  ("Flop + turn + river"), closing the frontend half of M39's own
+  deferred follow-on.** `MultiwayFlopSolveDepth` (`types.ts`) widens
+  from `'flop' | 'flop_turn'` to include `'flop_to_river'`, kept as its
+  own named type rather than folded into (or replaced by)
+  `FlopSolveDepth` even though the three labels now match exactly — the
+  two endpoint families' response shapes still differ in what
+  `position`/`positions` can legitimately hold (3 positions vs. 2), the
+  same reason the type was split out in the first place at M37.
+  `MULTIWAY_FLOP_DEPTH_ENDPOINTS` (`api.ts`) gains a `flop_to_river`
+  entry pointing at M40's new route.
+  - **The one real content decision:** `DEPTH_CONFIG`'s new hint copy
+    states the M39 finding directly ("measured cheaper than flop + turn
+    alone") rather than a generic "up to N seconds" — the same kind of
+    honest, specific copy `FlopSolver.tsx`'s own hints already carry
+    (e.g. `solve_flop_to_river`'s hint calling out that it "varies more
+    by board than the other two depths"), now extended to a case where
+    the honest finding is a pleasant surprise instead of a caveat.
+  - **Tests:** `MultiwayFlopSolver.test.tsx`'s existing "does not offer
+    a flop-to-river depth option" test — a real M37-era regression
+    guard, not dead weight — was flipped to its exact opposite
+    assertion (the option is now expected, not absent), rather than
+    deleted, so a future accidental removal of the option would still
+    be caught. One new test mirrors the existing `flop_turn` case:
+    selecting the depth, clicking the (correctly relabeled) button, and
+    confirming the request lands on `/solve_flop_to_river_multiway`
+    with the right query string.
+  - **Verification:** `npm test` — 150 passed (up from 149 — net +1:
+    one new test added, one existing test's assertion flipped in
+    place, not counted as a second new test). `python -m pytest
+    tests/ -v` not re-run — no backend files touched, mirroring M38's
+    own "frontend-only change" precedent. Live-verified in the browser
+    end to end (via `preview_start`'s `frontend-dev`/`api-dev` configs,
+    working around the same known screenshot-tool limitation this
+    session hit at M38 by driving the page with `javascript_tool`/
+    `get_page_text`/`form_input`/`computer` clicks instead): selecting
+    "Flop + turn + river" updates the button label and hint text
+    live; clicking Solve issues a real request to
+    `GET /solve_flop_to_river_multiway?board=Jh7d2c&pot=10&stack_bb=40&
+    position=OOP` (confirmed 200 OK via `read_network_requests`); the
+    rendered result shows a real strategy (50 iterations, 1.71s) with
+    OOP's own trained AK-suited combos carrying real, differentiated
+    frequencies and the untrained MID/IP-only combos correctly marked
+    "low data."
+  - **Scope, and what's now fully closed:** this closes out the entire
+    M30-M41 multiway-postflop-solving arc's originally-scoped work —
+    engine (M30-M32 board-aware N-way equity/range-seeding/chance-
+    sampling primitives, M35-M36 flop/turn solving, M39 river
+    chaining), API (M37 flop/turn endpoints, M40 river endpoint), and
+    frontend (M38 component, M41 completing its depth selector) all
+    now cover the same 3 runout depths the 2-position family has had
+    since M14. True 6-max/9-max multiway *postflop* solving remains
+    unscoped future work (the demo pool's cost is dominated by combo-
+    pool size, measured in M35/M36 but never tested past 3-max), as
+    does connecting `derive_ranges_from_path`'s own multiway output
+    (proven at 3-max in M35's own pipeline test) into either live
+    multiway endpoint the way M23/M24 did for the 2-position family.
 
 ## v3 vision (future) — live-table advisor
 
