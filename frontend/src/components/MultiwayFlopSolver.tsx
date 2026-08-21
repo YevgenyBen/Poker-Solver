@@ -9,11 +9,16 @@ const DEFAULT_BOARD = 'Jh7d2c';
 const DEFAULT_POT = 10;
 const DEFAULT_STACK_BB = 40;
 
-// M37's own measured numbers (see api/main.py's module docstring) —
-// solve_flop_multiway is close to flat across iteration count (a few
-// seconds regardless), but solve_flop_turn_multiway genuinely scales
-// with it (every iteration can sample a new (terminal, card) pair), so
-// its own hint names a real range rather than a single number.
+// M37/M40's own measured numbers (see api/main.py's module docstring)
+// — solve_flop_multiway is close to flat across iteration count (a few
+// seconds regardless). solve_flop_turn_multiway and solve_flop_to_
+// river_multiway both genuinely scale with iteration count (every
+// iteration can sample a new (terminal, card) pair), so their hints
+// name a real range rather than a single number — and, surprisingly,
+// the river hop is measured *cheaper* than the turn-only hop at every
+// iteration count compared (the opposite of the 2-position FlopSolver's
+// own flop_turn/flop_to_river relationship, see CLAUDE.md's M39 entry
+// for why), so its own worst case is a smaller number than flop_turn's.
 const DEPTH_CONFIG: Record<
   MultiwayFlopSolveDepth,
   { label: string; buttonLabel: string; solvingLabel: string; hint: string }
@@ -30,15 +35,22 @@ const DEPTH_CONFIG: Record<
     solvingLabel: 'Solving flop + turn (up to about 15 seconds)…',
     hint: 'Chains a real turn betting round in via a sampled chance branch — can take up to about 15 seconds.',
   },
+  flop_to_river: {
+    label: 'Flop + turn + river',
+    buttonLabel: 'Solve flop + turn + river',
+    solvingLabel: 'Solving flop + turn + river (up to about 10 seconds)…',
+    hint: 'Chains both turn and river betting in via sampled chance branches — measured cheaper than flop + turn alone, up to about 10 seconds.',
+  },
 };
 
-// M37: a real 3-max (OOP/MID/IP) multiway flop — a separate component
-// from FlopSolver, not a 3rd position bolted onto it, mirroring
-// CachedFlopSolver's own "different interaction shape -> separate
-// component" precedent (M22): a 3rd live position and a narrower
-// (2-, not 3-entry) depth selector are enough of a shape change that
-// shoehorning them into FlopSolver's own 2-position form would need
-// messy conditional branching throughout.
+// M37/M40: a real 3-max (OOP/MID/IP) multiway flop — a separate
+// component from FlopSolver, not a 3rd position bolted onto it,
+// mirroring CachedFlopSolver's own "different interaction shape ->
+// separate component" precedent (M22): a 3rd live position is enough
+// of a shape change on its own that shoehorning it into FlopSolver's
+// own 2-position form would need messy conditional branching
+// throughout — even though, as of M40, both components' depth
+// selectors now offer the same 3 options.
 export function MultiwayFlopSolver() {
   const [board, setBoard] = useState(DEFAULT_BOARD);
   const [pot, setPot] = useState(DEFAULT_POT);
@@ -114,6 +126,7 @@ export function MultiwayFlopSolver() {
           >
             <option value="flop">Flop only</option>
             <option value="flop_turn">Flop + turn</option>
+            <option value="flop_to_river">Flop + turn + river</option>
           </select>
         </label>
         <button type="button" onClick={handleSolve} disabled={loading}>

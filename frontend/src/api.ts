@@ -91,13 +91,14 @@ export async function fetchFlopStrategy(
   return fetchJson<FlopSolveResponse>(`${FLOP_DEPTH_ENDPOINTS[depth]}?${query.toString()}`, { signal });
 }
 
-// M37: same one-endpoint-per-depth idiom as FLOP_DEPTH_ENDPOINTS above,
-// a separate lookup table (not a wider FLOP_DEPTH_ENDPOINTS) since
-// MultiwayFlopSolveDepth is its own, narrower type — no 'flop_to_river'
-// entry exists here.
+// M37/M40: same one-endpoint-per-depth idiom as FLOP_DEPTH_ENDPOINTS
+// above, a separate lookup table (not a shared FLOP_DEPTH_ENDPOINTS)
+// since MultiwayFlopSolveDepth stays its own type even though all
+// three depth labels now match — see that type's own comment.
 const MULTIWAY_FLOP_DEPTH_ENDPOINTS: Record<MultiwayFlopSolveDepth, string> = {
   flop: '/solve_flop_multiway',
   flop_turn: '/solve_flop_turn_multiway',
+  flop_to_river: '/solve_flop_to_river_multiway',
 };
 
 export async function fetchMultiwayFlopStrategy(
