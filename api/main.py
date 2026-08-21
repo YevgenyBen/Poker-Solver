@@ -447,6 +447,38 @@ walking the already-solved tree afterward, same "resolving is free,
 re-solving isn't" reasoning _turn_path_cache's own M26 key already
 established) — same lock also guards ensure_flop_turn_multiway_
 branch's own in-place chance_data mutation.
+
+POST /solve_river_from_path (M46) closes the last street this project's
+real-action-path thread had left uncovered: one hop further than
+/solve_turn_from_path, via solve_flop_to_river (M13) instead of
+solve_flop_turn. Unlike the turn endpoint (which deliberately exposes
+only the FIRST turn decision, never a deeper turn-street path), a real
+river decision needs a real TURN action path too, since the turn is
+itself a full betting round — this endpoint's request adds that field,
+plus a real dealt river card.
+
+Measured before shipping, and the real finding here: solve_flop_to_
+river's cost is dominated by combo-POOL SIZE far more steeply than any
+other path-derived endpoint in this file, to the point that even a
+single CLASS-level cap (the same lever every sibling endpoint uses) is
+already too coarse — a single class can expand to up to 12 combos, and
+capping to just one class per side (up to 16 combos total) measured
+224.43s at this function's own already-tight default iteration count
+(20). Capping by raw COMBO count instead, at that same iteration count:
+1 combo/side (2 total) -> 14.10s; 2/side (4 total) -> 27.94s; 3/side (6
+total) -> 43.00s — a real, roughly linear ~7s/combo relationship.
+RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE is set to 3 (~43s), landing in the
+same "slow but tolerable for a live request" bracket /solve_flop_to_
+river's own fixed-demo endpoint was accepted in at M14 (~63-105s).
+river_iterations' own cap mirrors MAX_FLOP_TO_RIVER_ITERATIONS' own
+"==default, zero headroom" discipline, for the identical reason: cost
+at this scale is already at the outer edge of tolerable at the default
+alone.
+
+Pre-warmed, unlike every other path-derived endpoint in this file — its
+own cost (~43s at default) is a meaningfully worse cold-start tax than
+any of them, the same "worth pre-warming" bar solve_flop_turn/solve_
+flop_to_river's own fixed-demo pre-warms were held to at M14.
 """
 
 import dataclasses
@@ -507,6 +539,8 @@ from .schemas import (
     MultiwayTurnPathRequest,
     PreflopWalkRequest,
     PreflopWalkResponse,
+    RiverPathQueryResponse,
+    RiverPathRequest,
     SolveResponse,
     TurnMultiwayPathQueryResponse,
     TurnPathQueryResponse,
@@ -789,6 +823,37 @@ MAX_FLOP_TO_RIVER_ITERATIONS = DEFAULT_FLOP_TO_RIVER_ITERATIONS
 # than capping to a single class per side would.
 MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE = 2
 
+# /solve_river_from_path's (M46) own cost controls — capped by COMBO
+# count directly, not by class the way every other path-derived
+# endpoint's own cap is (MAX_PATH_QUERY_CLASSES_PER_SIDE, MAX_TURN_
+# PATH_QUERY_CLASSES_PER_SIDE, MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_
+# POSITION). Real, measured reason: solve_flop_to_river's cost scales so
+# steeply with combo-pool size that even a single CLASS (which can
+# expand to up to 12 combos, e.g. an offsuit hand) is already too coarse
+# a lever — measured directly, same real preflop line/board/iterations
+# throughout: capping to the top class per side (up to 16 combos after
+# expansion) cost 224.43s at iterations=20, the solver's own already-
+# tight default. Capping by raw combo count instead: 1 combo/side (2
+# total) -> 14.10s; 2/side (4 total) -> 27.94s; 3/side (6 total) ->
+# 43.00s — a real, roughly linear ~7s/combo relationship, not the
+# unpredictable jump a class-sized cap produces. Set to 3 combos per
+# side (~43s), landing in the same "slow but tolerable for a live
+# request" bracket /solve_flop_to_river's own fixed-demo endpoint was
+# already accepted in at M14 (~63-105s), while still giving a caller
+# more than one real combo of range diversity per side.
+RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE = 3
+
+# solve_flop_to_river's own cost is dominated by combo-pool size, not
+# iteration count, at these tiny scales (see the measurement above — all
+# three combo-count points were measured at the SAME iterations=20).
+# Mirrors MAX_FLOP_TO_RIVER_ITERATIONS' own "==default, zero headroom"
+# discipline for the identical reason: this function's cost is already
+# at the outer edge of tolerable for a live request at its own default,
+# so `river_iterations` can only ever request a faster, noisier result,
+# never a slower one.
+DEFAULT_RIVER_PATH_QUERY_ITERATIONS = DEFAULT_FLOP_TO_RIVER_ITERATIONS
+MAX_RIVER_PATH_QUERY_ITERATIONS = DEFAULT_FLOP_TO_RIVER_ITERATIONS
+
 # /solve_flop_multiway_from_path's (M42) own cost controls — the
 # multiway analog of MAX_PATH_QUERY_CLASSES_PER_SIDE/PATH_QUERY_
 # ITERATIONS, separately measured since solve_flop_multiway's own cost
@@ -942,6 +1007,15 @@ _path_query_lock = threading.Lock()
 # this isn't going through that primitive.
 _turn_path_cache: dict = {}
 _turn_path_lock = threading.Lock()
+
+# M46's own plain-dict cache for solve_flop_to_river results — same
+# shape/reasoning as _turn_path_cache above (keyed on what the solve
+# itself depends on: preflop_action_path, stack_bb, its own iterations,
+# board, river_iterations; deliberately NOT flop_action_path/turn_card/
+# turn_action_path/river_card, resolved by walking the already-solved
+# tree afterward instead of re-solving).
+_river_path_cache: dict = {}
+_river_path_lock = threading.Lock()
 
 
 def _prewarm_enabled() -> bool:
@@ -1426,6 +1500,21 @@ def _cap_range(range_dict: dict, max_classes: int) -> dict:
     if len(range_dict) <= max_classes:
         return range_dict
     top_items = sorted(range_dict.items(), key=lambda item: item[1], reverse=True)[:max_classes]
+    return dict(top_items)
+
+
+def _cap_range_to_combos(class_frequencies: dict, max_combos: int, exclude: frozenset) -> dict:
+    """M46's own combo-level analog of _cap_range — expands a {Starting
+    Hand: weight} dict to real board-legal combos first (via combos.
+    range_from_class_frequencies), THEN caps to the top `max_combos`
+    combos by weight, rather than capping classes before expansion. See
+    RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE's own comment for why: a
+    class-level cap is too coarse a lever for solve_flop_to_river's own
+    cost curve (a single class can expand to up to 12 combos)."""
+    expanded = range_from_class_frequencies(class_frequencies, exclude=exclude)
+    if len(expanded) <= max_combos:
+        return expanded
+    top_items = sorted(expanded.items(), key=lambda item: item[1], reverse=True)[:max_combos]
     return dict(top_items)
 
 
@@ -1982,6 +2071,214 @@ def _query_turn_multiway_from_path(
     }
 
 
+def _query_river_from_path(
+    preflop_action_kinds: list,
+    flop_action_kinds: list,
+    turn_card,
+    turn_action_kinds: list,
+    river_card,
+    stack_bb: float,
+    board_cards: tuple,
+    iterations: int,
+    river_iterations: int,
+    players: int = 2,
+) -> dict:
+    """Orchestrates POST /solve_river_from_path end to end — one street
+    further than _query_turn_from_path, whose structure this mirrors
+    exactly for the first hop: a real (cached, raw) preflop solve ->
+    resolve the client's preflop action kinds -> derive_ranges_from_path
+    (M16) -> require exactly 2 live positions -> cap both sides by COMBO
+    count (RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE, not class — see that
+    constant's own comment for the measured reason) -> solve_flop_to_
+    river (M13), behind its own narrowly-keyed cache -> resolve the
+    client's flop action kinds against that result's own root -> deal
+    the client's real turn card -> resolve the client's real TURN action
+    kinds against the resulting turn-street root (new relative to the
+    turn endpoint, which only ever exposes the FIRST turn decision) ->
+    deal the client's real river card -> read whatever real strategy
+    solve_flop_to_river already computed there.
+
+    `players` (mirrors M29's own precedent): part of `_river_path_
+    cache`'s own key, for the identical collision reason `_turn_path_
+    cache`'s key already includes it.
+    """
+    preflop_result = _get_or_solve_preflop_raw(stack_bb, iterations, players=players)
+    preflop_actions, _node = _resolve_action_path(preflop_result.root, preflop_action_kinds)
+    path_scenario = derive_ranges_from_path(preflop_result, preflop_actions)
+    # Known, deliberate gap: path_scenario.trained isn't surfaced here
+    # either — see _query_flop_from_path's identical note above.
+
+    if not isinstance(path_scenario.node, TerminalNode):
+        raise ValueError("preflop_action_path does not reach a terminal — action isn't capped yet")
+    if len(path_scenario.live_positions) != 2:
+        # Same restriction _query_turn_from_path already has, for the
+        # identical reason: postflop solving here is 2-position only,
+        # regardless of the origin table size.
+        raise ValueError(
+            f"preflop_action_path leaves {len(path_scenario.live_positions)} live positions, not 2 — "
+            "postflop solving is 2-position only, regardless of the origin table size"
+        )
+    oop_position, ip_position = postflop_action_order(preflop_result.config.positions, path_scenario.live_positions)
+    oop_stack = path_scenario.stacks[oop_position]
+    ip_stack = path_scenario.stacks[ip_position]
+    if oop_stack != ip_stack:
+        raise RuntimeError(
+            "derive_ranges_from_path returned unequal stacks at a terminal node — should be "
+            "impossible per game_tree.py's no-side-pots invariant, please report"
+        )
+    effective_stack_bb = oop_stack
+
+    exclude = frozenset(board_cards)
+    hero_range = _cap_range_to_combos(path_scenario.ranges[oop_position], RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE, exclude)
+    villain_range = _cap_range_to_combos(path_scenario.ranges[ip_position], RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE, exclude)
+    if not hero_range:
+        raise ValueError(f"board {''.join(str(c) for c in board_cards)!r} blocks every combo in {oop_position}'s derived (capped) range")
+    if not villain_range:
+        raise ValueError(f"board {''.join(str(c) for c in board_cards)!r} blocks every combo in {ip_position}'s derived (capped) range")
+
+    river_solve_key = (
+        tuple(preflop_action_kinds),
+        round(stack_bb),
+        iterations,
+        board_cards,
+        river_iterations,
+        players,
+    )
+    with _river_path_lock:
+        result = _river_path_cache.get(river_solve_key)
+    if result is None:
+        result = solve_flop_to_river(
+            board=board_cards,
+            hero_range=hero_range,
+            villain_range=villain_range,
+            pot=path_scenario.pot,
+            effective_stack_bb=effective_stack_bb,
+            positions=(oop_position, ip_position),
+            raise_sizes=FLOP_TO_RIVER_RAISE_SIZES,
+            max_raises=FLOP_TO_RIVER_MAX_RAISES,
+            iterations=river_iterations,
+        )
+        with _river_path_lock:
+            _river_path_cache[river_solve_key] = result
+
+    _flop_actions, flop_node = _resolve_action_path(result.root, flop_action_kinds)
+    if not isinstance(flop_node, TerminalNode):
+        raise ValueError("flop_action_path does not reach a terminal — action isn't capped yet")
+
+    response = {
+        "board": "".join(str(c) for c in board_cards),
+        "turn_card": str(turn_card),
+        "river_card": str(river_card),
+        "preflop_action_path": list(preflop_action_kinds),
+        "flop_action_path": list(flop_action_kinds),
+        "turn_action_path": list(turn_action_kinds),
+        "stack_bb": stack_bb,
+        "position": oop_position,
+        "positions": [oop_position, ip_position],
+        "players": players,
+        "river_iterations": river_iterations,
+        "elapsed_seconds": result.elapsed_seconds,
+    }
+
+    if id(flop_node) not in result.chance_data:
+        # Not showdown-eligible at the flop — someone folded there. No
+        # turn or river decision to make. Same reasoning as _query_turn_
+        # from_path's own identical check (is_showdown is exactly "2+
+        # live positions", proven N-general, not a heads-up-only fact —
+        # see game_tree.TerminalNode.is_showdown's own definition).
+        return {
+            **response,
+            "is_terminal": True,
+            "player_to_act": None,
+            "strategy": {},
+            "trained": {},
+            "pot": flop_node.pot,
+            "effective_stack_bb": effective_stack_bb,
+        }
+
+    turn_chance_node = result.chance_data[id(flop_node)]
+    if turn_card not in turn_chance_node.branches:
+        raise ValueError(f"{turn_card} is not a legal turn card here (already on the board, or already dealt)")
+    turn_root = turn_chance_node.branches[turn_card].root
+
+    # Same recomputation _query_turn_from_path's own comment already
+    # explains (no way to read remaining_stack back off ChanceNode/
+    # ChanceBranch directly) — the amount remaining entering the turn.
+    remaining_stack_after_flop = effective_stack_bb - max(turn_chance_node.invested.values())
+
+    if isinstance(turn_root, TerminalNode):
+        # The flop action already put a player fully all-in — chance.py's
+        # own design reuses the terminal itself as branch.root in that
+        # case, never populating a real turn decision node, so there's
+        # no turn action to resolve and no river decision either.
+        return {
+            **response,
+            "is_terminal": True,
+            "player_to_act": None,
+            "strategy": {},
+            "trained": {},
+            "pot": turn_root.pot,
+            "effective_stack_bb": remaining_stack_after_flop,
+        }
+
+    # New relative to _query_turn_from_path: the turn is a full betting
+    # round, so a real river decision needs the client's own turn action
+    # path resolved against turn_root, not turn_root itself.
+    _turn_actions, turn_node = _resolve_action_path(turn_root, turn_action_kinds)
+    if not isinstance(turn_node, TerminalNode):
+        raise ValueError("turn_action_path does not reach a terminal — action isn't capped yet")
+
+    # The amount remaining entering the river — turn_node.invested is
+    # the TURN street's own fresh (0-based) investment tracking, not
+    # cumulative with the flop's, per game_tree.StreetConfig's own
+    # per-street reset (see game_tree.py's pot_offset docstring).
+    remaining_stack_after_turn = remaining_stack_after_flop - max(turn_node.invested.values())
+
+    if id(turn_node) not in result.chance_data:
+        # Folded on the turn — no river decision to make.
+        return {
+            **response,
+            "is_terminal": True,
+            "player_to_act": None,
+            "strategy": {},
+            "trained": {},
+            "pot": turn_node.pot,
+            "effective_stack_bb": remaining_stack_after_turn,
+        }
+
+    river_chance_node = result.chance_data[id(turn_node)]
+    if river_card not in river_chance_node.branches:
+        raise ValueError(f"{river_card} is not a legal river card here (already on the board, or already dealt)")
+    river_node = river_chance_node.branches[river_card].root
+
+    if isinstance(river_node, TerminalNode):
+        # Already all-in on the turn — no river decision, just a
+        # showdown once the river card is revealed.
+        return {
+            **response,
+            "is_terminal": True,
+            "player_to_act": None,
+            "strategy": {},
+            "trained": {},
+            "pot": river_node.pot,
+            "effective_stack_bb": remaining_stack_after_turn,
+        }
+
+    # A real river decision — the deepest node this endpoint (or any
+    # endpoint in this app) exposes.
+    strategy = result.strategy_at(river_node)
+    trained = result.trained_hands(river_node)
+    return {
+        **response,
+        "is_terminal": False,
+        "player_to_act": river_node.player_to_act,
+        "strategy": strategy,
+        "trained": trained,
+        "pot": river_node.pot,
+        "effective_stack_bb": remaining_stack_after_turn,
+    }
+
+
 def _prewarm_common_depths() -> None:
     for depth in PREWARM_STACK_DEPTHS:
         try:
@@ -2039,6 +2336,28 @@ def _prewarm_common_depths() -> None:
         )
     except Exception:
         logger.exception("pre-warm failed for solve_turn_from_path")
+
+    # /solve_river_from_path's own cost (~43s at its own default combo
+    # cap) is well past the tax-worth-avoiding bracket the pre-warms
+    # above were already accepted for — a real, worse cold-start tax
+    # than any of them. Default line: bet/call on the flop, check/check
+    # on the turn (keeps both positions live, no all-in), a real turn
+    # card and a real, distinct river card.
+    try:
+        logger.info("pre-warming solve_river_from_path for the default line")
+        _query_river_from_path(
+            ["raise", "call_or_check"],
+            ["raise", "call_or_check"],
+            parse_cards("2h")[0],
+            ["call_or_check", "call_or_check"],
+            parse_cards("9s")[0],
+            100.0,
+            tuple(parse_cards(DEFAULT_CHAINED_FLOP_BOARD)),
+            DEFAULT_ITERATIONS,
+            DEFAULT_RIVER_PATH_QUERY_ITERATIONS,
+        )
+    except Exception:
+        logger.exception("pre-warm failed for solve_river_from_path")
 
 
 @asynccontextmanager
@@ -2338,6 +2657,61 @@ async def solve_turn_from_path_endpoint(request: TurnPathRequest):
             board_cards,
             iterations,
             turn_iterations,
+            request.players,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/solve_river_from_path", response_model=RiverPathQueryResponse)
+async def solve_river_from_path_endpoint(request: RiverPathRequest):
+    """Real river-level advice (M46) — one street further than
+    /solve_turn_from_path, closing the last street this project's
+    real-action-path thread had left uncovered. A real preflop path, a
+    real flop board/action path, a real dealt turn card, a real turn
+    action path (new — the turn is itself a full betting round), and a
+    real dealt river card, in; the river decision's real strategy, out.
+    See the module docstring for the measured cost this required capping
+    ranges by combo count, not class, to keep tolerable."""
+    try:
+        if len(request.preflop_action_path) > MAX_PATH_LENGTH:
+            raise ValueError(
+                f"preflop_action_path is too long ({len(request.preflop_action_path)} > {MAX_PATH_LENGTH})"
+            )
+        if len(request.flop_action_path) > MAX_PATH_LENGTH:
+            raise ValueError(f"flop_action_path is too long ({len(request.flop_action_path)} > {MAX_PATH_LENGTH})")
+        if len(request.turn_action_path) > MAX_PATH_LENGTH:
+            raise ValueError(f"turn_action_path is too long ({len(request.turn_action_path)} > {MAX_PATH_LENGTH})")
+        board_cards = tuple(parse_cards(request.board))
+        if len(board_cards) != 3:
+            raise ValueError(f"board must have exactly 3 cards for a flop, got {len(board_cards)}")
+        turn_cards = tuple(parse_cards(request.turn_card))
+        if len(turn_cards) != 1:
+            raise ValueError(f"turn_card must have exactly 1 card, got {len(turn_cards)}")
+        river_cards = tuple(parse_cards(request.river_card))
+        if len(river_cards) != 1:
+            raise ValueError(f"river_card must have exactly 1 card, got {len(river_cards)}")
+        iterations = request.iterations if request.iterations is not None else DEFAULT_ITERATIONS
+        if not 0 < iterations <= MAX_ITERATIONS:
+            raise ValueError(f"iterations must be between 1 and {MAX_ITERATIONS}, got {iterations}")
+        river_iterations = (
+            request.river_iterations if request.river_iterations is not None else DEFAULT_RIVER_PATH_QUERY_ITERATIONS
+        )
+        if not 0 < river_iterations <= MAX_RIVER_PATH_QUERY_ITERATIONS:
+            raise ValueError(
+                f"river_iterations must be between 1 and {MAX_RIVER_PATH_QUERY_ITERATIONS}, got {river_iterations}"
+            )
+        return await run_in_threadpool(
+            _query_river_from_path,
+            request.preflop_action_path,
+            request.flop_action_path,
+            turn_cards[0],
+            request.turn_action_path,
+            river_cards[0],
+            request.stack_bb,
+            board_cards,
+            iterations,
+            river_iterations,
             request.players,
         )
     except ValueError as exc:

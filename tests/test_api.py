@@ -36,6 +36,7 @@ FAST_MAX_PATH_QUERY_CLASSES_PER_SIDE = 2
 # for the same test-speed reason. Its own class cap needs its own
 # separate shrink, mirroring FAST_MAX_PATH_QUERY_CLASSES_PER_SIDE.
 FAST_MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE = 1
+FAST_RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE = 1
 
 
 @pytest.fixture(autouse=True)
@@ -83,6 +84,12 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
     monkeypatch.setattr(api_main, "PATH_QUERY_ITERATIONS", FAST_PATH_QUERY_ITERATIONS)
     monkeypatch.setattr(api_main, "MAX_PATH_QUERY_CLASSES_PER_SIDE", FAST_MAX_PATH_QUERY_CLASSES_PER_SIDE)
     monkeypatch.setattr(api_main, "MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE", FAST_MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE)
+    # /solve_river_from_path (M46) — its own combo-level cap, shrunk to
+    # the practical floor (1 combo per side, 2 total) for the same
+    # test-speed reason as every cap above; FLOP_TO_RIVER_MAX_RAISES/
+    # RAISE_SIZES are already at their minimal production values (1/())
+    # so need no further shrink here.
+    monkeypatch.setattr(api_main, "RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE", FAST_RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE)
     # DEMO_MULTIWAY_FLOP_CLASSES (M37) — same shrink-to-the-floor idiom as
     # DEMO_CHAINED_FLOP_HERO_/VILLAIN_CLASSES above: one small suited
     # class per position (4 combos each via range_from_class_frequencies,
@@ -113,6 +120,7 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
     api_main._turn_path_cache.clear()
     api_main._flop_multiway_path_cache.clear()
     api_main._turn_multiway_path_cache.clear()
+    api_main._river_path_cache.clear()
     yield
     _cache.clear()
     _multiway_cache.clear()
@@ -128,6 +136,7 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
     api_main._turn_path_cache.clear()
     api_main._flop_multiway_path_cache.clear()
     api_main._turn_multiway_path_cache.clear()
+    api_main._river_path_cache.clear()
 
 
 @pytest.fixture()
@@ -1558,6 +1567,280 @@ def test_solve_turn_from_path_players_2_and_3_do_not_share_a_cache_entry(client)
     assert r2.status_code == 200
     assert r3.status_code == 200
     assert len(api_main._turn_path_cache) == 2
+
+
+# ---------------------------------------------------------------------------
+# M46: POST /solve_river_from_path — real river-level advice, one street
+# further than /solve_turn_from_path (M26), via poker_solver.solver.
+# solve_flop_to_river's own chance_data, read live, two hops deep.
+#
+# FLOP_TO_RIVER_MAX_RAISES=1/RAISE_SIZES=() are ALREADY at their minimal
+# production values (unlike FLOP_TURN_MAX_RAISES/RAISE_SIZES, which the
+# fixture patches down for the turn endpoint's own tests) — so only
+# fold/call_or_check/all_in exist at each street; the same real terminal
+# lines the turn-path section above already validated apply here too,
+# one street further.
+# ---------------------------------------------------------------------------
+
+_RIVER_PATH_ITERATIONS = 5  # within MAX_RIVER_PATH_QUERY_ITERATIONS's own zero-headroom cap (20)
+_RIVER_TURN_CARD = "Ts"  # doesn't collide with the default test board "2h6d9c"
+_RIVER_CARD = "4h"  # doesn't collide with the board or _RIVER_TURN_CARD
+
+
+def _river_body(
+    preflop_action_path,
+    flop_action_path,
+    turn_action_path,
+    turn_card=_RIVER_TURN_CARD,
+    river_card=_RIVER_CARD,
+    stack_bb=100.0,
+    board="2h6d9c",
+    iterations=_RIVER_PATH_ITERATIONS,
+    river_iterations=_RIVER_PATH_ITERATIONS,
+    players=2,
+):
+    return {
+        "stack_bb": stack_bb,
+        "preflop_action_path": preflop_action_path,
+        "board": board,
+        "flop_action_path": flop_action_path,
+        "turn_card": turn_card,
+        "turn_action_path": turn_action_path,
+        "river_card": river_card,
+        "iterations": iterations,
+        "river_iterations": river_iterations,
+        "players": players,
+    }
+
+
+def test_solve_river_from_path_returns_a_real_non_uniform_river_strategy(client):
+    response = client.post(
+        "/solve_river_from_path",
+        json=_river_body(
+            ["raise", "call_or_check"], ["call_or_check", "call_or_check"], ["call_or_check", "call_or_check"]
+        ),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["is_terminal"] is False
+    assert body["board"] == "2h6d9c"
+    assert body["turn_card"] == "Ts"
+    assert body["river_card"] == "4h"
+    assert body["player_to_act"] in ("BTN", "BB")
+    assert set(body["positions"]) == {"BTN", "BB"}
+    assert body["pot"] > 0
+    assert body["effective_stack_bb"] > 0
+    assert len(body["strategy"]) > 0
+    for freqs in body["strategy"].values():
+        assert sum(freqs.values()) == pytest.approx(1.0, abs=1e-6)
+    assert set(body["trained"].keys()) == set(body["strategy"].keys())
+    assert body["river_iterations"] == _RIVER_PATH_ITERATIONS
+
+
+def test_solve_river_from_path_reuses_the_same_cache_entry_across_cards_and_action_lines(client):
+    # Same regression class as test_solve_turn_from_path_reuses_the_same_
+    # cache_entry_across_turn_cards_and_flop_lines — the cache key must
+    # not include flop_action_path/turn_card/turn_action_path/river_card,
+    # any of which are resolved by walking the already-solved tree, not
+    # by re-solving.
+    base = _river_body(
+        ["raise", "call_or_check"], ["call_or_check", "call_or_check"], ["call_or_check", "call_or_check"]
+    )
+    first = client.post("/solve_river_from_path", json=base).json()
+    assert len(api_main._river_path_cache) == 1
+
+    different_river_card = client.post("/solve_river_from_path", json={**base, "river_card": "5s"}).json()
+    assert len(api_main._river_path_cache) == 1
+    assert different_river_card["river_card"] != first["river_card"]
+
+    different_turn_card = client.post("/solve_river_from_path", json={**base, "turn_card": "4c"}).json()
+    assert len(api_main._river_path_cache) == 1
+    assert different_turn_card["turn_card"] != first["turn_card"]
+
+    already_all_in_flop = client.post(
+        "/solve_river_from_path", json={**base, "flop_action_path": ["all_in", "call_or_check"]}
+    ).json()
+    assert len(api_main._river_path_cache) == 1
+    assert already_all_in_flop["is_terminal"] is True
+    assert already_all_in_flop["strategy"] == {}
+    assert already_all_in_flop["trained"] == {}
+
+    fold_out_flop = client.post(
+        "/solve_river_from_path", json={**base, "flop_action_path": ["all_in", "fold"]}
+    ).json()
+    assert len(api_main._river_path_cache) == 1
+    assert fold_out_flop["is_terminal"] is True
+    assert fold_out_flop["player_to_act"] is None
+
+    already_all_in_turn = client.post(
+        "/solve_river_from_path", json={**base, "turn_action_path": ["all_in", "call_or_check"]}
+    ).json()
+    assert len(api_main._river_path_cache) == 1
+    assert already_all_in_turn["is_terminal"] is True
+    assert already_all_in_turn["effective_stack_bb"] == pytest.approx(0.0)
+
+    fold_out_turn = client.post(
+        "/solve_river_from_path", json={**base, "turn_action_path": ["all_in", "fold"]}
+    ).json()
+    assert len(api_main._river_path_cache) == 1
+    assert fold_out_turn["is_terminal"] is True
+    assert fold_out_turn["player_to_act"] is None
+
+
+def test_solve_river_from_path_partitions_different_preflop_legs_into_separate_cache_entries(client):
+    client.post(
+        "/solve_river_from_path",
+        json=_river_body(
+            ["raise", "call_or_check"], ["call_or_check", "call_or_check"], ["call_or_check", "call_or_check"]
+        ),
+    )
+    client.post(
+        "/solve_river_from_path",
+        json=_river_body(
+            ["call_or_check", "call_or_check"],
+            ["call_or_check", "call_or_check"],
+            ["call_or_check", "call_or_check"],
+        ),
+    )
+    assert len(api_main._river_path_cache) == 2
+
+
+def test_solve_river_from_path_rejects_an_illegal_river_card(client):
+    # "9c" is already on the board (board="2h6d9c").
+    response = client.post(
+        "/solve_river_from_path",
+        json=_river_body(
+            ["raise", "call_or_check"],
+            ["call_or_check", "call_or_check"],
+            ["call_or_check", "call_or_check"],
+            river_card="9c",
+        ),
+    )
+    assert response.status_code == 422
+
+
+def test_solve_river_from_path_rejects_a_malformed_river_card(client):
+    response = client.post(
+        "/solve_river_from_path",
+        json=_river_body(
+            ["raise", "call_or_check"],
+            ["call_or_check", "call_or_check"],
+            ["call_or_check", "call_or_check"],
+            river_card="4h5h",
+        ),
+    )
+    assert response.status_code == 422
+
+
+def test_solve_river_from_path_rejects_an_illegal_turn_action_kind(client):
+    response = client.post(
+        "/solve_river_from_path",
+        json=_river_body(["raise", "call_or_check"], ["call_or_check", "call_or_check"], ["not_a_real_kind"]),
+    )
+    assert response.status_code == 422
+
+
+def test_solve_river_from_path_rejects_a_non_terminal_turn_path(client):
+    response = client.post(
+        "/solve_river_from_path",
+        json=_river_body(["raise", "call_or_check"], ["call_or_check", "call_or_check"], ["call_or_check"]),
+    )
+    assert response.status_code == 422
+
+
+def test_solve_river_from_path_rejects_a_non_terminal_flop_path(client):
+    response = client.post(
+        "/solve_river_from_path",
+        json=_river_body(["raise", "call_or_check"], ["call_or_check"], ["call_or_check", "call_or_check"]),
+    )
+    assert response.status_code == 422
+
+
+def test_solve_river_from_path_rejects_a_non_terminal_preflop_path(client):
+    # Mirrors test_solve_turn_from_path_rejects_a_non_terminal_preflop_
+    # path — the same TerminalNode safety check, ported here since this
+    # endpoint also bypasses library.query_strategy_from_path.
+    response = client.post(
+        "/solve_river_from_path",
+        json=_river_body(["raise"], ["call_or_check", "call_or_check"], ["call_or_check", "call_or_check"]),
+    )
+    assert response.status_code == 422
+
+
+def test_solve_river_from_path_rejects_a_too_long_turn_action_path(client):
+    too_long = ["call_or_check"] * (api_main.MAX_PATH_LENGTH + 1)
+    response = client.post(
+        "/solve_river_from_path",
+        json=_river_body(["raise", "call_or_check"], ["call_or_check", "call_or_check"], too_long),
+    )
+    assert response.status_code == 422
+
+
+def test_solve_river_from_path_rejects_out_of_range_river_iterations(client):
+    response = client.post(
+        "/solve_river_from_path",
+        json=_river_body(
+            ["raise", "call_or_check"],
+            ["call_or_check", "call_or_check"],
+            ["call_or_check", "call_or_check"],
+            river_iterations=api_main.MAX_RIVER_PATH_QUERY_ITERATIONS + 1,
+        ),
+    )
+    assert response.status_code == 422
+
+
+def test_solve_river_from_path_accepts_a_multiway_origin_narrowed_to_two_survivors(client):
+    response = client.post(
+        "/solve_river_from_path",
+        json=_river_body(
+            ["raise", "fold", "call_or_check"],
+            ["call_or_check", "call_or_check"],
+            ["call_or_check", "call_or_check"],
+            players=3,
+        ),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["players"] == 3
+    assert set(body["positions"]) == {"BTN", "BB"}
+    assert body["is_terminal"] is False
+
+
+def test_solve_river_from_path_rejects_a_multiway_preflop_path_with_three_live_survivors(client):
+    response = client.post(
+        "/solve_river_from_path",
+        json=_river_body(
+            ["call_or_check", "call_or_check", "call_or_check"],
+            ["call_or_check", "call_or_check", "call_or_check"],
+            ["call_or_check", "call_or_check", "call_or_check"],
+            players=3,
+        ),
+    )
+    assert response.status_code == 422
+
+
+def test_solve_river_from_path_players_2_and_3_do_not_share_a_cache_entry(client):
+    r2 = client.post(
+        "/solve_river_from_path",
+        json=_river_body(
+            ["raise", "call_or_check"],
+            ["call_or_check", "call_or_check"],
+            ["call_or_check", "call_or_check"],
+            players=2,
+        ),
+    )
+    r3 = client.post(
+        "/solve_river_from_path",
+        json=_river_body(
+            ["raise", "fold", "call_or_check"],
+            ["call_or_check", "call_or_check"],
+            ["call_or_check", "call_or_check"],
+            players=3,
+        ),
+    )
+    assert r2.status_code == 200
+    assert r3.status_code == 200
+    assert len(api_main._river_path_cache) == 2
 
 
 # ---------------------------------------------------------------------------

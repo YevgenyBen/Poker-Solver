@@ -3217,6 +3217,101 @@ street chaining needs.
     the open on-demand-fallback design question M44's own entry already
     named); and the general flop-action wizard both this milestone and
     M26 before it deferred rather than re-attempted.
+- **M46 — `POST /solve_river_from_path`: real river-level advice,
+  closing the last street this project's real-action-path thread had
+  left uncovered.** Following the user's own explicit reprioritization
+  (river coverage first, then solve speed, live-table integrations
+  deferred — see the `v3-roadmap-priority` memory), this extends
+  `/solve_turn_from_path` (M26) one hop further via `solve_flop_to_
+  river` (M13) instead of `solve_flop_turn`. A real river decision
+  needs a real TURN action path too (the turn is itself a full betting
+  round) — unlike the turn endpoint's own deliberate "expose only the
+  first turn decision" scope cut, which needed no such field — so the
+  request grows a `turn_action_path` plus a real dealt `river_card`.
+  Heads-up only this milestone, matching every other 2-position-first-
+  multiway-later sequencing already established in this project (M12/
+  M13 before M39, M26 before M44); multiway river-from-path is a likely
+  follow-up, not attempted here.
+  - **The real finding, measured before any cap was chosen:**
+    `solve_flop_to_river`'s cost is dominated by combo-pool size far
+    more steeply than any other path-derived endpoint in this file — so
+    steeply that even a single CLASS-level cap (the lever every sibling
+    endpoint uses) is already too coarse. Measured directly, same real
+    preflop line/board/iterations throughout: capping to the single top
+    class per side (up to 16 combos after expansion, since one offsuit
+    class alone can be 12 combos) cost **224.43s** at this function's
+    own already-tight default iteration count (20). Capping by raw
+    COMBO count instead, at that same iteration count: 1 combo/side (2
+    total) -> 14.10s; 2/side (4 total) -> 27.94s; 3/side (6 total) ->
+    43.00s — a real, roughly linear ~7s/combo relationship, not the
+    unpredictable jump a class-sized cap produces. `_cap_range_to_
+    combos` (new) expands to real combos FIRST, then caps — the inverse
+    order of every other path-derived endpoint's own `_cap_range`.
+    `RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE` set to 3 (~43s), the same
+    "slow but tolerable for a live request" bracket `/solve_flop_to_
+    river`'s own fixed-demo endpoint was accepted in at M14 (~63-105s).
+    `river_iterations`' own cap mirrors `MAX_FLOP_TO_RIVER_ITERATIONS`'
+    own "==default, zero headroom" discipline — cost at this scale is
+    already at the outer edge of tolerable at the default alone, so the
+    field can only ever request a faster, noisier result.
+  - **Structurally simpler than M44's own multiway-turn analog, for a
+    real, verified reason:** `solve_flop_to_river` is the EXACT solver
+    (`chance.build_chance_node` with `chain_to_river=True`), which
+    exhaustively builds every reachable chance branch during solving —
+    unlike MCCFR's own lazy, only-what-was-sampled `chance_data`. So
+    every showdown-eligible turn-level terminal the client's own
+    `turn_action_path` can resolve to is guaranteed already present in
+    `chance_data` once `solve_flop_to_river` has run — no on-demand-
+    build fallback (`ensure_flop_turn_multiway_branch`'s own M44
+    machinery) is needed here at all. `chance_data` composes two levels
+    deep with zero new `cfr.py` code (M13's own already-proven finding,
+    confirmed still true rather than re-derived), so `_query_river_
+    from_path` is a direct, mechanical one-hop extension of `_query_
+    turn_from_path`'s own structure: resolve `flop_action_path` ->
+    `chance_data[id(flop_node)]` -> deal `turn_card` -> resolve `turn_
+    action_path` against the resulting turn root -> `chance_data[id(
+    turn_node)]` -> deal `river_card` -> read whatever real strategy
+    is already sitting there.
+  - **A real correctness subtlety, verified against `StreetConfig`'s
+    own per-street reset before trusting it, not assumed by analogy:**
+    computing `remaining_stack` entering the river needed care — `turn_
+    node.invested` (the TURN street's own fresh, 0-based investment
+    tracking, per `game_tree.py`'s own `pot_offset` design) is NOT
+    cumulative with the flop's own investment, so `remaining_stack_
+    after_turn = remaining_stack_after_flop - max(turn_node.invested.
+    values())`, mirroring `_query_turn_from_path`'s own identical-shape
+    computation one level deeper, not a naive re-use of `effective_
+    stack_bb` directly.
+  - **Pre-warmed**, unlike every other path-derived endpoint in this
+    file — its own cost (~43s at default) is a meaningfully worse cold-
+    start tax than any of them, the same "worth pre-warming" bar `solve_
+    flop_turn`/`solve_flop_to_river`'s own fixed-demo pre-warms were
+    held to at M14.
+  - **Tests:** `tests/test_api.py` gained 14 new tests, mirroring the
+    turn-path section's own structure one hop deeper (a real non-uniform
+    river strategy; cache reuse across river/turn cards and flop/turn
+    action lines, including all four already-resolved terminal shapes —
+    all-in-on-flop, folded-on-flop, all-in-on-turn, folded-on-turn;
+    partition-by-preflop-leg; illegal/malformed river card; illegal turn
+    action kind; non-terminal turn/flop/preflop paths; too-long turn
+    action path; out-of-range `river_iterations`; a multiway origin
+    narrowed to 2 survivors; a rejected 3-live-survivor multiway path;
+    and players=2/3 not sharing a cache entry) — all 14 pass in ~37s at
+    the fixture's own shrunk 1-combo-per-side cap, confirming the real
+    cost driver is combo count, not test-suite-breaking by itself.
+  - **Verification:** `python -m pytest tests/ -v` — 700 passed, zero
+    regressions (up from M45's 686). No frontend changes this
+    milestone — matches M24-before-M25/M42-before-M43/M44-before-M45's
+    own "engine/API first" precedent; per the user's own stated
+    priority (frontend is a secondary tool, not the focus), a river
+    depth option for `TurnPathSolver.tsx`/`ActionPathSolver.tsx` is a
+    natural, smaller follow-up, not required to consider river coverage
+    itself complete.
+  - **What's still open:** a frontend for this endpoint; multiway
+    river-from-path (unscoped, cost not yet measured at that scale);
+    and — per the user's own stated next priority — solve speed work
+    generally, now that every street through the river has a real,
+    working (if slow) path-derived answer.
 
 ## v3 vision (future) — live-table advisor
 
@@ -3282,6 +3377,23 @@ exactly-uniform, fabricated-looking derived range — `PathScenario`
 gained its own `trained` field for this reason, mirroring M28's signal
 one layer earlier in the pipeline (not yet threaded through to either
 endpoint's own response — a named, deliberate gap, not a silent one).
+
+**M46 update — river-level advice ships, closing this thread's last
+open street — and corrects M26's own "already de-risked" claim.** M26
+measured "a two-hop river walk measured ~0.002ms" and called river-
+level advice already de-risked cost-wise on that basis. That number was
+real but measured the wrong thing: reading a chance-branch lookup off
+an *already-solved* `StrategyResult` is indeed nearly free — but the
+`solve_flop_to_river` SOLVE itself, at a real derived (not the tiny
+fixed 2-combo demo) range, is the actual cost, and M46 measured it
+directly for the first time: 14-43s depending on combo-pool cap, far
+from "de-risked." The corrected, now-actually-measured finding is
+`RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE`'s own comment in M46's entry
+above. What remains: an interactive flop-action wizard (still a curated
+preset/fixed line, the same M24-before-M25-style gap this thread has
+carried since M26), and multiway postflop solving beyond the turn
+(M44's own turn-depth work is heads-up's only sibling so far; multiway
+river-from-path is unscoped).
 
 ### The real-time-speed roadmap
 
