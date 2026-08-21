@@ -4,10 +4,35 @@ import numpy as np
 import pytest
 
 from poker_solver.cards import Card
-from poker_solver.cfr import InfoSetTable, _sample_opponent_hands, mccfr_solve, solve
-from poker_solver.chance import ChanceBranch, ChanceNode
+from poker_solver.cfr import (
+    InfoSetTable,
+    _mccfr_recurse,
+    _mccfr_terminal_value,
+    _opponent_hands_are_dealable,
+    _sample_chance_card,
+    _sample_opponent_hands,
+    mccfr_solve,
+    solve,
+)
+from poker_solver.chance import ChanceBranch, ChanceNode, SampledChanceBranch, build_mccfr_chance_branch
+from poker_solver.combos import HandCombo
 from poker_solver.equity import MultiwayEquityCache, build_equity_table
-from poker_solver.game_tree import ALL_IN, BB, BTN, CALL_OR_CHECK, FOLD, RAISE, Action, DecisionNode, GameConfig, TerminalNode, build_game_tree
+from poker_solver.game_tree import (
+    ALL_IN,
+    BB,
+    BTN,
+    CALL_OR_CHECK,
+    FOLD,
+    RAISE,
+    Action,
+    DecisionNode,
+    GameConfig,
+    StreetConfig,
+    TerminalNode,
+    build_game_tree,
+    build_street_tree,
+)
+from poker_solver.multiway_board_equity import NwayBoardEquityCache
 from poker_solver.starting_hands import StartingHand
 
 
@@ -801,3 +826,378 @@ def test_mccfr_solve_initial_reach_changes_result_from_default():
     assert not np.array_equal(
         default_result[id(root)].strategy_sum, seeded_result[id(root)].strategy_sum
     )
+
+
+# ---------------------------------------------------------------------------
+# M32: MCCFR chance-branch sampling + board-aware terminal equity (Phase 3
+# of docs/full-table-diagnostic-2026-08.md's recommendation #5, closing it).
+# Phase 1 (multiway_board_equity.py) was M30; Phase 2 (initial_reach, above)
+# was M31. See cfr.py's own module docstring (item 4) and chance.py's
+# SampledChanceBranch/build_mccfr_chance_branch for the full design.
+# ---------------------------------------------------------------------------
+
+_TOY_BOARD = (Card("2", "c"), Card("7", "d"), Card("9", "s"))
+_TOY_COMBOS = [HandCombo(Card("A", "h"), Card("A", "d")), HandCombo(Card("K", "h"), Card("K", "d"))]
+
+
+# --- _opponent_hands_are_dealable / _sample_opponent_hands with HandCombo ---
+# (the hard blocker found during M32's own design: _sample_opponent_hands
+# previously always called deal_n_hands, which reads StartingHand-only
+# attributes and raises AttributeError on a HandCombo — confirmed by
+# direct execution before this fix existed, not assumed.)
+
+
+def test_opponent_hands_are_dealable_true_for_non_conflicting_combos():
+    assert _opponent_hands_are_dealable(list(_TOY_COMBOS))
+
+
+def test_opponent_hands_are_dealable_false_for_a_shared_card():
+    conflicting = [_TOY_COMBOS[0], HandCombo(Card("A", "h"), Card("Q", "d"))]  # shares Ah with AA
+    assert not _opponent_hands_are_dealable(conflicting)
+
+
+def test_opponent_hands_are_dealable_true_for_empty_list():
+    assert _opponent_hands_are_dealable([])
+
+
+def test_opponent_hands_are_dealable_still_uses_deal_n_hands_for_starting_hand():
+    # Byte-for-byte unchanged behavior for the pre-M32 (StartingHand) case
+    # — the real regression guarantee this refactor depends on.
+    assert _opponent_hands_are_dealable([StartingHand("A", "A"), StartingHand("K", "K")])
+    assert not _opponent_hands_are_dealable([StartingHand("K", "K"), StartingHand("K", "K"), StartingHand("K", "K")])
+
+
+def test_sample_opponent_hands_works_with_a_handcombo_pool():
+    combos = [
+        HandCombo(Card("A", "h"), Card("A", "d")),
+        HandCombo(Card("K", "h"), Card("K", "d")),
+        HandCombo(Card("Q", "h"), Card("Q", "d")),
+    ]
+    weights = np.array([1.0, 1.0, 1.0])
+    position_weights = {"BTN": weights, "SB": weights, "BB": weights}
+    rng = random.Random(5)
+    for _ in range(50):
+        sampled = _sample_opponent_hands(("BTN", "SB", "BB"), "BTN", position_weights, combos, rng)
+        assert _opponent_hands_are_dealable(list(sampled.values()))  # no crash, and mutually legal
+
+
+def test_sample_opponent_hands_resamples_when_handcombos_conflict():
+    aa1 = HandCombo(Card("A", "h"), Card("A", "d"))
+    aa2 = HandCombo(Card("A", "c"), Card("A", "s"))  # does not conflict with aa1
+    kk = HandCombo(Card("K", "h"), Card("K", "d"))
+    combos = [aa1, aa2, kk]
+    position_weights = {
+        "BTN": np.array([0.0, 0.0, 1.0]),
+        "SB": np.array([1.0, 0.0, 0.0]),  # SB always draws aa1
+        "BB": np.array([0.5, 0.5, 0.0]),  # BB conflicts with SB half the time (aa1), escapes half (aa2)
+    }
+    rng = random.Random(7)
+    sampled = _sample_opponent_hands(("BTN", "SB", "BB"), "BTN", position_weights, combos, rng)
+    # 0.5^50 chance of never escaping in MAX_OPPONENT_RESAMPLE_ATTEMPTS
+    # tries — not truly flake-proof, but astronomically unlikely (~1e-15).
+    assert sampled == {"SB": aa1, "BB": aa2}
+
+
+# --- mccfr_solve backward compatibility + the new board/chance_fn/chance_data params ---
+
+
+def test_mccfr_solve_without_chance_fn_matches_pre_m32_behavior():
+    root, hands, equity_cache = _mccfr_toy_game(10.0, 1.0, 0.6)
+    omitted = mccfr_solve(root, hands, positions=(BTN, BB), equity_cache=equity_cache, iterations=200, seed=11)
+    explicit_none = mccfr_solve(
+        root, hands, positions=(BTN, BB), equity_cache=equity_cache, iterations=200, seed=11,
+        board=None, chance_fn=None, chance_data=None,
+    )
+    assert omitted.keys() == explicit_none.keys()
+    for node_id in omitted:
+        assert np.array_equal(omitted[node_id].regret_sum, explicit_none[node_id].regret_sum)
+        assert np.array_equal(omitted[node_id].strategy_sum, explicit_none[node_id].strategy_sum)
+
+
+def test_mccfr_solve_chance_fn_requires_board():
+    root, hands, equity_cache = _mccfr_toy_game(10.0, 1.0, 0.6)
+    with pytest.raises(ValueError, match="board"):
+        mccfr_solve(
+            root, hands, positions=(BTN, BB), equity_cache=equity_cache, iterations=10, seed=1,
+            chance_fn=lambda terminal, card: None,
+        )
+
+
+# --- _sample_chance_card ---
+
+
+def test_sample_chance_card_excludes_board_and_live_opponent_cards():
+    opponent = HandCombo(Card("A", "h"), Card("A", "d"))
+    rng = random.Random(3)
+    for _ in range(300):
+        card = _sample_chance_card(_TOY_BOARD, (opponent,), rng)
+        assert card not in _TOY_BOARD
+        assert card not in opponent.cards
+
+
+# --- _mccfr_recurse's new chance dispatch ---
+
+
+def test_mccfr_recurse_dispatches_via_chance_fn_for_a_contested_showdown_terminal():
+    combos = _TOY_COMBOS
+    hand_index = {h: i for i, h in enumerate(combos)}
+    showdown_terminal = TerminalNode(pot=10.0, invested={"BTN": 1.0, "BB": 1.0}, folded=frozenset())
+    root = DecisionNode(
+        player_to_act="BTN", pot=1.5, invested={"BTN": 0.5, "BB": 1.0}, folded=frozenset(), raises_so_far=0,
+        children={Action(RAISE, 1.0): showdown_terminal},
+    )
+    branch_root = TerminalNode(pot=10.0, invested={"BTN": 1.0, "BB": 1.0}, folded=frozenset())
+    branch = SampledChanceBranch(
+        card=Card("5", "s"), board=_TOY_BOARD + (Card("5", "s"),),
+        equity_cache=_StubEquityCache(0.9, num_hands=2), root=branch_root, chance_fn=None,
+    )
+    calls = []
+
+    def spy_chance_fn(terminal, card):
+        calls.append((terminal, card))
+        return branch
+
+    value = _mccfr_recurse(
+        root, "BTN", {"BB": combos[1]}, np.array([1.0, 1.0]), {}, 2, hand_index,
+        _StubEquityCache(0.5, num_hands=2), random.Random(1),
+        board=_TOY_BOARD, chance_fn=spy_chance_fn, chance_data={},
+    )
+    assert len(calls) == 1
+    assert calls[0][0] is showdown_terminal
+    # The real, arithmetic-level proof dispatch actually swapped equity
+    # sources — not just that a spy got called: the value reflects the
+    # BRANCH's own 0.9 equity, not the outer, ambient 0.5.
+    assert np.allclose(value, 0.9 * 10.0 - 1.0)
+
+
+def test_mccfr_recurse_does_not_dispatch_chance_when_traverser_has_folded():
+    # A genuinely 3-handed terminal where the TRAVERSER folded but two
+    # OTHER positions remain live — is_showdown is True (2 of 3 live), so
+    # this directly tests the divergence from _solve_recurse's single
+    # is_showdown gate: traverser-folded must still block dispatch.
+    terminal = TerminalNode(pot=15.0, invested={"BTN": 1.0, "MID": 1.0, "IP": 1.0}, folded=frozenset({"BTN"}))
+    assert terminal.is_showdown
+    combos = _TOY_COMBOS
+    hand_index = {h: i for i, h in enumerate(combos)}
+
+    def spy_chance_fn(terminal, card):
+        raise AssertionError("chance_fn must not be called when the traverser has folded")
+
+    value = _mccfr_recurse(
+        terminal, "BTN", {"MID": combos[1], "IP": combos[0]}, np.array([1.0, 1.0]), {}, 2, hand_index,
+        _StubEquityCache(0.5, num_hands=2), random.Random(1),
+        board=_TOY_BOARD, chance_fn=spy_chance_fn, chance_data={},
+    )
+    assert np.array_equal(value, np.full(2, -1.0))  # traverser folded: fixed -invested payoff
+
+
+def test_mccfr_recurse_does_not_rechance_a_turn_level_showdown_terminal():
+    # Mirrors test_solve_does_not_recurse_chance_fn_into_branch_subtrees's
+    # own regression, adapted for sampling: a branch whose own root is
+    # ITSELF a showdown terminal must fall through to direct equity, not
+    # trigger a second dispatch back through the ambient chance_fn.
+    combos = _TOY_COMBOS
+    hand_index = {h: i for i, h in enumerate(combos)}
+    turn_showdown = TerminalNode(pot=10.0, invested={"BTN": 1.0, "BB": 1.0}, folded=frozenset())
+    flop_showdown = TerminalNode(pot=10.0, invested={"BTN": 1.0, "BB": 1.0}, folded=frozenset())
+    root = DecisionNode(
+        player_to_act="BTN", pot=1.5, invested={"BTN": 0.5, "BB": 1.0}, folded=frozenset(), raises_so_far=0,
+        children={Action(RAISE, 1.0): flop_showdown},
+    )
+    branch = SampledChanceBranch(
+        card=Card("5", "s"), board=_TOY_BOARD + (Card("5", "s"),),
+        equity_cache=_StubEquityCache(0.9, num_hands=2), root=turn_showdown, chance_fn=None,
+    )
+    calls = []
+
+    def spy_chance_fn(terminal, card):
+        calls.append((terminal, card))
+        return branch
+
+    _mccfr_recurse(
+        root, "BTN", {"BB": combos[1]}, np.array([1.0, 1.0]), {}, 2, hand_index,
+        _StubEquityCache(0.5, num_hands=2), random.Random(1),
+        board=_TOY_BOARD, chance_fn=spy_chance_fn, chance_data={},
+    )
+    assert len(calls) == 1
+    assert calls[0][0] is flop_showdown
+
+
+def test_mccfr_chance_dispatch_all_in_already_reuses_terminal_without_redispatch():
+    combos = _TOY_COMBOS
+    hand_index = {h: i for i, h in enumerate(combos)}
+    all_in_terminal = TerminalNode(pot=30.0, invested={"BTN": 15.0, "BB": 15.0}, folded=frozenset())
+    root = DecisionNode(
+        player_to_act="BTN", pot=1.5, invested={"BTN": 0.5, "BB": 1.0}, folded=frozenset(), raises_so_far=0,
+        children={Action(ALL_IN, 15.0): all_in_terminal},
+    )
+    # Mirrors build_mccfr_chance_branch's own all-in-already behavior:
+    # branch.root IS the same terminal object, chance_fn is None.
+    branch = SampledChanceBranch(
+        card=Card("5", "s"), board=_TOY_BOARD + (Card("5", "s"),),
+        equity_cache=_StubEquityCache(0.9, num_hands=2), root=all_in_terminal, chance_fn=None,
+    )
+    calls = []
+
+    def spy_chance_fn(terminal, card):
+        calls.append((terminal, card))
+        return branch
+
+    value = _mccfr_recurse(
+        root, "BTN", {"BB": combos[1]}, np.array([1.0, 1.0]), {}, 2, hand_index,
+        _StubEquityCache(0.5, num_hands=2), random.Random(1),
+        board=_TOY_BOARD, chance_fn=spy_chance_fn, chance_data={},
+    )
+    assert len(calls) == 1  # dispatched exactly once, into the branch
+    assert np.allclose(value, 0.9 * 30.0 - 15.0)
+
+
+def test_mccfr_solve_chance_data_memoized_for_repeated_terminal_card_pair():
+    combos = _TOY_COMBOS
+    showdown = TerminalNode(pot=10.0, invested={"BTN": 1.0, "BB": 1.0}, folded=frozenset())
+    root = DecisionNode(
+        player_to_act="BTN", pot=1.5, invested={"BTN": 0.5, "BB": 1.0}, folded=frozenset(), raises_so_far=0,
+        children={Action(RAISE, 1.0): showdown},
+    )
+    calls = []
+
+    def spy_chance_fn(terminal, card):
+        calls.append((terminal, card))
+        return SampledChanceBranch(
+            card=card, board=_TOY_BOARD + (card,), equity_cache=_StubEquityCache(0.5, num_hands=2),
+            root=TerminalNode(pot=10.0, invested={"BTN": 1.0, "BB": 1.0}, folded=frozenset()), chance_fn=None,
+        )
+
+    equity_cache = _StubEquityCache(0.5, num_hands=2)
+    weights = np.array([1.0, 1.0])
+    chance_data: dict = {}
+    mccfr_solve(
+        root, combos, positions=(BTN, BB), equity_cache=equity_cache, iterations=100, seed=1,
+        initial_reach={BTN: weights, BB: weights},
+        board=_TOY_BOARD, chance_fn=spy_chance_fn, chance_data=chance_data,
+    )
+    # At most 52-3=49 distinct cards can ever be sampled for this one
+    # terminal — the spy's call count must equal distinct (terminal, card)
+    # pairs actually dispatched, never the iteration count (100).
+    assert 0 < len(calls) <= 49
+    assert len(calls) == len(chance_data)
+    # every call was for a genuinely distinct (terminal, card) pair — keyed
+    # the same way chance_data itself is keyed (TerminalNode isn't
+    # hashable, since it carries a dict field, so id() stands in for it)
+    seen_keys = {(id(terminal), card) for terminal, card in calls}
+    assert len(seen_keys) == len(calls)
+
+
+# --- _mccfr_terminal_value's new NaN handling ---
+
+
+class _NanStubEquityCache:
+    """Returns equity with a NaN in a specific slot — for testing
+    _mccfr_terminal_value's nan_to_num safety net directly."""
+
+    def __init__(self, num_hands, nan_index):
+        self._num_hands = num_hands
+        self._nan_index = nan_index
+
+    def traverser_equity_vector(self, opponent_hands):
+        vector = np.full(self._num_hands, 0.7)
+        vector[self._nan_index] = np.nan
+        return vector
+
+
+def test_mccfr_terminal_value_replaces_nan_equity_with_neutral_half():
+    combos = _TOY_COMBOS
+    terminal = TerminalNode(pot=10.0, invested={"BTN": 1.0, "BB": 1.0}, folded=frozenset())
+    cache = _NanStubEquityCache(num_hands=2, nan_index=0)
+    value = _mccfr_terminal_value(terminal, "BTN", {"BB": combos[1]}, 2, cache)
+    assert not np.any(np.isnan(value))
+    assert value[0] == pytest.approx(0.5 * 10.0 - 1.0)  # the NaN'd hand -> neutral 0.5
+    assert value[1] == pytest.approx(0.7 * 10.0 - 1.0)  # the real hand -> untouched
+
+
+def test_mccfr_terminal_value_nan_to_num_is_a_noop_for_a_never_nan_cache():
+    combos = _TOY_COMBOS
+    terminal = TerminalNode(pot=10.0, invested={"BTN": 1.0, "BB": 1.0}, folded=frozenset())
+    cache = _StubEquityCache(0.6, num_hands=2)
+    value = _mccfr_terminal_value(terminal, "BTN", {"BB": combos[1]}, 2, cache)
+    assert np.allclose(value, 0.6 * 10.0 - 1.0)
+
+
+# --- Determinism with chance dispatch active ---
+
+
+def test_mccfr_solve_with_chance_fn_is_deterministic_given_a_seed():
+    combos = _TOY_COMBOS
+    showdown = TerminalNode(pot=10.0, invested={"BTN": 1.0, "BB": 1.0}, folded=frozenset())
+    root = DecisionNode(
+        player_to_act="BTN", pot=1.5, invested={"BTN": 0.5, "BB": 1.0}, folded=frozenset(), raises_so_far=0,
+        children={Action(RAISE, 1.0): showdown},
+    )
+
+    def chance_fn(terminal, card):
+        return SampledChanceBranch(
+            card=card, board=_TOY_BOARD + (card,), equity_cache=_StubEquityCache(0.6, num_hands=2),
+            root=TerminalNode(pot=10.0, invested={"BTN": 1.0, "BB": 1.0}, folded=frozenset()), chance_fn=None,
+        )
+
+    equity_cache = _StubEquityCache(0.5, num_hands=2)
+    weights = np.array([1.0, 1.0])
+    kwargs = dict(
+        root=root, hands=combos, positions=(BTN, BB), equity_cache=equity_cache, iterations=200, seed=17,
+        initial_reach={BTN: weights, BB: weights}, board=_TOY_BOARD, chance_fn=chance_fn,
+    )
+    first = mccfr_solve(**kwargs)
+    second = mccfr_solve(**kwargs)
+    assert np.array_equal(first[id(root)].regret_sum, second[id(root)].regret_sum)
+    assert np.array_equal(first[id(root)].strategy_sum, second[id(root)].strategy_sum)
+
+
+# --- The required end-to-end test: a real 3-max flop chaining into a real turn ---
+
+_E2E_BOARD = (Card("2", "c"), Card("7", "d"), Card("9", "s"))
+_E2E_POSITIONS = ("OOP", "MID", "IP")
+
+
+def _e2e_combo_pool():
+    # 2 combos per position, on ranks disjoint from the board and each
+    # other, so a weight-restricted per-position range is meaningful (a
+    # position's own weight vector is 0 everywhere except its own combos).
+    oop = [HandCombo(Card("A", "h"), Card("A", "d")), HandCombo(Card("K", "h"), Card("K", "d"))]
+    mid = [HandCombo(Card("Q", "h"), Card("Q", "d")), HandCombo(Card("J", "h"), Card("J", "d"))]
+    ip = [HandCombo(Card("T", "h"), Card("T", "d")), HandCombo(Card("6", "h"), Card("6", "d"))]
+    return oop, mid, ip
+
+
+def test_mccfr_solve_real_3max_flop_chains_into_turn_and_produces_well_formed_strategy():
+    oop, mid, ip = _e2e_combo_pool()
+    all_combos = oop + mid + ip
+
+    def _weights_for(own_combos):
+        return np.array([1.0 if c in own_combos else 0.0 for c in all_combos])
+
+    initial_reach = {"OOP": _weights_for(oop), "MID": _weights_for(mid), "IP": _weights_for(ip)}
+
+    config = StreetConfig(positions=_E2E_POSITIONS, pot=6.0, stack_bb=20.0, raise_sizes=(), max_raises=1)
+    root = build_street_tree(config)
+    equity_cache = NwayBoardEquityCache(_E2E_BOARD, all_combos)
+
+    def chance_fn(terminal, card):
+        return build_mccfr_chance_branch(
+            terminal, card=card, board=_E2E_BOARD, combos=all_combos, positions=_E2E_POSITIONS,
+            effective_stack_bb=20.0, raise_sizes=(), max_raises=1,
+        )
+
+    chance_data: dict = {}
+    node_data = mccfr_solve(
+        root, all_combos, positions=_E2E_POSITIONS, equity_cache=equity_cache, iterations=300, seed=1,
+        initial_reach=initial_reach, board=_E2E_BOARD, chance_fn=chance_fn, chance_data=chance_data,
+    )
+
+    assert node_data
+    for table in node_data.values():
+        avg = table.average_strategy()
+        assert not np.any(np.isnan(avg))
+        assert np.allclose(avg.sum(axis=1), 1.0)
+
+    assert len(chance_data) > 0  # dispatch actually fired at least once
+    assert any(isinstance(branch.root, DecisionNode) for branch in chance_data.values())  # a real turn decision

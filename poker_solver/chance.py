@@ -46,6 +46,9 @@ import numpy as np
 from .board_equity import build_board_equity_table
 from .cards import Card, remaining_deck
 from .game_tree import DecisionNode, StreetConfig, TerminalNode, build_street_tree
+from .multiway_board_equity import DEFAULT_NWAY_BOARD_EQUITY_SAMPLES
+from .multiway_board_equity import DEFAULT_SEED as DEFAULT_NWAY_EQUITY_SEED
+from .multiway_board_equity import NwayBoardEquityCache
 
 
 @dataclass(frozen=True)
@@ -193,3 +196,155 @@ def build_chance_node(
         branches[card] = ChanceBranch(card=card, equity_table=equity_table, root=root, chance_fn=chance_fn)
 
     return ChanceNode(pot=terminal.pot, invested=dict(terminal.invested), branches=branches)
+
+
+@dataclass(frozen=True)
+class SampledChanceBranch:
+    """One already-chosen next card, and everything that follows from it —
+    the MCCFR-appropriate sibling of `ChanceBranch`/`ChanceNode` (M32),
+    deliberately NOT reusing either: `ChanceBranch.equity_table` is a
+    precomputed NxN array built for the exact 2-player solver's own
+    pairwise value representation, and `ChanceNode` eagerly builds EVERY
+    possible card's branch upfront — both wrong shapes for MCCFR, which
+    only ever needs ONE sampled card's own subtree, evaluated via an N-way,
+    lazily-memoized-per-opponent-tuple equity *cache* (M30's
+    `NwayBoardEquityCache`), not a fixed table. See
+    `build_mccfr_chance_branch`'s own docstring for how this gets built,
+    and `cfr.py`'s module docstring for how it gets sampled/walked.
+
+    `board` has no `ChanceBranch` analog — needed because, unlike the
+    exact solver (which never tracks board content at all; a `ChanceBranch`
+    is only ever reached via its own parent `ChanceNode`), MCCFR's own
+    recursion needs to know the *current* board to sample the *next*
+    branch's card when recursing into this branch's own subtree.
+
+    `chance_fn`, always `None` as of M32 (one hop only — flop->turn, not
+    chained further): the direct structural analog of `ChanceBranch.
+    chance_fn`'s own M12-before-M13 history. A future turn->river
+    milestone would populate this the same way M13 populated
+    `ChanceBranch.chance_fn`, with no other change needed here.
+    """
+
+    card: Card
+    board: tuple
+    equity_cache: NwayBoardEquityCache
+    root: DecisionNode | TerminalNode
+    chance_fn: Optional[Callable[[TerminalNode, Card], "SampledChanceBranch"]] = None
+
+
+def build_mccfr_chance_branch(
+    terminal: TerminalNode,
+    card: Card,
+    board: tuple,
+    combos: list,
+    positions: tuple,
+    effective_stack_bb: float,
+    raise_sizes: tuple = (2.5, 3.0, 2.2),
+    max_raises: int = 4,
+    equity_samples: int = DEFAULT_NWAY_BOARD_EQUITY_SAMPLES,
+    equity_seed: int = DEFAULT_NWAY_EQUITY_SEED,
+) -> SampledChanceBranch:
+    """Build the ONE next-street subtree that follows a showdown-eligible
+    `terminal` when `card` — already chosen by the caller — is dealt.
+
+    The MCCFR-native sibling of `build_chance_node`: that function eagerly
+    builds every possible next card's branch (correct for the exact
+    solver, which visits the whole tree exhaustively every iteration
+    anyway, so building all branches once and reusing them is the right
+    tradeoff there — see M12/M13's own measured costs, ~183s for 50
+    iterations at a modest combo pool). MCCFR is fundamentally a
+    per-iteration SAMPLING method — reusing `build_chance_node` here would
+    force building 44-49 N-way equity caches to serve ONE sampled card per
+    iteration, defeating MCCFR's entire reason to exist. This function
+    builds exactly the one branch the caller already decided on.
+
+    `card` is a parameter, not sampled inside this function: the sampling
+    decision (which card, via `mccfr_solve`'s own seeded `rng`, for the
+    same "same seed -> same result" determinism story `mccfr_solve`'s own
+    docstring already promises) belongs in `cfr.py` — this module stays a
+    pure "given these exact inputs, build this structure" builder,
+    matching its own module docstring's existing promise ("this module
+    only builds the structure, it doesn't solve anything"). It also lets
+    `cfr.py` check its own `chance_data` memoization *before* paying this
+    function's construction cost, which a card-sampling-inside-here design
+    couldn't support.
+
+    `combos`/`positions`/`effective_stack_bb`/`raise_sizes`/`max_raises`
+    mean exactly what they mean on `build_chance_node` (same combo pool
+    the calling tree was solved with; the *entering* stack for whichever
+    street `terminal` belongs to). `equity_samples`/`equity_seed` size the
+    new branch's own `NwayBoardEquityCache` — both default to
+    `multiway_board_equity.py`'s own module defaults, matching
+    `solver.py`'s existing `from .board_equity import DEFAULT_SEED as
+    DEFAULT_EQUITY_SEED`-style aliasing precedent. Note (measured during
+    M32's own design, not assumed): every branch this milestone builds
+    operates on a 4-card board (flop's 3 + this one dealt card), so
+    `remaining_needed` is always 1 inside `NwayBoardEquityCache`'s own
+    equity computation — the *exact*-enumeration path
+    (`board_equity.py`'s own established `remaining_needed<=1` shortcut,
+    mirrored by `multiway_board_equity.py`), not Monte Carlo sampling — so
+    `equity_samples` is inert for this milestone's actual usage.
+
+    Raises `ValueError` if `terminal` is a fold-out (nothing to deal a
+    card for), if `card` is already on `board` (cfr.py's own sampling
+    guarantees this by construction, but this fails loudly rather than
+    silently building a board with a duplicate card), or if the derived
+    remaining stack would be negative (an inconsistent `effective_stack_bb`
+    relative to what `terminal` already shows invested).
+    """
+    if not terminal.is_showdown:
+        raise ValueError("build_mccfr_chance_branch needs a showdown-eligible terminal (no fold), got a fold-out")
+    if card in board:
+        raise ValueError(f"card {card} is already on board {board}")
+
+    remaining_stack = effective_stack_bb - max(terminal.invested.values())
+    if remaining_stack < 0:
+        raise ValueError(
+            f"effective_stack_bb={effective_stack_bb} is less than what's already invested "
+            f"({max(terminal.invested.values())}) at this terminal"
+        )
+
+    next_board = board + (card,)
+    equity_cache = NwayBoardEquityCache(next_board, combos, samples=equity_samples, seed=equity_seed)
+
+    # The plain live-position filter, NOT game_tree.postflop_action_order:
+    # `positions` here is a StreetConfig-shaped tuple, already
+    # postflop-native (first entry already acts first, by that config's
+    # own construction) — there is nothing to re-derive. postflop_action_
+    # order exists specifically to convert a *preflop* GameConfig.positions
+    # tuple into postflop order; applying it to an already-postflop tuple
+    # produces the WRONG order (confirmed by direct execution during M32's
+    # own design: postflop_action_order(("OOP","MID","IP"), live=("OOP",
+    # "IP")) returns ('IP','OOP'), not the correct ('OOP','IP')) — a
+    # natural-looking wrong answer for a future reader reaching for the
+    # "obvious" helper, recorded here so nobody re-makes that mistake.
+    live_positions = tuple(p for p in positions if p not in terminal.folded)
+
+    if remaining_stack == 0:
+        # Both/all remaining players are already all-in — no more betting
+        # is possible, `terminal` is already a valid showdown leaf for this
+        # branch too, only its equity source (one card richer) changes.
+        # Deliberately no chance_fn here: this branch's equity_cache
+        # (scoped to next_board) already correctly resolves however many
+        # community cards remain via NwayBoardEquityCache's own
+        # remaining_needed handling — a further chance dispatch on top of
+        # that would double-process this same physical terminal. Putting
+        # chance_fn = None in this branch of the if/else (rather than a
+        # separate check applied afterward) is what makes that
+        # structurally impossible, not just tested-for — mirrors
+        # build_chance_node's own identical placement/reasoning exactly.
+        root = terminal
+        chance_fn = None
+    else:
+        root = build_street_tree(
+            StreetConfig(
+                positions=live_positions,
+                pot=terminal.pot,
+                stack_bb=remaining_stack,
+                raise_sizes=raise_sizes,
+                max_raises=max_raises,
+            )
+        )
+        chance_fn = None  # M32 scope: one hop only (flop->turn, not chained to river)
+
+    return SampledChanceBranch(card=card, board=next_board, equity_cache=equity_cache, root=root, chance_fn=chance_fn)

@@ -200,7 +200,7 @@ def test_cache_starts_empty():
 def test_cache_populates_on_first_touch():
     board = tuple(cards("2c 7d 9h"))
     cache = NwayBoardEquityCache(board, [HandCombo(*cards("Ah Ad"))], samples=20)
-    cache.equity_vector((HandCombo(*cards("Kh Kd")),))
+    cache.traverser_equity_vector((HandCombo(*cards("Kh Kd")),))
     assert len(cache) == 1
 
 
@@ -208,8 +208,8 @@ def test_cache_hit_returns_identical_vector_without_growing():
     board = tuple(cards("2c 7d 9h"))
     cache = NwayBoardEquityCache(board, [HandCombo(*cards("Ah Ad"))], samples=20)
     opponents = (HandCombo(*cards("Kh Kd")),)
-    first = cache.equity_vector(opponents)
-    second = cache.equity_vector(opponents)
+    first = cache.traverser_equity_vector(opponents)
+    second = cache.traverser_equity_vector(opponents)
     assert np.array_equal(first, second, equal_nan=True)
     assert len(cache) == 1
 
@@ -219,8 +219,8 @@ def test_cache_is_order_independent_for_the_opponent_tuple():
     cache = NwayBoardEquityCache(board, [HandCombo(*cards("Ah Ad"))], samples=20)
     opp_a = HandCombo(*cards("Kh Kd"))
     opp_b = HandCombo(*cards("Qh Qd"))
-    forward = cache.equity_vector((opp_a, opp_b))
-    reversed_order = cache.equity_vector((opp_b, opp_a))
+    forward = cache.traverser_equity_vector((opp_a, opp_b))
+    reversed_order = cache.traverser_equity_vector((opp_b, opp_a))
     assert np.array_equal(forward, reversed_order, equal_nan=True)
     assert len(cache) == 1  # both requests hit the same canonical entry
 
@@ -228,7 +228,7 @@ def test_cache_is_order_independent_for_the_opponent_tuple():
 def test_cache_values_are_probabilities_or_nan():
     board = tuple(cards("2c 7d 9h"))
     cache = NwayBoardEquityCache(board, [HandCombo(*cards("Ah Ad")), HandCombo(*cards("3h 4d"))], samples=20)
-    vector = cache.equity_vector((HandCombo(*cards("Kh Kd")), HandCombo(*cards("Qh Qd"))))
+    vector = cache.traverser_equity_vector((HandCombo(*cards("Kh Kd")), HandCombo(*cards("Qh Qd"))))
     assert np.all((vector >= 0.0) | np.isnan(vector))
     assert np.all((vector <= 1.0) | np.isnan(vector))
 
@@ -239,7 +239,7 @@ def test_cache_deterministic_across_separate_caches_with_same_seed():
     opponents = (HandCombo(*cards("Kh Kd")), HandCombo(*cards("Qh Qd")))
     cache1 = NwayBoardEquityCache(board, candidates, samples=30, seed=99)
     cache2 = NwayBoardEquityCache(board, candidates, samples=30, seed=99)
-    assert np.array_equal(cache1.equity_vector(opponents), cache2.equity_vector(opponents), equal_nan=True)
+    assert np.array_equal(cache1.traverser_equity_vector(opponents), cache2.traverser_equity_vector(opponents), equal_nan=True)
 
 
 def test_cache_different_boards_do_not_collide():
@@ -252,6 +252,6 @@ def test_cache_different_boards_do_not_collide():
     opponents = (HandCombo(*cards("Kh Kd")),)
     cache_a = NwayBoardEquityCache(tuple(cards("2c 7d 9h")), candidates, samples=300, seed=1)
     cache_b = NwayBoardEquityCache(tuple(cards("3s 8s Ts")), candidates, samples=300, seed=1)
-    vector_a = cache_a.equity_vector(opponents)
-    vector_b = cache_b.equity_vector(opponents)
+    vector_a = cache_a.traverser_equity_vector(opponents)
+    vector_b = cache_b.traverser_equity_vector(opponents)
     assert vector_a[0] != pytest.approx(vector_b[0])
