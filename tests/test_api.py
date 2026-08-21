@@ -2,7 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api import main as api_main
-from api.main import _cache, _multiway_cache, app
+from api.main import _multiway_cache, app
 from poker_solver.cards import parse_cards, remaining_deck
 from poker_solver.starting_hands import StartingHand
 
@@ -106,7 +106,6 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
     )
     monkeypatch.setattr(api_main, "MULTIWAY_FLOP_MAX_RAISES", 1)
     monkeypatch.setattr(api_main, "MULTIWAY_FLOP_RAISE_SIZES", ())
-    _cache.clear()
     _multiway_cache.clear()
     api_main._flop_cache.clear()
     api_main._flop_turn_cache.clear()
@@ -122,7 +121,6 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
     api_main._turn_multiway_path_cache.clear()
     api_main._river_path_cache.clear()
     yield
-    _cache.clear()
     _multiway_cache.clear()
     api_main._flop_cache.clear()
     api_main._flop_turn_cache.clear()
@@ -1225,6 +1223,45 @@ def test_preflop_walk_after_a_limp_offers_a_free_check_with_no_fold(client):
     by_kind = _by_kind(body["legal_actions"])
     assert "fold" not in by_kind
     assert by_kind["call_or_check"]["to_call"] == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# M58: one preflop solve cache, and `position` honored at every table
+# size. GET /solve used to keep its own formatted-response cache that
+# independently re-solved the identical spot every path-derived endpoint
+# had already solved (docs/project-audit-2026-08-21.md's SS2.1), and its
+# heads-up branch silently ignored `position`.
+# ---------------------------------------------------------------------------
+
+
+def test_solve_and_preflop_walk_share_one_preflop_solve(client):
+    # The audit's own verified finding, now a regression test: hitting
+    # GET /solve then a path-derived endpoint must leave exactly ONE
+    # cached preflop solve, not one per cache.
+    client.get(f"/solve/100?iterations={_PATH_ITERATIONS}")
+    assert len(api_main._preflop_raw_cache) == 1
+    client.post("/preflop_walk", json=_walk_body([], iterations=_PATH_ITERATIONS))
+    assert len(api_main._preflop_raw_cache) == 1
+
+
+def test_solve_honors_position_at_heads_up(client):
+    # Previously silently ignored: heads-up returned first-to-act
+    # whatever the caller asked for, while multiway honored `position`.
+    btn = client.get(f"/solve/100?iterations={_PATH_ITERATIONS}").json()
+    bb = client.get(f"/solve/100?iterations={_PATH_ITERATIONS}&position=BB").json()
+    assert btn["position"] == "BTN"
+    assert bb["position"] == "BB"
+    assert bb["opening_range"] != btn["opening_range"]
+
+
+def test_solve_still_honors_position_at_multiway(client):
+    body = client.get("/solve/100?players=3&position=BB").json()
+    assert body["position"] == "BB"
+
+
+def test_solve_rejects_a_position_that_is_not_at_the_table(client):
+    response = client.get(f"/solve/100?iterations={_PATH_ITERATIONS}&position=NOTAPOSITION")
+    assert response.status_code == 422
 
 
 # ---------------------------------------------------------------------------

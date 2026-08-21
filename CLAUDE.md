@@ -4050,6 +4050,43 @@ street chaining needs.
     (measurement first — M27 warns more iterations made things worse);
     decide the fate of superseded endpoints/tabs; restructure CLAUDE.md.
 
+- **M58 — audit recommendation #1: unify the two preflop caches, and
+  fix a second bug the unification exposed.** First item of
+  `docs/project-audit-2026-08-21.md`'s prioritized list, worked in
+  order under the user's standing "auto-merge, take the deepest option
+  at every fork" directive.
+  - **The audit's own verified finding, fixed:** `GET /solve/{stack_bb}`
+    kept its own formatted-response cache (`_cache`) while every
+    path-derived endpoint cached a raw `StrategyResult` in `_preflop_
+    raw_cache` — so at `players == 2` the identical preflop spot was
+    solved TWICE. `_cache`/`_cache_lock`/`_get_or_solve` are deleted
+    outright; there is now exactly ONE preflop cache. Already true for
+    `players != 2` since M29; heads-up simply never got the same
+    treatment.
+  - **A SECOND, previously-unrecorded bug the unification exposed —
+    and the reason the deep fix was the right call:** `GET /solve/
+    {stack_bb}?position=BB` at heads-up **silently returned BTN's
+    strategy**. The parameter was accepted and ignored, while the
+    multiway branch honored it (`format_solve_response(result,
+    position=position)` existed only there). Confirmed empirically
+    before fixing. A minimal "make one helper call the other" fix would
+    have left this in place; formatting at the ROUTE instead — one code
+    path for every table size — fixes it for free. Silent-wrong-answer
+    bugs are exactly what this project's own `trained`/`source` work
+    exists to prevent, so leaving one in the oldest endpoint would have
+    been incoherent.
+  - **Measured payoff, larger than the audit predicted:** the audit
+    estimated ~3.2s saved on one user journey. The full backend suite's
+    own wall clock fell **415s -> 205s** — the duplicate solve was being
+    paid repeatedly across the suite, not just once per session. A real,
+    independent corroboration that the redundancy was genuine.
+  - **Tests:** 4 new — one pinning the audit's own finding as a
+    regression (hitting `/solve` then a path endpoint leaves exactly ONE
+    cached solve), two pinning `position` at heads-up AND multiway, and
+    one for an invalid position.
+  - **Verification:** `python -m pytest tests/ -v` — 746 passed, zero
+    regressions (up from M57's 742). No frontend changes.
+
 ## v3 vision (future) — live-table advisor
 
 Discussed with the user while scoping M16, recorded here rather than
