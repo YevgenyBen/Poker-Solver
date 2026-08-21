@@ -2552,6 +2552,83 @@ street chaining needs.
     request-latency scoping decision (mirroring M14's own "ship both
     endpoints, accept the real measured cost" precedent, or a curated-
     demo-pool-sized-to-be-fast approach instead), not attempted here.
+- **M37 — `GET /solve_flop_multiway` and `GET /solve_flop_turn_multiway`:
+  the first live endpoints for true multiway postflop solving.** Every
+  prior postflop endpoint in this project, however deep the runout, has
+  been 2-position (OOP/IP) end to end — this wires M35's `solve_flop_
+  multiway` and M36's `solve_flop_turn_multiway` into `api/main.py` for
+  the first time, mirroring M14's own "ship both a flop-only and a
+  chained-to-turn endpoint together" precedent, now for 3+ live
+  positions.
+  - **Both response shapes reused completely unchanged, confirmed by
+    tracing the code rather than assumed:** `FlopSolveResponse`/`format_
+    flop_response` were already position-count-agnostic — every field
+    they read (`result.config.pot`/`.stack_bb`, `result.root.player_to_
+    act`, `strategy_for_position`/`trained_for_position`, `list(result.
+    config.positions)`) is already N-general on `StrategyResult`.
+    `strategy_format.py`'s own docstring had explicitly anticipated this
+    exact gap since M14 ("multiway postflop solving is this project's
+    own named, still-unscoped next structural gap... whenever it lands,
+    this field is already exactly where it needs to be") — it landed
+    here, unmodified. `position` now simply accepts `OOP`, `MID`, or
+    `IP`; the response's own `positions` field carries all 3.
+  - **A curated 3-max-only demo pool** (`DEMO_MULTIWAY_FLOP_CLASSES` —
+    one suited class per position, 11 combos total after board-legal
+    expansion), deliberately not 6-max/9-max — M35/M36 both measured
+    pool size as the dominant cost driver for this whole solving path,
+    and neither table size's own postflop cost has ever been measured;
+    3-max-first here mirrors M8/M9's own precedent for multiway
+    *preflop* before 6-max/9-max became their own later milestones.
+  - **A real, encouraging cost finding, carrying M36's own finding
+    forward into live-endpoint terms:** measured live, at this pool:
+    `solve_flop_multiway` costs ~3.0-3.5s, close to flat across
+    iteration count (200 vs 2000 iterations: ~3.0s vs ~3.5s — the
+    equity cache saturates fast at this small a pool, mirroring `/solve_
+    flop_turn`'s own identical "flat cost" shape and reasoning) — so
+    `MAX_FLOP_MULTIWAY_ITERATIONS` gets the same generous 10x-default
+    headroom `/solve_flop_turn`'s own cap does. `solve_flop_turn_
+    multiway` costs ~1.3-13.8s depending on iteration count (50 iters
+    ~1.3s, 200 iters ~5.8s, 500 iters ~13.8s) — genuinely *not* flat,
+    unlike its 2-position cousin: every iteration can sample a new
+    `(terminal, card)` pair, a materially bigger space at this pool size
+    than the flop-level equity cache's own opponent-tuple space — so
+    `MAX_FLOP_TURN_MULTIWAY_ITERATIONS` is set far more conservatively
+    (500, landing at the cap's own ~13.8s), the same "slow but tolerable
+    for a live request" bracket `/solve_flop_to_river` was already
+    accepted in at M14.
+  - **Neither endpoint is pre-warmed** — both are cheaper than
+    `/solve_flop`'s own already-"not worth pre-warming" ~2.6s at their
+    respective defaults, so a cold-start tax was never the concern
+    `/solve_flop_turn`'s/`/solve_flop_to_river`'s own pre-warming exists
+    to avoid.
+  - `_get_or_solve_flop_multiway`/`_get_or_solve_flop_turn_multiway` and
+    their own `_flop_multiway_cache`/`_flop_turn_multiway_cache` +
+    locks mirror `_get_or_solve_flop_turn`/`_get_or_solve_flop_to_river`'s
+    exact shape — deliberately separate dicts per endpoint (not shared),
+    the same "an identical key could otherwise collide between two
+    endpoints with different `max_raises`" reasoning every prior pair of
+    `/solve_flop*` endpoints already established.
+  - **Tests:** `tests/test_api.py` gained a full section mirroring the
+    M14 section's own structure (200-and-cached-across-positions, board/
+    pot/stack validation, iterations-above-cap rejection, and a direct
+    regression test that the two new endpoints' caches don't collide).
+    The autouse pool-shrinking fixture gained a matching `DEMO_MULTIWAY_
+    FLOP_CLASSES` shrink (one small suited class per position, `MULTIWAY_
+    FLOP_MAX_RAISES` down to 1) — the same "shrink to the floor, test
+    plumbing not convergence" idiom the existing fixture already applies
+    to every other `/solve_flop*` endpoint's own demo pool.
+  - **Verification:** `python -m pytest tests/ -v` — 646 passed, zero
+    regressions (up from M36's 637). `npm test` (frontend) — 139 passed,
+    zero regressions.
+  - **Scope:** API only, no frontend changes — a real, nontrivial design
+    question (traced, not assumed: neither `FlopSolver.tsx`'s own 2-
+    position depth-selector nor `TableModeControl`'s own preflop-only,
+    N-position selector directly fits a "3-position postflop depth
+    selector" need — a genuinely new component, not a small extension of
+    either existing one) deliberately left for its own follow-up
+    milestone, matching this session's own established "engine, then
+    API, then frontend" three-step pattern (M30-M32 engine-only, M35-M36
+    engine-only, this milestone API-only).
 
 ## v3 vision (future) — live-table advisor
 

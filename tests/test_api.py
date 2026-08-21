@@ -82,11 +82,29 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
     monkeypatch.setattr(api_main, "PATH_QUERY_ITERATIONS", FAST_PATH_QUERY_ITERATIONS)
     monkeypatch.setattr(api_main, "MAX_PATH_QUERY_CLASSES_PER_SIDE", FAST_MAX_PATH_QUERY_CLASSES_PER_SIDE)
     monkeypatch.setattr(api_main, "MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE", FAST_MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE)
+    # DEMO_MULTIWAY_FLOP_CLASSES (M37) — same shrink-to-the-floor idiom as
+    # DEMO_CHAINED_FLOP_HERO_/VILLAIN_CLASSES above: one small suited
+    # class per position (4 combos each via range_from_class_frequencies,
+    # the practical floor), plus MULTIWAY_FLOP_MAX_RAISES down to 1 —
+    # this tests HTTP plumbing, not the real demo tree's convergence.
+    monkeypatch.setattr(
+        api_main,
+        "DEMO_MULTIWAY_FLOP_CLASSES",
+        {
+            "OOP": {StartingHand("9", "8", suited=True): 1.0},
+            "MID": {StartingHand("6", "4", suited=True): 1.0},
+            "IP": {StartingHand("5", "3", suited=True): 1.0},
+        },
+    )
+    monkeypatch.setattr(api_main, "MULTIWAY_FLOP_MAX_RAISES", 1)
+    monkeypatch.setattr(api_main, "MULTIWAY_FLOP_RAISE_SIZES", ())
     _cache.clear()
     _multiway_cache.clear()
     api_main._flop_cache.clear()
     api_main._flop_turn_cache.clear()
     api_main._flop_to_river_cache.clear()
+    api_main._flop_multiway_cache.clear()
+    api_main._flop_turn_multiway_cache.clear()
     api_main._flop_query_library.clear()
     api_main._preflop_raw_cache.clear()
     api_main._path_query_libraries.clear()
@@ -97,6 +115,8 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
     api_main._flop_cache.clear()
     api_main._flop_turn_cache.clear()
     api_main._flop_to_river_cache.clear()
+    api_main._flop_multiway_cache.clear()
+    api_main._flop_turn_multiway_cache.clear()
     api_main._flop_query_library.clear()
     api_main._preflop_raw_cache.clear()
     api_main._path_query_libraries.clear()
@@ -605,6 +625,134 @@ def test_solve_flop_turn_and_solve_flop_to_river_are_cached_independently(client
 
     assert not _any_branch_has_a_populated_chance_fn(turn_result)
     assert _any_branch_has_a_populated_chance_fn(river_result)
+
+
+# ---------------------------------------------------------------------------
+# M37: GET /solve_flop_multiway and GET /solve_flop_turn_multiway — the
+# first live endpoints for true multiway (3+ live position) postflop
+# solving (M30-M36). Same board/pot/stack-in, one-position's-strategy-out
+# shape as every other /solve_flop* endpoint, but `position` now accepts
+# OOP, MID, or IP, and `positions` in the response carries all 3 — see
+# api/main.py's module docstring for the real cost numbers behind
+# DEMO_MULTIWAY_FLOP_CLASSES and the two iteration caps.
+# ---------------------------------------------------------------------------
+
+_MULTIWAY_FLOP_BOARD = "Jh7d2c"  # disjoint from the fixture's 9,8,6,4,5,3-rank position classes
+
+FAST_FLOP_MULTIWAY_ITERATIONS = 20
+FAST_FLOP_TURN_MULTIWAY_ITERATIONS = 5
+
+
+def test_solve_flop_multiway_returns_200_well_formed_and_cached_across_positions(client):
+    url = (
+        f"/solve_flop_multiway?board={_MULTIWAY_FLOP_BOARD}&pot=10&stack_bb=40"
+        f"&iterations={FAST_FLOP_MULTIWAY_ITERATIONS}"
+    )
+    first = client.get(url)
+    assert first.status_code == 200
+    body = first.json()
+    assert body["board"] == _MULTIWAY_FLOP_BOARD
+    assert body["pot"] == 10.0
+    assert body["stack_bb"] == 40.0
+    assert body["iterations"] == FAST_FLOP_MULTIWAY_ITERATIONS
+    assert body["elapsed_seconds"] >= 0.0
+    assert body["position"] == "OOP"
+    assert body["positions"] == ["OOP", "MID", "IP"]
+    assert len(body["strategy"]) > 0
+    for freqs in body["strategy"].values():
+        assert sum(freqs.values()) == pytest.approx(1.0, abs=1e-6)
+
+    # A different live position must be served from the same cached
+    # StrategyResult, not trigger a second (real) solve.
+    mid_body = client.get(f"{url}&position=MID").json()
+    assert mid_body["elapsed_seconds"] == body["elapsed_seconds"]
+    assert mid_body["position"] == "MID"
+
+    bad_position = client.get(f"{url}&position=NOTAPOSITION")
+    assert bad_position.status_code == 422
+
+
+def test_solve_flop_multiway_rejects_a_board_that_isnt_exactly_three_cards(client):
+    response = client.get(
+        f"/solve_flop_multiway?board=Jh7d&pot=10&stack_bb=40&iterations={FAST_FLOP_MULTIWAY_ITERATIONS}"
+    )
+    assert response.status_code == 422
+
+
+def test_solve_flop_multiway_rejects_nonpositive_pot_or_stack(client):
+    bad_pot = client.get(f"/solve_flop_multiway?board={_MULTIWAY_FLOP_BOARD}&pot=0&stack_bb=40")
+    assert bad_pot.status_code == 422
+    bad_stack = client.get(f"/solve_flop_multiway?board={_MULTIWAY_FLOP_BOARD}&pot=10&stack_bb=0")
+    assert bad_stack.status_code == 422
+
+
+def test_solve_flop_multiway_rejects_iterations_above_the_cap(client):
+    response = client.get(
+        f"/solve_flop_multiway?board={_MULTIWAY_FLOP_BOARD}&pot=10&stack_bb=40"
+        f"&iterations={api_main.MAX_FLOP_MULTIWAY_ITERATIONS + 1}"
+    )
+    assert response.status_code == 422
+
+
+def test_solve_flop_turn_multiway_returns_200_well_formed_and_cached_across_positions(client):
+    url = (
+        f"/solve_flop_turn_multiway?board={_MULTIWAY_FLOP_BOARD}&pot=10&stack_bb=40"
+        f"&iterations={FAST_FLOP_TURN_MULTIWAY_ITERATIONS}"
+    )
+    first = client.get(url)
+    assert first.status_code == 200
+    body = first.json()
+    assert body["board"] == _MULTIWAY_FLOP_BOARD
+    assert body["positions"] == ["OOP", "MID", "IP"]
+    assert len(body["strategy"]) > 0
+    for freqs in body["strategy"].values():
+        assert sum(freqs.values()) == pytest.approx(1.0, abs=1e-6)
+
+    ip_body = client.get(f"{url}&position=IP").json()
+    assert ip_body["elapsed_seconds"] == body["elapsed_seconds"]
+    assert ip_body["position"] == "IP"
+
+
+def test_solve_flop_turn_multiway_rejects_a_board_that_isnt_exactly_three_cards(client):
+    response = client.get(
+        f"/solve_flop_turn_multiway?board=Jh7d&pot=10&stack_bb=40&iterations={FAST_FLOP_TURN_MULTIWAY_ITERATIONS}"
+    )
+    assert response.status_code == 422
+
+
+def test_solve_flop_turn_multiway_rejects_nonpositive_pot_or_stack(client):
+    bad_pot = client.get(f"/solve_flop_turn_multiway?board={_MULTIWAY_FLOP_BOARD}&pot=0&stack_bb=40")
+    assert bad_pot.status_code == 422
+    bad_stack = client.get(f"/solve_flop_turn_multiway?board={_MULTIWAY_FLOP_BOARD}&pot=10&stack_bb=0")
+    assert bad_stack.status_code == 422
+
+
+def test_solve_flop_turn_multiway_rejects_iterations_above_the_cap(client):
+    response = client.get(
+        f"/solve_flop_turn_multiway?board={_MULTIWAY_FLOP_BOARD}&pot=10&stack_bb=40"
+        f"&iterations={api_main.MAX_FLOP_TURN_MULTIWAY_ITERATIONS + 1}"
+    )
+    assert response.status_code == 422
+
+
+def test_solve_flop_multiway_and_solve_flop_turn_multiway_are_cached_independently(client):
+    # Direct regression test for _get_or_solve_flop_multiway/_get_or_
+    # solve_flop_turn_multiway's own separate-dict design (see the
+    # module-level comment by _flop_multiway_cache) — an identical
+    # (board, pot, stack_bb, iterations) key must not collide between
+    # the two endpoints, which use different max_raises/chance-dispatch
+    # behavior.
+    shared_iterations = min(FAST_FLOP_MULTIWAY_ITERATIONS, FAST_FLOP_TURN_MULTIWAY_ITERATIONS)
+    client.get(f"/solve_flop_multiway?board={_MULTIWAY_FLOP_BOARD}&pot=10&stack_bb=40&iterations={shared_iterations}")
+    client.get(
+        f"/solve_flop_turn_multiway?board={_MULTIWAY_FLOP_BOARD}&pot=10&stack_bb=40&iterations={shared_iterations}"
+    )
+    assert len(api_main._flop_multiway_cache) == 1
+    assert len(api_main._flop_turn_multiway_cache) == 1
+    flop_result = next(iter(api_main._flop_multiway_cache.values()))
+    turn_result = next(iter(api_main._flop_turn_multiway_cache.values()))
+    assert flop_result.chance_data == {}  # solve_flop_multiway never dispatches chance
+    assert len(turn_result.chance_data) > 0  # solve_flop_turn_multiway does
 
 
 # ---------------------------------------------------------------------------
