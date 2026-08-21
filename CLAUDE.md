@@ -1882,6 +1882,103 @@ street chaining needs.
     seeding/opponent sampling, MCCFR chance-branch sampling) are each
     likely their own milestone, mirroring the real-time-speed roadmap's
     own M17-M21 multi-phase structure — none attempted here.
+- **M31 — Per-position range seeding for MCCFR (Phase 2 of
+  recommendation #5).** `mccfr_solve` (`poker_solver/cfr.py`) previously
+  drew every position's hole cards — traverser and opponents alike —
+  from one shared, global `combo_weight`-derived prior, regardless of
+  position: real for preflop-from-scratch (every seat's honest prior
+  before any action *is* uniform combo_weight, which is why this went
+  unnoticed for 20+ milestones), but wrong for the eventual postflop
+  case this whole recommendation exists to unlock, where different
+  positions have genuinely different, already-narrowed ranges. New
+  `initial_reach: dict | None = None` parameter — deliberately named
+  and shaped to exactly match `solve()`'s own existing parameter of the
+  same name (position -> a weight array, same length/order as `hands`)
+  — so a caller who already understands one already understands the
+  other, and a future milestone reusing `derive_ranges_from_path`
+  (already N-player-general per M16) has a matching shape to bridge
+  into on both the exact-solve and MCCFR paths alike.
+  - **Threaded into BOTH halves of sampling, not just one:** the
+    traverser's own `reach` (their belief over their own hand, seeded
+    once per iteration) now comes from their own weight vector, and
+    each opponent's hand is now independently sampled from THEIR OWN
+    weight vector too — previously both read the same shared
+    `combo_weights` array unconditionally. A position missing from
+    `initial_reach` (or the default `None`, meaning no overrides at
+    all) falls back to `combo_weight`, computed lazily — mirroring
+    `solve()`'s own identical `_default_reach` reasoning exactly,
+    including the same forward-looking justification: `hands` may
+    someday be `combos.HandCombo` (a future postflop MCCFR consumer),
+    which has no `combo_weight` attribute at all, so a caller supplying
+    every position's own real range should never touch the fallback.
+  - **A real refactor alongside the feature, not just new code bolted
+    on:** the opponent-sampling-and-resample-on-infeasibility loop was
+    extracted from `mccfr_solve`'s own body into a new, independently
+    testable `_sample_opponent_hands` — unchanged behavior (same
+    `MAX_OPPONENT_RESAMPLE_ATTEMPTS` retry ceiling, same "proceed with
+    the last infeasible draw" fallback M27 already established), but
+    now directly unit-testable against a real per-position weight
+    vector without needing to reverse-engineer sampling behavior from a
+    full solve's aggregate regret/strategy output — the specific thing
+    that made verifying the *opponent* half of this feature tractable
+    at all (the *traverser* half is directly observable through
+    `InfoSetTable.trained_mask()` at the traverser's own decision node;
+    nothing analogous exists for a sampled-not-accumulated opponent
+    draw).
+  - **Validates upfront, before any solving happens, not partway
+    through:** a wrong-length weight vector or one that sums to zero
+    (that position would have no possible hand to ever be sampled as,
+    whether traversing or acting as an opponent) raises `ValueError`
+    immediately — the same "fail loudly at the API boundary" discipline
+    `solve()`'s own `equity_table.shape` check already established.
+  - **The single most important regression guarantee, proven, not just
+    argued:** `initial_reach=None` (the default, and every pre-M31 call
+    site) must be *exactly* equivalent to every position explicitly
+    supplying its own `combo_weight`-derived array — confirmed with a
+    dedicated test comparing the two calls' full `node_data`
+    (`regret_sum`/`strategy_sum` at every node) for bit-for-bit
+    equality, not just "produces a similar-looking strategy." Given
+    M27's own history with this exact function (a change that looked
+    "small, localized" turned out not to be, caught only by the
+    mandatory full-suite rerun), the full backend suite — not just
+    `test_cfr.py` — was re-run before trusting this: 582 passed, zero
+    regressions, including every existing 3-max/6-max/9-max preflop
+    test and the N=2 exact-solver cross-validation test this module's
+    own docstring cites as MCCFR's strongest correctness signal.
+  - **New capability, verified end to end, not just structurally:** a
+    dedicated test seeds one position's `initial_reach` with zero
+    weight on a specific hand, in a real 3-max preflop tree (not a toy
+    2-action one), and confirms that hand shows `trained_mask()==False`
+    at that position's own root-level node after solving — the same
+    real "zero reach weight" `trained=False` cause M28's own
+    `trained_hands` docstring already documented as one of two possible
+    causes, now deliberately engineered rather than incidentally
+    discovered. A second test confirms opponent-side sampling
+    specifically: a position's weight vector concentrated entirely on
+    one hand is sampled as that exact hand across 200 independent
+    draws, never anything else. A third, end-to-end test confirms two
+    solves differing *only* in one position's `initial_reach` (same
+    seed, same tree, same equity cache otherwise) produce genuinely
+    different `strategy_sum` — proving the parameter isn't silently
+    ignored anywhere in the pipeline.
+  - **Zero real callers today, by design — matches M17/M19's own
+    standalone-primitive precedent, not an oversight:** `solver.py`'s
+    multiway dispatch always solves a full preflop tree from its root,
+    where uniform `combo_weight` genuinely is every position's honest
+    prior — there is no real situation *yet* where a different weight
+    vector would be the more correct choice. The real consumer is a
+    future milestone (seeding genuine per-position ranges into a
+    multiway postflop MCCFR solve), itself still blocked on the two
+    OTHER recommendation-#5 prerequisites this milestone deliberately
+    doesn't attempt: a board-aware, per-chance-branch equity source
+    (`multiway_board_equity.py`, M30) actually threaded through this
+    module's terminal-value computation, and a chance-branch sampling
+    case in `mccfr_solve`'s own recursion, which doesn't exist at all
+    yet (`_mccfr_recurse` has no `ChanceNode` handling, unlike
+    `_solve_recurse`'s M12-era one).
+  - Engine only, no `api/main.py`/frontend changes — matches every
+    other phase of this recommendation and the real-time-speed
+    roadmap's own M17/M19 precedent for a primitive milestone.
 
 ## v3 vision (future) — live-table advisor
 

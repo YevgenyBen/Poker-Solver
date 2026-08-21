@@ -34,10 +34,12 @@ Two solving paths live here, sharing InfoSetTable:
    own decision nodes are explored exhaustively (regret/strategy-sum
    updates stay exact for them), while every *other* position's hole
    cards and every one of their action choices are sampled once per
-   iteration from their true distributions (combo_weight for hole cards;
-   current strategy, blended with a small exploration floor, for
-   actions — sampled directly, with no importance-sampling correction,
-   see EXPLORATION_EPSILON and _mccfr_recurse below for why). The
+   iteration from their true distributions (combo_weight for hole
+   cards, or a caller-supplied per-position `initial_reach` override as
+   of M31 — see mccfr_solve's own docstring; current strategy, blended
+   with a small exploration floor, for actions — sampled directly, with
+   no importance-sampling correction, see EXPLORATION_EPSILON and
+   _mccfr_recurse below for why). The
    exploration floor turned out to matter in practice, not just in
    theory: CFR+'s regret flooring can legitimately push
    current_strategy() to an *exact* 0/1 split even when the true
@@ -535,6 +537,43 @@ def _mccfr_recurse(
     )
 
 
+def _sample_opponent_hands(
+    positions: tuple,
+    traverser: str,
+    position_weights: dict,
+    hands: list,
+    rng,
+) -> dict:
+    """Draws one hand per non-traverser position, each from THAT
+    position's own weight vector (`position_weights[position]`) — not a
+    single shared distribution — retrying up to
+    MAX_OPPONENT_RESAMPLE_ATTEMPTS times whenever the joint draw is
+    physically infeasible (`deal_n_hands` raises; see that constant's own
+    module-level docstring for why this rejection-resampling exists, and
+    why exhausting every attempt is left to proceed with the last
+    (infeasible) draw rather than raising or hanging — unchanged
+    behavior, just relocated here).
+
+    Extracted from `mccfr_solve`'s own loop body specifically so it can
+    be tested directly and deterministically against a real per-position
+    weight vector, without needing to reverse-engineer sampling behavior
+    from a full solve's aggregate regret/strategy output.
+    """
+    candidate_hands: dict = {}
+    for _ in range(MAX_OPPONENT_RESAMPLE_ATTEMPTS):
+        candidate_hands = {
+            position: rng.choices(hands, weights=position_weights[position].tolist())[0]
+            for position in positions
+            if position != traverser
+        }
+        try:
+            deal_n_hands(list(candidate_hands.values()))
+        except RuntimeError:
+            continue  # opponents mutually incompatible — resample the whole draw
+        return candidate_hands
+    return candidate_hands
+
+
 def mccfr_solve(
     root: DecisionNode,
     hands: list,
@@ -542,6 +581,7 @@ def mccfr_solve(
     equity_cache: MultiwayEquityCache,
     iterations: int,
     seed: int = 0,
+    initial_reach: dict | None = None,
 ) -> dict:
     """Run `iterations` of External-Sampling MCCFR over `root`.
 
@@ -549,6 +589,41 @@ def mccfr_solve(
     traverser cycles through it, one per iteration. `equity_cache` should
     be constructed with the same `hands` list (see
     equity.MultiwayEquityCache) so indices line up.
+
+    `initial_reach` (M31) optionally maps position -> a weight array
+    (same length/order as `hands`), overriding the default combo_weight-
+    derived prior for THAT position — mirrors `solve()`'s own parameter
+    of the same name/shape/semantics exactly, deliberately, so a caller
+    who already understands one already understands the other. A
+    position missing from `initial_reach` (or the default `None`,
+    meaning "no overrides at all") falls back to combo_weight, so every
+    pre-M31 call site is unaffected — proven, not just argued: see
+    test_mccfr_solve_default_initial_reach_matches_explicit_combo_weight.
+    Used for BOTH sides of sampling, not just one: the traverser's own
+    `reach` (their belief over their own hand, seeded once per iteration)
+    is drawn from their own weight vector, AND each opponent's hand is
+    independently sampled from THEIR OWN weight vector (previously every
+    position — traverser and opponent alike — drew from one shared
+    global combo_weight prior regardless of position; see
+    docs/full-table-diagnostic-2026-08.md's §4, which named this among
+    true multiway postflop solving's prerequisites). Raises `ValueError`
+    upfront, before any solving happens, for a wrong-length weight vector
+    or one that sums to zero (that position would have no possible hand
+    to ever be sampled as, whether traversing or acting as an opponent).
+
+    Zero real callers today — `solver.py`'s own multiway dispatch always
+    solves a full preflop tree from its root, where every position's
+    prior is legitimately uniform combo_weight — ships as a standalone,
+    tested capability ahead of its real consumer, matching this
+    project's own M17-then-M18/M19-then-M20 precedent. Its real use is a
+    future milestone: seeding real per-position ranges (e.g. from
+    derive_ranges_from_path, already N-player-general per M16) into a
+    genuine multiway postflop MCCFR solve — itself still blocked on two
+    OTHER prerequisites this milestone deliberately doesn't attempt (a
+    board-aware, per-chance-branch equity source — multiway_board_
+    equity.py, M30 — actually threaded into this function's terminal-
+    value computation, and a chance-branch sampling case in this
+    module's own recursion, which doesn't exist here at all yet).
 
     Returns a dict of {id(DecisionNode): InfoSetTable} — the same shape
     `solve()` returns, so downstream code (StrategyResult etc.) doesn't
@@ -566,35 +641,43 @@ def mccfr_solve(
     """
     num_hands = len(hands)
     hand_index = {hand: i for i, hand in enumerate(hands)}
-    combo_weights = [hand.combo_weight for hand in hands]
-    rng = random.Random(seed)
+    initial_reach = initial_reach or {}
 
+    def _default_weights():
+        # Lazy, not eager — mirrors solve()'s own identical reasoning:
+        # `hands` may someday be combos.HandCombo (a future postflop
+        # MCCFR consumer), which has no combo_weight at all. Only ever
+        # called for a position genuinely missing its own initial_reach
+        # entry, so a caller supplying every position's own real range
+        # never touches this.
+        return np.array([hand.combo_weight for hand in hands], dtype=float)
+
+    position_weights: dict = {}
+    for position in positions:
+        weights = (
+            np.asarray(initial_reach[position], dtype=float)
+            if position in initial_reach
+            else _default_weights()
+        )
+        if weights.shape != (num_hands,):
+            raise ValueError(
+                f"initial_reach[{position!r}] has shape {weights.shape}, "
+                f"expected ({num_hands},) to match len(hands)"
+            )
+        if float(weights.sum()) <= 0:
+            raise ValueError(
+                f"initial_reach[{position!r}] sums to zero — position "
+                f"{position!r} would have no possible hand to ever be "
+                "sampled as, whether traversing or acting as an opponent"
+            )
+        position_weights[position] = weights
+
+    rng = random.Random(seed)
     node_data: dict = {}
     for iteration in range(iterations):
         traverser = positions[iteration % len(positions)]
-        opponent_hands = None
-        for _ in range(MAX_OPPONENT_RESAMPLE_ATTEMPTS):
-            candidate_hands = {
-                position: rng.choices(hands, weights=combo_weights)[0]
-                for position in positions
-                if position != traverser
-            }
-            try:
-                deal_n_hands(list(candidate_hands.values()))
-            except RuntimeError:
-                continue  # opponents mutually incompatible — resample the whole draw
-            opponent_hands = candidate_hands
-            break
-        if opponent_hands is None:
-            # Every resample attempt was infeasible — only reachable with a
-            # pathologically small/degenerate hands pool (see
-            # MAX_OPPONENT_RESAMPLE_ATTEMPTS's own comment). Proceed with
-            # the last draw anyway; MultiwayEquityCache's own placeholder
-            # handles it from here, exactly as every draw did before this
-            # fix existed — this preserves termination without silently
-            # dropping the iteration.
-            opponent_hands = candidate_hands
-        reach = np.array(combo_weights)
+        opponent_hands = _sample_opponent_hands(positions, traverser, position_weights, hands, rng)
+        reach = position_weights[traverser].copy()
         _mccfr_recurse(
             root, traverser, opponent_hands, reach, node_data, num_hands, hand_index, equity_cache, rng
         )
