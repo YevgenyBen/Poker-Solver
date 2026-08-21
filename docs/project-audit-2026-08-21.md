@@ -275,6 +275,13 @@ costs only 11s — so there is real *cost* headroom.
 > the constraint.** 300 is not a conservative budget, it is the count at
 > which the answer is still sane; raising it makes the output actively
 > worse. See recommendation #5 below, now resolved as "do not raise".
+>
+> **FOLLOW-UP (M66).** The *reason* was found, and it is not the solver:
+> `DEMO_MULTIWAY_HANDS` is 48.6% premium by combo weight, so at 6-max a
+> player faces a premium hand ~97% of the time and folding AKs really is
+> near-correct. Over a realistically-weighted pool the same solver is
+> flat at 100x the budget. Raising these budgets needs a better pool
+> first, not a CFR change.
 
 ### 6.2 Multiway postflop is *faster* than heads-up — because its preflop pool is tiny
 
@@ -314,7 +321,7 @@ means the current figure is at *higher* range fidelity than the old one.
 > | 2 | Extract `<ComboRow>` | **M59** — done; -164/+15 lines. The "11 duplications" were two different shapes; only the 9-use one was extracted. |
 > | 3 | Cache registry | **M60** — done; self-registering class, not a hand-maintained list. Found two "caches" that are engine-owned dicts. |
 > | 4 | Split `api/main.py` | **M61+M62** — done; 3,441 -> 1,273 lines across four modules. |
-> | 5 | 6/9-max iteration budgets | **M63** — **DO NOT RAISE.** §6.1's "real headroom" framing was wrong; corrected in place above. |
+> | 5 | 6/9-max iteration budgets | **M63** — **DO NOT RAISE.** §6.1's "real headroom" framing was wrong; corrected in place above. **M66** — cause found: the demo hand pool, not MCCFR. |
 > | 6 | Superseded endpoints/tabs | **M64** — 2 tabs retired (not 5 — the count here was imprecise), 5 routes deprecated but functional. |
 > | 7 | Restructure CLAUDE.md | **M65** — done; 4,628 -> 423 lines, history moved to `docs/milestones.md`. |
 
@@ -352,14 +359,34 @@ divergence (AKs UTG fold 15.6% -> 48.7% -> 92.4% at 300 / 3k / 30k
 iterations; QQ 19.3% -> 86.2%). None of M33/M34's equity fixes, M48's
 evaluator rewrite, or M55's memoization touched the cause.
 
-Budgets left at 300. A characterization test
-(`test_six_max_convergence_still_diverges_with_more_iterations`) now
-pins this so the constraint is a runnable fact rather than a comment,
-and so a future convergence fix produces a loud failure pointing back
-here. **The real fix remains the one M27 named**: restructure CFR+'s
-regret update to mask out a hand's contribution for an iteration
-entirely rather than feed it any placeholder value — a genuine
-architectural change to `_mccfr_recurse`, not a tuning exercise.
+Budgets left at 300. A characterization test now pins this so the
+constraint is a runnable fact rather than a comment.
+
+**M66 update — the named fix was implemented, and it was not the
+cause.** M27's proposed architectural change (mask a hand's
+contribution out of the regret update rather than feed it a placeholder
+equity value) was built: `MultiwayEquityCache` now reports which entries
+are fabricated, `_mccfr_terminal_value` folds that into NaN, and
+`_mccfr_recurse` skips the regret and `strategy_sum` updates for those
+hands. Measured against the same experiment, **the divergence was
+unchanged** (AKs 25.2% -> 67.8% -> 94.5%). The change shipped anyway on
+its own merits — it is behaviour-neutral where answers are
+well-determined and cost-neutral, and it makes `trained_mask()` honest —
+but it is explicitly *not* the fix for this.
+
+**The actual cause is `DEMO_MULTIWAY_HANDS`, not the solver.** That pool
+is 48.6% premium by combo weight, so at 6-max the traverser faces a
+premium ~97% of the time and folding AKs under the gun really is close
+to correct. Diluting to 10.2% premium makes the fold rate 2.5% -> 1.2%
+-> 1.7% across 300 / 3k / 30k — flat at 100x the budget. A control at
+the same pool *size* but premium-light still degraded, so coarseness
+contributes too.
+
+**Revised recommendation:** raising these budgets is still wrong *today*,
+but the blocker is the demo pool, not MCCFR. Replacing it with a larger,
+realistically-weighted pool is what unlocks larger budgets — a real
+product change (it alters every multiway endpoint's output and costs
+3-9x more per solve), scoped as its own milestone.
 
 ### #6 — Decide the fate of the superseded endpoints and tabs (§2.2, §2.4)
 Not urgent, and there's a real argument for keeping them (isolating one

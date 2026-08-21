@@ -502,19 +502,35 @@ def _mccfr_terminal_value(
 
     opponent_live_hands = tuple(opponent_hands[p] for p in other_live)
     equity_vector = equity_cache.traverser_equity_vector(opponent_live_hands)
-    # NEW (M32): NwayBoardEquityCache returns NaN for a candidate that
-    # physically conflicts with the board or the fixed opponent tuple —
-    # a real, structural fact at postflop combo granularity (deliberately
-    # not a placeholder itself — see multiway_board_equity.py's own
-    # docstring). 0.5 mirrors chance.py's own already-accepted, already-
-    # shipped nan_to_num(..., nan=0.5) precedent for the analogous exact-
-    # solver case. Provably a no-op against MultiwayEquityCache (post-M27
-    # it never produces NaN) and non-mutating (nan_to_num's default
-    # copy=True can't corrupt NwayBoardEquityCache's own cached array).
-    # Verified, not just reasoned about, that this doesn't reintroduce
-    # M27's own placeholder-compounding bug in a new context — see
-    # test_cfr.py's dedicated iteration-count stress test.
-    equity_vector = np.nan_to_num(equity_vector, nan=0.5)
+
+    # M66: mark hands whose "equity" is fabricated rather than simulated,
+    # so `_mccfr_recurse` can skip their regret update instead of learning
+    # from a number that has no true value. Two equity sources, one signal:
+    #   - MultiwayEquityCache (preflop, class-level) has to return a dense
+    #     float array, so it reports fabrication out-of-band via
+    #     `traverser_validity_mask` (M66); we fold that into NaN here.
+    #   - NwayBoardEquityCache (postflop, combo-level) already reports it
+    #     IN-band as NaN (M30's deliberate "no placeholder value, ever"
+    #     convention), so it needs no mask method and gets none.
+    # Both therefore arrive at the same representation below, and the
+    # `getattr` matches this function's existing duck-typing of
+    # `equity_cache` rather than introducing an isinstance check.
+    validity_mask = getattr(equity_cache, "traverser_validity_mask", None)
+    if validity_mask is not None:
+        equity_vector = np.where(validity_mask(opponent_live_hands), equity_vector, np.nan)
+    # M32 replaced NaN with a neutral 0.5 here. M66 deliberately does NOT:
+    # NaN is now the signal, and it is left intact so it propagates. Every
+    # arithmetic step from here to the traverser's own decision node is
+    # per-hand (`einsum("ha,ha->h")` contracts over actions, never over
+    # hands), so a NaN for hand h taints hand h's value at every ancestor
+    # and touches no other hand — which is exactly the conservative
+    # propagation we want: if ANY line reachable this iteration priced
+    # hand h with a fabricated number, h's regret at every node above is
+    # untrustworthy, not just at the terminal where the fabrication
+    # happened. `_mccfr_recurse` turns that into a skipped update. See
+    # this milestone's entry in docs/milestones.md for why 0.5 was not
+    # safe to keep once the same code path started serving the preflop
+    # multiway solver's much higher fabrication rate.
     return equity_vector * node.pot - node.invested[traverser]
 
 
@@ -675,9 +691,36 @@ def _mccfr_recurse(
         # distribution to marginalize over; that marginalization happens
         # implicitly across many iterations instead, via the natural
         # sampling frequency (combo_weight-proportional).
-        regret = cf_action_values - node_value[:, None]
+        # M66: skip hands whose value this iteration is fabricated rather
+        # than simulated. `node_value[h]` is NaN iff some reachable
+        # terminal priced hand h with a fallback (see
+        # `_mccfr_terminal_value`) — note this catches it even when
+        # `strategy[h, a] == 0`, since 0 * NaN is still NaN, so a tainted
+        # action cannot hide behind a zero weight.
+        #
+        # Skipping is NOT equivalent to feeding a neutral value. CFR+
+        # floors regret at 0 and never lets it decrease, so a fabricated
+        # value biased in one direction ratchets: each iteration adds a
+        # little more regret for the same action and none of it can ever
+        # be undone. Contributing nothing leaves regret_sum untouched, so
+        # such a hand learns only from the iterations where it had a real
+        # value — the honest amount of information available. It also
+        # keeps strategy_sum at 0 for a hand that never once had a real
+        # value, so `InfoSetTable.trained_mask()` (M28) reports it as
+        # untrained rather than confidently wrong.
+        #
+        # SCOPE, stated so nobody re-derives a wrong conclusion from this
+        # code: M27 proposed this change to fix 6-max preflop divergence
+        # (AKs's UTG fold rate climbing 15.6% -> 48.7% -> 92.4% at
+        # 300/3k/30k iterations). M66 built it and measured it — it does
+        # NOT fix that. The cause there is DEMO_MULTIWAY_HANDS being 48.6%
+        # premium by combo weight, not this update rule. This change is
+        # here on its own merits (correctness and an honest trained_mask),
+        # measured behaviour-neutral where answers are well-determined.
+        valid = np.isfinite(node_value)
+        regret = np.where(valid[:, None], cf_action_values - node_value[:, None], 0.0)
         table.regret_sum = np.maximum(table.regret_sum + regret, 0.0)  # CFR+: floor at 0
-        table.strategy_sum += reach[:, None] * strategy
+        table.strategy_sum += np.where(valid[:, None], reach[:, None] * strategy, 0.0)
         return node_value
 
     # Opponent's decision: sample one action from their current strategy,

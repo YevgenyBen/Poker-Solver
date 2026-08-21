@@ -558,6 +558,60 @@ def test_multiway_cache_handles_blocked_traverser_hand_gracefully():
     assert vector[1] != pytest.approx(vector[0])  # AA candidate: not blocked, a real simulated value
 
 
+def test_multiway_validity_mask_flags_a_blocked_candidate():
+    # Same setup as the KK-mirror test above: the KK candidate can't
+    # physically coexist with two KK opponents, so its equity is a
+    # fallback, while AA's is a real simulated value. traverser_equity_
+    # vector has to return a float for both; the mask is what tells them
+    # apart (M66), so cfr.py can decline to learn from the fabricated one.
+    cache = MultiwayEquityCache(hands=[StartingHand("K", "K"), StartingHand("A", "A")], samples=20)
+    opponents = (StartingHand("K", "K"), StartingHand("K", "K"))
+    mask = cache.traverser_validity_mask(opponents)
+    assert mask.dtype == bool
+    assert len(mask) == 2
+    assert mask[0] == False  # noqa: E712 - KK candidate: blocked, value is a fallback
+    assert mask[1] == True   # noqa: E712 - AA candidate: a real simulated value
+
+
+def test_multiway_validity_mask_is_all_true_when_nothing_is_blocked():
+    cache = MultiwayEquityCache(
+        hands=[StartingHand("A", "K", suited=True), StartingHand("7", "2", suited=False)],
+        samples=20,
+    )
+    mask = cache.traverser_validity_mask((StartingHand("Q", "J", suited=False),))
+    assert np.all(mask)
+
+
+def test_multiway_validity_mask_is_all_false_when_opponents_conflict():
+    # Three KK opponents need 6 kings, so no concrete deal exists at all
+    # and EVERY candidate falls back — the whole-vector case, distinct
+    # from the per-candidate one above.
+    cache = MultiwayEquityCache(hands=[StartingHand("A", "A"), StartingHand("7", "2", suited=False)], samples=20)
+    kk = StartingHand("K", "K")
+    mask = cache.traverser_validity_mask((kk, kk, kk))
+    assert not np.any(mask)
+
+
+def test_multiway_validity_mask_matches_the_equity_vector_either_call_order():
+    # The mask is filled in the same pass as the vector and cached under
+    # the same key, so asking for either one first must give the same
+    # answer — and asking for the second must not recompute.
+    hands = [StartingHand("K", "K"), StartingHand("A", "A")]
+    opponents = (StartingHand("K", "K"), StartingHand("K", "K"))
+
+    mask_first = MultiwayEquityCache(hands=hands, samples=20, seed=3)
+    mask_a = mask_first.traverser_validity_mask(opponents)
+    vector_a = mask_first.traverser_equity_vector(opponents)
+
+    vector_first = MultiwayEquityCache(hands=hands, samples=20, seed=3)
+    vector_b = vector_first.traverser_equity_vector(opponents)
+    mask_b = vector_first.traverser_validity_mask(opponents)
+
+    assert np.array_equal(mask_a, mask_b)
+    assert np.array_equal(vector_a, vector_b)
+    assert len(mask_first) == 1  # one entry either way — no duplicate computation
+
+
 def test_multiway_cache_blocked_candidate_placeholder_reflects_real_strength():
     # 4 live opponents (KK, QQ, AA, AA — the two AAs together use all 4
     # aces) block a 5th AA candidate even after the joint-redeal retry.

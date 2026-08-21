@@ -1088,12 +1088,12 @@ def test_mccfr_solve_chance_data_memoized_for_repeated_terminal_card_pair():
     assert len(seen_keys) == len(calls)
 
 
-# --- _mccfr_terminal_value's new NaN handling ---
+# --- _mccfr_terminal_value's NaN handling (M32 shape, M66 semantics) ---
 
 
 class _NanStubEquityCache:
     """Returns equity with a NaN in a specific slot — for testing
-    _mccfr_terminal_value's nan_to_num safety net directly."""
+    _mccfr_terminal_value's handling of an unpriceable hand directly."""
 
     def __init__(self, num_hands, nan_index):
         self._num_hands = num_hands
@@ -1105,22 +1105,101 @@ class _NanStubEquityCache:
         return vector
 
 
-def test_mccfr_terminal_value_replaces_nan_equity_with_neutral_half():
+def test_mccfr_terminal_value_preserves_nan_for_an_unpriceable_hand():
+    # M32 replaced NaN with a neutral 0.5 here; M66 deliberately does not,
+    # because that 0.5 is exactly the kind of fabricated value CFR+'s
+    # regret floor ratchets on. NaN is now the signal that says "this hand
+    # had no real value this iteration" and it must survive to reach
+    # _mccfr_recurse, which turns it into a SKIPPED update.
     combos = _TOY_COMBOS
     terminal = TerminalNode(pot=10.0, invested={"BTN": 1.0, "BB": 1.0}, folded=frozenset())
     cache = _NanStubEquityCache(num_hands=2, nan_index=0)
     value = _mccfr_terminal_value(terminal, "BTN", {"BB": combos[1]}, 2, cache)
-    assert not np.any(np.isnan(value))
-    assert value[0] == pytest.approx(0.5 * 10.0 - 1.0)  # the NaN'd hand -> neutral 0.5
+    assert np.isnan(value[0])  # the unpriceable hand stays unpriceable
     assert value[1] == pytest.approx(0.7 * 10.0 - 1.0)  # the real hand -> untouched
 
 
-def test_mccfr_terminal_value_nan_to_num_is_a_noop_for_a_never_nan_cache():
+def test_mccfr_terminal_value_leaves_a_never_nan_cache_untouched():
     combos = _TOY_COMBOS
     terminal = TerminalNode(pot=10.0, invested={"BTN": 1.0, "BB": 1.0}, folded=frozenset())
     cache = _StubEquityCache(0.6, num_hands=2)
     value = _mccfr_terminal_value(terminal, "BTN", {"BB": combos[1]}, 2, cache)
     assert np.allclose(value, 0.6 * 10.0 - 1.0)
+
+
+def test_mccfr_terminal_value_folds_a_validity_mask_into_nan():
+    # MultiwayEquityCache can't report "no real value" in-band (it returns
+    # a dense float array), so it reports out-of-band via
+    # traverser_validity_mask. _mccfr_terminal_value folds that into the
+    # same NaN representation NwayBoardEquityCache uses natively, so both
+    # equity sources reach _mccfr_recurse looking identical.
+    class _MaskedStub:
+        def traverser_equity_vector(self, opponent_hands):
+            return np.array([0.7, 0.7])
+
+        def traverser_validity_mask(self, opponent_hands):
+            return np.array([False, True])  # hand 0's value is fabricated
+
+    combos = _TOY_COMBOS
+    terminal = TerminalNode(pot=10.0, invested={"BTN": 1.0, "BB": 1.0}, folded=frozenset())
+    value = _mccfr_terminal_value(terminal, "BTN", {"BB": combos[1]}, 2, _MaskedStub())
+    assert np.isnan(value[0])
+    assert value[1] == pytest.approx(0.7 * 10.0 - 1.0)
+
+
+# --- M66: a fabricated value must produce NO learning, not wrong learning ---
+
+
+def test_mccfr_skips_the_regret_update_for_an_unpriceable_hand():
+    """The core M66 guarantee. A hand whose value is fabricated this
+    iteration must leave regret_sum and strategy_sum completely untouched
+    — not merely be nudged by a neutral number.
+
+    This is what makes CFR+ safe here: its regret floor means regret only
+    ever ratchets up, so any persistent one-sided bias accumulates forever
+    instead of averaging out. Contributing nothing is the only update that
+    can't accumulate.
+    """
+    combos = _TOY_COMBOS
+    config = StreetConfig(positions=("BTN", "BB"), pot=10.0, stack_bb=20.0,
+                          raise_sizes=(), max_raises=1)
+    root = build_street_tree(config)
+    # Hand 0 is never priceable; hand 1 always is.
+    cache = _NanStubEquityCache(num_hands=2, nan_index=0)
+    # HandCombo has no combo_weight, so every position's reach is explicit.
+    reach = {"BTN": np.ones(2), "BB": np.ones(2)}
+    node_data = mccfr_solve(root, combos, ("BTN", "BB"), cache, iterations=25, seed=1,
+                            initial_reach=reach)
+
+    assert node_data, "the solve should have touched at least one node"
+    for table in node_data.values():
+        assert not np.any(np.isnan(table.regret_sum)), "NaN must never enter regret_sum"
+        assert not np.any(np.isnan(table.strategy_sum)), "NaN must never enter strategy_sum"
+        # Hand 0 was never priceable, so it must have learned nothing at all...
+        assert np.all(table.regret_sum[0] == 0.0)
+        assert np.all(table.strategy_sum[0] == 0.0)
+        # ...and must therefore honestly report itself as untrained (M28),
+        # rather than carrying a strategy derived from a placeholder.
+        assert table.trained_mask()[0] == False  # noqa: E712 - numpy bool
+
+
+def test_mccfr_still_learns_normally_for_hands_that_are_always_priceable():
+    """The other half: masking must not suppress learning for hands that
+    DO have real values — otherwise it would 'fix' divergence by simply
+    refusing to learn anything."""
+    combos = _TOY_COMBOS
+    config = StreetConfig(positions=("BTN", "BB"), pot=10.0, stack_bb=20.0,
+                          raise_sizes=(), max_raises=1)
+    root = build_street_tree(config)
+    cache = _NanStubEquityCache(num_hands=2, nan_index=0)
+    # HandCombo has no combo_weight, so every position's reach is explicit.
+    reach = {"BTN": np.ones(2), "BB": np.ones(2)}
+    node_data = mccfr_solve(root, combos, ("BTN", "BB"), cache, iterations=25, seed=1,
+                            initial_reach=reach)
+
+    assert any(table.trained_mask()[1] for table in node_data.values()), (
+        "hand 1 is priceable at every terminal and must actually learn"
+    )
 
 
 # --- Determinism with chance dispatch active ---

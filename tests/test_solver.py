@@ -2179,12 +2179,26 @@ def test_derive_ranges_from_path_pipeline_open_3bet_call_feeds_solve_flop():
 # ---------------------------------------------------------------------------
 
 
-def test_six_max_convergence_still_diverges_with_more_iterations():
+def test_six_max_demo_pool_degrades_with_more_iterations():
     # M27 measured AKs's UTG-open fold rate climbing 22.8% (300 iters) ->
     # 69.2% (3k) -> 94.8% (30k) instead of settling. M63 re-measured on
     # current code — AFTER M33/M34's equity fixes, M48's evaluator
     # rewrite and M55's memoization — and reproduced it: 15.6% -> 48.7%
     # -> 92.4%. None of those changes touched the cause.
+    #
+    # M66 FOUND THE CAUSE, and it is not the solver: it is THIS HAND POOL.
+    # _M9_HANDS is 48.6% premium by combo weight (AA/KK/QQ/AKs/AKo out of
+    # 8 classes). At 6-max the traverser faces 5 opponents drawn from it,
+    # so ~97% of the time at least one holds a premium hand — and folding
+    # AKs under the gun really is close to correct in that game. More
+    # iterations converge HARDER to a correct answer to a distorted
+    # question. See test_six_max_converges_with_a_realistic_pool below,
+    # which is the other half of this pair and the actual evidence.
+    #
+    # This test therefore pins a known property of the shipped demo pool,
+    # NOT a solver defect. It is why api/config.py's 6-max budget is 300
+    # rather than something larger, and it should keep passing until the
+    # demo pool itself is replaced.
     hands = list(_M9_HANDS)
     positions = ("UTG", "MP", "CO", "BTN", "SB", "BB")
 
@@ -2210,6 +2224,62 @@ def test_six_max_convergence_still_diverges_with_more_iterations():
     # ...and 10x more solving makes it materially WORSE, not better.
     assert at_ten_times > at_shipped_budget + 0.15, (
         f"AKs UTG fold rate went {at_shipped_budget:.1%} -> {at_ten_times:.1%} with 10x "
-        "the iterations. If this assertion now fails, 6-max convergence may be FIXED — "
-        "re-measure and revisit the iteration budgets in api/config.py."
+        "the iterations. If this assertion now fails, the demo pool may have been "
+        "replaced with a more realistic one — re-measure and revisit the iteration "
+        "budgets in api/config.py, which are small only because of this effect."
     )
+
+
+def test_six_max_converges_with_a_realistic_pool():
+    """The other half of the pair above, and the evidence that 6-max MCCFR
+    itself is sound: run the SAME solver, at the SAME table size, over a
+    hand pool whose premium density is realistic rather than ~49%, and the
+    'divergence' disappears entirely.
+
+    M66 measured this three ways. Diluting to 34 classes / 10.2% premium
+    made AKs's UTG fold rate 2.5% -> 1.2% -> 1.7% across 300 / 3k / 30k
+    iterations — flat at 100x the shipped budget, where the demo pool went
+    25.2% -> 67.8% -> 94.5%. A control at the demo pool's own SIZE (8
+    classes) but premium-light still degraded, so pool coarseness matters
+    too, not density alone; the pool used here is the cheapest
+    configuration found that still shows clean convergence, so the suite
+    pays ~35s for the finding rather than the ~2.5 minutes the 34-class
+    version costs.
+    """
+    hands = [
+        StartingHand("A", "A"), StartingHand("K", "K"), StartingHand("Q", "Q"),
+        StartingHand("A", "K", suited=True), StartingHand("A", "K", suited=False),
+        StartingHand("T", "9", suited=False), StartingHand("9", "6", suited=False),
+        StartingHand("8", "5", suited=False), StartingHand("7", "2", suited=False),
+        StartingHand("6", "3", suited=False), StartingHand("3", "2", suited=False),
+        StartingHand("J", "8", suited=False), StartingHand("5", "4", suited=False),
+        StartingHand("Q", "9", suited=False),
+    ]
+    positions = ("UTG", "MP", "CO", "BTN", "SB", "BB")
+
+    def utg_fold_rates(iterations):
+        result = solve_preflop(
+            config=GameConfig(positions=positions, stack_bb=100.0),
+            hands=hands,
+            equity_cache=MultiwayEquityCache(hands=hands, seed=1),
+            iterations=iterations,
+            seed=1,
+        )
+        opening = result.opening_range()
+        return {hand: opening[hand]["fold"] for hand in ("AKs", "QQ", "KK")}
+
+    at_shipped_budget = utg_fold_rates(300)
+    at_ten_times = utg_fold_rates(3_000)
+
+    for hand in ("AKs", "QQ", "KK"):
+        base, more = at_shipped_budget[hand], at_ten_times[hand]
+        # The demo pool's failure signature is a LARGE upward climb. Here
+        # the rates should stay put or improve — a small upward wobble is
+        # ordinary Monte Carlo noise, a 15-point climb is the defect.
+        assert more < base + 0.15, (
+            f"{hand} UTG fold rate went {base:.1%} -> {more:.1%} with 10x the iterations. "
+            "A realistic pool is supposed to converge; if this fails, the instability is "
+            "NOT just a demo-pool artifact after all and M66's diagnosis needs revisiting."
+        )
+        # A strong hand should not be folding under the gun at any point.
+        assert more < 0.35, f"{hand} folds {more:.1%} at UTG — implausible for a real pool"

@@ -50,12 +50,19 @@ every street (preflop through river) and every supported table size
 ### Known constraints — read before "improving" these
 
 - **6-max/9-max preflop budgets are 300 iterations, and raising them
-  makes output WORSE, not better.** MCCFR diverges on this hand pool:
-  AKs's UTG fold rate runs 15.6% (300) -> 48.7% (3k) -> 92.4% (30k).
-  Cost is not the constraint. Pinned by
-  `test_six_max_convergence_still_diverges_with_more_iterations`. The
-  real fix is architectural (mask a hand's contribution in
-  `_mccfr_recurse` rather than feed it a placeholder) — see M27, M63.
+  makes output WORSE, not better.** AKs's UTG fold rate runs 15.6%
+  (300) -> 48.7% (3k) -> 92.4% (30k). Cost is not the constraint.
+  **The cause is `DEMO_MULTIWAY_HANDS`, not the solver (M66):** that pool
+  is 48.6% premium by combo weight, so at 6-max a player faces a premium
+  ~97% of the time and folding AKs under the gun really is near-correct.
+  MCCFR is converging correctly to a distorted question. Over a
+  realistically-weighted pool it is flat at 100x the budget (2.5% ->
+  1.2% -> 1.7%). Pinned by the paired
+  `test_six_max_demo_pool_degrades_with_more_iterations` and
+  `test_six_max_converges_with_a_realistic_pool`. **Do not** try to fix
+  this in `_mccfr_recurse` — M27 proposed exactly that and M66 built it
+  (it shipped, for other reasons) and measured no effect. The fix is a
+  better hand pool.
 - **Multiway postflop answers an easier question than heads-up.** Its
   preflop leg solves over `DEMO_MULTIWAY_HANDS`' 8 classes, not 169.
   That is why multiway timings look faster; treat the advice as
