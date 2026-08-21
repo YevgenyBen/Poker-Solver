@@ -4003,6 +4003,53 @@ street chaining needs.
     (with the earlier 404 still visible in the log as proof the proxy
     fix was the thing that mattered).
 
+- **M57 — whole-project audit: code quality, redundancy, and speed.**
+  `docs/project-audit-2026-08-21.md` (new), mirroring `full-table-
+  diagnostic-2026-08.md`'s own role before M27-M34: a measured
+  checkpoint to inform prioritization, with nothing fixed as part of it.
+  - **Headline: the codebase is structurally healthy.** Zero dead public
+    functions, 906 passing tests (742 backend + 164 frontend), clean
+    lint/type pass, engine/API boundary enforced by test. The findings
+    are about accumulated SURFACE AREA, not defects.
+  - **The one verified, immediately actionable finding:** `GET /solve/
+    {stack_bb}` caches a formatted response in `_cache` while every
+    path-derived endpoint caches a raw `StrategyResult` in `_preflop_
+    raw_cache` — so at `players == 2` the identical preflop spot is
+    solved TWICE (~3.2s wasted) on the most likely first user journey.
+    Confirmed by inspecting both caches after real requests, not
+    inferred. Already solved for `players != 2` (M29 shares one cache
+    there); heads-up just never got the same treatment.
+  - **Other redundancy found:** ~6 endpoints `/advise` now supersedes
+    (each with its own near-duplicate schema); the same combo-row markup
+    hand-rolled **11 times across 8 frontend components**; 8 tabs of
+    which 5 are slices of what the Advisor now does; `api/main.py` at
+    3,441 lines (2.3x the next largest file); 28 cache/lock globals with
+    no registry, which the test fixture must clear by hand in two places
+    (a recurring per-milestone footgun).
+  - **Benchmarks, 24 endpoints at production settings** — full table in
+    the document. Two findings worth carrying forward: **3-max preflop
+    (23.92s) is slower than 6-max (11.33s)** because it runs 100,000
+    iterations against their 300, meaning 6/9-max get ~333x less solving
+    and there IS cost headroom (M27's convergence instability, not cost,
+    is the blocker — and it predates M48/M55's speedups); and **multiway
+    postflop is FASTER than heads-up** (turn 2.22s vs 10.78s) purely
+    because its preflop leg solves over 8 classes rather than 169 — a
+    fidelity gap wearing a speed win's clothing, worth remembering
+    before treating multiway advice as equally trustworthy.
+  - **Trajectory recorded:** the slowest real path is now river heads-up
+    at 16.65s; turn heads-up advice was ~46s pre-M48 and is 10.78s now,
+    at HIGHER range fidelity (M54/M55 raised the caps).
+  - **Explicitly not recommended:** the two-phase solve (M47's other
+    named lever). M55 found the real bottleneck, fixed it losslessly for
+    3-4x, and left `_solve_recurse`'s own self time at ~12% — a
+    speculative architectural change that alters solver output, for a
+    ~12% slice, is a bad trade now.
+  - **Prioritized recommendations (7), ranked by value/effort:** unify
+    the preflop caches; extract a `<ComboRow>` component; add a cache
+    registry; split `api/main.py`; revisit 6/9-max iteration budgets
+    (measurement first — M27 warns more iterations made things worse);
+    decide the fate of superseded endpoints/tabs; restructure CLAUDE.md.
+
 ## v3 vision (future) — live-table advisor
 
 Discussed with the user while scoping M16, recorded here rather than
