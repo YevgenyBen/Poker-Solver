@@ -3051,6 +3051,112 @@ street chaining needs.
     endpoints) are both untouched by this frontend-only milestone —
     this closes the *frontend* gap specifically, not either of those
     separately-scoped engine/API questions.
+- **M44 — `POST /solve_turn_multiway_from_path`: the multiway analog of
+  `/solve_turn_from_path` (M26),** closing the "turn-depth" half of
+  M42/M43's own remaining open item (the other half, true 6/9-max
+  multiway postflop solving, stays untouched). Mirrors `_query_flop_
+  multiway_from_path`'s own M42 scope boundary: requires a genuine
+  3+-live-position terminal; a 2-survivor path 422s with a message
+  pointing at `/solve_turn_from_path` instead. Uses `flop_iterations`,
+  not a separate `turn_iterations` field — `solve_flop_turn_multiway`'s
+  own single-solve design (M36) produces both the flop and turn
+  strategies from ONE call, unlike the exact 2-position solver's own
+  two-stage cost profile M26 named its own two iteration fields for.
+  - **A real, structural gap this milestone had to solve that M26 never
+    faced, found during design rather than discovered as a bug later:**
+    `solve_flop_turn_multiway`'s own `chance_data` only ever contains
+    the `(terminal, card)` pairs MCCFR actually happened to SAMPLE
+    while solving (see that function's own docstring) — not every legal
+    next card, the way the exact solver's `chance_data` does (`build_
+    chance_node` eagerly builds all ~44-49 branches per terminal). A
+    real turn card a client asks about can easily be one MCCFR never
+    sampled, especially spread across a derived pool's many distinct
+    terminals at a modest iteration budget — `_query_turn_from_path`'s
+    own clean `if turn_card not in chance_node.branches: raise
+    ValueError` (correct there, since the exact solver enumerates
+    everything) would have made this endpoint frequently, frustratingly
+    unusable for the exact real-derived-situation use case it exists
+    to serve.
+  - **Fixed with a new engine primitive, not a workaround in `api/
+    main.py`:** `poker_solver.solver.ensure_flop_turn_multiway_branch` —
+    on a `chance_data` miss for a legal card, builds and caches exactly
+    the branch MCCFR would have built had it sampled that pair itself
+    (`chance.build_mccfr_chance_branch` is a pure function of its
+    inputs, proven deterministic in M32's own tests, so passing the
+    identical `board`/`combos`/`positions`/`effective_stack_bb`/
+    `raise_sizes`/`max_raises` reproduces exactly what real sampling
+    would have built). Placed in `solver.py`, not called directly from
+    `api/main.py` against `chance.py` — matches this project's own
+    established layering (every endpoint orchestrates `solver.py`-level
+    functions; `solver.py` is the layer that knows about `chance.py`/
+    `cfr.py` internals), and makes the primitive independently testable
+    and reusable outside this one endpoint.
+  - **A real design question resolved by reading, not assuming:** does
+    a freshly-built (MCCFR-untouched) turn node need special-casing to
+    report low confidence? No — `StrategyResult.strategy_at`/`.trained_
+    hands` already fall back to the untrained uniform default for ANY
+    node absent from `node_data` (M28's own existing "no entry ->
+    uniform + `trained=False`" behavior, confirmed by reading both
+    methods' own docstrings, not assumed) — an unvisited node already
+    behaves identically to a visited-but-untrained one. So the on-
+    demand branch's own strategy needed zero new code to report
+    honestly: it just IS an unvisited node, and the existing machinery
+    already does the right thing.
+  - **Measured, not assumed, before finalizing the class cap:** at the
+    same real 3-max open/call/call path/board M42's own cap comment
+    measured, chained into `solve_flop_turn_multiway` instead of `solve_
+    flop_multiway`: cap=1 -> 18 combos, 50 iters ~4.19s / 200 iters
+    ~16.17s; cap=2 -> 35 combos, 50 iters ~10.12s / 200 iters ~42.69s.
+    Set `MAX_MULTIWAY_TURN_PATH_QUERY_CLASSES_PER_POSITION` to 2 — the
+    SAME value as the flop-only endpoint's own cap, unlike M26's own
+    precedent (where the turn-level cap had to SHRINK relative to the
+    flop-level one, because the exact solver's own chance dispatch is
+    expensive). `solve_flop_turn_multiway`'s chance dispatch is cheap
+    enough at this pool size — the same lazy, one-sampled-card-at-a-
+    time construction M36/M39 already found cheaper than expected — that
+    the same class count stays affordable. Default kept at `solve_flop_
+    turn_multiway`'s own default (50, ~10.12s at this pool); cap set to
+    200 (~42.69s), landing in the same "slow but tolerable for a live
+    request" bracket `/solve_turn_from_path`'s own ~46s already
+    established.
+  - Own cache dict (`_turn_multiway_path_cache`), keyed only on the
+    preflop leg (not `flop_action_path`/`turn_card`, resolved by walking
+    the already-solved tree afterward — the same "resolving is free,
+    re-solving isn't" reasoning `_turn_path_cache`'s own M26 key already
+    established). The SAME lock also guards `ensure_flop_turn_multiway_
+    branch`'s own in-place `chance_data` mutation, preventing two
+    concurrent requests from racing to build the same missing branch.
+  - **Tests:** `tests/test_solver.py` gained a dedicated `ensure_flop_
+    turn_multiway_branch` section (4 tests: returns the cached branch
+    unchanged on a hit; builds and caches a genuinely new branch on a
+    miss, with every hand correctly reporting `trained=False`; a second
+    call against the same miss hits the now-populated cache without a
+    duplicate build; raises for an illegal card). `tests/test_api.py`
+    gained 10 tests, including the one that matters most: a real
+    end-to-end HTTP-layer test that populates the cache with one real
+    request, inspects the cached `StrategyResult`'s own `chance_data` to
+    find a real, definitely-never-sampled card for the exact same flop
+    terminal, requests exactly that card, and confirms a 200 response
+    with every hand correctly marked `trained=False` — proving the
+    on-demand fallback actually fires through the real endpoint, not
+    just at the engine level.
+  - **Verification:** `python -m pytest tests/ -v` — 686 passed, zero
+    regressions (up from M43's 672 — 4 new `test_solver.py` tests, 10
+    new `test_api.py` tests). No frontend changes this milestone —
+    matches M42's own "engine/API first, frontend later" precedent (M42
+    itself got its own frontend the very next milestone, at M43).
+  - **What's still open:** a frontend for this endpoint (the natural
+    next milestone, mirroring M42-then-M43's own precedent — wiring
+    into `TurnPathSolver.tsx` the same way M43 wired `/solve_flop_
+    multiway_from_path` into `ActionPathSolver.tsx`); true 6/9-max
+    multiway postflop solving (still unscoped); and river-depth path-
+    derived multiway advice one street further (mirroring M26's own
+    "river-level advice... already de-risked cost-wise" note, now with
+    an additional, real open design question this milestone's own
+    on-demand-build fallback didn't have to answer yet: whether a
+    SECOND chained hop's own chance_data needs the identical fallback
+    treatment `ensure_flop_turn_multiway_branch` provides here, or a
+    structurally different one).
 
 ## v3 vision (future) — live-table advisor
 

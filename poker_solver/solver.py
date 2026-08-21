@@ -21,7 +21,7 @@ import numpy as np
 from .abstraction import BucketedPool, bucket_reach_vector, build_bucket_equity_table, build_hand_buckets
 from .board_equity import DEFAULT_SEED as DEFAULT_EQUITY_SEED
 from .board_equity import build_board_equity_table
-from .chance import build_chance_node, build_mccfr_chance_branch
+from .chance import SampledChanceBranch, build_chance_node, build_mccfr_chance_branch
 from .cfr import InfoSetTable, mccfr_solve, solve
 from .equity import MultiwayEquityCache, get_equity_table
 from .multiway_board_equity import NwayBoardEquityCache
@@ -880,6 +880,84 @@ def solve_flop_turn_multiway(
         elapsed_seconds=elapsed,
         chance_data=chance_data,
     )
+
+
+def ensure_flop_turn_multiway_branch(
+    result: StrategyResult,
+    terminal: TerminalNode,
+    card,
+    board: tuple,
+    position_ranges: dict,
+    positions: tuple,
+    effective_stack_bb: float,
+    raise_sizes: tuple = (2.5, 3.0, 2.2),
+    max_raises: int = 4,
+    equity_samples: int = None,
+    equity_seed: int = DEFAULT_EQUITY_SEED,
+) -> SampledChanceBranch:
+    """Returns `result.chance_data`'s entry for `(id(terminal), card)`,
+    building and caching it on demand (via `chance.build_mccfr_chance_
+    branch`) if MCCFR's own sampling never actually visited that specific
+    (terminal, card) pair while producing `result`.
+
+    A real, structural gap `solve_flop_turn_multiway`'s own MCCFR-native
+    `chance_data` has that `solve_flop_turn`'s exact-solver `chance_data`
+    never had: the exact solver's `build_chance_node` eagerly builds
+    every one of the ~44-49 possible next cards for every showdown-
+    eligible terminal, so any legal card a caller later asks about is
+    guaranteed to already be there. MCCFR is fundamentally sampling-based
+    — `chance_data` only ever contains the ONE card actually sampled at
+    each terminal `mccfr_solve` happened to visit each iteration (see
+    `solve_flop_turn_multiway`'s own docstring) — so a real, legal
+    (terminal, card) combination a client asks about later can easily be
+    one MCCFR never happened to sample, especially at a real derived
+    combo pool spread across many distinct terminals and a modest
+    iteration budget (a live endpoint's own necessary cost tradeoff, not
+    a bug).
+
+    The freshly-built branch's own root correctly reports `trained=False`
+    for every hand via `StrategyResult.strategy_at`/`.trained_hands`'s
+    own EXISTING "no node_data entry -> uniform fallback" behavior (M28)
+    — no special-casing needed there, confirmed by reading both methods'
+    own docstrings rather than assumed: an unvisited node already
+    behaves identically to a visited-but-untrained one.
+
+    `position_ranges`/`positions`/`effective_stack_bb`/`raise_sizes`/
+    `max_raises`/`equity_samples`/`equity_seed` must be the SAME values
+    passed to the `solve_flop_turn_multiway` call that produced `result`
+    — `build_mccfr_chance_branch` is a pure function of its inputs
+    (proven deterministic in M32's own tests), so passing the identical
+    inputs reproduces exactly what MCCFR's own sampling would have built
+    had it happened to sample this (terminal, card) pair itself, on the
+    same combo pool and tree shape. `combos` is re-derived from
+    `position_ranges` the same deterministic way `solve_flop_turn_
+    multiway` itself derives it (`sorted(set().union(...), key=str)`),
+    not passed separately, so a caller can't accidentally pass a
+    mismatched pool.
+
+    Raises `ValueError` (propagated from `build_mccfr_chance_branch`) if
+    `card` isn't legal here — already on the board, or `terminal` is a
+    fold-out with nothing to deal a card for.
+    """
+    key = (id(terminal), card)
+    if key in result.chance_data:
+        return result.chance_data[key]
+
+    combos = sorted(set().union(*(r.keys() for r in position_ranges.values())), key=str)
+    branch = build_mccfr_chance_branch(
+        terminal,
+        card=card,
+        board=board,
+        combos=combos,
+        positions=positions,
+        effective_stack_bb=effective_stack_bb,
+        raise_sizes=raise_sizes,
+        max_raises=max_raises,
+        equity_seed=equity_seed,
+        **({"equity_samples": equity_samples} if equity_samples is not None else {}),
+    )
+    result.chance_data[key] = branch
+    return branch
 
 
 # Measured during M39's own scoping pass, not assumed — and the real

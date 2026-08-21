@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from poker_solver.abstraction import BucketedPool, HandBucket, build_hand_buckets
-from poker_solver.cards import Card
+from poker_solver.cards import Card, remaining_deck
 from poker_solver.cfr import InfoSetTable
 from poker_solver.combos import HandCombo, combos_for_class, range_from_class_frequencies
 from poker_solver.equity import MultiwayEquityCache, build_equity_table
@@ -19,6 +19,7 @@ from poker_solver.game_tree import (
     TerminalNode,
     build_game_tree,
     postflop_action_order,
+    walk,
 )
 from poker_solver.solver import (
     DEFAULT_ITERATIONS,
@@ -27,6 +28,7 @@ from poker_solver.solver import (
     StrategyResult,
     derive_flop_scenario,
     derive_ranges_from_path,
+    ensure_flop_turn_multiway_branch,
     expand_bucket_strategy,
     format_opening_range_grid,
     solve_flop,
@@ -930,6 +932,122 @@ def test_solve_flop_turn_multiway_rejects_positions_and_position_ranges_mismatch
         solve_flop_turn_multiway(
             board=board, position_ranges=position_ranges, pot=9.0, effective_stack_bb=15.0,
             positions=("OOP", "MID", "IP"), raise_sizes=(), max_raises=1,
+        )
+
+
+# ---------------------------------------------------------------------------
+# M44: ensure_flop_turn_multiway_branch — solve_flop_turn_multiway's own
+# chance_data only ever contains the (terminal, card) pairs MCCFR actually
+# happened to sample while solving (unlike solve_flop_turn's exact-solver
+# chance_data, which eagerly builds every possible next card). This
+# closes that real, structural gap: given a genuine miss, it builds and
+# caches exactly the branch MCCFR would have built had it sampled that
+# pair itself.
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_flop_turn_multiway_branch_returns_the_cached_branch_on_a_hit(tiny_flop_turn_multiway_result):
+    # Any real (terminal, card) pair MCCFR actually sampled works as a
+    # "hit" fixture — walk the whole (tiny) tree to map chance_data's own
+    # id()-keys back to real TerminalNode objects, then pick one.
+    (terminal_id, card), branch = next(iter(tiny_flop_turn_multiway_result.chance_data.items()))
+    nodes_by_id = {id(node): node for node in walk(tiny_flop_turn_multiway_result.root)}
+    terminal = nodes_by_id[terminal_id]
+    position_ranges = {
+        "OOP": {HandCombo(Card("7", "s"), Card("7", "c")): 1.0},
+        "MID": {HandCombo(Card("A", "h"), Card("A", "d")): 1.0},
+        "IP": {HandCombo(Card("9", "d"), Card("8", "d")): 1.0},
+    }
+    result = ensure_flop_turn_multiway_branch(
+        tiny_flop_turn_multiway_result, terminal, card,
+        board=(Card("7", "h"), Card("2", "d"), Card("9", "c")),
+        position_ranges=position_ranges, positions=("OOP", "MID", "IP"),
+        effective_stack_bb=15.0, raise_sizes=(), max_raises=1, equity_samples=50,
+    )
+    assert result is branch  # the exact cached object, not a rebuild
+
+
+def test_ensure_flop_turn_multiway_branch_builds_and_caches_on_a_miss():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    position_ranges = {
+        "OOP": {HandCombo(Card("7", "s"), Card("7", "c")): 1.0},
+        "MID": {HandCombo(Card("A", "h"), Card("A", "d")): 1.0},
+        "IP": {HandCombo(Card("9", "d"), Card("8", "d")): 1.0},
+    }
+    result = solve_flop_turn_multiway(
+        board=board, position_ranges=position_ranges, pot=9.0, effective_stack_bb=15.0,
+        positions=("OOP", "MID", "IP"), raise_sizes=(), max_raises=1,
+        iterations=20, equity_samples=50, seed=1,
+    )
+    terminal = _find_a_showdown_terminal(result.root)
+    already_sampled = {card for (tid, card) in result.chance_data if tid == id(terminal)}
+    unsampled_card = next(c for c in remaining_deck(board) if c not in already_sampled)
+    before_count = len(result.chance_data)
+
+    branch = ensure_flop_turn_multiway_branch(
+        result, terminal, unsampled_card, board=board, position_ranges=position_ranges,
+        positions=("OOP", "MID", "IP"), effective_stack_bb=15.0, raise_sizes=(), max_raises=1,
+        equity_samples=50,
+    )
+
+    assert len(result.chance_data) == before_count + 1
+    assert result.chance_data[(id(terminal), unsampled_card)] is branch
+    if isinstance(branch.root, DecisionNode):
+        # A freshly-built, MCCFR-untouched node — every hand correctly
+        # falls back to the untrained uniform default (M28's own existing
+        # strategy_at/trained_hands behavior, no special-casing needed).
+        trained = result.trained_hands(branch.root)
+        assert all(is_trained is False for is_trained in trained.values())
+        strategy = result.strategy_at(branch.root)
+        for freqs in strategy.values():
+            assert pytest.approx(sum(freqs.values()), abs=1e-6) == 1.0
+
+
+def test_ensure_flop_turn_multiway_branch_second_call_hits_the_cache_it_just_built():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    position_ranges = {
+        "OOP": {HandCombo(Card("7", "s"), Card("7", "c")): 1.0},
+        "MID": {HandCombo(Card("A", "h"), Card("A", "d")): 1.0},
+        "IP": {HandCombo(Card("9", "d"), Card("8", "d")): 1.0},
+    }
+    result = solve_flop_turn_multiway(
+        board=board, position_ranges=position_ranges, pot=9.0, effective_stack_bb=15.0,
+        positions=("OOP", "MID", "IP"), raise_sizes=(), max_raises=1,
+        iterations=20, equity_samples=50, seed=1,
+    )
+    terminal = _find_a_showdown_terminal(result.root)
+    already_sampled = {card for (tid, card) in result.chance_data if tid == id(terminal)}
+    unsampled_card = next(c for c in remaining_deck(board) if c not in already_sampled)
+
+    kwargs = dict(
+        board=board, position_ranges=position_ranges, positions=("OOP", "MID", "IP"),
+        effective_stack_bb=15.0, raise_sizes=(), max_raises=1, equity_samples=50,
+    )
+    first = ensure_flop_turn_multiway_branch(result, terminal, unsampled_card, **kwargs)
+    before_count = len(result.chance_data)
+    second = ensure_flop_turn_multiway_branch(result, terminal, unsampled_card, **kwargs)
+    assert second is first
+    assert len(result.chance_data) == before_count  # no duplicate build
+
+
+def test_ensure_flop_turn_multiway_branch_raises_for_an_illegal_card():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    position_ranges = {
+        "OOP": {HandCombo(Card("7", "s"), Card("7", "c")): 1.0},
+        "MID": {HandCombo(Card("A", "h"), Card("A", "d")): 1.0},
+        "IP": {HandCombo(Card("9", "d"), Card("8", "d")): 1.0},
+    }
+    result = solve_flop_turn_multiway(
+        board=board, position_ranges=position_ranges, pot=9.0, effective_stack_bb=15.0,
+        positions=("OOP", "MID", "IP"), raise_sizes=(), max_raises=1,
+        iterations=20, equity_samples=50, seed=1,
+    )
+    terminal = _find_a_showdown_terminal(result.root)
+    with pytest.raises(ValueError):
+        ensure_flop_turn_multiway_branch(
+            result, terminal, Card("7", "h"),  # already on the board
+            board=board, position_ranges=position_ranges, positions=("OOP", "MID", "IP"),
+            effective_stack_bb=15.0, raise_sizes=(), max_raises=1, equity_samples=50,
         )
 
 
