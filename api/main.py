@@ -20,10 +20,11 @@ subset, not the full 169 classes — a real 169-hand 3-max MCCFR solve was
 measured during M8 to take well over 10 minutes even at a modest
 iteration count (the lazy per-matchup equity cache has to pay for a
 great many distinct opponent-hand combinations at that scale), which
-isn't viable for an interactive endpoint. The curated subset
-(cfg.DEMO_MULTIWAY_HANDS — the same one test_solver.py's multiway tests use,
-so convergence behavior is already validated there) keeps this fast
-enough to serve live. This is a real, documented scope limit, not a
+isn't viable for an interactive endpoint. M67 accepted that cost rather
+than the coverage gap it bought: cfg.MULTIWAY_PREFLOP_HANDS is now the
+full 169-class pool (~170s at 6-max, cached per spot and pre-warmed at
+stack 100), because the previous 8-class subset meant no advice at all
+for ~95% of starting hands. This is a real, documented scope limit, not a
 hidden shortcut: it demonstrates the N-player-general engine, not a
 production-grade multiway range chart.
 
@@ -72,7 +73,7 @@ GET /solve_flop is M11's deliverable: a real heads-up (OOP/IP) flop
 betting round, board + pot + stack in, hero's per-combo strategy out
 (poker_solver/solver.py's solve_flop). Like /equity but unlike /solve's
 multiway demo, this can't just reuse a fixed hand *pool* the way
-cfg.DEMO_MULTIWAY_HANDS does — a flop combo range has to exclude whatever
+cfg.MULTIWAY_PREFLOP_HANDS does — a flop combo range has to exclude whatever
 the board itself blocks, which varies per request. So the curated input
 here (cfg.DEMO_FLOP_HERO_CLASSES/cfg.DEMO_FLOP_VILLAIN_CLASSES) is one level up:
 small hand-class sets, expanded into the actual board-legal combo range
@@ -381,9 +382,11 @@ behavior) and `flop_iterations` (this endpoint's own real cost driver).
 
 A real, load-bearing consequence of reusing _get_or_solve_preflop_raw
 unchanged: whenever `players != 2`, the preflop leg is already
-restricted to cfg.MULTIWAY_TABLE_CONFIGS' own small cfg.DEMO_MULTIWAY_HANDS
-pool (8 real classes), not the full 169-class pool /solve_flop_from_
-path solves over at players=2 — so this endpoint's own class cap
+restricted to whatever cfg.MULTIWAY_PREFLOP_HANDS holds. That USED to be
+a small 8-class pool, far narrower than the 169 classes /solve_flop_from_
+path solves over at players=2; M67 made the two identical, so this
+endpoint's own class cap now genuinely binds — see this endpoint's own
+cap constant for the re-measurement that followed — and its own class cap
 (cfg.MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION) only ever ranks among
 those same 8 classes, not 169. Measured for real anyway, since solve_
 flop_multiway's own cost curve is far steeper than solve_flop's at any
@@ -626,6 +629,7 @@ from .caches import (
     _flop_turn_cache,
     _flop_turn_multiway_cache,
     _multiway_cache,
+    _multiway_equity_caches,
     _path_query_libraries,
     _preflop_raw_cache,
     _river_path_cache,

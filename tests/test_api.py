@@ -19,6 +19,25 @@ from poker_solver.starting_hands import StartingHand
 # several parametrized players=9 tests, was measured during M9 to make
 # the test suite itself slow.
 FAST_MULTIWAY_ITERATIONS = 30
+# M67 made the real multiway preflop pool all 169 classes, which costs
+# ~170s (6-max) / ~215s (9-max) per spot at production settings. The
+# autouse fixture clears caches between tests, so every multiway test
+# would pay that afresh — untestable at any iteration count. These tests
+# only need the HTTP plumbing to work, so they run against the small
+# curated pool that used to BE the production pool (M9-M66). Its
+# premium-heaviness is precisely why it was replaced for real use, and
+# equally why it's harmless here: no test in this file asserts a
+# strategy VALUE, only shapes, keys and status codes.
+FAST_MULTIWAY_HANDS = [
+    StartingHand("A", "A"),
+    StartingHand("K", "K"),
+    StartingHand("A", "K", suited=True),
+    StartingHand("Q", "Q"),
+    StartingHand("A", "K", suited=False),
+    StartingHand("T", "9", suited=False),
+    StartingHand("7", "2", suited=False),
+    StartingHand("3", "2", suited=False),
+]
 # /solve_flop_cached's own fast-test iteration count — its own named
 # constant even though the value happens to coincide with others below,
 # matching this file's existing per-endpoint naming precedent.
@@ -54,6 +73,7 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
         for players, table in api_config.MULTIWAY_TABLE_CONFIGS.items()
     }
     monkeypatch.setattr(api_config, "MULTIWAY_TABLE_CONFIGS", fast_table_configs)
+    monkeypatch.setattr(api_config, "MULTIWAY_PREFLOP_HANDS", FAST_MULTIWAY_HANDS)
     # DEMO_CHAINED_FLOP_HERO_/VILLAIN_CLASSES' real 12-combo pool costs
     # ~18-26s (solve_flop_turn) / ~63-105s (solve_flop_to_river) per
     # solve — real numbers from M14's own PR, far too slow to pay
@@ -237,7 +257,7 @@ def test_multiway_solve_returns_200_with_well_formed_response(client, players, e
     assert body["stack_bb"] == 100.0
     assert body["position"] == expected_positions[0]
     assert body["positions"] == expected_positions
-    assert len(body["opening_range"]) == len(api_config.DEMO_MULTIWAY_HANDS)
+    assert len(body["opening_range"]) == len(FAST_MULTIWAY_HANDS)
 
 
 @pytest.mark.parametrize("players", [3, 6, 9])
@@ -1407,14 +1427,51 @@ def test_advise_preflop_hero_is_keyed_by_hand_class_not_combo(client):
     # The real bug a smoke test caught during M51: preflop strategies are
     # keyed by CLASS ("AKs"), every postflop street by concrete combo
     # ("AsKs"), so a route that assumed one shape silently returned no
-    # hero advice at all. in_range is always True preflop — the solve
-    # covers all 169 classes, so there's no cap to fall outside of.
+    # hero advice at all. At heads-up the solve covers all 169 classes,
+    # so hero is always in range here.
     response = client.post("/advise", json=_advise_body(preflop_action_path=[], hero_cards="AsKs"))
     assert response.status_code == 200
     hero = response.json()["hero"]
     assert hero["cards"] == "AsKs"
     assert hero["in_range"] is True
     assert hero["trained"] is True
+    assert sum(hero["strategy"].values()) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_advise_preflop_in_range_is_false_for_a_hand_outside_the_solved_pool(client):
+    """M67: in_range used to be hardcoded True preflop, on the reasoning
+    that "a preflop solve covers every class". True heads-up, false at
+    multiway — which this fixture makes concrete, since it shrinks the
+    multiway pool to 8 classes exactly as the pre-M67 production config
+    did. A hand outside the pool got `in_range: true` next to a null
+    strategy: confidently wrong, the failure mode this project's honesty
+    signals exist to prevent.
+
+    Production no longer has a pool this narrow (MULTIWAY_PREFLOP_HANDS
+    is all 169 classes), but the signal must stay derived rather than
+    assumed — any future pool restriction has to report itself honestly.
+    """
+    body = _advise_body(preflop_action_path=["fold"], hero_cards="Ts7s")
+    body["players"] = 6
+    response = client.post("/advise", json=body)
+    assert response.status_code == 200
+    hero = response.json()["hero"]
+    assert hero["cards"] == "Ts7s"
+    # T7s is not in FAST_MULTIWAY_HANDS, so there is genuinely no advice...
+    assert hero["strategy"] is None
+    # ...and the response must say so rather than claim otherwise.
+    assert hero["in_range"] is False
+
+
+def test_advise_preflop_in_range_is_true_for_a_hand_inside_the_solved_pool(client):
+    """The other half: the honest signal must not simply always say False
+    at multiway — a hand that IS in the pool still gets real advice."""
+    body = _advise_body(preflop_action_path=["fold"], hero_cards="AsKs")
+    body["players"] = 6
+    response = client.post("/advise", json=body)
+    assert response.status_code == 200
+    hero = response.json()["hero"]
+    assert hero["in_range"] is True
     assert sum(hero["strategy"].values()) == pytest.approx(1.0, abs=1e-6)
 
 

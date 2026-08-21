@@ -277,7 +277,7 @@ costs only 11s — so there is real *cost* headroom.
 > worse. See recommendation #5 below, now resolved as "do not raise".
 >
 > **FOLLOW-UP (M66).** The *reason* was found, and it is not the solver:
-> `DEMO_MULTIWAY_HANDS` is 48.6% premium by combo weight, so at 6-max a
+> the multiway preflop pool was 48.6% premium by combo weight, so at 6-max a
 > player faces a premium hand ~97% of the time and folding AKs really is
 > near-correct. Over a realistically-weighted pool the same solver is
 > flat at 100x the budget. Raising these budgets needs a better pool
@@ -294,6 +294,25 @@ classes**, so derived ranges are far narrower than the heads-up path's
 answering an easier question, not because multiway solving is cheaper.
 **This is a fidelity gap wearing a speed win's clothing** — worth
 remembering before treating multiway advice as equally trustworthy.
+
+> **RESOLVED (M67), for the preflop leg.** The multiway preflop pool is
+> now all 169 classes, identical to heads-up, so the derivation
+> asymmetry this section describes is gone. Scoping it also turned up
+> the gap's sharper edge, which this audit missed: the 8-class pool
+> meant multiway preflop advice **did not exist for ~95% of starting
+> hands** (a 6-max request holding T7s got `strategy: null` — with
+> `in_range: true` beside it, since that flag was hardcoded). Both are
+> fixed. The cost is real and was accepted knowingly: ~170s at 6-max /
+> ~215s at 9-max per spot at the settings first tried; the shipped
+> configuration is `samples=50` at 3,000 iterations (~325s at 6-max),
+> because 300 iterations over 169 classes produced flatly wrong fold
+> rates. A caveat the audit could not have known and that survives:
+> multiway preflop is trustworthy for fold-vs-play but NOT for sizing —
+> the split among non-fold actions is still unconverged, and `trained`
+> does not catch it. Multiway POSTFLOP is
+> still thinner than heads-up (its path queries cap derived ranges at 6
+> classes per position — measured 11.5s flop / 1.5s turn), so the
+> section's closing warning still applies there.
 
 ### 6.3 Cache hits are uniformly free; cold costs are the whole story
 
@@ -374,7 +393,9 @@ its own merits — it is behaviour-neutral where answers are
 well-determined and cost-neutral, and it makes `trained_mask()` honest —
 but it is explicitly *not* the fix for this.
 
-**The actual cause is `DEMO_MULTIWAY_HANDS`, not the solver.** That pool
+**The actual cause is the multiway preflop hand pool, not the solver**
+(then `DEMO_MULTIWAY_HANDS`; replaced in M67 by
+`MULTIWAY_PREFLOP_HANDS`, all 169 classes). That pool
 is 48.6% premium by combo weight, so at 6-max the traverser faces a
 premium ~97% of the time and folding AKs under the gun really is close
 to correct. Diluting to 10.2% premium makes the fold rate 2.5% -> 1.2%

@@ -348,10 +348,27 @@ def _simulate_equity(dealt: list, samples: int, rng: random.Random) -> list:
     values[:, :, :2] = hole_values[None, :, :]
     suits[:, :, :2] = hole_suits[None, :, :]
 
+    # M67: sample INDICES, not Card objects, and look the values up out of
+    # two arrays built once per call. Previously this rebuilt two 5-element
+    # Python lists per sample — a `.value` property call and a dict lookup
+    # per card — which profiled as the single hottest region of a 6-max
+    # 169-class solve (39M `Card.value` calls, 45.9M `str.upper` calls).
+    #
+    # Bit-identical, not merely equivalent, and that matters: this project
+    # relies on "same seed -> same result" across process restarts (see
+    # _stable_seed). `random.sample` picks positions in the population and
+    # returns population[j], so sampling from `range(len(deck))` consumes
+    # the RNG in exactly the same sequence and yields exactly the j's the
+    # old call would have mapped through `deck`. Verified by comparing
+    # real equity vectors before and after, not just reasoned about.
+    deck_values = np.array([card.value for card in deck], dtype=np.int64)
+    deck_suits = np.array([_SUIT_INDEX[card.suit] for card in deck], dtype=np.int64)
+    deck_positions = range(len(deck))
+
     for sample_idx in range(samples):
-        board = rng.sample(deck, 5)
-        values[sample_idx, :, 2:] = [card.value for card in board]
-        suits[sample_idx, :, 2:] = [_SUIT_INDEX[card.suit] for card in board]
+        board = rng.sample(deck_positions, 5)
+        values[sample_idx, :, 2:] = deck_values[board]
+        suits[sample_idx, :, 2:] = deck_suits[board]
 
     scores = best_hand_rank_batch(
         values.reshape(samples * num_hands, 7), suits.reshape(samples * num_hands, 7)

@@ -26,7 +26,7 @@ from poker_solver.solver import (
     DEFAULT_FLOP_TO_RIVER_ITERATIONS,
     DEFAULT_FLOP_TURN_MULTIWAY_ITERATIONS,
 )
-from poker_solver.starting_hands import StartingHand
+from poker_solver.starting_hands import StartingHand, all_starting_hands
 
 # The React app's production build (see frontend/, `npm run build`). Not
 # committed to git — build it locally or in CI before serving for real.
@@ -35,22 +35,55 @@ FRONTEND_DIST_DIR = FilePath(__file__).resolve().parent.parent / "frontend" / "d
 PREWARM_STACK_DEPTHS = (20, 40, 50, 75, 100, 150, 200)
 MAX_ITERATIONS = 20_000
 
-# Same 8-hand pool as tests/test_solver.py's multiway fixtures — see that
-# file's comment for why it's deliberately NOT pair-heavy (an earlier
-# version was, and it made "premium hands rarely fold" a false
-# expectation even for correctly-solved hands). Kept identical here so
-# this endpoint's behavior is covered by those tests' convergence
-# checks, not just independently hoped to work.
-DEMO_MULTIWAY_HANDS = [
-    StartingHand("A", "A"),
-    StartingHand("K", "K"),
-    StartingHand("A", "K", suited=True),
-    StartingHand("Q", "Q"),
-    StartingHand("A", "K", suited=False),
-    StartingHand("T", "9", suited=False),
-    StartingHand("7", "2", suited=False),
-    StartingHand("3", "2", suited=False),
-]
+# The multiway preflop pool: the full 169-class canonical set, i.e. the
+# real game — the same pool heads-up has always used.
+#
+# This REPLACED an 8-class curated pool in M67, for two independently
+# sufficient reasons.
+#
+# 1. Coverage. The old pool meant multiway preflop advice existed for 8
+#    of 169 starting hands. A 6-max request holding T7s got HTTP 200
+#    with a null strategy — no advice at all for ~95% of hands, on the
+#    product's own central question ("what do I do with MY hand?").
+#
+# 2. Correctness. That pool was 48.6% premium by combo weight, so at
+#    6-max a player faced a premium ~97% of the time. M66 traced the
+#    long-standing "6-max divergence" to exactly this: the solver was
+#    converging correctly to a distorted game. The full pool is 2.6%
+#    premium — real density — and the answers are sane (AKs's UTG open
+#    folds 2.6% at 6-max, against 25.2% -> 94.5% on the old pool).
+#
+# The cost is real and is the reason this wasn't done sooner. Measured
+# at 300 iterations, samples=200, all 169 classes: **3-max 62s, 6-max
+# ~170s, 9-max ~215s** per (stack, players) spot, against ~5.6s for the
+# old 8-class pool. It is paid once per spot (cached), and _prewarm_
+# common_depths already warms stack_bb=100 for every table size in a
+# background daemon thread, so a server that has finished warming serves
+# those instantly. A non-prewarmed stack depth pays it on first request.
+#
+# Coverage is real, not nominal — checked rather than assumed, since a
+# larger pool could plausibly have meant each class getting too few
+# updates: **all 169 classes come back trained at 300 iterations.** MCCFR
+# is vectorized over candidate hands (only OPPONENT hands are sampled),
+# so every class receives every iteration's update.
+MULTIWAY_PREFLOP_HANDS = all_starting_hands()
+
+# Monte Carlo runouts per equity evaluation for the multiway preflop leg.
+# Deliberately BELOW poker_solver's own default (200), and the reason is
+# a real measured trade, not a cost cut for its own sake.
+#
+# With 169 classes the binding constraint is ITERATIONS, not sample
+# precision: at 300 iterations the strategy is badly unconverged whatever
+# the sample count (T7s folding 22.6% under the gun at 6-max, which is
+# simply wrong). samples=50 costs ~3.6x less per evaluation, which buys
+# ~6x the iterations for the same wall clock — and iterations are what
+# this needs. Measured at 6-max, 169 classes:
+#     samples=200, 300 iters  (~170s): T7s fold 22.6%, 72o fold 94.4%
+#     samples=50,  3,000 iters (325s): T7s fold 69.8%, 72o fold 98.3%
+#     samples=50, 10,000 iters (712s): T7s fold 86.9%, 72o fold 98.7%
+# The cheaper-but-more-iterated setting is not a worse answer; it is a
+# much better one.
+MULTIWAY_PREFLOP_SAMPLES = 50
 
 # One entry per supported multiway table size. `iterations` shrinks as
 # player count grows — see the module docstring for why (cache-hit rate
@@ -93,7 +126,8 @@ DEMO_MULTIWAY_HANDS = [
 # still sane. Raising it makes the output actively worse.
 #
 # M66 FOUND THE CAUSE, and it changes what "fixing" this means. It is not
-# a solver defect — it is DEMO_MULTIWAY_HANDS itself. That pool is 48.6%
+# a solver defect — it is the multiway preflop hand pool itself (then an
+# 8-class curated list; see MULTIWAY_PREFLOP_HANDS). That pool was 48.6%
 # premium by combo weight (AA/KK/QQ/AKs/AKo out of 8 classes). At 6-max
 # the traverser faces 5 opponents drawn from it, so ~97% of the time at
 # least one holds a premium — and under those conditions folding AKs
@@ -107,22 +141,52 @@ DEMO_MULTIWAY_HANDS = [
 # contributes as well as density; the real fix is a pool that is both
 # larger and realistically weighted.
 #
-# So these budgets stay at 300 — but the reason is now "the pool makes
-# large counts meaningless", not "MCCFR is broken at 6-max". Replacing
-# DEMO_MULTIWAY_HANDS is what unlocks raising them, and that is a real
-# product change (it alters every multiway endpoint's output and costs
-# 3-9x more per solve at these sizes), scoped as its own milestone.
+# M67 REPLACED THAT POOL (see MULTIWAY_PREFLOP_HANDS above): multiway
+# preflop now solves all 169 classes, at a real 2.6% premium density. So
+# the correctness reason for keeping these budgets SMALL is gone — over a
+# realistic pool, more iterations help rather than hurt. The numbers below
+# are raised accordingly, and are now bounded purely by cost.
+#
+# 300 iterations is NOT enough over 169 classes, which is a different
+# failure from the pre-M67 one and worth stating plainly: fold rates come
+# out simply wrong (T7s folding 22.6% under the gun at 6-max). Measured
+# at 6-max with MULTIWAY_PREFLOP_SAMPLES=50:
+#     300 iters:     T7s fold 22.6%   (wrong)
+#   3,000 iters (325s): T7s fold 69.8%, 72o fold 98.3%, AA fold 0.1%
+#  10,000 iters (712s): T7s fold 86.9%, 72o fold 98.7%, AA fold 0.0%
+#
+# Set to 3,000 as the point where the FOLD-vs-PLAY decision — the thing a
+# player is actually asking — becomes plausible, at a cost that is
+# tolerable behind the cache and the startup pre-warm.
+#
+# **An honest, deliberate limitation, not an oversight:** the split among
+# the NON-fold actions (limp / raise 2.5 / jam) is still not converged at
+# this budget. AA jams ~22% here where a converged solve puts it near 0.
+# So treat multiway preflop output as trustworthy for "is this hand
+# playable from this seat" and NOT for "which sizing". Heads-up has no
+# such caveat — it solves exactly (CFR+) against a precomputed 169x169
+# equity table. Closing this properly is an ARCHITECTURAL fix, not a
+# budget one: multiway equity is Monte-Carlo-simulated per opponent
+# tuple, which is why iterations cost what they do. See docs/milestones.md
+# M67 for the profiling that establishes this and the proposed fix.
+#
+# 3-max drops from 100,000 to the same 3,000 — that 100,000 was tuned
+# against the old 8-class pool, where an iteration was ~20x cheaper.
+# 9-max is set lower than 6-max because its per-iteration cost is higher:
+# EXTRAPOLATED from a measured 79.4s at 300 iterations (samples=50), not
+# measured at 1,000 directly — flagged rather than presented as measured,
+# and worth confirming before relying on it.
 # Pinned by tests/test_solver.py's paired
 # test_six_max_demo_pool_degrades_with_more_iterations and
 # test_six_max_converges_with_a_realistic_pool.
 MULTIWAY_TABLE_CONFIGS = {
-    3: {"positions": ("BTN", "SB", "BB"), "iterations": 100_000},
-    6: {"positions": ("UTG", "MP", "CO", "BTN", "SB", "BB"), "iterations": 300},
-    9: {"positions": ("UTG", "UTG1", "MP1", "MP2", "MP3", "CO", "BTN", "SB", "BB"), "iterations": 300},
+    3: {"positions": ("BTN", "SB", "BB"), "iterations": 3_000},
+    6: {"positions": ("UTG", "MP", "CO", "BTN", "SB", "BB"), "iterations": 3_000},
+    9: {"positions": ("UTG", "UTG1", "MP1", "MP2", "MP3", "CO", "BTN", "SB", "BB"), "iterations": 1_000},
 }
 
 # /solve_flop's curated demo ranges — small hand-*class* sets (not
-# combo lists, unlike DEMO_MULTIWAY_HANDS), expanded into actual
+# combo lists, unlike MULTIWAY_PREFLOP_HANDS), expanded into actual
 # board-legal combos per request via combos.range_from_class_frequencies
 # (see the module docstring above for why: a fixed combo list can't
 # account for whatever a given board blocks). Hero's a tight
@@ -412,8 +476,10 @@ MAX_RIVER_PATH_QUERY_ITERATIONS = DEFAULT_FLOP_TO_RIVER_ITERATIONS
 # is the dominant cost driver, compounded by MCCFR's opponent-sampling
 # cache-miss rate). Unlike /solve_flop_from_path's preflop leg (which
 # solves over the FULL 169-class pool at players=2), this endpoint's
-# preflop leg is already restricted to MULTIWAY_TABLE_CONFIGS' own
-# small DEMO_MULTIWAY_HANDS pool (8 real classes) whenever players != 2
+# preflop leg USED to be restricted to a small 8-class pool whenever
+# players != 2 — M67 made it the same full 169-class pool
+# (MULTIWAY_PREFLOP_HANDS), so that asymmetry is gone and this cap now
+# genuinely binds (see the M67 re-measurement below)
 # (see _get_or_solve_preflop_raw's own docstring) — so a much smaller
 # per-position cap than MAX_PATH_QUERY_CLASSES_PER_SIDE's 6 is both
 # necessary (this endpoint's own steep cost curve) and sufficient
@@ -427,14 +493,22 @@ MAX_RIVER_PATH_QUERY_ITERATIONS = DEFAULT_FLOP_TO_RIVER_ITERATIONS
 # single top class per position would.
 # M54 re-tune: cap=2 -> 7.42s, cap=4 -> 16.80s, cap=6 -> 17.03s
 # (M42 measured cap=2 at ~22.46s pre-M48, so ~3x faster). Note cap=6
-# costs essentially the SAME as cap=4 on this path — a real structural
-# ceiling, not noise: at players != 2 the preflop leg solves over
-# DEMO_MULTIWAY_HANDS' own 8 classes (see _get_or_solve_preflop_raw),
-# and this path's derived range has fewer than 6 with meaningful weight,
-# so the extra cap headroom simply doesn't bind here. Raised to 6 rather
-# than 4 precisely because it's free on this path while giving real
-# extra fidelity on a path whose derived range IS wider — with the
-# honest caveat that such a path would cost more than 17.03s.
+# cost essentially the SAME as cap=4 there, because the preflop leg
+# solved over only 8 classes, so a derived range had fewer than 6
+# classes with meaningful weight and the cap never bound. M54 raised it
+# to 6 anyway — free on that path — and left an explicit caveat that a
+# path whose derived range IS wider "would cost more than 17.03s",
+# unmeasured.
+#
+# M67 MADE IT BIND and measured it, since the preflop leg is now the
+# full 169-class pool. On a real 6-max open/call/call path reaching a
+# genuine 3-live-position flop, preflop leg pre-warmed and excluded:
+# **cap=2 -> 3.1s, cap=4 -> 6.6s, cap=6 -> 11.5s.** So the caveat was
+# pessimistic — a genuinely binding cap=6 costs LESS than M54's own
+# non-binding 17.03s reading. (Not a like-for-like refutation: M54's
+# path was 3-max-origin, this one 6-max-origin. The durable point is
+# that cap=6 is comfortably inside the "tolerable for a live request"
+# bracket even now that it does real work.) Left at 6.
 MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION = 6
 
 # Iteration-count scaling at this cap's own 35-combo pool is NOT close
@@ -475,6 +549,12 @@ MAX_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = 500
 # for — so roughly 8x). Same 8-class structural ceiling as the flop
 # multiway cap above, and raised to 6 for the same reason: measured free
 # on this path, real extra fidelity on a wider one.
+#
+# M67 re-measured this one too, for the same reason (the preflop leg is
+# now the full 169-class pool, so the cap genuinely binds). Same 6-max
+# path as the flop cap above, preflop leg pre-warmed and excluded:
+# **cap=2 -> 0.6s, cap=4 -> 1.0s, cap=6 -> 1.5s.** Comfortably the
+# cheapest capped path in the codebase; left at 6.
 MAX_MULTIWAY_TURN_PATH_QUERY_CLASSES_PER_POSITION = 6
 DEFAULT_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS = DEFAULT_FLOP_TURN_MULTIWAY_ITERATIONS
 MAX_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS = 200

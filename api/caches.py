@@ -141,6 +141,29 @@ _flop_multiway_path_cache = _SolveCache("flop_multiway_path")
 # protection the cache dict's own reads/writes already get.
 _turn_multiway_path_cache = _SolveCache("turn_multiway_path")
 
+# M67: MultiwayEquityCache instances, shared across every multiway solve
+# that uses the same hand pool — keyed by the pool, NOT by (stack,
+# players) the way _multiway_cache is.
+#
+# The point is that preflop equity is a property of the HANDS alone. It
+# does not depend on stack depth (no board, no betting — just "how often
+# does this hand beat these hands"), and it does not depend on table size
+# beyond what is already encoded in the opponent tuple's own length,
+# which is part of MultiwayEquityCache's own key. So a fresh cache per
+# spot — which is what _get_or_solve_multiway used to build — threw away
+# every simulated equity the moment a different stack depth was
+# requested, then recomputed it identically. With PREWARM_STACK_DEPTHS
+# holding 7 depths, that is the same work done 7 times.
+#
+# Keyed by the pool rather than held as a single module-level instance
+# for a specific reason: tests/test_api.py's autouse fixture
+# monkeypatches MULTIWAY_PREFLOP_HANDS to a small pool AFTER import, and
+# an instance built at import time would hold the full 169-class pool
+# while the solve ran over 8 — a length mismatch between the equity
+# vector and the hand list, i.e. a silent correctness bug rather than a
+# slow test. Keying by the pool makes the two impossible to desync.
+_multiway_equity_caches = _SolveCache("multiway_equity")
+
 _preflop_raw_cache = _SolveCache("preflop_raw")
 # Deliberately NOT one shared dict like _flop_query_library above — see
 # the module docstring's Finding 2. This endpoint's range/pot are

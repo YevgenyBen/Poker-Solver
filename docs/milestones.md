@@ -4524,3 +4524,114 @@ entry's own corrections before trusting its conclusions.
     needs its own cost-and-budget measurement pass. That is a product
     change with a clear brief, which is a much better place to be than an
     open-ended solver investigation.
+
+- **M67 — Multiway preflop solves the real game (all 169 classes), and
+  the honest limits of doing so.** M66 named the demo hand pool as the
+  next thing to fix. Scoping it turned up something worse than the
+  convergence issue and that M66 had not looked for: **multiway preflop
+  advice did not exist for ~95% of starting hands.** A 6-max request
+  holding T7s or 98s returned HTTP 200 with `strategy: null` — and
+  `in_range: true` beside it. This milestone closes that, and in doing so
+  measured several things that contradict what was believed going in.
+  - **The pool is now `MULTIWAY_PREFLOP_HANDS = all_starting_hands()`**,
+    the same 169-class set heads-up has always used; premium density
+    drops from 48.6% to a real 2.6%. The old 8-class list moved to
+    `tests/test_api.py` as `FAST_MULTIWAY_HANDS`, monkeypatched by the
+    autouse fixture — those tests assert shapes and status codes, never
+    strategy values, so a curated pool is harmless there and keeps
+    `tests/test_api.py` at ~92s.
+  - **`in_range` was lying, and now isn't.** `_advise_preflop` hardcoded
+    `hero_in_range: True`, reasoning that "a preflop solve covers every
+    class, so there's no cap for hero to fall outside of." True at
+    heads-up, false at multiway, and nothing had ever exercised the
+    difference. Now derived (`hero_key in strategy`), so it stays correct
+    under any future pool restriction instead of by coincidence. Pinned
+    by a pair of tests — one asserting False for an out-of-pool hand, one
+    asserting the signal doesn't simply always say False.
+  - **300 iterations is not enough over 169 classes — a NEW failure,
+    opposite to the old one.** Pre-M67 the danger was too MANY
+    iterations; here too few produce flatly wrong fold rates (T7s folding
+    22.6% under the gun at 6-max). Caught only by checking the action mix
+    rather than the fold rate alone: at 300 iterations AKs's fold rate
+    looked fine at 2.6% while it was jamming 100bb **62.9%** of the time,
+    against 3.1% for the trusted heads-up solve. **Fold rate alone is not
+    a sufficient convergence check** — it hides everything happening
+    among the non-fold actions.
+  - **The fix was budget plus sample count, measured as a trade.**
+    `MULTIWAY_PREFLOP_SAMPLES = 50` (below the engine's own 200) because
+    with 169 classes the binding constraint is iterations, not sample
+    precision — cheaper evaluations buy ~6x the iterations for the same
+    wall clock, and that is the axis that matters. Measured at 6-max:
+    | setting | T7s fold | 72o fold | AA jam | cost |
+    |---|---|---|---|---|
+    | samples=200, 300 it | 22.6% | 94.4% | 65.7% | ~170s |
+    | samples=50, 3,000 it | 69.8% | 98.3% | 22.3% | 325s |
+    | samples=50, 10,000 it | 86.9% | 98.7% | 19.4% | 712s |
+    Budgets set to 3,000 (3-max and 6-max) and 1,000 (9-max). 3-max drops
+    from 100,000, which had been tuned against a pool where an iteration
+    was ~20x cheaper. **9-max's 1,000 is EXTRAPOLATED** from a measured
+    79.4s at 300 iterations, not measured directly — flagged rather than
+    presented as measured.
+  - **A deliberate, documented limitation.** The split among the NON-fold
+    actions is still not converged even at 10,000 iterations (AA jams
+    ~19% where a converged solve puts it near 0). Multiway preflop output
+    is therefore trustworthy for "is this hand playable from this seat"
+    and NOT for "which sizing". Shipped with that stated in
+    `api/config.py` and CLAUDE.md rather than left for a user to
+    discover, because the existing honesty signals do NOT catch it —
+    `trained` is True for all 169 classes, since it only reports that a
+    hand received updates, not that those updates converged.
+  - **Two speed attempts, both honestly negative, both kept.** Profiling
+    a 6-max 169-class solve pointed hard at `Card.value` (39M calls,
+    recomputing a string lookup on a frozen dataclass whose rank never
+    changes) and `hand_utils.rank_value` (42.5M calls doing `.upper()` +
+    `in` + `.index()`). Both were fixed — `Card.value` precomputed once in
+    `__post_init__`, `rank_value` switched to a dict — and
+    `_simulate_equity`'s inner loop was changed to sample deck INDICES and
+    gather from two numpy arrays instead of rebuilding 5-element Python
+    lists of `Card` objects per sample. **Wall clock: 171.5s against a
+    166-174s baseline. No measurable gain.** Exactly M47's trap repeated:
+    under cProfile every Python call is inflated, so the highest-*count*
+    functions look dominant while the real cost is numpy hand-evaluation
+    volume. Kept anyway — all three are strictly better code and the
+    `_simulate_equity` change was verified **bit-identical** (equity
+    vectors compared before/after; `random.sample` over `range(len(deck))`
+    consumes the RNG in exactly the same sequence, which matters because
+    `_stable_seed` exists to guarantee cross-process reproducibility).
+  - **One speed change that did help, and is a real root fix:**
+    `MultiwayEquityCache` instances are now shared across solves via
+    `_multiway_equity_caches`, keyed by the hand pool. Preflop equity is a
+    property of the HANDS alone — not stack depth, and not table size
+    beyond the opponent-tuple length the cache already keys by — so
+    building a fresh one per `(stack, players)` spot discarded every
+    simulated equity the moment a different stack was requested. Measured
+    at 6-max: 173.0s cold, then 128.0s / 111.6s for further stack depths
+    (~30%, less than hoped because each solve's RNG diverges and draws
+    partly different opponent tuples). Keyed by the pool rather than held
+    as a module-level instance specifically because the test fixture
+    monkeypatches the pool after import — a single instance would have
+    held 169 hands while the solve ran over 8, a silent length mismatch.
+  - **The architectural finding, which is the real answer.** Heads-up is
+    both fast and converged because it solves exactly (CFR+) against a
+    precomputed, disk-cached 169x169 equity table. Multiway has no such
+    table: `MultiwayEquityCache` Monte-Carlo-simulates equity per opponent
+    tuple, and with 5 opponents drawn from 169 classes almost every
+    iteration is a fresh tuple, so iteration cost never amortizes. That —
+    not the hand pool, not the regret update, not per-call Python overhead
+    — is why multiway preflop is slow, and no amount of budget tuning
+    fixes it. **The next milestone is a precomputed multiway equity
+    structure**, the direct analog of what already makes heads-up work.
+  - **Two caps that had never actually bound, now measured.** M54 set
+    `MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION` and its turn sibling to
+    6, noting both were free *only* because the preflop leg solved 8
+    classes, and left an explicit caveat that a wider path "would cost
+    more than 17.03s", unmeasured. They bind now. On a real 6-max
+    open/call/call path reaching a genuine 3-live-position flop, preflop
+    leg pre-warmed and excluded: **flop cap=2 -> 3.1s, cap=4 -> 6.6s,
+    cap=6 -> 11.5s; turn cap=2 -> 0.6s, cap=4 -> 1.0s, cap=6 -> 1.5s.**
+    The caveat was pessimistic — a genuinely binding cap=6 costs *less*
+    than M54's own non-binding reading. Not like-for-like (M54's path was
+    3-max-origin), and recorded that way. Both left at 6, now on measured
+    rather than incidental grounds.
+  - **Verification:** full backend suite green. No frontend files
+    touched — nothing there depended on the pool's size.
