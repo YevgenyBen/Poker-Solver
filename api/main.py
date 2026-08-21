@@ -1573,6 +1573,42 @@ def _cap_range_to_combos(class_frequencies: dict, max_combos: int, exclude: froz
     return dict(top_items)
 
 
+def _range_confidence(path_scenario, position_ranges: dict) -> dict:
+    """Per-position summary of `PathScenario.trained` (M29), restricted
+    to the classes that ACTUALLY survived capping (M52).
+
+    Deliberately computed over the surviving classes, not the full
+    derived range: a caller's advice is only ever built from what got
+    solved, so confidence over the 160-odd classes the cap discarded
+    would be noise that dilutes the number that matters.
+
+    Summarized per position rather than returned per hand — the shape
+    M29/M42/M44 each deferred deciding. A full per-hand map for every
+    live position is mostly noise for a caller asking "can I trust this
+    advice"; counts plus a boolean answer that directly, and hero's own
+    per-hand flag (see `hero_range_trained`) covers the one hand a
+    caller actually holds.
+
+    Why it matters, measured not assumed: M29 found a real 6-max path
+    whose derived range came back *exactly* uniform — confident-looking,
+    fabricated, and silently indistinguishable from a converged one.
+    """
+    confidence = {}
+    for position, combo_dict in position_ranges.items():
+        trained_map = path_scenario.trained.get(position, {})
+        classes = {_combo_to_class(combo) for combo in combo_dict}
+        # A class absent from `trained` never had solving applied to it
+        # along this path (e.g. a force-included hero class) — treated as
+        # untrained, the conservative reading, never silently as True.
+        trained_classes = sum(1 for cls in classes if trained_map.get(cls, False))
+        confidence[position] = {
+            "trained_classes": trained_classes,
+            "total_classes": len(classes),
+            "fully_trained": trained_classes == len(classes),
+        }
+    return confidence
+
+
 def _combo_to_class(combo) -> StartingHand:
     """The StartingHand class a concrete HandCombo belongs to (M51).
 
@@ -1612,6 +1648,12 @@ class _PathSituation:
     # its own derived weight; False when it had to be force-included.
     # None when no hero_combo was supplied at all.
     hero_in_range: bool | None = None
+    # M52: per-position summary of PathScenario.trained, restricted to
+    # the classes that actually survived capping — position -> {"trained
+    # _classes", "total_classes", "fully_trained"}. See _range_confidence.
+    range_confidence: dict | None = None
+    # M52: whether hero's OWN class was trained along the derivation.
+    hero_range_trained: bool | None = None
 
 
 def _derive_path_situation(
@@ -1765,6 +1807,17 @@ def _derive_path_situation(
             }
             capped_scenario = dataclasses.replace(capped_scenario, ranges=hero_ranges)
 
+    hero_range_trained = None
+    if hero_combo is not None:
+        hero_class = _combo_to_class(hero_combo)
+        # Trained only if EVERY live position's derivation had real
+        # solving for hero's class — the same all-positions reading
+        # hero_in_range uses, and conservative for a missing entry.
+        hero_range_trained = all(
+            path_scenario.trained.get(position, {}).get(hero_class, False)
+            for position in position_ranges
+        )
+
     return _PathSituation(
         preflop_result=preflop_result,
         path_scenario=path_scenario,
@@ -1773,6 +1826,8 @@ def _derive_path_situation(
         position_ranges=position_ranges,
         capped_scenario=capped_scenario,
         hero_in_range=hero_in_range,
+        range_confidence=_range_confidence(path_scenario, position_ranges),
+        hero_range_trained=hero_range_trained,
     )
 
 
@@ -1853,6 +1908,8 @@ def _query_flop_from_path(
         "positions": [oop_position, ip_position],
         "players": players,
         "hero_in_range": situation.hero_in_range,
+        "range_confidence": situation.range_confidence,
+        "hero_range_trained": situation.hero_range_trained,
     }
 
 
@@ -1929,6 +1986,8 @@ def _query_flop_multiway_from_path(
         "positions": formatted["positions"],
         "players": players,
         "hero_in_range": situation.hero_in_range,
+        "range_confidence": situation.range_confidence,
+        "hero_range_trained": situation.hero_range_trained,
     }
 
 
@@ -2018,6 +2077,8 @@ def _query_turn_from_path(
         "players": players,
         "elapsed_seconds": result.elapsed_seconds,
         "hero_in_range": situation.hero_in_range,
+        "range_confidence": situation.range_confidence,
+        "hero_range_trained": situation.hero_range_trained,
     }
 
     if id(flop_node) not in result.chance_data:
@@ -2165,6 +2226,8 @@ def _query_turn_multiway_from_path(
         "players": players,
         "elapsed_seconds": result.elapsed_seconds,
         "hero_in_range": situation.hero_in_range,
+        "range_confidence": situation.range_confidence,
+        "hero_range_trained": situation.hero_range_trained,
     }
 
     if not flop_node.is_showdown:
@@ -2329,6 +2392,8 @@ def _query_river_from_path(
         "river_iterations": river_iterations,
         "elapsed_seconds": result.elapsed_seconds,
         "hero_in_range": situation.hero_in_range,
+        "range_confidence": situation.range_confidence,
+        "hero_range_trained": situation.hero_range_trained,
     }
 
     if id(flop_node) not in result.chance_data:
@@ -2501,6 +2566,31 @@ def _infer_street(request) -> str:
     return "river"
 
 
+def _live_position_count(request, iterations: int) -> int:
+    """How many positions actually SURVIVE the preflop path (M52 fix).
+
+    Load-bearing, and a real bug before this existed: /advise used to
+    pick its 2-position-vs-multiway solver from `request.players` — the
+    ORIGIN table size — which is the wrong question. M29 built support
+    specifically for the most common real full-ring shape: everyone
+    folds and two players see the flop heads-up. That hand has
+    `players=6` but must use the EXACT 2-position solver, not MCCFR.
+    Choosing on table size routed it to the multiway cell, which then
+    correctly refused it — making /advise unusable for exactly the case
+    M29 existed to serve.
+
+    Counts from the resolved node's own `folded` set rather than calling
+    derive_ranges_from_path: the reach-multiplication that function does
+    is real work this question doesn't need, and it raises on a
+    fold-out-to-one path that the orchestrators themselves report far
+    more clearly. The preflop solve is already cached, so this is a tree
+    walk, not a second solve.
+    """
+    preflop_result = _get_or_solve_preflop_raw(request.stack_bb, iterations, players=request.players)
+    _actions, node = _resolve_action_path(preflop_result.root, request.preflop_action_path)
+    return sum(1 for p in preflop_result.config.positions if p not in node.folded)
+
+
 def _advise_preflop(request, iterations: int, hero_combo=None) -> dict:
     """The one /advise cell with no sibling endpoint behind it (M51):
     real preflop strategy at whatever node the action path reaches.
@@ -2549,7 +2639,7 @@ def _advise_preflop(request, iterations: int, hero_combo=None) -> dict:
     }
 
 
-def _advise(request, street: str, iterations: int, solve_iterations: int, hero_combo) -> dict:
+def _advise(request, street: str, iterations: int, solve_iterations: int, hero_combo, multiway: bool) -> dict:
     """Dispatches one AdviseRequest to whichever sibling orchestrator
     already serves its (street, table size) cell, then normalizes the
     result into AdviseResponse's own shape (M51).
@@ -2569,7 +2659,6 @@ def _advise(request, street: str, iterations: int, solve_iterations: int, hero_c
     board_cards = tuple(parse_cards(request.board))
     if len(board_cards) != 3:
         raise ValueError(f"board must have exactly 3 cards for a flop, got {len(board_cards)}")
-    multiway = request.players != 2
 
     if street == "flop" and not multiway:
         raw = _query_flop_from_path(
@@ -3031,7 +3120,11 @@ async def advise_endpoint(request: AdviseRequest):
         if not 0 < iterations <= MAX_ITERATIONS:
             raise ValueError(f"iterations must be between 1 and {MAX_ITERATIONS}, got {iterations}")
 
-        cell = (street, request.players != 2)
+        # Survivor count, NOT request.players — see _live_position_count
+        # for the real bug this prevents (a full-ring hand folding down
+        # to a heads-up flop must use the exact 2-position solver).
+        multiway = street != "preflop" and _live_position_count(request, iterations) >= 3
+        cell = (street, multiway)
         if cell in _ADVISE_UNSUPPORTED_CELLS:
             raise ValueError(_ADVISE_UNSUPPORTED_CELLS[cell])
 
@@ -3042,7 +3135,7 @@ async def advise_endpoint(request: AdviseRequest):
             if not 0 < solve_iterations <= max_iters:
                 raise ValueError(
                     f"solve_iterations must be between 1 and {max_iters} for a {street} "
-                    f"{'multiway' if request.players != 2 else 'heads-up'} query, got {solve_iterations}"
+                    f"{'multiway' if multiway else 'heads-up'} query, got {solve_iterations}"
                 )
 
         hero_combo = None
@@ -3052,7 +3145,9 @@ async def advise_endpoint(request: AdviseRequest):
                 raise ValueError(f"hero_cards must have exactly 2 cards, got {len(hero_cards)}")
             hero_combo = HandCombo(hero_cards[0], hero_cards[1])
 
-        raw = await run_in_threadpool(_advise, request, street, iterations, solve_iterations, hero_combo)
+        raw = await run_in_threadpool(
+            _advise, request, street, iterations, solve_iterations, hero_combo, multiway
+        )
 
         hero = None
         if hero_combo is not None:
@@ -3065,6 +3160,12 @@ async def advise_endpoint(request: AdviseRequest):
                 "in_range": bool(raw.get("hero_in_range", False)),
                 "strategy": raw["strategy"].get(hero_key),
                 "trained": None if raw.get("trained") is None else raw["trained"].get(hero_key),
+                # Distinct from `trained` above, and easy to conflate:
+                # `trained` is about the POSTFLOP solve node hero's
+                # advice was read from; `range_trained` is about the
+                # PREFLOP derivation that produced the range fed into
+                # that solve. Either can be untrustworthy independently.
+                "range_trained": raw.get("hero_range_trained"),
             }
 
         return {
@@ -3082,6 +3183,7 @@ async def advise_endpoint(request: AdviseRequest):
             "source": raw["source"],
             "solve_iterations": raw.get("solve_iterations"),
             "elapsed_seconds": raw["elapsed_seconds"],
+            "range_confidence": raw.get("range_confidence"),
         }
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

@@ -1464,6 +1464,72 @@ def test_advise_river_multiway_is_the_one_unfilled_cell_and_says_why(client):
     assert "2-position only" in response.json()["detail"]
 
 
+def test_advise_routes_a_multiway_origin_folded_to_two_survivors_to_the_exact_solver(client):
+    # M52's real dispatch bug: /advise used to pick its solver from
+    # request.players (the ORIGIN table size), so a 6-max hand folding
+    # down to a heads-up flop — the most common real full-ring shape,
+    # which M29 built support for specifically — got routed to the
+    # multiway cell and correctly refused, making /advise unusable for
+    # exactly that case. Survivor count is the right question.
+    response = client.post(
+        "/advise",
+        json=_advise_body(
+            ["raise", "raise", "fold", "fold", "fold", "fold", "call_or_check"],
+            players=6, board="2h6d9c",
+        ),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] in ("library_hit", "library_miss")  # the exact 2-position path
+    assert len(body["positions"]) == 2
+
+
+def test_advise_range_confidence_fires_on_a_real_untrained_derivation(client):
+    # The signal has to actually FIRE somewhere, or it proves nothing.
+    # This is M29's own measured case reproduced: a deep 6-max 3-bet
+    # line leaves the opener's derived range untrained — confident-
+    # looking, fabricated, and before M52 silently indistinguishable
+    # from a converged one in any API response.
+    response = client.post(
+        "/advise",
+        json=_advise_body(
+            ["raise", "raise", "fold", "fold", "fold", "fold", "call_or_check"],
+            players=6, board="2h6d9c", hero_cards="AsKs",
+        ),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    confidence = body["range_confidence"]
+    assert set(confidence) == set(body["positions"])
+    assert any(not c["fully_trained"] for c in confidence.values()), (
+        "expected at least one position's derived range to be untrained on this deep 6-max line"
+    )
+    for entry in confidence.values():
+        assert 0 <= entry["trained_classes"] <= entry["total_classes"]
+        assert entry["fully_trained"] == (entry["trained_classes"] == entry["total_classes"])
+    # hero.range_trained is about the PREFLOP derivation, distinct from
+    # hero.trained (the postflop solve node) — both are reported.
+    assert body["hero"]["range_trained"] is False
+
+
+def test_advise_range_confidence_is_present_and_clean_on_a_shallow_heads_up_line(client):
+    response = client.post("/advise", json=_advise_body(board="2h6d9c"))
+    assert response.status_code == 200
+    confidence = response.json()["range_confidence"]
+    assert set(confidence) == {"BTN", "BB"}
+    for entry in confidence.values():
+        assert entry["fully_trained"] is True
+
+
+def test_advise_preflop_has_no_range_confidence(client):
+    # Preflop derives no range at all — it reads the full solved
+    # 169-class strategy directly, so there is nothing to have been
+    # fabricated. An explicit null, not a fake all-trained summary.
+    response = client.post("/advise", json=_advise_body(preflop_action_path=[]))
+    assert response.status_code == 200
+    assert response.json()["range_confidence"] is None
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
