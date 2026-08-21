@@ -33,6 +33,7 @@ from poker_solver.solver import (
     solve_flop_abstracted,
     solve_flop_multiway,
     solve_flop_to_river,
+    solve_flop_to_river_multiway,
     solve_flop_turn,
     solve_flop_turn_multiway,
     solve_preflop,
@@ -927,6 +928,135 @@ def test_solve_flop_turn_multiway_rejects_positions_and_position_ranges_mismatch
     }
     with pytest.raises(ValueError):
         solve_flop_turn_multiway(
+            board=board, position_ranges=position_ranges, pot=9.0, effective_stack_bb=15.0,
+            positions=("OOP", "MID", "IP"), raise_sizes=(), max_raises=1,
+        )
+
+
+# ---------------------------------------------------------------------------
+# M39: solve_flop_to_river_multiway — a second chance-branch hop on top of
+# solve_flop_turn_multiway, chaining all the way to a real multiway river
+# showdown (chance.build_mccfr_chance_branch's chain_to_river, M39) — the
+# direct N-position generalization of solve_flop_to_river (M13).
+#
+# A real, measured surprise (see DEFAULT_FLOP_TO_RIVER_MULTIWAY_
+# ITERATIONS's own comment in solver.py): unlike the 2-position exact
+# solver, where the second hop is dramatically MORE expensive (M13
+# measured ~63-105s vs. solve_flop_turn's own ~18-26s), the MCCFR-native
+# version is actually CHEAPER at a matching pool/tree than solve_flop_
+# turn_multiway's own numbers — build_mccfr_chance_branch's lazy,
+# one-sampled-card-at-a-time design never pays the exact solver's own
+# ~44x44 eager-branch combinatorial cost. So this fixture uses the SAME
+# tiny scale solve_flop_turn_multiway's own fixture does, not a shrunk
+# one.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def tiny_flop_to_river_multiway_result():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    position_ranges = {
+        "OOP": {HandCombo(Card("7", "s"), Card("7", "c")): 1.0},
+        "MID": {HandCombo(Card("A", "h"), Card("A", "d")): 1.0},
+        "IP": {HandCombo(Card("9", "d"), Card("8", "d")): 1.0},
+    }
+    return solve_flop_to_river_multiway(
+        board=board,
+        position_ranges=position_ranges,
+        pot=9.0,
+        effective_stack_bb=15.0,
+        positions=("OOP", "MID", "IP"),
+        raise_sizes=(),
+        max_raises=1,
+        iterations=30,
+        equity_samples=50,
+    )
+
+
+def test_solve_flop_to_river_multiway_covers_all_three_ranges(tiny_flop_to_river_multiway_result):
+    opening = tiny_flop_to_river_multiway_result.opening_range()
+    assert set(opening.keys()) == {"7s7c", "AhAd", "9d8d"}
+
+
+def test_solve_flop_to_river_multiway_frequencies_sum_to_one(tiny_flop_to_river_multiway_result):
+    opening = tiny_flop_to_river_multiway_result.opening_range()
+    for freqs in opening.values():
+        assert not any(np.isnan(freq) for freq in freqs.values())
+        assert pytest.approx(sum(freqs.values()), abs=1e-6) == 1.0
+
+
+def test_solve_flop_to_river_multiway_root_is_the_flop_root(tiny_flop_to_river_multiway_result):
+    root = tiny_flop_to_river_multiway_result.root
+    assert isinstance(root, DecisionNode)
+    assert root.player_to_act == "OOP"
+    assert root.pot == pytest.approx(9.0)
+
+
+def test_solve_flop_to_river_multiway_chance_data_reaches_a_real_river_level(tiny_flop_to_river_multiway_result):
+    # This is the test that actually proves the SECOND hop happened, not
+    # just the first (already covered by solve_flop_turn_multiway's own
+    # analogous test): a real, naturally-reached-during-solving branch
+    # whose own board is a complete 5-card river (chance_data's own
+    # entries carry their own `board` field — no tree-walking needed to
+    # tell turn-level from river-level entries apart).
+    chance_data = tiny_flop_to_river_multiway_result.chance_data
+    river_branches = [b for b in chance_data.values() if len(b.board) == 5]
+    assert river_branches  # at least one branch actually reached the river during real solving
+
+    real_river_decisions = [b.root for b in river_branches if isinstance(b.root, DecisionNode)]
+    assert real_river_decisions  # at least one is a genuine river decision, not just an all-in-reused terminal
+    strategy = tiny_flop_to_river_multiway_result.strategy_at(real_river_decisions[0])
+    for freqs in strategy.values():
+        assert not any(np.isnan(freq) for freq in freqs.values())
+        assert pytest.approx(sum(freqs.values()), abs=1e-6) == 1.0
+
+    # No branch's own chance_fn survives past a complete river board —
+    # the direct regression test for chance.py's own "chain_to_river
+    # never populates chance_fn once len(next_board) == 5" guard.
+    assert all(b.chance_fn is None for b in river_branches)
+
+
+def test_solve_flop_to_river_multiway_deterministic_given_the_same_seed():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    position_ranges = {
+        "OOP": {HandCombo(Card("7", "s"), Card("7", "c")): 1.0},
+        "MID": {HandCombo(Card("A", "h"), Card("A", "d")): 1.0},
+        "IP": {HandCombo(Card("9", "d"), Card("8", "d")): 1.0},
+    }
+    kwargs = dict(
+        board=board, position_ranges=position_ranges, pot=9.0, effective_stack_bb=15.0,
+        positions=("OOP", "MID", "IP"), raise_sizes=(), max_raises=1,
+        iterations=20, equity_samples=50, equity_seed=7, seed=3,
+    )
+    result_1 = solve_flop_to_river_multiway(**kwargs)
+    result_2 = solve_flop_to_river_multiway(**kwargs)
+    assert result_1.opening_range() == result_2.opening_range()
+
+
+def test_solve_flop_to_river_multiway_uses_default_iterations_when_omitted():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    position_ranges = {
+        "OOP": {HandCombo(Card("7", "s"), Card("7", "c")): 1.0},
+        "MID": {HandCombo(Card("A", "h"), Card("A", "d")): 1.0},
+        "IP": {HandCombo(Card("9", "d"), Card("8", "d")): 1.0},
+    }
+    result = solve_flop_to_river_multiway(
+        board=board, position_ranges=position_ranges, pot=9.0, effective_stack_bb=15.0,
+        positions=("OOP", "MID", "IP"), raise_sizes=(), max_raises=1, equity_samples=50,
+    )
+    assert result.iterations > 0
+    assert result.elapsed_seconds >= 0.0
+
+
+def test_solve_flop_to_river_multiway_rejects_positions_and_position_ranges_mismatch():
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    position_ranges = {
+        "OOP": {HandCombo(Card("7", "s"), Card("7", "c")): 1.0},
+        "MID": {HandCombo(Card("A", "h"), Card("A", "d")): 1.0},
+        # "IP" deliberately missing
+    }
+    with pytest.raises(ValueError):
+        solve_flop_to_river_multiway(
             board=board, position_ranges=position_ranges, pot=9.0, effective_stack_bb=15.0,
             positions=("OOP", "MID", "IP"), raise_sizes=(), max_raises=1,
         )

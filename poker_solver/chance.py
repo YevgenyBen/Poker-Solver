@@ -243,6 +243,7 @@ def build_mccfr_chance_branch(
     max_raises: int = 4,
     equity_samples: int = DEFAULT_NWAY_BOARD_EQUITY_SAMPLES,
     equity_seed: int = DEFAULT_NWAY_EQUITY_SEED,
+    chain_to_river: bool = False,
 ) -> SampledChanceBranch:
     """Build the ONE next-street subtree that follows a showdown-eligible
     `terminal` when `card` — already chosen by the caller — is dealt.
@@ -291,6 +292,24 @@ def build_mccfr_chance_branch(
     silently building a board with a duplicate card), or if the derived
     remaining stack would be negative (an inconsistent `effective_stack_bb`
     relative to what `terminal` already shows invested).
+
+    `chain_to_river` (M39, default `False` — every M32 call site
+    unaffected): when `True`, a branch whose own street still has real
+    betting left (`remaining_stack > 0`) *and* whose own board isn't
+    already a complete 5-card river gets its own `chance_fn` populated
+    with a closure that deals *that* branch's next card the same way —
+    passing `chain_to_river=True` on a flop terminal therefore chains
+    flop->turn->river, not just flop->turn, since the recursive call
+    keeps forwarding the flag. Mirrors `build_chance_node`'s own
+    identical M13 parameter/semantics exactly, but the closure here
+    needs none of that function's own default-argument late-binding
+    guard (`_b=next_board, _s=remaining_stack`): `build_chance_node`
+    builds many branches in one shared loop, so its closures could
+    otherwise all capture the *last* iteration's loop variables by
+    reference; `build_mccfr_chance_branch` builds exactly one branch per
+    call, so `next_board`/`remaining_stack`/etc. are already this call's
+    own locals — there is no loop to share variables across, and no
+    shared state a later call could retroactively corrupt.
     """
     if not terminal.is_showdown:
         raise ValueError("build_mccfr_chance_branch needs a showdown-eligible terminal (no fold), got a fold-out")
@@ -345,6 +364,17 @@ def build_mccfr_chance_branch(
                 max_raises=max_raises,
             )
         )
-        chance_fn = None  # M32 scope: one hop only (flop->turn, not chained to river)
+        if chain_to_river and len(next_board) < 5:
+            # No default-argument late-binding trick needed here (unlike
+            # build_chance_node's own M13 closure) — see this function's
+            # own docstring for why: next_board/live_positions/etc. are
+            # already this call's own locals, not shared loop state.
+            chance_fn = lambda t, c: build_mccfr_chance_branch(
+                t, card=c, board=next_board, combos=combos, positions=live_positions,
+                effective_stack_bb=effective_stack_bb, raise_sizes=raise_sizes, max_raises=max_raises,
+                equity_samples=equity_samples, equity_seed=equity_seed, chain_to_river=True,
+            )
+        else:
+            chance_fn = None  # M32 scope default: one hop only (flop->turn)
 
     return SampledChanceBranch(card=card, board=next_board, equity_cache=equity_cache, root=root, chance_fn=chance_fn)
