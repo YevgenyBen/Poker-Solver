@@ -16,7 +16,9 @@ be run once and cached to disk, not recomputed on every solve.
 """
 
 import hashlib
+import os
 import random
+import threading
 from collections import Counter
 from pathlib import Path
 
@@ -124,6 +126,9 @@ def build_equity_table(
     return table
 
 
+_equity_table_cache_lock = threading.Lock()  # see get_equity_table's own docstring
+
+
 def get_equity_table(
     cache_path: Path | str | None = None,
     hands: list | None = None,
@@ -136,13 +141,43 @@ def get_equity_table(
     Building the full 169x169 table from scratch takes real time (tens of
     thousands of Monte Carlo matchups) — this is meant to be paid once,
     with subsequent calls served from the cached .npy file.
+
+    Thread-safe against a real, already-live race (docs/full-table-
+    diagnostic-2026-08.md's §3.10): `api/main.py` runs a background
+    pre-warm thread that can call this concurrently with a live request
+    (CLAUDE.md's M14 entry already measured real contention between the
+    two) — on a cold cache (the file doesn't exist yet), both could
+    previously reach `path.exists() == False`, both build the table, and
+    both `np.save` to the *same* path, risking a caller reading a
+    partially-written file if the two writes interleaved. Fixed two ways,
+    doing different jobs: (1) `_equity_table_cache_lock` (module-level,
+    process-wide) avoids the *redundant* rebuild — a second thread
+    re-checks `path.exists()` after acquiring the lock, so only the
+    thread that actually loses the race pays the (expensive) rebuild
+    cost. (2) The write itself goes to a per-thread/per-process temp file
+    in the same directory, then `os.replace`s it into place — atomic on
+    both POSIX and Windows — so even a caller that reaches this function
+    through some path that doesn't hold the lock (e.g. a future multi-
+    *process* deployment; `threading.Lock` only protects threads within
+    one process, a scope limitation stated plainly, not glossed over)
+    can never observe a partially-written file: a reader either sees the
+    old file or the new one, complete, never a mix. `force_rebuild=True`
+    intentionally still takes the lock too, so a forced rebuild can't
+    race a concurrent normal load either.
     """
     path = Path(cache_path) if cache_path is not None else DEFAULT_CACHE_PATH
     if not force_rebuild and path.exists():
         return np.load(path)
-    table = build_equity_table(hands=hands, samples=samples, seed=seed)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    np.save(path, table)
+    with _equity_table_cache_lock:
+        # Re-check now that we hold the lock — another thread may have
+        # already built and written the table while we were waiting.
+        if not force_rebuild and path.exists():
+            return np.load(path)
+        table = build_equity_table(hands=hands, samples=samples, seed=seed)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.parent / f"{path.stem}.tmp-{os.getpid()}-{threading.get_ident()}.npy"
+        np.save(tmp_path, table)
+        os.replace(tmp_path, path)
     return table
 
 
@@ -402,6 +437,25 @@ class MultiwayEquityCache:
     not a single shared advancing RNG — so results don't depend on which
     order different opponent-hand combinations happen to be requested
     in, only on the combination itself.
+
+    Thread-safe (docs/full-table-diagnostic-2026-08.md's §3.10):
+    `self._cache`'s check-then-maybe-compute-then-write sequence in
+    `traverser_equity_vector` is guarded by `self._lock`, the same
+    "check under lock, compute unlocked, write under lock" pattern
+    `api/main.py`'s own `_get_or_solve*` helpers already use — the
+    expensive part (dealing cards, simulating runouts) never holds the
+    lock, so concurrent callers for *different* keys never serialize on
+    each other; two callers racing for the *same* key may both compute
+    (deterministic given `seed`+the key, so either result is correct —
+    the loser's own value is simply discarded rather than written over
+    the winner's), never observe a torn/partial write. No current
+    caller actually shares one instance across threads (every real
+    construction site in this codebase builds a fresh instance per
+    solve, used single-threaded within it) — this is a proactive
+    hardening for a scaling move the diagnostic named as blocked, not a
+    fix for an already-observed bug, and cheap enough (the locked
+    sections are a single dict read or write, not the surrounding
+    computation) to add now rather than defer.
     """
 
     def __init__(
@@ -414,6 +468,7 @@ class MultiwayEquityCache:
         self.samples = samples
         self.seed = seed
         self._cache: dict = {}
+        self._lock = threading.Lock()
 
     def traverser_equity_vector(self, opponent_hands: tuple) -> np.ndarray:
         """Length-len(self.hands) array: index i is the win-share of a
@@ -481,7 +536,8 @@ class MultiwayEquityCache:
         MULTIWAY_TABLE_CONFIGS comment for the resulting mitigation.
         """
         key = tuple(sorted(opponent_hands, key=str))
-        cached = self._cache.get(key)
+        with self._lock:
+            cached = self._cache.get(key)
         if cached is not None:
             return cached
 
@@ -505,7 +561,8 @@ class MultiwayEquityCache:
             vector = np.array([
                 _pairwise_fallback_equity(hand, opponent_hands, rng) for hand in self.hands
             ])
-            self._cache[key] = vector
+            with self._lock:
+                self._cache[key] = vector
             return vector
         opponent_used = frozenset(card for pair in opponent_dealt for card in pair)
 
@@ -548,7 +605,8 @@ class MultiwayEquityCache:
             values.append(equity)
 
         vector = np.array(values)
-        self._cache[key] = vector
+        with self._lock:
+            self._cache[key] = vector
         return vector
 
     def __len__(self) -> int:

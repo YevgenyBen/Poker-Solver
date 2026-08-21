@@ -181,7 +181,31 @@ MAX_OPPONENT_RESAMPLE_ATTEMPTS = 50
 @dataclass
 class InfoSetTable:
     """Regret/strategy accumulators for one DecisionNode, across every
-    hand class the acting player could hold at that node."""
+    hand class the acting player could hold at that node.
+
+    **Not thread-safe, deliberately not fixed here** (docs/full-table-
+    diagnostic-2026-08.md's §3.10): `regret_sum`/`strategy_sum`'s
+    read-modify-write updates in `_solve_recurse`/`_mccfr_recurse` (e.g.
+    `table.regret_sum = np.maximum(table.regret_sum + regret, 0.0)`) are
+    unguarded. Every solving path in this codebase visits one `node_data`
+    dict from a single Python thread for the full duration of one solve
+    (no parallel-traverser architecture exists yet), so this is not a
+    live bug — but it does mean a *future* concurrent-solving design
+    can't just start spawning traverser threads against a shared
+    `node_data` without addressing this first. Deliberately NOT adding a
+    lock here now, unlike `equity.MultiwayEquityCache`'s own analogous
+    §3.10 fix: this struct is mutated on the single hottest path in the
+    entire engine (once per node, per iteration, of every solve that
+    exists today), where a lock's overhead — real even uncontended,
+    unlike the comparatively rare, already-expensive `MultiwayEquityCache`
+    lookups it would be paid in exchange for — would cost every current,
+    single-threaded caller something for a scaling move that doesn't
+    exist yet and whose actual synchronization needs aren't decided (a
+    future parallel-traverser design might use per-thread `node_data`
+    dicts merged at the end instead, sidestepping per-table locking
+    entirely, rather than needing exactly this lock). Named explicitly so
+    it's a decision on record, not a gap nobody noticed.
+    """
 
     regret_sum: np.ndarray
     strategy_sum: np.ndarray
