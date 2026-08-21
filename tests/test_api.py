@@ -110,6 +110,7 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
     api_main._preflop_raw_cache.clear()
     api_main._path_query_libraries.clear()
     api_main._turn_path_cache.clear()
+    api_main._flop_multiway_path_cache.clear()
     yield
     _cache.clear()
     _multiway_cache.clear()
@@ -123,6 +124,7 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
     api_main._preflop_raw_cache.clear()
     api_main._path_query_libraries.clear()
     api_main._turn_path_cache.clear()
+    api_main._flop_multiway_path_cache.clear()
 
 
 @pytest.fixture()
@@ -1047,6 +1049,109 @@ def test_solve_flop_from_path_hits_a_board_isomorphic_to_a_previous_miss(client)
     assert first["hit"] is False
     assert second["hit"] is True
     assert second["canonical_board"] == first["canonical_board"]
+
+
+# ---------------------------------------------------------------------------
+# M42: POST /solve_flop_multiway_from_path — the multiway analog of
+# /solve_flop_from_path, for a real action path that leaves 3+ live
+# positions at the flop (a case /solve_flop_from_path structurally
+# can't serve — see api/main.py's module docstring).
+# ---------------------------------------------------------------------------
+
+FAST_MULTIWAY_PATH_FLOP_ITERATIONS = 20
+
+_THREE_LIVE_PATH = ["call_or_check", "call_or_check", "call_or_check"]  # BTN limps, SB calls, BB checks
+
+
+def _multiway_path_body(
+    action_path,
+    stack_bb=100.0,
+    board="2h6d9c",
+    iterations=_PATH_ITERATIONS,
+    flop_iterations=FAST_MULTIWAY_PATH_FLOP_ITERATIONS,
+    players=3,
+):
+    return {
+        "stack_bb": stack_bb,
+        "action_path": action_path,
+        "board": board,
+        "iterations": iterations,
+        "flop_iterations": flop_iterations,
+        "players": players,
+    }
+
+
+def test_solve_flop_multiway_from_path_returns_200_for_a_real_three_live_line(client):
+    response = client.post("/solve_flop_multiway_from_path", json=_multiway_path_body(_THREE_LIVE_PATH))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["players"] == 3
+    assert set(body["positions"]) == {"BTN", "SB", "BB"}
+    assert body["position"] in body["positions"]
+    assert body["flop_iterations"] == FAST_MULTIWAY_PATH_FLOP_ITERATIONS
+    assert body["board"] == "2h6d9c"
+    assert len(body["strategy"]) > 0
+    for freqs in body["strategy"].values():
+        assert sum(freqs.values()) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_solve_flop_multiway_from_path_rejects_a_two_survivor_path(client):
+    # BTN opens, SB folds, BB calls -> only 2 live; this endpoint's own
+    # job is genuinely 3+ live positions — /solve_flop_from_path already
+    # serves the 2-survivor case, via the exact (not MCCFR-approximate)
+    # 2-position solver.
+    response = client.post(
+        "/solve_flop_multiway_from_path", json=_multiway_path_body(["raise", "fold", "call_or_check"])
+    )
+    assert response.status_code == 422
+    assert "solve_flop_from_path" in response.json()["detail"]
+
+
+def test_solve_flop_multiway_from_path_rejects_a_non_terminal_path(client):
+    response = client.post("/solve_flop_multiway_from_path", json=_multiway_path_body(["call_or_check"]))
+    assert response.status_code == 422
+
+
+def test_solve_flop_multiway_from_path_rejects_an_unknown_action_kind(client):
+    response = client.post("/solve_flop_multiway_from_path", json=_multiway_path_body(["not_a_real_kind"]))
+    assert response.status_code == 422
+
+
+def test_solve_flop_multiway_from_path_rejects_a_malformed_board(client):
+    response = client.post(
+        "/solve_flop_multiway_from_path", json=_multiway_path_body(_THREE_LIVE_PATH, board="Jh7d")
+    )
+    assert response.status_code == 422
+
+
+def test_solve_flop_multiway_from_path_rejects_flop_iterations_above_the_cap(client):
+    response = client.post(
+        "/solve_flop_multiway_from_path",
+        json=_multiway_path_body(
+            _THREE_LIVE_PATH, flop_iterations=api_main.MAX_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS + 1
+        ),
+    )
+    assert response.status_code == 422
+
+
+def test_solve_flop_multiway_from_path_repeat_query_is_cached(client):
+    body = _multiway_path_body(_THREE_LIVE_PATH)
+    first = client.post("/solve_flop_multiway_from_path", json=body).json()
+    second = client.post("/solve_flop_multiway_from_path", json=body).json()
+    assert first["elapsed_seconds"] == second["elapsed_seconds"]
+    assert len(api_main._flop_multiway_path_cache) == 1
+
+
+def test_solve_flop_multiway_from_path_a_different_flop_iterations_gets_its_own_cache_entry(client):
+    client.post(
+        "/solve_flop_multiway_from_path",
+        json=_multiway_path_body(_THREE_LIVE_PATH, flop_iterations=FAST_MULTIWAY_PATH_FLOP_ITERATIONS),
+    )
+    client.post(
+        "/solve_flop_multiway_from_path",
+        json=_multiway_path_body(_THREE_LIVE_PATH, flop_iterations=FAST_MULTIWAY_PATH_FLOP_ITERATIONS + 1),
+    )
+    assert len(api_main._flop_multiway_path_cache) == 2
 
 
 # ---------------------------------------------------------------------------
