@@ -87,6 +87,35 @@ Two solving paths live here, sharing InfoSetTable:
    them — `chance_fn is None` short-circuits the new logic entirely, so
    this is purely additive to the existing exact-CFR behavior.
 
+4. `mccfr_solve()` gained its own, differently-shaped chance-dispatch
+   capability at M32 (Phase 3 of docs/full-table-diagnostic-2026-08.md's
+   recommendation #5, "true multiway postflop solving") — also via
+   `chance_fn`/`chance_data` parameters (same names, deliberately
+   mirroring `solve()`'s), plus a new `board` parameter. Where `solve()`
+   AVERAGES over every one of a `ChanceNode`'s branches every iteration
+   (correct there, since the exact solver visits the whole tree
+   exhaustively anyway), `mccfr_solve()` SAMPLES exactly one card per
+   visit, via `chance.build_mccfr_chance_branch` and a new
+   `chance.SampledChanceBranch` (deliberately not `ChanceBranch`/
+   `ChanceNode`, which are shaped for eager, all-branches, pairwise-table
+   use — see both dataclasses' own docstrings). Reusing `build_chance_
+   node`'s eager approach here would defeat MCCFR's entire reason to
+   exist — see `build_mccfr_chance_branch`'s own docstring for the
+   measured cost comparison. The sampled branch's own equity source
+   (M30's board-aware `NwayBoardEquityCache`) is threaded into
+   `_mccfr_terminal_value` via plain duck typing — nothing about that
+   function's signature changed, since `MultiwayEquityCache` and
+   `NwayBoardEquityCache` both expose the identical
+   `.traverser_equity_vector(opponent_hands) -> np.ndarray` shape. See
+   `_mccfr_recurse`'s own `TerminalNode`-branch dispatch for the
+   sampling/memoization mechanics and why its gating condition
+   necessarily diverges from `_solve_recurse`'s (traverser-vectorized,
+   not both-positions-at-once), and `_sample_chance_card`'s own docstring
+   for why chance-card sampling needs neither `EXPLORATION_EPSILON`'s
+   exploration floor nor `MAX_OPPONENT_RESAMPLE_ATTEMPTS`'s
+   reject-and-resample loop, unlike this module's other two sampling
+   decisions.
+
 Reach probabilities are seeded with each hand's combo_weight (its prior
 probability of being dealt) in both paths — see the project plan for why
 card-removal/blocker effects are still ignored (each class is treated as
@@ -99,7 +128,9 @@ from typing import Callable, Optional
 
 import numpy as np
 
+from .cards import Card, remaining_deck
 from .chance import ChanceNode
+from .combos import HandCombo
 from .equity import MultiwayEquityCache, deal_n_hands
 from .game_tree import BB, BTN, DecisionNode, TerminalNode
 
@@ -418,11 +449,23 @@ def _mccfr_terminal_value(
     traverser: str,
     opponent_hands: dict,
     num_hands: int,
-    equity_cache: MultiwayEquityCache,
+    equity_cache,
 ) -> np.ndarray:
     """The traverser's net payoff for each of their `num_hands` possible
     hands (length-`num_hands` vector), given the fixed `opponent_hands`
-    sampled for this iteration."""
+    sampled for this iteration.
+
+    `equity_cache` is duck-typed, not restricted to `MultiwayEquityCache`
+    by anything this function actually checks: any object exposing
+    `.traverser_equity_vector(opponent_hands: tuple) -> np.ndarray`
+    (indexed over that object's own fixed candidate pool) works here
+    unchanged — as of M32, that includes `multiway_board_equity.
+    NwayBoardEquityCache` (board-aware, reached via a sampled chance
+    branch — see `_mccfr_recurse`), not just the original board-blind
+    `MultiwayEquityCache`. Nothing about this function's own signature or
+    body needed to change to support that; only the NaN-handling line
+    below is new.
+    """
     if traverser in node.folded:
         return np.full(num_hands, -node.invested[traverser])
 
@@ -435,7 +478,54 @@ def _mccfr_terminal_value(
 
     opponent_live_hands = tuple(opponent_hands[p] for p in other_live)
     equity_vector = equity_cache.traverser_equity_vector(opponent_live_hands)
+    # NEW (M32): NwayBoardEquityCache returns NaN for a candidate that
+    # physically conflicts with the board or the fixed opponent tuple —
+    # a real, structural fact at postflop combo granularity (deliberately
+    # not a placeholder itself — see multiway_board_equity.py's own
+    # docstring). 0.5 mirrors chance.py's own already-accepted, already-
+    # shipped nan_to_num(..., nan=0.5) precedent for the analogous exact-
+    # solver case. Provably a no-op against MultiwayEquityCache (post-M27
+    # it never produces NaN) and non-mutating (nan_to_num's default
+    # copy=True can't corrupt NwayBoardEquityCache's own cached array).
+    # Verified, not just reasoned about, that this doesn't reintroduce
+    # M27's own placeholder-compounding bug in a new context — see
+    # test_cfr.py's dedicated iteration-count stress test.
+    equity_vector = np.nan_to_num(equity_vector, nan=0.5)
     return equity_vector * node.pot - node.invested[traverser]
+
+
+def _sample_chance_card(board: tuple, opponent_live_hands: tuple, rng) -> Card:
+    """Uniformly samples one card not already on `board` and not held by
+    any of `opponent_live_hands` (M32) — the MCCFR-appropriate sibling of
+    `_sample_opponent_hands`'s opponent-hand sampling and `_mccfr_recurse`'s
+    own opponent-action sampling, but deliberately shaped differently from
+    both, for reasons worth stating rather than leaving implicit:
+
+    No `EXPLORATION_EPSILON`-style floor: that floor exists because
+    `current_strategy()` is a *learned* policy that can legitimately
+    converge to an exact 0/1 split, making a rare-but-relevant *action*
+    permanently unreachable under naive sampling. A chance card's
+    distribution is fixed, uniform, exogenous "nature" randomness — the
+    physical shuffle — identical on iteration 1 and iteration 1,000,000,
+    with no analogous collapse risk to guard against. Mixing a uniform
+    distribution with a uniform floor would be a mathematical no-op
+    anyway, not a safety margin.
+
+    No `MAX_OPPONENT_RESAMPLE_ATTEMPTS`-style reject-and-resample loop:
+    that mechanism exists because *multiple, interdependent* opponent
+    draws from a class-based pool can conflict with each other and need
+    retrying to find any feasible joint assignment. Card sampling here is
+    the opposite shape — excluding every known-conflicting card from the
+    pool *before* drawing makes the single draw correct on the first
+    attempt, always, by construction; there is nothing to retry.
+    """
+    excluded = set(board)
+    for combo in opponent_live_hands:
+        excluded.update(combo.cards)
+    deck = remaining_deck(excluded)
+    if not deck:
+        raise ValueError(f"no cards remain to deal a chance card (board={board}, excluded {len(excluded)} cards)")
+    return rng.choice(deck)
 
 
 def _mccfr_recurse(
@@ -446,12 +536,87 @@ def _mccfr_recurse(
     node_data: dict,
     num_hands: int,
     hand_index: dict,
-    equity_cache: MultiwayEquityCache,
+    equity_cache,
     rng,
+    board: Optional[tuple] = None,
+    chance_fn: Optional[Callable] = None,
+    chance_data: Optional[dict] = None,
 ) -> np.ndarray:
     """Returns the traverser's payoff vector (length num_hands) from this
-    node onward, given the fixed `opponent_hands` for this iteration."""
+    node onward, given the fixed `opponent_hands` for this iteration.
+
+    `board`/`chance_fn`/`chance_data` (M32): mirrors `_solve_recurse`'s
+    own parameters of the same names/roles, with one necessary divergence.
+    `_solve_recurse` AVERAGES over every branch of a `ChanceNode` every
+    iteration (correct there — the exact solver visits the whole tree
+    exhaustively anyway). MCCFR SAMPLES exactly one card via
+    `_sample_chance_card`, using this same iteration's own seeded `rng`
+    (the same "same seed -> same result" determinism story every other
+    sampling decision in this module already honors), and recurses into
+    only that one card's own lazily-built subtree (`chance.
+    build_mccfr_chance_branch`, memoized in `chance_data` by
+    `(id(node), card)` — not just `id(node)` alone, since a different
+    iteration's sampled card for the *same* terminal needs its own,
+    separately-memoized branch).
+
+    The dispatch gate (`chance_fn is not None and node.is_showdown and
+    traverser not in node.folded`) necessarily differs from
+    `_solve_recurse`'s single `is_showdown` check: `_solve_recurse`
+    values both positions in one pass, so `is_showdown` alone is the
+    right and only gate there. MCCFR is traverser-vectorized — a terminal
+    where the traverser has already folded has a value that's already
+    fixed regardless of any further street (folding ends that position's
+    stake), so dispatching a chance branch there would be wasted work.
+    (A terminal where the traverser is live but has no remaining live
+    OPPONENT can't actually arise here: `is_showdown` already requires
+    >=2 live positions, and a live traverser is one of them, so at least
+    one other live position is algebraically guaranteed whenever both
+    conditions hold — proven once, in a comment at the call site, rather
+    than re-checked on every dispatch.) `is_showdown` is kept explicit
+    anyway for direct visual symmetry with `_solve_recurse`'s own gate,
+    even though `traverser not in node.folded` alone, combined with
+    `_mccfr_terminal_value`'s own early-return shape, would already rule
+    out the same cases.
+
+    Double-dispatch prevention is structural, not incidental, at two
+    points: `build_mccfr_chance_branch` sets a branch's own `chance_fn` to
+    `None` inside the same `if remaining_stack == 0` block that decides
+    `root` (an all-in-already branch can never be re-dispatched); and the
+    recursive call into a branch's own subtree always passes `chance_fn=
+    branch.chance_fn` (never the ambient `chance_fn` parameter) — mirrors
+    `_solve_recurse`'s own M12 pattern exactly. Since M32 never populates
+    a branch's own `chance_fn` (one hop only — flop->turn, not chained to
+    river), every terminal reached inside a turn-level subtree falls
+    straight through to `_mccfr_terminal_value`, with no possibility of a
+    second dispatch.
+    """
     if isinstance(node, TerminalNode):
+        if chance_fn is not None and node.is_showdown and traverser not in node.folded:
+            # No separate `if other_live:` guard needed here (an earlier
+            # draft had one): is_showdown means >=2 positions are live
+            # (invested minus folded), and traverser not in node.folded
+            # means the traverser is one of them — so at least one *other*
+            # live position is algebraically guaranteed to exist. Checked,
+            # not assumed: proven once here rather than re-verified at
+            # runtime on every dispatch, since re-deriving a provably-
+            # always-true condition on a hot path buys nothing (unlike
+            # e.g. query_strategy_from_path's own explicit RuntimeError,
+            # which guards a genuinely separate assumption that could, in
+            # principle, drift out of sync with its own precondition).
+            live = [p for p in node.invested if p not in node.folded]
+            other_live = [p for p in live if p != traverser]
+            opponent_live_hands = tuple(opponent_hands[p] for p in other_live)
+            card = _sample_chance_card(board, opponent_live_hands, rng)
+            key = (id(node), card)
+            branch = chance_data.get(key)
+            if branch is None:
+                branch = chance_fn(node, card)
+                chance_data[key] = branch
+            return _mccfr_recurse(
+                branch.root, traverser, opponent_hands, reach, node_data, num_hands, hand_index,
+                branch.equity_cache, rng,
+                board=branch.board, chance_fn=branch.chance_fn, chance_data=chance_data,
+            )
         return _mccfr_terminal_value(node, traverser, opponent_hands, num_hands, equity_cache)
 
     actions = node.legal_actions
@@ -472,6 +637,9 @@ def _mccfr_recurse(
                 hand_index,
                 equity_cache,
                 rng,
+                board=board,
+                chance_fn=chance_fn,
+                chance_data=chance_data,
             )
             for a_idx, action in enumerate(actions)
         ]
@@ -534,7 +702,47 @@ def _mccfr_recurse(
         hand_index,
         equity_cache,
         rng,
+        board=board,
+        chance_fn=chance_fn,
+        chance_data=chance_data,
     )
+
+
+def _opponent_hands_are_dealable(hands: list) -> bool:
+    """True if `hands` (one per live opponent this iteration) could all be
+    dealt simultaneously — i.e. no two of them physically conflict.
+
+    Dispatches on hand type (mirrors this file's own existing
+    `isinstance(node, ChanceNode)`/`isinstance(node, TerminalNode)` style,
+    not duck-typing — `StartingHand` and `HandCombo` have fully disjoint
+    attribute sets, so either would work, but `isinstance` is the file's
+    established idiom): `StartingHand` (preflop's 169-class abstraction,
+    every existing call site until M32) delegates to `deal_n_hands`'s own
+    combo-level search — a *class* pair can be mutually feasible or not
+    depending on which underlying combos are still available, which only
+    `deal_n_hands`'s search actually resolves. `HandCombo` (M32, postflop)
+    needs no search at all — combos already *are* concrete cards, so a
+    plain pairwise "any card repeated?" check is exact, not an
+    approximation, and far cheaper than routing through `deal_n_hands`
+    (which expects `StartingHand`-only attributes and would raise
+    `AttributeError` on a `HandCombo` — confirmed by direct execution
+    during M32's own design, not assumed).
+    """
+    if not hands:
+        return True
+    if isinstance(hands[0], HandCombo):
+        seen: set = set()
+        for combo in hands:
+            for card in combo.cards:
+                if card in seen:
+                    return False
+                seen.add(card)
+        return True
+    try:
+        deal_n_hands(hands)
+    except RuntimeError:
+        return False
+    return True
 
 
 def _sample_opponent_hands(
@@ -548,11 +756,11 @@ def _sample_opponent_hands(
     position's own weight vector (`position_weights[position]`) — not a
     single shared distribution — retrying up to
     MAX_OPPONENT_RESAMPLE_ATTEMPTS times whenever the joint draw is
-    physically infeasible (`deal_n_hands` raises; see that constant's own
-    module-level docstring for why this rejection-resampling exists, and
-    why exhausting every attempt is left to proceed with the last
-    (infeasible) draw rather than raising or hanging — unchanged
-    behavior, just relocated here).
+    physically infeasible (`_opponent_hands_are_dealable` returns False;
+    see MAX_OPPONENT_RESAMPLE_ATTEMPTS's own module-level docstring for
+    why this rejection-resampling exists, and why exhausting every
+    attempt is left to proceed with the last (infeasible) draw rather
+    than raising or hanging — unchanged behavior, just relocated here).
 
     Extracted from `mccfr_solve`'s own loop body specifically so it can
     be tested directly and deterministically against a real per-position
@@ -566,11 +774,9 @@ def _sample_opponent_hands(
             for position in positions
             if position != traverser
         }
-        try:
-            deal_n_hands(list(candidate_hands.values()))
-        except RuntimeError:
-            continue  # opponents mutually incompatible — resample the whole draw
-        return candidate_hands
+        if _opponent_hands_are_dealable(list(candidate_hands.values())):
+            return candidate_hands
+        # opponents mutually incompatible — resample the whole draw
     return candidate_hands
 
 
@@ -578,10 +784,13 @@ def mccfr_solve(
     root: DecisionNode,
     hands: list,
     positions: tuple,
-    equity_cache: MultiwayEquityCache,
+    equity_cache,
     iterations: int,
     seed: int = 0,
     initial_reach: dict | None = None,
+    board: tuple | None = None,
+    chance_fn: Optional[Callable] = None,
+    chance_data: Optional[dict] = None,
 ) -> dict:
     """Run `iterations` of External-Sampling MCCFR over `root`.
 
@@ -611,19 +820,34 @@ def mccfr_solve(
     or one that sums to zero (that position would have no possible hand
     to ever be sampled as, whether traversing or acting as an opponent).
 
-    Zero real callers today — `solver.py`'s own multiway dispatch always
-    solves a full preflop tree from its root, where every position's
-    prior is legitimately uniform combo_weight — ships as a standalone,
-    tested capability ahead of its real consumer, matching this
-    project's own M17-then-M18/M19-then-M20 precedent. Its real use is a
-    future milestone: seeding real per-position ranges (e.g. from
+    Zero real callers today (as of M31) — `solver.py`'s own multiway
+    dispatch always solves a full preflop tree from its root, where every
+    position's prior is legitimately uniform combo_weight — shipped as a
+    standalone, tested capability ahead of its real consumer, matching
+    this project's own M17-then-M18/M19-then-M20 precedent. Its real use
+    is a future milestone: seeding real per-position ranges (e.g. from
     derive_ranges_from_path, already N-player-general per M16) into a
-    genuine multiway postflop MCCFR solve — itself still blocked on two
-    OTHER prerequisites this milestone deliberately doesn't attempt (a
-    board-aware, per-chance-branch equity source — multiway_board_
-    equity.py, M30 — actually threaded into this function's terminal-
-    value computation, and a chance-branch sampling case in this
-    module's own recursion, which doesn't exist here at all yet).
+    genuine multiway postflop MCCFR solve.
+
+    `board`/`chance_fn`/`chance_data` (M32) close the two prerequisites
+    `initial_reach`'s own M31 docstring named as still-blocking: a
+    board-aware, per-chance-branch equity source (multiway_board_equity.
+    py's NwayBoardEquityCache, M30) is now threaded through this
+    function's terminal-value computation via plain duck typing (see
+    `_mccfr_terminal_value`'s own docstring — nothing about its signature
+    changed), and a chance-branch SAMPLING case (as opposed to
+    `_solve_recurse`'s own AVERAGING one) now exists in this module's own
+    recursion — see `_mccfr_recurse`'s docstring for the full mechanics.
+    Mirrors `solve()`'s own `chance_fn`/`chance_data` parameter names
+    exactly; `board` (the current street's community cards) has no
+    `solve()` analog, required because MCCFR must *sample* a specific
+    next card rather than dispatch to a pre-built exhaustive structure.
+    `chance_fn is not None` requires `board` to also be supplied (raises
+    `ValueError` upfront otherwise); `chance_data` defaults to a fresh
+    `{}` when `chance_fn` is set and none is supplied, mirroring `solve()`
+    exactly. All three default to `None`, and every pre-M32 call site
+    omits them — purely additive, same guarantee `solve()`'s own M12
+    `chance_fn`/`chance_data` addition made.
 
     Returns a dict of {id(DecisionNode): InfoSetTable} — the same shape
     `solve()` returns, so downstream code (StrategyResult etc.) doesn't
@@ -639,6 +863,11 @@ def mccfr_solve(
     per-iteration `rng` consumption can be reasoned about independent of
     `hands`' own composition.
     """
+    if chance_fn is not None and board is None:
+        raise ValueError("chance_fn requires board (the current street's community cards) to also be supplied")
+    if chance_fn is not None and chance_data is None:
+        chance_data = {}
+
     num_hands = len(hands)
     hand_index = {hand: i for i, hand in enumerate(hands)}
     initial_reach = initial_reach or {}
@@ -679,6 +908,7 @@ def mccfr_solve(
         opponent_hands = _sample_opponent_hands(positions, traverser, position_weights, hands, rng)
         reach = position_weights[traverser].copy()
         _mccfr_recurse(
-            root, traverser, opponent_hands, reach, node_data, num_hands, hand_index, equity_cache, rng
+            root, traverser, opponent_hands, reach, node_data, num_hands, hand_index, equity_cache, rng,
+            board=board, chance_fn=chance_fn, chance_data=chance_data,
         )
     return node_data

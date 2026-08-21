@@ -195,7 +195,7 @@ class NwayBoardEquityCache:
         self.seed = seed
         self._cache: dict = {}
 
-    def equity_vector(self, opponent_combos: tuple) -> np.ndarray:
+    def traverser_equity_vector(self, opponent_combos: tuple) -> np.ndarray:
         key = tuple(sorted(opponent_combos, key=str))
         cached = self._cache.get(key)
         if cached is not None:

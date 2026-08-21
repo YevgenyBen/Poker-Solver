@@ -1979,6 +1979,210 @@ street chaining needs.
   - Engine only, no `api/main.py`/frontend changes — matches every
     other phase of this recommendation and the real-time-speed
     roadmap's own M17/M19 precedent for a primitive milestone.
+- **M32 — MCCFR chance-branch sampling + board-aware terminal equity
+  (Phase 3 of recommendation #5, closing it).** The diagnostic's own §4
+  framed what remained as *two* separate prerequisites — a signature-
+  level change threading a per-chance-branch equity source through
+  MCCFR's terminal-value computation, and a chance-branch sampling case
+  in MCCFR's own recursion. Design analysis this session found these
+  aren't separable: sampling a chance branch produces a subtree whose
+  terminals need *some* equity source, and that source has to be M30's
+  board-aware primitive. This milestone ships both together, closing
+  recommendation #5's engine-level work (a live endpoint/`solver.py`
+  entry point remains explicitly future work, mirroring M12+M13-before-
+  M14's own precedent).
+  - **A Plan-agent design pass (mirroring M27's own precedent for a
+    similarly high-stakes `cfr.py` change) surfaced three real findings
+    via actual code execution, not assumption, before any implementation
+    — the kind of thing a plan built from reading alone would have
+    missed:**
+    1. `mccfr_solve` could not run against a `HandCombo` pool at all —
+       confirmed by execution: `_sample_opponent_hands` unconditionally
+       called `equity.deal_n_hands`, which reads `StartingHand`-only
+       attributes and raises `AttributeError` on a `HandCombo`. Fixed
+       with a new `_opponent_hands_are_dealable` — dispatches on
+       `isinstance(hands[0], HandCombo)`: a plain pairwise
+       physical-card-overlap check for combos (exact, not an
+       approximation — combos already *are* concrete cards, no search
+       needed), byte-for-byte the existing `deal_n_hands`-via-try/except
+       behavior for `StartingHand`. This is the direct application M30's
+       own docstring already asked for ("reject-and-resample opponent/
+       candidate combos before calling this function with something
+       already known to be impossible").
+    2. `game_tree.postflop_action_order` (M29) — the obvious-looking
+       helper for filtering a folded position out of the next street —
+       is WRONG when applied to an already-postflop-native
+       `StreetConfig.positions` tuple: confirmed by direct execution
+       (`postflop_action_order(("OOP","MID","IP"), live=("OOP","IP"))`
+       returns `('IP','OOP')`, the wrong order). `postflop_action_order`
+       exists specifically to convert a *preflop* `GameConfig.positions`
+       tuple into postflop order; a `StreetConfig`-shaped tuple is
+       already postflop-native (first entry already acts first, by that
+       config's own construction) — nothing to re-derive. Fixed with the
+       plain filter `tuple(p for p in positions if p not in folded)`,
+       matching the exact idiom `solver.py`'s own `derive_ranges_from_
+       path` already uses. Regression-tested directly (a 3-position
+       fixture with the middle position folded, asserting the correct
+       live-position order) — specifically shaped to fail under the
+       tempting-but-wrong `postflop_action_order`-based approach.
+    3. `multiway_board_equity.NwayBoardEquityCache.equity_vector` needed
+       renaming to `.traverser_equity_vector` — a naming inconsistency in
+       M30's own shipped code, invisible until now because M30 shipped
+       with zero real callers. The rename makes `NwayBoardEquityCache` a
+       true duck-typed drop-in for `MultiwayEquityCache` at any
+       `equity_cache`-shaped call site, which this milestone's whole
+       design depends on: `_mccfr_terminal_value`'s signature and body
+       needed **zero changes** beyond one new line (see below) to accept
+       a board-aware equity source instead of a board-blind one.
+  - **A fourth point, caught in this session's own review of the agent's
+    proposal before writing any code — the one place "mirror an existing
+    precedent" was the wrong call:** the agent proposed handling
+    `NwayBoardEquityCache`'s NaN outputs (a candidate combo physically
+    conflicting with the board/fixed opponents — a *structural*,
+    high-frequency fact at postflop combo granularity, not a rare
+    sampling artifact) via `nan_to_num(equity_vector, nan=0.5)`, directly
+    mirroring `chance.py`'s own already-accepted, already-shipped
+    `nan_to_num(..., nan=0.5)` precedent for the *exact* solver. That
+    precedent is safe *there* specifically because the exact solver
+    averages over ~47 branches every iteration, diluting a 0.5-biased
+    minority into a mostly-real-valued average — a materially different
+    regime from M27's own hard-won lesson, that a flat placeholder value
+    repeatedly encountered across many *sampled* iterations (not diluted
+    by within-iteration averaging) can compound destructively under
+    CFR+'s regret-flooring ratchet. Given postflop combo-level blocking
+    is common (not rare like M27's own opponent-infeasibility case),
+    this was judged close enough to M27's own regime to require the same
+    caution — implemented anyway (the simpler, better-justified choice),
+    but treated as unproven until M27's own validation methodology
+    (an iteration-count sweep, checking for the exact "grows monotonically
+    with more iterations" signature M27 diagnosed) was actually applied,
+    not just assumed safe by analogy.
+  - **The mandatory empirical stress test, run before shipping, not
+    after — and the real result is the opposite of a compounding bug:**
+    a real 3-max flop scenario (a wider, deliberately-overlapping 5-combo
+    pool per position — more blocking between positions' own combos than
+    the tiny end-to-end test uses, the exact condition that produces NaN
+    entries and exercises the new `nan_to_num`), chance-dispatched to a
+    real turn, tracking a mid-strength hand's (AKo) and a weak pair's
+    (44) fold frequency facing a raise at 300 / 3,000 / 30,000
+    iterations: **0.2749 -> 0.0380 -> 0.0100** (AKo) and **0.1829 ->
+    0.0379 -> 0.0145** (44) — *decreasing* and *stabilizing* (shrinking
+    deltas: -0.24 then -0.03, not growing), the precise opposite of M27's
+    own diagnosed signature (which grew monotonically toward a degenerate
+    extreme, e.g. 22.8% -> 69.2% -> 94.8%). Zero `average_strategy()`
+    tables showed a NaN entry at any of the three iteration counts (0 of
+    936, 2,863, and 4,413 InfoSets respectively) — the `nan_to_num` fix
+    is doing its job, not leaking. Concluded, not assumed: the simpler
+    `nan=0.5` approach ships as-is; the stricter net-payoff-masking
+    alternative considered during design was not needed. A real,
+    incidental finding from the same sweep, worth recording: per-
+    iteration cost *dropped* as iteration count grew (52ms/iter at 300,
+    48ms/iter at 3,000, 15ms/iter at 30,000) — `chance_branches` (distinct
+    dispatched (terminal, card) pairs, each memoized in `chance_data`)
+    grew only ~1.6x (1,147 -> 1,857) while iterations grew 10x, meaning
+    an increasing fraction of later iterations hit an already-warm
+    chance-branch cache rather than paying fresh `NwayBoardEquityCache`/
+    `build_street_tree` construction cost.
+  - **Implementation, engine only:** new `chance.SampledChanceBranch`
+    (frozen dataclass: `card`, `board`, `equity_cache`, `root`,
+    `chance_fn`) + `chance.build_mccfr_chance_branch` — the MCCFR-native
+    sibling of `ChanceBranch`/`build_chance_node`, deliberately NOT
+    reusing either (a `ChanceBranch`'s `equity_table` is a precomputed
+    NxN array for the exact solver's pairwise value representation; a
+    `ChanceNode` eagerly builds *every* possible card's branch upfront —
+    both wrong shapes for MCCFR, which samples exactly ONE card per
+    visit and would otherwise pay for 44-49 N-way equity caches to serve
+    one). `card` is a parameter, not sampled inside the function — the
+    sampling decision (via `mccfr_solve`'s own seeded `rng`, for the same
+    determinism story every other sampling decision in this module
+    already honors) belongs in `cfr.py`, and lets `cfr.py` check its own
+    `chance_data` memoization *before* paying construction cost.
+    Structural double-dispatch prevention mirrors `build_chance_node`'s
+    own placement exactly: `chance_fn=None` lives inside the *same*
+    `if remaining_stack == 0` block that decides `root` for an
+    all-in-already branch, not a separate check applied after.
+  - `cfr.py` — `mccfr_solve`/`_mccfr_recurse` both gain `board`/
+    `chance_fn`/`chance_data` (mirroring `solve()`'s own parameter names
+    exactly; `board` has no `solve()` analog, needed because MCCFR must
+    *sample* a specific next card rather than dispatch to a pre-built
+    exhaustive structure). New `_sample_chance_card` — plain uniform
+    sampling from the remaining deck, excluding the board and every live
+    opponent's own cards, via `mccfr_solve`'s own `rng`. Deliberately no
+    `EXPLORATION_EPSILON`-style floor (a chance card's distribution is
+    fixed, uniform, exogenous "nature" randomness, never a *learned*
+    policy that can degenerate to an exact 0/1 split the way
+    `current_strategy()` can — no analogous collapse risk to guard
+    against) and no `MAX_OPPONENT_RESAMPLE_ATTEMPTS`-style retry loop
+    (excluding known-conflicting cards *before* drawing makes the single
+    draw correct by construction, unlike opponent-hand sampling's
+    needs-retry-after-the-fact shape).
+  - **A design simplification caught during this session's own
+    implementation, not carried over from the Plan agent's proposal
+    verbatim:** the agent's dispatch gate was `chance_fn is not None and
+    node.is_showdown and traverser not in node.folded`, wrapped around a
+    separate `if other_live:` check. Algebraically, that wrapper is
+    unreachable-false: `is_showdown` already means >=2 positions are
+    live, and a live traverser is one of them, so at least one *other*
+    live position is guaranteed whenever both outer conditions hold —
+    proven once (in a comment at the call site) and removed, rather than
+    re-verified at runtime on every single dispatch for a condition that
+    can never actually be false there.
+  - **Tests:** `tests/test_chance.py` — `build_mccfr_chance_branch`'s
+    full validation surface (fold-out/board-conflict/negative-stack
+    rejection, turn-street-vs-all-in-already root shape, determinism,
+    every branch's own `chance_fn` is `None` per the one-hop scope) plus
+    the direct Finding-2 regression test described above.
+    `tests/test_cfr.py` — `HandCombo`-pool opponent sampling (works, and
+    correctly resamples on a forced conflict); `mccfr_solve` omitting
+    `board`/`chance_fn`/`chance_data` is bit-identical (full `node_data`)
+    to passing all three explicitly `None`; `ValueError` when `chance_fn`
+    is set without `board`; `_sample_chance_card` never returns a board
+    or live-opponent card; a hand-built toy tree + spy `chance_fn` proves
+    dispatch fires and the branch's own equity source is what actually
+    gets used (not the outer one — a real arithmetic-level check, not
+    just "the spy was called"); a genuinely 3-handed toy terminal (the
+    traverser folded, two *other* positions still live and
+    showdown-eligible) proves the MCCFR-specific fold gate, a divergence
+    from `_solve_recurse`'s single `is_showdown` check that a 2-player
+    toy tree structurally can't exercise; a branch whose own root is
+    itself a showdown terminal falls through to direct equity, not a
+    second dispatch (mirrors `test_solve_does_not_recurse_chance_fn_
+    into_branch_subtrees`); all-in-already correctness at the `cfr.py`
+    level; `chance_data` memoization (spy call count equals distinct
+    `(terminal, card)` pairs actually dispatched — keyed by `id()`,
+    since `TerminalNode` carries a dict field and isn't hashable — never
+    the iteration count); the new `nan_to_num` line's own direct unit
+    tests (replaces a stub NaN with neutral 0.5, and is a provable no-op
+    against a cache that never produces NaN); full determinism given a
+    seed with chance dispatch active; and the required end-to-end test —
+    a real 3-max flop tree, a real per-position combo pool with
+    `initial_reach` supplied for all three positions, a real board, a
+    real `chance_fn`/`chance_data` wired through `build_mccfr_chance_
+    branch` — asserting no NaN anywhere, every strategy row sums to 1.0,
+    `chance_data` is non-empty (dispatch actually fired), and at least
+    one dispatched branch reached a real turn-street `DecisionNode` (not
+    just an all-in-reused terminal).
+  - **Verification:** `python -m pytest tests/ -v` — 610 passed, zero
+    regressions (up from M31's 582 — mandatory given `cfr.py`'s own M27
+    history of "small, localized" changes turning out not to be, and
+    that this touches `_sample_opponent_hands`, which every existing
+    preflop MCCFR test depends on). `npm test` (frontend) — 139 passed,
+    zero regressions (engine-only change, no frontend files touched).
+  - **Scope:** engine only, no `api/main.py`/frontend changes, no
+    `solver.py` entry point — matches M12+M13-before-M14's own precedent
+    of shipping engine+tests before a live-wiring milestone. Turn->river
+    chaining (a second hop) is deliberately deferred, mirroring
+    M12-before-M13's own one-hop-first precedent; a `chain_to_river`-
+    style forward-compatible parameter was considered (confirmed cleanly
+    addable later with no late-binding-closure risk, unlike
+    `build_chance_node`'s own loop-shared-variable concern, since this
+    function builds exactly one branch per call) but not added now,
+    matching the diagnostic's own explicit one-hop-first scope. This
+    closes recommendation #5's engine-level work; a live endpoint (and
+    the multiway-postflop `solver.py` entry point it would need) remains
+    unscoped future work, the same "prove it small first, wire it up
+    later" pattern the real-time-speed roadmap (M17-M21) and M15-M16
+    each already established.
 
 ## v3 vision (future) — live-table advisor
 
