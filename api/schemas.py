@@ -60,6 +60,31 @@ class HeroAdvice(BaseModel):
     in_range: bool
     strategy: dict[str, float] | None
     trained: bool | None
+    # M52. Deliberately a separate field from `trained` above, and easy
+    # to conflate: `trained` is about the POSTFLOP solve node this
+    # advice was read from; `range_trained` is about the PREFLOP
+    # derivation that produced the range fed into that solve. Either can
+    # be untrustworthy independently of the other.
+    range_trained: bool | None = None
+
+
+class RangeConfidence(BaseModel):
+    """How much of one position's solved-against range was genuinely
+    backed by real solving along the preflop path, rather than the
+    untrained uniform default (M52, surfacing PathScenario.trained —
+    the signal M29 measured, and M29/M42/M44 each deferred exposing).
+
+    Counted over the classes that actually SURVIVED capping, not the
+    full derived range: advice is only ever built from what got solved,
+    so confidence over discarded classes would dilute the real number.
+
+    `fully_trained: False` means part of the range fed into this solve
+    was the untrained default — the advice is built on a partly
+    fabricated-looking range and should be weighted accordingly."""
+
+    trained_classes: int
+    total_classes: int
+    fully_trained: bool
 
 
 class AdviseResponse(BaseModel):
@@ -93,6 +118,10 @@ class AdviseResponse(BaseModel):
     source: str
     solve_iterations: int | None
     elapsed_seconds: float
+    # M52: position -> RangeConfidence. None for the preflop street,
+    # which derives no range at all (it reads the full solved 169-class
+    # strategy directly, so there's nothing to have been fabricated).
+    range_confidence: dict[str, RangeConfidence] | None = None
 
 
 class SolveResponse(BaseModel):

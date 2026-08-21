@@ -3725,6 +3725,68 @@ street chaining needs.
     response-shape decision); and live-table integration, which the
     user explicitly deferred.
 
+- **M52 — surface the derived-range confidence signal, and fix a real
+  `/advise` dispatch bug found while proving it fires.** Closes the gap
+  M29 measured and M29/M42/M44 each deferred exposing — now a one-place
+  change, exactly as M50's extraction promised.
+  - **Why this one mattered most of what was left:** M29 measured a real
+    6-max line whose derived range came back *exactly uniform* —
+    "confident-looking, fabricated, and silently indistinguishable from
+    a genuinely converged one." For a tool whose entire job is giving
+    advice someone might act on, silently-fabricated input is worse than
+    a slow answer or a missing feature.
+  - **The response-shape decision M29/M42/M44 all deferred, now made:**
+    a per-position SUMMARY (`range_confidence: {position: {trained_
+    classes, total_classes, fully_trained}}`), not a per-hand map. A
+    full per-hand map for every live position is mostly noise for a
+    caller asking "can I trust this"; counts plus a boolean answer that
+    directly, and `hero.range_trained` covers the one hand a caller
+    actually holds. Computed over the classes that actually SURVIVED
+    capping, not the full derived range — advice is only ever built from
+    what got solved, so confidence over discarded classes would dilute
+    the number that matters.
+  - **Two confidence fields that are easy to conflate, deliberately kept
+    separate and documented as such:** `hero.trained` is about the
+    POSTFLOP solve node the advice was read from; `hero.range_trained`
+    is about the PREFLOP derivation that produced the range fed into
+    that solve. Either can be untrustworthy independently of the other.
+  - **Proven to actually fire, not just to exist:** a signal that's
+    always `True` proves nothing, so this was verified against M29's own
+    measured case — a deep 6-max 3-bet line — which reproduces exactly:
+    `UTG: 0/3 trained, fully_trained: False`, `hero.range_trained:
+    False`, while the other survivor is cleanly 3/3. Pinned by a test
+    that asserts at least one position is untrained on that line, plus
+    a companion test that a shallow heads-up line comes back cleanly
+    fully trained (so the signal isn't just always-False either).
+  - **The real bug this surfaced, and it was a serious one:** proving
+    the signal fires needed a 6-max line, which immediately 422'd —
+    `/advise` picked its solver from `request.players` (the ORIGIN table
+    size) rather than from how many positions actually SURVIVE to the
+    flop. A 6-max hand where everyone folds and two players see the flop
+    heads-up — *the most common real full-ring shape*, and precisely
+    what M29 was built to support — was routed to the multiway cell,
+    which then correctly refused it. `/advise` was unusable for exactly
+    the case M29 existed to serve. Fixed with `_live_position_count`
+    (counts from the resolved node's own `folded` set — a tree walk over
+    an already-cached solve, not a second solve, and deliberately not
+    `derive_ranges_from_path`, whose reach-multiplication this question
+    doesn't need). Threaded through the cap lookup and unsupported-cell
+    check too, since both were keyed on the same wrong question.
+    Regression-pinned by its own test.
+  - **Scope, stated honestly:** `range_confidence` is surfaced on
+    `/advise` only, not on the five sibling endpoints — the fix itself
+    is in the one shared place (`_derive_path_situation`, per M50), but
+    surfacing it on each sibling would mean five more response-model
+    changes. `/advise` is the front door a real consumer uses; the
+    siblings remain the older, narrower-purpose endpoints. A caller
+    needing the signal there can switch to `/advise`.
+  - **Verification:** `python -m pytest tests/ -v` — 736 passed, zero
+    regressions (up from M51's 732 — 4 new). No frontend changes.
+  - **What's still open:** the (river, multiway) cell; re-tuning the
+    remaining caps against M48's speedup; the two-phase-solve lever
+    (M47); and live-table integration, which the user explicitly
+    deferred.
+
 ## v3 vision (future) — live-table advisor
 
 Discussed with the user while scoping M16, recorded here rather than
