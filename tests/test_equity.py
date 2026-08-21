@@ -1,4 +1,5 @@
 import random
+import threading
 import time
 
 import numpy as np
@@ -603,4 +604,118 @@ def test_multiway_cache_deterministic_across_separate_caches_with_same_seed():
     cache1 = MultiwayEquityCache(hands=hands, samples=30, seed=99)
     cache2 = MultiwayEquityCache(hands=hands, samples=30, seed=99)
     assert np.array_equal(cache1.traverser_equity_vector(opponents), cache2.traverser_equity_vector(opponents))
+
+
+# ---------------------------------------------------------------------------
+# M34: thread safety (docs/full-table-diagnostic-2026-08.md's §3.10) —
+# MultiwayEquityCache._cache's own lock, and get_equity_table's atomic
+# on-disk write + lock. InfoSetTable's own §3.10 gap is deliberately
+# documented rather than locked — see its class docstring in cfr.py.
+# ---------------------------------------------------------------------------
+
+
+def test_multiway_cache_concurrent_access_same_key_is_safe_and_consistent():
+    # Many threads racing for the IDENTICAL opponent tuple must never
+    # crash or corrupt self._cache — and since the computation is
+    # deterministic given (seed, key), every thread's own result must be
+    # bit-identical too, regardless of who "won" the cache write.
+    hands = [StartingHand("A", "A"), StartingHand("K", "K"), StartingHand("Q", "Q")]
+    opponents = (StartingHand("7", "2", suited=False), StartingHand("8", "3", suited=False))
+    cache = MultiwayEquityCache(hands=hands, samples=30, seed=1)
+
+    results = []
+    errors = []
+
+    def worker():
+        try:
+            results.append(cache.traverser_equity_vector(opponents))
+        except Exception as exc:  # pragma: no cover - failure path only
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(16)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors
+    assert len(results) == 16
+    for result in results[1:]:
+        assert np.array_equal(result, results[0])
+    assert len(cache) == 1  # one distinct key was ever requested
+
+
+def test_multiway_cache_concurrent_access_different_keys_all_correct():
+    hands = [StartingHand("A", "A"), StartingHand("K", "K")]
+    opponent_pool = [
+        StartingHand("7", "2", suited=False), StartingHand("8", "3", suited=False),
+        StartingHand("9", "4", suited=False), StartingHand("T", "5", suited=False),
+        StartingHand("J", "6", suited=False), StartingHand("Q", "7", suited=False),
+    ]
+    cache = MultiwayEquityCache(hands=hands, samples=30, seed=2)
+    opponent_tuples = [(opponent_pool[i], opponent_pool[i + 1]) for i in range(0, 6, 2)]
+
+    results: dict = {}
+    lock = threading.Lock()
+    errors = []
+
+    def worker(opponents):
+        try:
+            vector = cache.traverser_equity_vector(opponents)
+            with lock:
+                results[opponents] = vector
+        except Exception as exc:  # pragma: no cover - failure path only
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(opponents,)) for opponents in opponent_tuples for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors
+    assert len(cache) == 3  # exactly the 3 distinct opponent tuples requested
+    for opponents in opponent_tuples:
+        expected = cache.traverser_equity_vector(opponents)  # a guaranteed cache hit now
+        assert np.array_equal(results[opponents], expected)
+
+
+def test_get_equity_table_concurrent_cold_start_never_produces_a_corrupt_file(tmp_path):
+    # The real, already-live race this milestone fixes: many threads all
+    # reaching a nonexistent cache file at once (the pre-warm-thread-vs-
+    # live-request shape CLAUDE.md's M14 entry already measured real
+    # contention for). Every thread must get back a valid, correctly-
+    # shaped table — never a crash from a torn/partial read — and the
+    # file left on disk afterward must itself load cleanly.
+    hands = [StartingHand("A", "A"), StartingHand("K", "K"), StartingHand("Q", "Q")]
+    cache_path = tmp_path / "concurrent_equity.npy"
+    assert not cache_path.exists()
+
+    results = []
+    errors = []
+
+    def worker():
+        try:
+            results.append(get_equity_table(cache_path=cache_path, hands=hands, samples=20))
+        except Exception as exc:  # pragma: no cover - failure path only
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors
+    assert len(results) == 8
+    for table in results:
+        assert table.shape == (3, 3)
+    assert cache_path.exists()
+    # No leftover temp files from any thread that lost the race.
+    leftover_tmp = list(tmp_path.glob("*.tmp-*"))
+    assert leftover_tmp == []
+    # The file actually on disk loads cleanly and matches what every
+    # thread received — the direct proof no torn write ever landed.
+    on_disk = np.load(cache_path)
+    assert np.array_equal(on_disk, results[0])
 

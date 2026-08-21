@@ -2297,6 +2297,83 @@ street chaining needs.
     write) — is a mechanically different kind of fix (locking, not
     equity computation) and is deliberately left for its own milestone,
     matching this project's "one coherent improvement per PR" rule.
+- **M34 — §3.10's three thread-safety gaps, closing recommendation
+  #7 in full.** Investigated each of the three named gaps individually
+  before fixing anything, rather than treating them as one uniform
+  "add locks" task — they turned out to have genuinely different risk
+  profiles, and the fix (or deliberate non-fix) for each reflects that.
+  - **Gap 1, real and already-live today, fixed with atomicity plus a
+    lock:** `equity.get_equity_table`'s on-disk cache had an unlocked
+    check-then-write race. Confirmed this isn't hypothetical: `api/
+    main.py` already runs a background pre-warm thread that calls into
+    `solve_preflop` -> `get_equity_table` concurrently with live
+    requests (CLAUDE.md's own M14 entry already measured real
+    contention between the two), so on a cold cache, two threads could
+    both build the table and both `np.save` to the same path — a real
+    torn-write risk. Fixed two ways, doing different jobs: a module-
+    level `threading.Lock` avoids the *redundant* rebuild (a second
+    thread re-checks `path.exists()` after acquiring the lock), and the
+    write itself goes to a per-thread/per-process temp file then
+    `os.replace`s into place (atomic on both POSIX and Windows) — so
+    even a hypothetical caller reaching this function outside the lock's
+    scope (a stated limitation: `threading.Lock` only protects threads
+    within one process, not a multi-*process* deployment, which this
+    project doesn't currently use) can never observe a partial file.
+  - **Gap 2, not currently live but cheap to proactively harden:**
+    `MultiwayEquityCache._cache` had the same class of unlocked check-
+    then-write. Traced every real construction site in the codebase
+    (confirmed, not assumed) before deciding this needed fixing at all:
+    every one builds a fresh instance per solve, used single-threaded
+    within it — no current caller actually shares one instance across
+    threads. Fixed anyway, proactively: a `self._lock` guarding the
+    dict read/write (never the expensive dealing/simulation itself),
+    mirroring the exact "check under lock, compute unlocked, write
+    under lock" pattern `api/main.py`'s own `_get_or_solve*` helpers
+    already use — not inventing a new idiom, applying this codebase's
+    own established one. Cheap because the locked sections are a single
+    dict operation, not the surrounding computation.
+  - **Gap 3, deliberately left unlocked, on the record, not silently
+    skipped:** `InfoSetTable`'s `regret_sum`/`strategy_sum` read-
+    modify-write updates are the single hottest path in the entire
+    engine — touched once per node, per iteration, of *every* solve
+    that exists today. Unlike gap 1 (real live risk) and gap 2 (cheap
+    to harden), a lock here would cost every current, single-threaded
+    caller real overhead for a scaling move (parallel traversers) that
+    doesn't exist yet, whose actual synchronization needs aren't even
+    decided — a future design might use per-thread `node_data` dicts
+    merged at the end instead of per-table locking, an entirely
+    different mechanism this milestone would have guessed wrong.
+    Documented explicitly in `InfoSetTable`'s own class docstring
+    instead: a decision on record, not a gap nobody noticed.
+  - **Tests:** `tests/test_equity.py` gained a dedicated concurrency
+    section — many threads racing the *identical* opponent tuple
+    against `MultiwayEquityCache` (no crash, every thread's own result
+    bit-identical given determinism, cache ends up with exactly one
+    entry); many threads racing *different* opponent tuples (each gets
+    its own correct value, cache ends up with exactly the right count
+    of distinct entries); and the direct regression test for gap 1 —
+    many threads hitting `get_equity_table` on a genuinely nonexistent
+    cache path simultaneously, asserting every thread gets back a
+    validly-shaped table, no leftover temp files, and the file actually
+    left on disk loads cleanly and matches what every thread received.
+  - **Verification:** `python -m pytest tests/ -v` — full suite, zero
+    regressions (this touches `equity.py` again, the same file M27/M33
+    already taught this project to re-verify broadly, not just re-run
+    its own test file). `npm test` (frontend) — zero regressions
+    (engine-only change, no frontend files touched).
+  - **This closes recommendation #7 in full** (suit-assignment bias
+    and the determinism-claim fix landed in M33; the three thread-
+    safety gaps close it here) — the last item on `docs/full-table-
+    diagnostic-2026-08.md`'s own prioritized recommendation list.
+    Recommendations #1-#7 are now all addressed, each recorded in its
+    own milestone entry above (M27-M34), including the places this
+    session's own investigation corrected or refined the diagnostic's
+    original framing rather than applying it verbatim (M32's finding
+    that `postflop_action_order` — introduced at M29, after the
+    diagnostic's own snapshot — would be misapplied by the tempting-
+    but-wrong approach to §3.7's fix, and this milestone's own finding
+    that only one of §3.10's three named thread-safety gaps was
+    actually live today, not all three equally).
 
 ## v3 vision (future) — live-table advisor
 
