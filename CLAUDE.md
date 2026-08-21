@@ -4123,6 +4123,51 @@ street chaining needs.
     component, including the label-less hero variant. No backend
     changes.
 
+- **M60 — audit recommendation #3: a cache registry.** Third item of
+  `docs/project-audit-2026-08-21.md`'s list. 28 ad-hoc globals (14 dicts
+  + 14 separately-declared locks) become 14 self-registering
+  `_SolveCache` objects.
+  - **The deepest option, and why it beat the minimal one:** the audit
+    suggested "an `ALL_CACHES = [...]` list the fixture iterates". That
+    would still be a hand-maintained inventory — the same class of thing
+    that was already being forgotten. A class that **registers itself on
+    construction** makes forgetting structurally impossible instead of
+    merely discouraged, and simultaneously fixes the second half of the
+    problem the audit noted: a dict and its lock were two independent
+    globals kept paired by convention alone.
+  - **`tests/test_api.py`'s fixture went from clearing 13 caches by hand
+    in TWO places (setup and teardown) to one `_SolveCache.clear_all()`
+    call each.** Every endpoint milestone in this project's history had
+    to remember to patch both lists; that footgun is gone.
+  - **Deliberately exposes `.entries` and `.lock` rather than forcing a
+    `get`/`set` API** — the locking DISCIPLINES here genuinely differ and
+    that difference is load-bearing: most helpers hold the lock only
+    around the dict access (accepting a concurrent double-solve),
+    `_query_flop`/`_query_flop_from_path` hold it across the whole
+    `query_strategy` call (M22, because that primitive has no
+    concurrency control of its own), and `_query_turn_multiway_from_path`
+    also guards `ensure_mccfr_chance_branch`'s in-place mutation (M44).
+    Collapsing those into one API would have quietly changed three
+    endpoints' concurrency behavior — the same "unify things that only
+    look alike" trap M50 and M59 each had to resist. **The class owns
+    storage and registration; each call site keeps owning its policy.**
+  - **A real distinction the audit missed, surfaced as an
+    `AttributeError` during the work rather than as a review note:**
+    `_flop_query_library` and `_path_query_libraries` are NOT endpoint
+    response caches — they are the `library` dict `poker_solver.library.
+    query_strategy` itself owns and mutates, whose documented contract
+    is a plain dict. Every call site now hands the engine `.entries`,
+    never the wrapper. Making `_SolveCache` masquerade as a dict would
+    have "fixed" the error while cementing exactly the implicit coupling
+    that made the distinction easy to miss.
+  - **Tests:** 3 new — that the registry covers every module-level cache
+    (verified by a live scan of the module rather than a hardcoded list,
+    which would reintroduce the very inventory this removes), that
+    `clear_all()` empties genuinely-populated caches, and that every
+    registered cache bundles both a dict and a real lock.
+  - **Verification:** `python -m pytest tests/ -v` — 749 passed, zero
+    regressions (up from M59's 746). No frontend changes.
+
 ## v3 vision (future) — live-table advisor
 
 Discussed with the user while scoping M16, recorded here rather than

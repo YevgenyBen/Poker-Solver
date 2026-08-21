@@ -2,7 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api import main as api_main
-from api.main import _multiway_cache, app
+from api.main import app
 from poker_solver.cards import parse_cards, remaining_deck
 from poker_solver.starting_hands import StartingHand
 
@@ -106,35 +106,15 @@ def _disable_prewarm_and_clear_cache(monkeypatch):
     )
     monkeypatch.setattr(api_main, "MULTIWAY_FLOP_MAX_RAISES", 1)
     monkeypatch.setattr(api_main, "MULTIWAY_FLOP_RAISE_SIZES", ())
-    _multiway_cache.clear()
-    api_main._flop_cache.clear()
-    api_main._flop_turn_cache.clear()
-    api_main._flop_to_river_cache.clear()
-    api_main._flop_multiway_cache.clear()
-    api_main._flop_turn_multiway_cache.clear()
-    api_main._flop_to_river_multiway_cache.clear()
-    api_main._flop_query_library.clear()
-    api_main._preflop_raw_cache.clear()
-    api_main._path_query_libraries.clear()
-    api_main._turn_path_cache.clear()
-    api_main._flop_multiway_path_cache.clear()
-    api_main._turn_multiway_path_cache.clear()
-    api_main._river_path_cache.clear()
+    # M60: one call, not a hand-maintained list. Every cache
+    # registers itself (see api/main.py's _SolveCache), so a new
+    # endpoint's cache can no longer be forgotten here.
+    api_main._SolveCache.clear_all()
     yield
-    _multiway_cache.clear()
-    api_main._flop_cache.clear()
-    api_main._flop_turn_cache.clear()
-    api_main._flop_to_river_cache.clear()
-    api_main._flop_multiway_cache.clear()
-    api_main._flop_turn_multiway_cache.clear()
-    api_main._flop_to_river_multiway_cache.clear()
-    api_main._flop_query_library.clear()
-    api_main._preflop_raw_cache.clear()
-    api_main._path_query_libraries.clear()
-    api_main._turn_path_cache.clear()
-    api_main._flop_multiway_path_cache.clear()
-    api_main._turn_multiway_path_cache.clear()
-    api_main._river_path_cache.clear()
+    # M60: one call, not a hand-maintained list. Every cache
+    # registers itself (see api/main.py's _SolveCache), so a new
+    # endpoint's cache can no longer be forgotten here.
+    api_main._SolveCache.clear_all()
 
 
 @pytest.fixture()
@@ -627,8 +607,8 @@ def test_solve_flop_turn_and_solve_flop_to_river_are_cached_independently(client
     # test silently passing on a key that never actually matches.
     assert len(api_main._flop_turn_cache) == 1
     assert len(api_main._flop_to_river_cache) == 1
-    turn_result = next(iter(api_main._flop_turn_cache.values()))
-    river_result = next(iter(api_main._flop_to_river_cache.values()))
+    turn_result = next(iter(api_main._flop_turn_cache.entries.values()))
+    river_result = next(iter(api_main._flop_to_river_cache.entries.values()))
 
     def _any_branch_has_a_populated_chance_fn(result):
         return any(
@@ -763,8 +743,8 @@ def test_solve_flop_multiway_and_solve_flop_turn_multiway_are_cached_independent
     )
     assert len(api_main._flop_multiway_cache) == 1
     assert len(api_main._flop_turn_multiway_cache) == 1
-    flop_result = next(iter(api_main._flop_multiway_cache.values()))
-    turn_result = next(iter(api_main._flop_turn_multiway_cache.values()))
+    flop_result = next(iter(api_main._flop_multiway_cache.entries.values()))
+    turn_result = next(iter(api_main._flop_turn_multiway_cache.entries.values()))
     assert flop_result.chance_data == {}  # solve_flop_multiway never dispatches chance
     assert len(turn_result.chance_data) > 0  # solve_flop_turn_multiway does
 
@@ -843,7 +823,7 @@ def test_solve_flop_to_river_multiway_is_cached_independently_from_the_other_two
     )
     assert len(api_main._flop_turn_multiway_cache) == 1
     assert len(api_main._flop_to_river_multiway_cache) == 1
-    river_result = next(iter(api_main._flop_to_river_multiway_cache.values()))
+    river_result = next(iter(api_main._flop_to_river_multiway_cache.entries.values()))
     assert len(river_result.chance_data) > 0
     assert any(len(branch.board) == 5 for branch in river_result.chance_data.values())
 
@@ -1223,6 +1203,48 @@ def test_preflop_walk_after_a_limp_offers_a_free_check_with_no_fold(client):
     by_kind = _by_kind(body["legal_actions"])
     assert "fold" not in by_kind
     assert by_kind["call_or_check"]["to_call"] == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# M60: the cache registry. Every solve cache registers itself on
+# construction, so clearing them is one call rather than a
+# hand-maintained list that each new endpoint had to remember to update
+# in two places (docs/project-audit-2026-08-21.md's SS3.2).
+# ---------------------------------------------------------------------------
+
+
+def test_every_cache_registers_itself():
+    registered = api_main._SolveCache.registered()
+    # Names are unique, and the registry covers every module-level cache
+    # object — checked by comparing against a live scan of the module
+    # rather than a hardcoded list, which would reintroduce exactly the
+    # hand-maintained inventory this milestone removed.
+    names = [cache.name for cache in registered]
+    assert len(names) == len(set(names)), f"duplicate cache names: {names}"
+
+    module_caches = [
+        value for value in vars(api_main).values() if isinstance(value, api_main._SolveCache)
+    ]
+    assert len(module_caches) == len(registered)
+    assert {id(c) for c in module_caches} == {id(c) for c in registered}
+
+
+def test_clear_all_empties_every_populated_cache(client):
+    client.get(f"/solve/100?iterations={_PATH_ITERATIONS}")
+    client.get(f"/solve_flop?board={_CHAINED_FLOP_BOARD}&pot=10&stack_bb=40&iterations={FAST_FLOP_ITERATIONS}")
+    populated = [c for c in api_main._SolveCache.registered() if len(c) > 0]
+    assert populated, "expected at least one cache to have been populated"
+
+    api_main._SolveCache.clear_all()
+    assert all(len(c) == 0 for c in api_main._SolveCache.registered())
+
+
+def test_each_cache_bundles_its_own_lock():
+    # The pairing a dict-plus-separate-lock convention could silently
+    # break; now impossible to have one without the other.
+    for cache in api_main._SolveCache.registered():
+        assert isinstance(cache.entries, dict)
+        assert hasattr(cache.lock, "acquire")
 
 
 # ---------------------------------------------------------------------------
@@ -2402,7 +2424,7 @@ def test_solve_turn_multiway_from_path_builds_and_returns_an_untrained_strategy_
     assert first.status_code == 200
     assert len(api_main._turn_multiway_path_cache) == 1
 
-    result = next(iter(api_main._turn_multiway_path_cache.values()))
+    result = next(iter(api_main._turn_multiway_path_cache.entries.values()))
     board_cards = tuple(api_main.parse_cards("2h6d9c"))
 
     # Find the real terminal object this flop_action_path resolves to,
