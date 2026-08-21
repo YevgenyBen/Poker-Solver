@@ -147,6 +147,66 @@ class FlopMultiwayPathQueryResponse(BaseModel):
     players: int
 
 
+class RiverPathRequest(BaseModel):
+    """M46's request body — the river analog of TurnPathRequest, one
+    street further: a real preflop path, a real flop board + flop action
+    path, a real dealt turn card, a real TURN action path (new — the
+    turn is itself a full betting round, unlike TurnPathQueryResponse's
+    own "expose only the first turn decision" scope cut, which needed no
+    turn_action_path at all), and a real dealt river card.
+
+    Two independent iteration fields, mirroring TurnPathRequest's own
+    preflop/turn split: `iterations` (the preflop leg — same behavior as
+    every other path-based request) and `river_iterations` (the
+    solve_flop_to_river leg — this endpoint's own real cost driver, far
+    steeper even than solve_flop_turn's, see api/main.py's module
+    docstring for the measured numbers). Same no-numeric-constraints-
+    here convention as ActionPathRequest/TurnPathRequest.
+
+    `players` (mirrors M29's own precedent): defaults to 2 — postflop
+    solving here is 2-position only, regardless of origin table size,
+    same restriction TurnPathRequest already has."""
+
+    stack_bb: float
+    preflop_action_path: list[str]
+    board: str
+    flop_action_path: list[str]
+    turn_card: str
+    turn_action_path: list[str]
+    river_card: str
+    iterations: int | None = None
+    river_iterations: int | None = None
+    players: int = 2
+
+
+class RiverPathQueryResponse(BaseModel):
+    """Mirrors TurnPathQueryResponse one street further. `river_
+    iterations` echoes what was actually used — this endpoint's own
+    solve-stage iteration count is real, request-controllable input
+    (unlike /solve_flop_from_path's fixed, unreported PATH_QUERY_
+    ITERATIONS), mirroring FlopMultiwayPathQueryResponse's/
+    TurnMultiwayPathQueryResponse's own identical field."""
+
+    board: str
+    turn_card: str
+    river_card: str
+    preflop_action_path: list[str]
+    flop_action_path: list[str]
+    turn_action_path: list[str]
+    stack_bb: float
+    effective_stack_bb: float
+    pot: float
+    river_iterations: int
+    is_terminal: bool
+    player_to_act: str | None
+    strategy: dict[str, dict[str, float]]
+    trained: dict[str, bool]
+    position: str
+    positions: list[str]
+    players: int
+    elapsed_seconds: float
+
+
 class PreflopWalkRequest(BaseModel):
     """M25's request body — board-independent, unlike ActionPathRequest:
     a "what's legal from here" query is a pure preflop-tree-state check,
