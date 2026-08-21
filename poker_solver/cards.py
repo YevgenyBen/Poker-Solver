@@ -23,14 +23,26 @@ class Card:
     def __post_init__(self):
         object.__setattr__(self, "rank", self.rank.upper())
         object.__setattr__(self, "suit", self.suit.lower())
-        rank_value(self.rank)  # raises ValueError for an unknown rank
+        # M67: computed ONCE here, not on every `.value` read. This is a
+        # frozen dataclass whose rank is already normalized by the line
+        # above, so the value can never change afterwards — recomputing it
+        # per access was pure waste. Profiled at 39M calls / ~22s
+        # cumulative on a single 6-max 169-class solve, because `.value`
+        # sits in the innermost equity-simulation loop.
+        #
+        # Set via object.__setattr__ rather than declared as a field so it
+        # stays out of the dataclass-generated __eq__/__hash__/__repr__ —
+        # it is derived data, and Card's identity is still (rank, suit).
+        # rank_value also still raises ValueError for an unknown rank, so
+        # this keeps the validation the discarded standalone call did.
+        object.__setattr__(self, "_value", rank_value(self.rank))
         if self.suit not in SUITS:
             raise ValueError(f"Unknown suit: {self.suit!r}")
 
     @property
     def value(self) -> int:
         """Numeric rank value (0-12), see hand_utils.rank_value."""
-        return rank_value(self.rank)
+        return self._value
 
     def __str__(self) -> str:
         return f"{self.rank}{self.suit}"

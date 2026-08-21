@@ -68,6 +68,7 @@ from .caches import (
     _flop_turn_cache,
     _flop_turn_multiway_cache,
     _multiway_cache,
+    _multiway_equity_caches,
     _path_query_libraries,
     _preflop_raw_cache,
     _river_path_cache,
@@ -80,12 +81,41 @@ def _cache_key(stack_bb: float, iterations: int) -> tuple:
     return (round(stack_bb), iterations)
 
 
+def _get_multiway_equity_cache(hands) -> MultiwayEquityCache:
+    """The shared MultiwayEquityCache for `hands` (M67).
+
+    Preflop equity depends only on the hands — not on stack depth, and
+    not on table size beyond the opponent-tuple length MultiwayEquityCache
+    already keys by. So every multiway solve over the same pool can and
+    should share one, instead of each (stack, players) spot rebuilding
+    identical simulations from scratch. See api/caches.py's own comment
+    on _multiway_equity_caches for why this is keyed by the pool rather
+    than being a single module-level instance.
+    """
+    key = (tuple(str(hand) for hand in hands), cfg.MULTIWAY_PREFLOP_SAMPLES)
+    with _multiway_equity_caches.lock:
+        cache = _multiway_equity_caches.entries.get(key)
+        if cache is None:
+            cache = MultiwayEquityCache(
+                hands=list(hands), samples=cfg.MULTIWAY_PREFLOP_SAMPLES, seed=1
+            )
+            _multiway_equity_caches.entries[key] = cache
+    return cache
+
+
 def _get_or_solve_multiway(stack_bb: float, players: int) -> StrategyResult:
     """Solves (or returns the cached result of solving) the full
-    `players`-max tree once for `stack_bb`, over cfg.DEMO_MULTIWAY_HANDS —
-    every position's strategy is derived from this single cached
+    `players`-max tree once for `stack_bb`, over
+    cfg.MULTIWAY_PREFLOP_HANDS (all 169 classes as of M67) — every
+    position's strategy is derived from this single cached
     StrategyResult, so switching `position` in the API/UI never triggers
-    a re-solve."""
+    a re-solve.
+
+    That single cached solve is why the full pool is affordable at all:
+    it costs ~170s at 6-max / ~215s at 9-max, paid once per (stack,
+    players), and _prewarm_common_depths already warms stack_bb=100 for
+    every table size on startup. See cfg.MULTIWAY_PREFLOP_HANDS for the
+    measurements and for why the previous 8-class pool was replaced."""
     key = (round(stack_bb), players)
     with _multiway_cache.lock:
         cached = _multiway_cache.entries.get(key)
@@ -94,10 +124,10 @@ def _get_or_solve_multiway(stack_bb: float, players: int) -> StrategyResult:
 
     table = cfg.MULTIWAY_TABLE_CONFIGS[players]
     config = GameConfig(positions=table["positions"], stack_bb=stack_bb)
-    equity_cache = MultiwayEquityCache(hands=cfg.DEMO_MULTIWAY_HANDS, seed=1)
+    equity_cache = _get_multiway_equity_cache(cfg.MULTIWAY_PREFLOP_HANDS)
     result = solve_preflop(
         config=config,
-        hands=cfg.DEMO_MULTIWAY_HANDS,
+        hands=cfg.MULTIWAY_PREFLOP_HANDS,
         equity_cache=equity_cache,
         iterations=table["iterations"],
         seed=1,
@@ -830,7 +860,7 @@ def _query_flop_from_path(
     the exact same literal action-kind path (e.g. ["raise",
     "call_or_check"] is valid at both heads-up and 6-max), so omitting
     it from the key would let one silently serve the other's cached
-    answer. cfg.DEMO_MULTIWAY_HANDS' own 8-class pool is already far
+    answer. cfg.MULTIWAY_PREFLOP_HANDS' own 8-class pool is already far
     smaller than cfg.MAX_PATH_QUERY_CLASSES_PER_SIDE would even cap to, so
     Finding 1's own uncapped-169-class-pool cost blowup doesn't recur
     here — multiway's curated pool was already the safe side of that
@@ -1669,6 +1699,7 @@ def _advise_preflop(request, iterations: int, hero_combo=None) -> dict:
 
     strategy = preflop_result.strategy_at(node)
     trained = preflop_result.trained_hands(node)
+    hero_key = None if hero_combo is None else str(_combo_to_class(hero_combo))
     live_positions = [p for p in preflop_result.config.positions if p not in node.folded]
     return {
         "street": "preflop",
@@ -1689,10 +1720,19 @@ def _advise_preflop(request, iterations: int, hero_combo=None) -> dict:
         # preflop solver works over the 169-class abstraction (v1's own
         # foundational choice). So hero's lookup key differs by street,
         # and the route must not assume one shape; it reads hero_key.
-        # in_range is unconditionally True here: a preflop solve covers
-        # every class, so there's no cap for hero to fall outside of.
-        "hero_key": None if hero_combo is None else str(_combo_to_class(hero_combo)),
-        "hero_in_range": None if hero_combo is None else True,
+        #
+        # in_range USED to be hardcoded True here, on the reasoning that
+        # "a preflop solve covers every class, so there's no cap for hero
+        # to fall outside of." That premise is true at heads-up (which
+        # really does solve all 169 classes) and was FALSE at multiway,
+        # which solves only its own pool — so a 6-max request for a hand
+        # outside that pool got `in_range: true` alongside a null
+        # strategy, which is precisely the confidently-wrong output this
+        # project's honesty signals exist to prevent (M67). Checked
+        # against the solved strategy now, so the answer is derived
+        # rather than assumed and stays correct whatever the pool is.
+        "hero_key": hero_key,
+        "hero_in_range": None if hero_key is None else hero_key in strategy,
     }
 
 

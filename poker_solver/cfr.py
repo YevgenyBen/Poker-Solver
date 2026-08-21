@@ -713,8 +713,9 @@ def _mccfr_recurse(
         # code: M27 proposed this change to fix 6-max preflop divergence
         # (AKs's UTG fold rate climbing 15.6% -> 48.7% -> 92.4% at
         # 300/3k/30k iterations). M66 built it and measured it — it does
-        # NOT fix that. The cause there is DEMO_MULTIWAY_HANDS being 48.6%
-        # premium by combo weight, not this update rule. This change is
+        # NOT fix that. The cause there was the API's multiway preflop hand
+        # pool being 48.6% premium by combo weight, not this update rule
+        # (M67 replaced that pool with all 169 classes). This change is
         # here on its own merits (correctness and an honest trained_mask),
         # measured behaviour-neutral where answers are well-determined.
         valid = np.isfinite(node_value)

@@ -49,24 +49,41 @@ every street (preflop through river) and every supported table size
 
 ### Known constraints — read before "improving" these
 
-- **6-max/9-max preflop budgets are 300 iterations, and raising them
-  makes output WORSE, not better.** AKs's UTG fold rate runs 15.6%
-  (300) -> 48.7% (3k) -> 92.4% (30k). Cost is not the constraint.
-  **The cause is `DEMO_MULTIWAY_HANDS`, not the solver (M66):** that pool
-  is 48.6% premium by combo weight, so at 6-max a player faces a premium
-  ~97% of the time and folding AKs under the gun really is near-correct.
-  MCCFR is converging correctly to a distorted question. Over a
-  realistically-weighted pool it is flat at 100x the budget (2.5% ->
-  1.2% -> 1.7%). Pinned by the paired
+- **Multiway preflop advice is trustworthy for FOLD-vs-PLAY, not for
+  SIZING (M67).** It solves all 169 classes now
+  (`MULTIWAY_PREFLOP_HANDS`) at 3,000 iterations / `samples=50`, which
+  makes fold rates plausible (T7s folds 69.8% UTG at 6-max, 72o 98.3%,
+  AA 0.1%). The split among non-fold actions is NOT converged — AA jams
+  ~22% where a real solve is near 0. **`trained` does not catch this**:
+  it reports that a hand got updates, not that they converged. Don't
+  present multiway sizing advice as authoritative.
+- **Multiway preflop is slow for an ARCHITECTURAL reason, and budget
+  tuning won't fix it.** Heads-up is fast *and* converged because it
+  solves exactly against a precomputed, disk-cached 169x169 equity
+  table. Multiway has no such table — `MultiwayEquityCache` Monte-Carlo
+  simulates per opponent tuple, and with 5 opponents from 169 classes
+  nearly every iteration is a fresh tuple, so cost never amortizes. A
+  6-max spot is ~325s. **The fix is a precomputed multiway equity
+  structure**, not more iterations, not micro-optimization (M67 tried
+  the latter: profiler said `Card.value`/`rank_value` dominated, real
+  wall-clock gain was zero — the same trap as M47).
+- **The old "6-max diverges with more iterations" constraint is RETIRED
+  (M66 diagnosed, M67 fixed).** It was never a solver bug — the old
+  8-class pool was 48.6% premium, so folding AKs under the gun really
+  was near-correct and MCCFR converged correctly to a distorted
+  question. **Do not** try to fix anything in `_mccfr_recurse` for this;
+  M27 proposed exactly that, M66 built it and measured no effect. Still
+  pinned by the paired
   `test_six_max_demo_pool_degrades_with_more_iterations` and
-  `test_six_max_converges_with_a_realistic_pool`. **Do not** try to fix
-  this in `_mccfr_recurse` — M27 proposed exactly that and M66 built it
-  (it shipped, for other reasons) and measured no effect. The fix is a
-  better hand pool.
-- **Multiway postflop answers an easier question than heads-up.** Its
-  preflop leg solves over `DEMO_MULTIWAY_HANDS`' 8 classes, not 169.
-  That is why multiway timings look faster; treat the advice as
-  correspondingly thinner.
+  `test_six_max_converges_with_a_realistic_pool`, which now document a
+  property of *any* premium-heavy pool rather than a live defect.
+- **Multiway POSTFLOP still answers an easier question than heads-up.**
+  M67 fixed the preflop leg (all 169 classes now), but postflop path
+  queries cap derived ranges per position
+  (`MAX_MULTIWAY_*_CLASSES_PER_POSITION = 6`) — measured 11.5s (flop) /
+  1.5s (turn). Treat multiway postflop advice as correspondingly
+  thinner, and note those caps genuinely bind now, where pre-M67 they
+  never did.
 - **`trained` / `range_confidence` / `source` exist because output can
   look confident and be fabricated.** Don't strip them for tidiness.
 - **The canonical-library path returns `trained: null`** — it persists
