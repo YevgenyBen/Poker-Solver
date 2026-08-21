@@ -4168,6 +4168,51 @@ street chaining needs.
   - **Verification:** `python -m pytest tests/ -v` — 749 passed, zero
     regressions (up from M59's 746). No frontend changes.
 
+- **M61 — audit recommendation #4 (first half): split `api/main.py`.**
+  3,441 lines -> **2,973**, with `api/config.py` (450) and
+  `api/caches.py` (174) carved out. The layering is a clean one-way
+  chain with no cycles: `config <- caches <- main`.
+  - **Staged deliberately, not done in one shot.** The audit itself
+    flagged this as "genuinely riskier than #1-#3 — it touches every
+    endpoint at once", and the biggest slice (the ~1,800 lines of
+    `_get_or_solve_*`/`_query_*` orchestrators) is left for its own
+    milestone. This mirrors M50-before-M51 exactly: extract the
+    foundation, prove it, then move the bulk onto it. Staging a risky
+    refactor IS the more thorough answer, not a lesser one — a
+    single-shot 3,400-line move with no intermediate checkpoint would
+    have been faster to write and much harder to trust.
+  - **A real constraint that shaped the design, thought through BEFORE
+    moving anything:** `tests/test_api.py` monkeypatches ~10 constants
+    as `api_main.<CONST>` to shrink demo pools for speed. Had `main.py`
+    referenced them as `config.X`, or had the orchestrators moved out in
+    this same step, those patches would have silently stopped taking
+    effect — tests would still pass while testing the *unshrunk*
+    production pools, i.e. slower and no longer testing what they claim.
+    Avoided by importing every name INTO `main.py`'s own namespace and
+    keeping the orchestrators there for now, so every existing read and
+    every existing monkeypatch resolves exactly as before.
+  - **The proof, and it is the same one M50 used:** `git diff tests/` is
+    **empty**. 749 passed with zero test modifications. A refactor that
+    needed its tests edited to pass would not have demonstrated anything
+    about behavior preservation.
+  - **Two small things caught by running rather than reading:** `logger`
+    had been swept into the constants block by a line-range extraction
+    (it belongs with the app that logs, not with tunable values), and
+    `_SolveCache` itself wasn't re-exported because the extraction
+    matched assignments and the class is a `class` statement. Both
+    surfaced immediately as import/attribute errors.
+  - **Every constant kept its full explanatory comment.** Those comments
+    are why this project's cost decisions survive across milestones, so
+    they moved with the values rather than being summarized away —
+    `config.py` is 450 lines for 42 constants precisely because of that.
+  - **Verification:** `python -m pytest tests/ -v` — 749 passed, zero
+    regressions and zero test changes. No frontend changes.
+  - **Remaining for the second half:** move the ~1,800 lines of
+    orchestrators into `api/solving.py`, which will require switching
+    the constant reads to `config.X` and updating the fixture's
+    monkeypatch targets accordingly — a real, deliberate test change,
+    unlike this half.
+
 ## v3 vision (future) — live-table advisor
 
 Discussed with the user while scoping M16, recorded here rather than
