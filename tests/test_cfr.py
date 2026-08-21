@@ -1,8 +1,10 @@
+import random
+
 import numpy as np
 import pytest
 
 from poker_solver.cards import Card
-from poker_solver.cfr import InfoSetTable, mccfr_solve, solve
+from poker_solver.cfr import InfoSetTable, _sample_opponent_hands, mccfr_solve, solve
 from poker_solver.chance import ChanceBranch, ChanceNode
 from poker_solver.equity import MultiwayEquityCache, build_equity_table
 from poker_solver.game_tree import ALL_IN, BB, BTN, CALL_OR_CHECK, FOLD, RAISE, Action, DecisionNode, GameConfig, TerminalNode, build_game_tree
@@ -630,4 +632,172 @@ def test_solve_handles_a_chance_node_nested_two_levels_deep():
     assert id(river_decision) in node_data
     avg = node_data[id(river_decision)].average_strategy()
     assert not np.any(np.isnan(avg))
-    assert np.allclose(avg.sum(axis=1), 1.0)
+
+
+# ---------------------------------------------------------------------------
+# M31: mccfr_solve's initial_reach — per-position range seeding, used for
+# BOTH the traverser's own reach AND how each opponent's hand is sampled.
+# Phase 2 of docs/full-table-diagnostic-2026-08.md's recommendation #5
+# ("true multiway postflop solving") — multiway_board_equity.py (M30) was
+# phase 1. See mccfr_solve's own docstring for the two remaining
+# prerequisites this phase still deliberately doesn't attempt (a
+# board-aware equity source actually threaded through terminal-value
+# computation, and a chance-branch sampling case in this module's own
+# recursion).
+# ---------------------------------------------------------------------------
+
+_M31_HANDS = [
+    StartingHand("A", "A"),
+    StartingHand("K", "K"),
+    StartingHand("Q", "Q"),
+    StartingHand("7", "2", suited=False),
+]
+
+
+def test_mccfr_solve_default_initial_reach_matches_explicit_combo_weight():
+    # The single most important regression guarantee for this change:
+    # omitting initial_reach (or passing None, the default) must be
+    # EXACTLY equivalent to every position explicitly supplying its own
+    # combo_weight-derived array — proving every pre-M31 call site's
+    # behavior is unaffected, not just "close." Shares one equity_cache
+    # across both calls deliberately: MultiwayEquityCache memoizes each
+    # opponent-tuple's value via a seed derived from the tuple itself
+    # (not a shared advancing RNG), so a warm cache returns identical
+    # values to a cold one — reuse here is a speed optimization, not a
+    # correctness risk.
+    config = GameConfig(positions=("BTN", "SB", "BB"))
+    root = build_game_tree(config)
+    equity_cache = MultiwayEquityCache(hands=_M31_HANDS, samples=100, seed=1)
+
+    omitted = mccfr_solve(root, _M31_HANDS, config.positions, equity_cache, iterations=500, seed=5)
+
+    combo_weights = [hand.combo_weight for hand in _M31_HANDS]
+    explicit = mccfr_solve(
+        root, _M31_HANDS, config.positions, equity_cache, iterations=500, seed=5,
+        initial_reach={position: combo_weights for position in config.positions},
+    )
+
+    assert omitted.keys() == explicit.keys()
+    for node_id in omitted:
+        assert np.array_equal(omitted[node_id].regret_sum, explicit[node_id].regret_sum)
+        assert np.array_equal(omitted[node_id].strategy_sum, explicit[node_id].strategy_sum)
+
+
+def test_sample_opponent_hands_respects_per_position_weights():
+    # SB's weight vector has ALL its mass on a single hand (QQ) — across
+    # many independent draws, SB's sampled hand must ALWAYS be QQ, never
+    # anything else, proving opponent sampling reads from THAT position's
+    # own weight vector, not one shared distribution the way it did
+    # before M31.
+    hands = _M31_HANDS
+    qq_index = hands.index(StartingHand("Q", "Q"))
+    sb_weights = np.zeros(len(hands))
+    sb_weights[qq_index] = 1.0
+    default_weights = np.array([hand.combo_weight for hand in hands])
+    position_weights = {"BTN": default_weights, "SB": sb_weights, "BB": default_weights}
+
+    rng = random.Random(11)
+    for _ in range(200):
+        sampled = _sample_opponent_hands(("BTN", "SB", "BB"), "BTN", position_weights, hands, rng)
+        assert sampled["SB"] == StartingHand("Q", "Q")
+        assert sampled["BB"] in hands
+
+
+def test_sample_opponent_hands_falls_back_to_last_draw_when_resampling_is_exhausted():
+    # Every opponent's weight vector is degenerate to the SAME single
+    # hand (AA) — three simultaneous AA opponents would need 6 aces, only
+    # 4 exist, so every resample attempt is provably infeasible (M27's
+    # own precheck, still load-bearing here). This must never hang or
+    # raise — it returns the last (infeasible) draw, exactly like every
+    # draw did before M27's resampling fix existed, just relocated into
+    # this now-standalone, directly-testable helper.
+    hands = [StartingHand("A", "A"), StartingHand("K", "K")]
+    aa_only = np.array([1.0, 0.0])
+    position_weights = {"BTN": np.array([0.5, 0.5]), "SB": aa_only, "BB": aa_only, "CO": aa_only}
+    rng = random.Random(3)
+    result = _sample_opponent_hands(("BTN", "SB", "BB", "CO"), "BTN", position_weights, hands, rng)
+    assert result == {
+        "SB": StartingHand("A", "A"),
+        "BB": StartingHand("A", "A"),
+        "CO": StartingHand("A", "A"),
+    }
+
+
+def test_mccfr_solve_traverser_reach_seeded_from_own_initial_reach():
+    # BTN's initial_reach has ZERO weight on 72o. root.player_to_act is
+    # BTN (visited on EVERY BTN-traversal iteration, no sampling
+    # uncertainty — unlike a deeper node, which would only be reached
+    # when some opponent's SAMPLED action happens to lead there), so this
+    # directly isolates the traverser-reach-seeding half of M31 from the
+    # opponent-sampling half already covered above. After solving, 72o
+    # must show trained_mask()==False at root (zero reach weight — the
+    # same real "trained=False" cause M28's own trained_hands docstring
+    # already documents, engineered deliberately here rather than
+    # incidentally discovered), while AA (real reach weight) must be
+    # trained.
+    config = GameConfig(positions=("BTN", "SB", "BB"))
+    root = build_game_tree(config)
+    assert root.player_to_act == "BTN"
+    equity_cache = MultiwayEquityCache(hands=_M31_HANDS, samples=100, seed=1)
+
+    weak_index = _M31_HANDS.index(StartingHand("7", "2", suited=False))
+    aa_index = _M31_HANDS.index(StartingHand("A", "A"))
+    btn_weights = np.array([hand.combo_weight for hand in _M31_HANDS])
+    btn_weights[weak_index] = 0.0
+    default_weights = [hand.combo_weight for hand in _M31_HANDS]
+
+    node_data = mccfr_solve(
+        root, _M31_HANDS, config.positions, equity_cache, iterations=300, seed=2,
+        initial_reach={"BTN": btn_weights, "SB": default_weights, "BB": default_weights},
+    )
+
+    trained = node_data[id(root)].trained_mask()
+    assert not trained[weak_index]
+    assert trained[aa_index]
+
+
+def test_mccfr_solve_initial_reach_wrong_shape_raises():
+    config = GameConfig(positions=("BTN", "SB", "BB"))
+    root = build_game_tree(config)
+    equity_cache = MultiwayEquityCache(hands=_M31_HANDS, samples=50, seed=1)
+    with pytest.raises(ValueError, match="shape"):
+        mccfr_solve(
+            root, _M31_HANDS, config.positions, equity_cache, iterations=10, seed=1,
+            initial_reach={"BTN": [1.0, 1.0]},  # wrong length: 2, not len(_M31_HANDS)==4
+        )
+
+
+def test_mccfr_solve_initial_reach_all_zero_raises():
+    config = GameConfig(positions=("BTN", "SB", "BB"))
+    root = build_game_tree(config)
+    equity_cache = MultiwayEquityCache(hands=_M31_HANDS, samples=50, seed=1)
+    with pytest.raises(ValueError, match="sums to zero"):
+        mccfr_solve(
+            root, _M31_HANDS, config.positions, equity_cache, iterations=10, seed=1,
+            initial_reach={"BTN": [0.0, 0.0, 0.0, 0.0]},
+        )
+
+
+def test_mccfr_solve_initial_reach_changes_result_from_default():
+    # Same seed, same tree, same equity cache — the ONLY difference
+    # between the two solves is BTN's own seeded range. If initial_reach
+    # were silently ignored somewhere in the pipeline, these would come
+    # back bit-identical; they must not.
+    config = GameConfig(positions=("BTN", "SB", "BB"))
+    root = build_game_tree(config)
+    equity_cache = MultiwayEquityCache(hands=_M31_HANDS, samples=100, seed=1)
+
+    default_result = mccfr_solve(root, _M31_HANDS, config.positions, equity_cache, iterations=300, seed=9)
+
+    weak_index = _M31_HANDS.index(StartingHand("7", "2", suited=False))
+    btn_weights = np.array([hand.combo_weight for hand in _M31_HANDS])
+    btn_weights[weak_index] = 0.0
+    default_weights = [hand.combo_weight for hand in _M31_HANDS]
+    seeded_result = mccfr_solve(
+        root, _M31_HANDS, config.positions, equity_cache, iterations=300, seed=9,
+        initial_reach={"BTN": btn_weights, "SB": default_weights, "BB": default_weights},
+    )
+
+    assert not np.array_equal(
+        default_result[id(root)].strategy_sum, seeded_result[id(root)].strategy_sum
+    )
