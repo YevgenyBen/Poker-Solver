@@ -818,7 +818,15 @@ FLOP_QUERY_ITERATIONS = DEFAULT_FLOP_ITERATIONS
 # bearing — the tree structurally bounds a real legal path to roughly
 # 2*max_raises regardless, an oversized list fails fast at the first
 # illegal step either way.
-MAX_PATH_QUERY_CLASSES_PER_SIDE = 6
+# M54 re-tune, after M48's ~5-6x hand-evaluator speedup. Re-measured
+# with the PREFLOP leg pre-warmed so the number reflects only what this
+# cap actually controls (the first sweep didn't, and produced an
+# impossible "larger cap is faster" reading that gave the flaw away):
+# cap=6 -> 3.47s, cap=10 -> 11.17s, cap=14 -> 22.56s. Raised 6 -> 10:
+# ~67% more range fidelity, still well inside the tolerable-for-a-live-
+# request bracket, with cap=14 left as measured headroom rather than
+# taken now.
+MAX_PATH_QUERY_CLASSES_PER_SIDE = 10
 MAX_PATH_LENGTH = 20
 # Flop-stage iterations, fixed — not exposed, unlike the preflop-stage
 # iterations request field below. This part of the pipeline sits behind
@@ -873,6 +881,21 @@ MAX_FLOP_TO_RIVER_ITERATIONS = DEFAULT_FLOP_TO_RIVER_ITERATIONS
 # if not snappy, request" bracket /solve_flop_to_river was already
 # accepted in at M14 (~63-105s), while keeping more range diversity
 # than capping to a single class per side would.
+# M54: DELIBERATELY UNCHANGED, and the one real negative finding of that
+# re-tune. Re-measured post-M48 (preflop pre-warmed): cap=2 -> 32.77s,
+# cap=3 -> 78.84s, cap=4 -> 107.27s. M48's speedup DID help here (M26
+# measured cap=2 at ~45.9s), but only ~1.4x — far less than the 3-8x
+# every sibling cell saw — so the next class step still costs more than
+# the bracket M26 deliberately chose cap=2 to stay inside. The speedup
+# here is therefore spent on LATENCY (46s -> 33s at the same fidelity),
+# not on range width.
+#
+# Why this cell benefited least is itself a useful pointer: M47's own
+# profile found solve_flop_turn dominated by cfr._solve_recurse's tree
+# traversal (531K recursive calls), not by hand evaluation — so M48,
+# which sped up hand evaluation, could only ever move part of it. That
+# makes this the cell the still-untried two-phase-solve lever (M47)
+# would most benefit.
 MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE = 2
 
 # /solve_river_from_path's (M46) own cost controls — capped by COMBO
@@ -933,7 +956,17 @@ MAX_RIVER_PATH_QUERY_ITERATIONS = DEFAULT_FLOP_TO_RIVER_ITERATIONS
 # "tolerable for a live request" bracket /solve_flop_from_path's own
 # ~17-21s established, while keeping more range diversity than a
 # single top class per position would.
-MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION = 2
+# M54 re-tune: cap=2 -> 7.42s, cap=4 -> 16.80s, cap=6 -> 17.03s
+# (M42 measured cap=2 at ~22.46s pre-M48, so ~3x faster). Note cap=6
+# costs essentially the SAME as cap=4 on this path — a real structural
+# ceiling, not noise: at players != 2 the preflop leg solves over
+# DEMO_MULTIWAY_HANDS' own 8 classes (see _get_or_solve_preflop_raw),
+# and this path's derived range has fewer than 6 with meaningful weight,
+# so the extra cap headroom simply doesn't bind here. Raised to 6 rather
+# than 4 precisely because it's free on this path while giving real
+# extra fidelity on a path whose derived range IS wider — with the
+# honest caveat that such a path would cost more than 17.03s.
+MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION = 6
 
 # Iteration-count scaling at this cap's own 35-combo pool is NOT close
 # to flat, unlike DEMO_MULTIWAY_FLOP_CLASSES' own tiny 11-combo pool
@@ -967,7 +1000,13 @@ MAX_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = 500
 # a live request" bracket /solve_turn_from_path's own ~46s already
 # established, not solve_flop_turn_multiway's own more generous 500-
 # iteration ceiling (tuned against the much smaller 11-combo demo pool).
-MAX_MULTIWAY_TURN_PATH_QUERY_CLASSES_PER_POSITION = 2
+# M54 re-tune, and the biggest winner of M48's speedup by far: cap=2 ->
+# 1.38s, cap=4 -> 2.32s, cap=6 -> 2.21s (M44 measured cap=2 at ~10.7s
+# equivalent once its own 200-vs-50 iteration difference is accounted
+# for — so roughly 8x). Same 8-class structural ceiling as the flop
+# multiway cap above, and raised to 6 for the same reason: measured free
+# on this path, real extra fidelity on a wider one.
+MAX_MULTIWAY_TURN_PATH_QUERY_CLASSES_PER_POSITION = 6
 DEFAULT_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS = DEFAULT_FLOP_TURN_MULTIWAY_ITERATIONS
 MAX_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS = 200
 
