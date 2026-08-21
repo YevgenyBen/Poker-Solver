@@ -1,9 +1,12 @@
 import random
+from collections import Counter
+from itertools import combinations_with_replacement
 
 import numpy as np
 import pytest
 
-from poker_solver.cards import Card
+from poker_solver.cards import SUITS, Card
+from poker_solver.hand_utils import RANK_ORDER
 from poker_solver.hand_eval import (
     FLUSH,
     FULL_HOUSE,
@@ -222,6 +225,59 @@ def test_best_hand_rank_batch_cross_validates_against_scalar_randomly():
         values, suits = _card_arrays(card_list)
         batch = int(best_hand_rank_batch(values, suits)[0])
         assert batch == scalar, f"mismatch for {dealt!r}: scalar={scalar} batch={batch}"
+
+
+# ---------------------------------------------------------------------------
+# M48: _rank_five_batch's internals were rewritten to a prime-product
+# lookup-table design (see hand_eval.py's own module comments) for real
+# speed, not just correctness-preserving refactoring — so this gets the
+# strongest correctness signal available: EXHAUSTIVE, not sampled,
+# coverage of every one of the C(13+5-1, 5) = 6,188 distinct 5-value
+# multisets a real 5-card hand can have, each cross-validated against
+# the trusted scalar rank_five reference. Mirrors this project's own
+# "exhaustive enumeration where feasible" precedent (M19's flop/turn
+# canonicalization tests) rather than trusting a random sample alone.
+# ---------------------------------------------------------------------------
+
+
+def _cards_for_value_multiset(values: tuple, all_same_suit: bool) -> list:
+    """Real, physically-valid Card objects for one 5-value multiset — a
+    repeated value gets a DIFFERENT suit each time it recurs (a real
+    deck has only one card per exact rank+suit pair), cycling through
+    SUITS per distinct value. `all_same_suit=True` additionally forces
+    every card to suit 's' (only physically valid when every value in
+    the multiset is distinct — a real deck can't deal two same-suit
+    same-value cards)."""
+    if all_same_suit:
+        return [Card(RANK_ORDER[v], "s") for v in values]
+    next_suit_index: dict = {}
+    result = []
+    for v in values:
+        i = next_suit_index.get(v, 0)
+        result.append(Card(RANK_ORDER[v], SUITS[i]))
+        next_suit_index[v] = i + 1
+    return result
+
+
+def test_rank_five_batch_exhaustive_over_every_value_multiset():
+    for values in combinations_with_replacement(range(13), 5):
+        if max(Counter(values).values()) > 4:
+            continue  # not physically dealable from a real (4-suit) deck
+
+        card_list = _cards_for_value_multiset(values, all_same_suit=False)
+        scalar = _pack_scalar_rank(rank_five(card_list))
+        value_arr, suit_arr = _card_arrays(card_list)
+        batch = int(_rank_five_batch(value_arr, suit_arr)[0])
+        assert batch == scalar, f"mismatch (non-flush) for {values!r}: scalar={scalar} batch={batch}"
+
+        if len(set(values)) == 5:
+            # The only case a real deck could ever deal as a flush —
+            # every value distinct, so all 5 cards can share one suit.
+            flush_cards = _cards_for_value_multiset(values, all_same_suit=True)
+            scalar_flush = _pack_scalar_rank(rank_five(flush_cards))
+            value_arr2, suit_arr2 = _card_arrays(flush_cards)
+            batch_flush = int(_rank_five_batch(value_arr2, suit_arr2)[0])
+            assert batch_flush == scalar_flush, f"mismatch (flush) for {values!r}: scalar={scalar_flush} batch={batch_flush}"
 
 
 def test_rank_five_batch_processes_many_hands_at_once():

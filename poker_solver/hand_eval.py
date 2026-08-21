@@ -8,13 +8,15 @@ This is used by equity.py to score showdowns during preflop equity
 simulation. It has no dependency on the solver/game-tree logic.
 
 Two evaluators live here: `rank_five`/`best_hand_rank` (scalar, one hand
-at a time — the original, simplest-possible implementation) and
-`best_hand_rank_batch` (vectorized, many hands at once via NumPy — added
-for M9). They're built to compute *the same* comparable ranks by
+at a time — the original, simplest-possible implementation, and the
+permanent trusted reference every other evaluator is validated against)
+and `best_hand_rank_batch` (vectorized, many hands at once via NumPy —
+added for M9). They're built to compute *the same* comparable ranks by
 construction (category priority order, tiebreak order), and
-tests/test_hand_eval.py cross-validates them against each other across
-many random hands, not just fixed known cases — batch is a performance
-path, not an independent algorithm to trust blindly.
+tests/test_hand_eval.py cross-validates them against each other — not
+just a random sample, but EXHAUSTIVELY over every one of the 6,188
+distinct 5-value hand patterns a real 5-card hand can have (M48) — batch
+is a performance path, not an independent algorithm to trust blindly.
 
 Why batch exists: equity.py's Monte Carlo simulation calls this once per
 (candidate hand, opponent combination, sampled board) — at N=2/3 players
@@ -26,10 +28,23 @@ dominant cost of solving at all — measured during M9 at 0.15-0.7s per
 equity-vector computation, making real MCCFR iteration counts (100K+)
 infeasible. Batch evaluates many (hand, board) combinations in one
 vectorized pass instead of one Python call each.
+
+M48 update: `_rank_five_batch`'s own internals were rewritten from a
+per-hand counting/masking/argsort pipeline to a prime-product lookup
+table (`_build_value_lookup_table`) — the same technique real production
+poker evaluators (the "Cactus Kev"/"Two Plus Two" family) use, adapted
+here to stay fully vectorized across NumPy arrays rather than one hand
+at a time. Real, measured, not assumed: a genuine end-to-end
+`solve_flop_to_river` benchmark (the same one CLAUDE.md's M46/M47
+entries used) dropped from ~41s to ~6.5-8s, a ~5-6x real speedup — see
+CLAUDE.md's M48 entry for the full profiling/measurement writeup,
+including a considered-and-correctly-rejected "lazy chance dispatch"
+idea (M47) that this milestone's own finding (hand evaluation, not
+chance-tree construction, was the true dominant cost) made moot.
 """
 
 from collections import Counter
-from itertools import combinations
+from itertools import combinations, combinations_with_replacement
 
 import numpy as np
 
@@ -135,81 +150,105 @@ def _pack_scores(category: np.ndarray, tiebreak: np.ndarray) -> np.ndarray:
     return score
 
 
+# Prime per card value (0-12) — a hand's 5 values multiply to a product
+# that's unique per *value multiset* (order-independent) by the
+# fundamental theorem of arithmetic. The same "prime product" trick
+# real production poker evaluators (the "Cactus Kev"/"Two Plus Two"
+# family) use for O(1) hand-category lookup instead of per-hand
+# counting/sorting — see _build_value_lookup_table and CLAUDE.md's M48
+# entry for the real, cross-validated speedup this measured.
+_VALUE_PRIMES = np.array([2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41], dtype=np.int64)
+
+
+def _category_and_tiebreak_for_values(values: tuple) -> tuple:
+    """category, 5-tuple tiebreak (zero-padded) for one 5-value multiset,
+    IGNORING flush — flush/straight-flush is applied afterward in
+    _rank_five_batch, since it depends on suits, not values alone.
+    Mirrors rank_five's own counting branch exactly (same Counter/sort-
+    by-count-then-value logic), plus straight detection via the same
+    trusted _straight_high helper. Used only once, at import time, to
+    build the lookup table below — never on any hot path itself."""
+    straight_high = _straight_high(set(values))
+    if straight_high is not None:
+        # A straight needs 5 distinct consecutive values — mutually
+        # exclusive with every count-based category below (those all
+        # need at least one repeated value), so there's no priority
+        # conflict to resolve between the two branches.
+        return STRAIGHT, (straight_high, 0, 0, 0, 0)
+
+    value_counts = Counter(values)
+    by_count = sorted(value_counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    counts = [count for _, count in by_count]
+    ordered_values = [value for value, _ in by_count]
+    padded = tuple((ordered_values + [0, 0, 0, 0, 0])[:5])
+
+    if counts[0] == 4:
+        return QUADS, padded
+    if counts[0] == 3 and counts[1] == 2:
+        return FULL_HOUSE, padded
+    if counts[0] == 3:
+        return TRIPS, padded
+    if counts[0] == 2 and counts[1] == 2:
+        return TWO_PAIR, padded
+    if counts[0] == 2:
+        return PAIR, padded
+    return HIGH_CARD, tuple(sorted(values, reverse=True))
+
+
+def _build_value_lookup_table() -> tuple:
+    """Precomputes, once at import time, every distinct 5-value
+    multiset's (prime_product, category, tiebreak) — sorted by
+    prime_product for np.searchsorted lookups in _rank_five_batch.
+    C(13+5-1, 5) = 6,188 distinct multisets (including some no real deck
+    can ever deal, e.g. 5-of-a-kind — harmless, they're simply never
+    looked up), built once and shared across every call, the same
+    "precompute once, reuse forever" idea cards._ALL_CARDS already
+    applies (M47)."""
+    rows = []
+    for values in combinations_with_replacement(range(_VALUE_BASE), 5):
+        product = 1
+        for v in values:
+            product *= int(_VALUE_PRIMES[v])
+        category, tiebreak = _category_and_tiebreak_for_values(values)
+        rows.append((product, category, *tiebreak))
+    rows.sort(key=lambda row: row[0])
+    products = np.array([row[0] for row in rows], dtype=np.int64)
+    categories = np.array([row[1] for row in rows], dtype=np.int64)
+    tiebreaks = np.array([row[2:] for row in rows], dtype=np.int64)
+    return products, categories, tiebreaks
+
+
+_LOOKUP_PRODUCTS, _LOOKUP_CATEGORIES, _LOOKUP_TIEBREAKS = _build_value_lookup_table()
+
+
 def _rank_five_batch(values: np.ndarray, suits: np.ndarray) -> np.ndarray:
     """values, suits: (M, 5) int arrays (card value 0-12, suit id 0-3).
     Returns (M,) int64 scores — same relative ordering as calling
     rank_five on each row, packed for vectorized comparison.
+
+    Implementation (M48): a prime-product lookup against a precomputed
+    table (_build_value_lookup_table), not per-hand counting/sorting —
+    see the module docstring and CLAUDE.md's M48 entry for why. A
+    flush's value pattern is ALWAYS exactly 5 distinct values (a real
+    deck has one card per (value, suit) pair, so 5 same-suit cards can
+    never repeat a value), which means the table lookup (built ignoring
+    suit entirely) can only ever return STRAIGHT or HIGH_CARD for a
+    flush hand — and rank_five's own FLUSH/HIGH_CARD tiebreak
+    conventions are identical (both `sorted(values, reverse=True)`), so
+    flush is applied afterward as a pure category relabel
+    (STRAIGHT->STRAIGHT_FLUSH, HIGH_CARD->FLUSH), never touching the
+    already-correct tiebreak.
     """
-    m = values.shape[0]
     is_flush = (suits == suits[:, 0:1]).all(axis=1)
+    products = _VALUE_PRIMES[values].prod(axis=1)
+    idx = np.searchsorted(_LOOKUP_PRODUCTS, products)
+    category = _LOOKUP_CATEGORIES[idx]
+    tiebreak = _LOOKUP_TIEBREAKS[idx]
 
-    value_range = np.arange(_VALUE_BASE)
-    # counts[:, v] = how many of this hand's 5 cards have value v
-    counts = (values[:, :, None] == value_range[None, None, :]).sum(axis=1)  # (M, 13)
-    presence = counts > 0
-    distinct_count = presence.sum(axis=1)
-    max_count = counts.max(axis=1)
-
-    # Straight detection: the wheel (A-2-3-4-5, i.e. values {0,1,2,3,12})
-    # plus the 9 "normal" 5-consecutive-value runs (high value 4..12).
-    # A straight requires 5 *distinct* values spanning exactly one such
-    # run, so at most one pattern can ever match a given hand.
-    straight_high = np.full(m, -1, dtype=np.int64)
-    wheel = presence[:, 0] & presence[:, 1] & presence[:, 2] & presence[:, 3] & presence[:, 12]
-    straight_high[wheel] = 3  # "5-high" straight, matching rank_five's low+4 for the wheel
-    for high in range(4, _VALUE_BASE):
-        low = high - 4
-        matches = presence[:, low] & presence[:, low + 1] & presence[:, low + 2] & presence[:, low + 3] & presence[:, high]
-        straight_high[matches] = high
-    is_straight = straight_high >= 0
-
-    # Values ordered by (count desc, value desc) — mirrors rank_five's
-    # `sorted(value_counts.items(), key=lambda item: (item[1], item[0]), reverse=True)`.
-    # Absent values (count 0) get key -1 so they always sort last.
-    key = np.where(presence, counts * 100 + value_range[None, :], -1)
-    order = np.argsort(-key, axis=1)[:, :5]
-    ordered_values = np.broadcast_to(value_range, (m, _VALUE_BASE))[np.arange(m)[:, None], order]
-
-    category = np.zeros(m, dtype=np.int64)
-    tiebreak = np.zeros((m, 5), dtype=np.int64)
-
-    def _apply(mask, cat, num_tiebreaks, source=ordered_values):
-        category[mask] = cat
-        for i in range(num_tiebreaks):
-            tiebreak[mask, i] = source[mask, i] if source is ordered_values else source[mask]
-
-    # Checked in standard poker priority order, highest first. Categories
-    # are mutually exclusive by construction (same-suit cards can't share
-    # a value, so a flush always has max_count==1 / distinct_count==5;
-    # a straight likewise needs exactly 5 distinct values) — see the
-    # module docstring's cross-validation note for how this is verified.
-    is_straight_flush = is_flush & is_straight
-    _apply(is_straight_flush, STRAIGHT_FLUSH, 1, source=straight_high)
-    remaining = ~is_straight_flush
-
-    is_quads = remaining & (max_count == 4)
-    _apply(is_quads, QUADS, 2)
-
-    is_full_house = remaining & (max_count == 3) & (distinct_count == 2)
-    _apply(is_full_house, FULL_HOUSE, 2)
-
-    is_flush_only = remaining & is_flush
-    _apply(is_flush_only, FLUSH, 5)
-
-    is_straight_only = remaining & is_straight & (~is_flush)
-    _apply(is_straight_only, STRAIGHT, 1, source=straight_high)
-
-    is_trips = remaining & (max_count == 3) & (distinct_count == 3)
-    _apply(is_trips, TRIPS, 3)
-
-    is_two_pair = remaining & (max_count == 2) & (distinct_count == 3)
-    _apply(is_two_pair, TWO_PAIR, 3)
-
-    is_pair = remaining & (max_count == 2) & (distinct_count == 4)
-    _apply(is_pair, PAIR, 4)
-
-    is_high_card = remaining & (max_count == 1) & (~is_straight) & (~is_flush)
-    _apply(is_high_card, HIGH_CARD, 5)
+    is_straight = category == STRAIGHT
+    is_high_card = category == HIGH_CARD
+    category = np.where(is_flush & is_straight, STRAIGHT_FLUSH, category)
+    category = np.where(is_flush & is_high_card, FLUSH, category)
 
     return _pack_scores(category, tiebreak)
 
