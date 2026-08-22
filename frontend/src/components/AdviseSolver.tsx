@@ -392,7 +392,20 @@ export function AdviseSolver() {
               <h3>Your hand: {result.hero.cards}</h3>
               {result.hero.strategy ? (
                 <>
-                  <ComboRow freqs={result.hero.strategy} />
+                  <ComboRow freqs={result.hero.strategy} trained={result.hero.trained !== false} />
+                  {/* M83: the most direct honesty signal there is — whether
+                      YOUR hand's numbers came from real solving or are the
+                      uniform placeholder. It was computed all along and
+                      never shown, so a placeholder rendered identically to
+                      a solved strategy. Louder than the hints below because
+                      those qualify a real answer; this one says there
+                      isn't one. */}
+                  {result.hero.trained === false && (
+                    <p className="solver-warning" role="alert">
+                      <strong>Not solved for your hand.</strong> These numbers are the untrained
+                      default, not real advice — the solver never reached your hand at this node.
+                    </p>
+                  )}
                   {!result.hero.in_range && (
                     <p className="depth-hint">
                       Your hand wasn&rsquo;t in the top of the derived range — it was added so it could be solved
@@ -405,8 +418,17 @@ export function AdviseSolver() {
                     </p>
                   )}
                 </>
-              ) : (
+              ) : result.is_terminal ? (
                 <p className="status">No decision to make here — the hand resolved before this street.</p>
+              ) : (
+                /* M83: this branch used to show the "hand resolved" message
+                   too, which was simply untrue. A null hero strategy at a
+                   LIVE node means the opposite: there is a decision, we
+                   just have nothing to say about this particular hand. */
+                <p className="solver-warning" role="alert">
+                  <strong>No advice for this hand.</strong> There is a decision here, but your hand
+                  wasn&rsquo;t part of the solved range — so we have nothing to tell you about it.
+                </p>
               )}
             </div>
           )}
