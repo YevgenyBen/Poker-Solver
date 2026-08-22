@@ -546,3 +546,26 @@ select:focus-visible {
   margin: 0 0 0.5rem;
   font-size: 1rem;
 }
+
+/* M82: the solver-confidence warning. The backend has always been able
+   to say "this cell does not converge" (solver_confidence), but nothing
+   in the UI read it — so a 9-max user saw advice with no indication it
+   is known-unreliable, which is the one failure mode this project's
+   honesty signals exist to prevent. Deliberately louder than
+   .depth-hint's quiet grey: `trained` and range confidence describe how
+   much was computed, and can be reasonably ignored; this one says the
+   answer may simply be wrong. */
+.solver-warning {
+  margin: 0.75rem 0 0;
+  padding: 0.6rem 0.75rem;
+  border-left: 3px solid #b45309;
+  border-radius: 3px;
+  background: rgba(180, 83, 9, 0.08);
+  color: #92400e;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.solver-warning strong {
+  color: #7c2d12;
+}

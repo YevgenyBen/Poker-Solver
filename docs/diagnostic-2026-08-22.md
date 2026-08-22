@@ -475,3 +475,44 @@ Interleaved in-process A/B: **1.20x on hand evaluation**. End to end,
 **~3.9x on the flop**, at identical fidelity (151 combos), with the
 equity estimator validated against exact enumeration and the hand
 evaluator against its own scalar path at every step.
+
+---
+
+# Round 6 audit + M82
+
+Re-ran the 17-scenario live simulation. **All 17 answer, all trained,
+none uniform**, and rounds 2-5's speed work shows up end to end:
+
+| scenario | round 1 | round 6 |
+|---|---|---|
+| HU flop, AK overcards | **no advice** | 8.4s, trained |
+| HU turn / river | 20.3s / 15.8s | 18.6s / 12.7s |
+| 6max flop / turn / river | 21.3 / 4.5 / 3.5s | **12.2 / 2.3 / 0.9s** |
+| 6max preflop | 93s | **76.7s** |
+| 9max preflop | 126s | **106.7s** |
+| 6max preflop 30bb | 66s | **55.8s** |
+
+## F7 — the honesty signal never reached the user
+
+The round-6 finding is not in the table. M76 added `solver_confidence` so
+a caller could refuse to present 9-max advice as GTO. **Nothing in the
+frontend read it.** A 9-max user saw a confident-looking strategy with no
+indication the backend already knew it was unreliable.
+
+That is the exact failure mode this project's honesty machinery exists to
+prevent, surviving *because* the machinery was only half-wired: the
+signal was produced correctly and then dropped at the API boundary. Worth
+naming as a class of bug — **a correctness signal that no consumer reads
+is not a correctness signal** — because `trained`, `range_confidence` and
+`source` all have the same exposure, and only the first two are rendered.
+
+**M82 wires it through**: `solver_confidence` / `solver_confidence_reason`
+on the response type, and a `role="alert"` warning in `AdviseSolver`
+carrying the backend's own plain-language reason rather than a generic
+label. Styled deliberately louder than the existing `.depth-hint` grey —
+`trained` and range confidence describe how much was computed and can
+reasonably be skimmed; this one says the answer may simply be wrong.
+
+Two tests pin it: one that the warning appears with its reason, one that
+it is **absent** at `solver_confidence: "high"` — a warning that is
+always present is furniture, and users learn to ignore furniture.
