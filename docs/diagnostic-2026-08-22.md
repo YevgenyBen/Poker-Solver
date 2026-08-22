@@ -328,3 +328,49 @@ rather than an engineering one. It stays available and marked
 `solver_confidence: "low"` with a plain-language reason, which is the
 honest state: a real solve of an under-trained problem, flagged so no
 consumer presents it as GTO.
+
+---
+
+# Round 3 audit + M79
+
+Re-profiled the same 6-max flop request after M78, and found M78's fix
+was **half a fix**.
+
+`nway_combo_equity_vector` was still the whole request, and
+`random.sample` was still **5,155,400 calls / 17.9s of 36.3s** — the same
+call count as before. M78 removed the per-sample Python *work* (Card
+attribute lookups, list rebuilds) but not the calls themselves. Worse,
+passing `range(len(deck))` as the population newly introduced **5.1M abc
+`isinstance` checks** costing ~5.9s: `random.sample` type-checks its
+population, and a `range` is more expensive to check than a list.
+
+**M79 removes the calls entirely.** One vectorized draw per candidate —
+random keys plus `argpartition` — gives `remaining_needed` distinct
+indices per row in a single numpy op, replacing `samples` interpreter
+calls.
+
+This is **not bit-identical**, and could not be: a different sampler
+draws different runouts. The contract this module guarantees is
+"deterministic given `seed`", which still holds. So it was validated the
+harder way, against **exact enumeration** of all 990 two-card runouts:
+
+| samples | mean bias | MAE |
+|---|---|---|
+| 120 | −0.0076 | 0.0233 |
+| 500 | −0.0028 | 0.0125 |
+| 2,000 | **−0.0008** | 0.0056 |
+
+Bias shrinking toward zero and MAE falling as 1/√n is the signature of an
+unbiased estimator — stronger evidence than bit-identity would have
+given, since bit-identity only proves two implementations agree, not that
+either is right.
+
+**Cumulative effect on a 6-max flop request: 45.2s → 24.6s (M78) →
+19.9s (M79).** The turn is 4.0s.
+
+A test asserting the N-way path matched the pairwise table *exactly* at
+N=2 now asserts statistical agreement at 4,000 samples. The exact match
+had only ever held because both implementations consumed the same RNG
+stream — a coincidence of shared plumbing, not evidence they agree about
+poker. Added a companion test proving the 1-card-runout path is
+enumerated rather than sampled (two different seeds must agree exactly).
