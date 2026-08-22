@@ -100,6 +100,21 @@ every street (preflop through river) and every supported table size
 - **Five `*_from_path` routes are deprecated** (superseded by
   `/advise`), still functional. New callers should use `/advise`.
 
+### Measuring performance — read before trusting any timing
+
+**This machine drifts.** M70 observed identical workloads running ~1.7x
+slower than when M68 measured them (9-max/3k: 418s vs 249s; 6-max/12k:
+491s vs 281s). So **absolute wall-clock numbers recorded in different
+sessions are not comparable**, and `docs/milestones.md` is full of them.
+M68's headline "1.95x" was withdrawn in M70 for exactly this reason.
+
+When making a speed claim, do one of these — never a bare before/after
+across sessions:
+- **Interleaved A/B in one process** (old and new implementation,
+  alternating). This is what produced M70's trustworthy 6.06x and 1.38x.
+- **Normalize against a reference workload** measured in the same run,
+  and report "reference units" alongside seconds.
+
 ### Verification
 
     python -m pytest tests/ -v     # 750 backend tests

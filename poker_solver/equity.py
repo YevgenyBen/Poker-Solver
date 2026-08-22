@@ -34,6 +34,10 @@ DEFAULT_SEED = 42
 DEFAULT_CACHE_PATH = Path(__file__).parent / "data" / "preflop_equity.npy"
 
 _ALL_HANDS = all_starting_hands()
+# Position of each canonical hand in the 169x169 pairwise equity table
+# (build_equity_table indexes by _ALL_HANDS order). Used by
+# _pairwise_fallback_equity to read the table instead of re-simulating.
+_HAND_TABLE_INDEX = {str(hand): index for index, hand in enumerate(_ALL_HANDS)}
 
 
 def _suit_pairs_for(hand: StartingHand) -> list:
@@ -545,23 +549,44 @@ def _pairwise_fallback_equity(hand: StartingHand, opponent_hands: tuple, rng: ra
     real, measurable source of bias — see traverser_equity_vector's own
     docstring for the fuller story.
     """
-    # M68: iterate the opponents in SORTED order, matching the order
-    # MultiwayEquityCache builds its own key in. This function draws from
-    # `rng` once per opponent, so iterating in the caller's order made the
-    # result depend on the order the opponents happened to be passed in —
-    # (AKs, T9o, KK) and (KK, T9o, AKs) are the same multiway situation
-    # and must produce the same number, but produced 0.690 and 0.700.
+    # M70: read the precomputed 169x169 pairwise table instead of running
+    # fresh Monte Carlo per opponent. Three things make this strictly
+    # better rather than a shortcut:
     #
-    # That was a latent bug, not a new one: the cache key has always been
-    # sorted, so the caller's order was never meant to be observable.
-    # test_multiway_cache_is_order_independent_across_fresh_caches passed
-    # before only because the two orders happened to coincide at the
-    # specific rng state that test reached; a change in how much rng is
-    # consumed upstream exposed it. Sorting here makes the property hold
-    # by construction rather than by luck.
+    #   * It is the SAME quantity. The table holds exactly `hand`'s
+    #     pairwise equity against each opponent class, which is what this
+    #     function averages — and it is built at DEFAULT_SAMPLES (200)
+    #     against this function's own FALLBACK_PAIRWISE_SAMPLES (50), so
+    #     the lookup is the *more* precise estimate, not a cheaper
+    #     approximation of it.
+    #   * It removes work that was already being thrown away. Since M66,
+    #     `cfr._mccfr_recurse` masks these entries out of the regret and
+    #     strategy updates entirely — the value is never learned from. A
+    #     profile of a real 6-max 169-class solve found 821,100 calls to
+    #     the SCALAR `hand_eval.rank_five` path, ~30% of total time,
+    #     essentially all of it here, computing numbers that were then
+    #     discarded.
+    #   * It is order-independent by construction, which is what M68 had
+    #     to fix by hand: this drew from `rng` once per opponent, so
+    #     (AKs, T9o, KK) and (KK, T9o, AKs) — the same situation — gave
+    #     0.690 and 0.700. A lookup consumes no rng at all, so the whole
+    #     class of bug is gone rather than sorted around.
+    #
+    # `rng` is retained in the signature deliberately: it costs nothing,
+    # keeps every call site unchanged, and this function's contract is
+    # "a hand-aware stand-in", not "a Monte Carlo one".
+    table = get_equity_table()
+    hand_index = _HAND_TABLE_INDEX.get(str(hand))
+    if hand_index is None:
+        # A hand outside the canonical 169 (no real caller has one, but
+        # the fallback must not become a new crash site).
+        return float(np.mean([
+            monte_carlo_equity(hand, opponent, samples=FALLBACK_PAIRWISE_SAMPLES, rng=rng)
+            for opponent in sorted(opponent_hands, key=str)
+        ]))
     return float(np.mean([
-        monte_carlo_equity(hand, opponent, samples=FALLBACK_PAIRWISE_SAMPLES, rng=rng)
-        for opponent in sorted(opponent_hands, key=str)
+        table[hand_index, _HAND_TABLE_INDEX[str(opponent)]]
+        for opponent in opponent_hands
     ]))
 
 
