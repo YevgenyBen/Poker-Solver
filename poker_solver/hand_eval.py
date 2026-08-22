@@ -64,6 +64,11 @@ STRAIGHT_FLUSH = 8
 # _pack_scores) since NumPy has no notion of comparing tuples elementwise.
 _VALUE_BASE = 13
 _FIVE_CARD_COMBOS = list(combinations(range(7), 5))  # the 21 five-of-seven choices
+# M81: the same thing as an int array, built once at import rather than
+# per call to best_hand_rank_batch (which rebuilt it 7,595 times in a
+# single 6-max preflop solve).
+_COMBO_INDEX = np.array(_FIVE_CARD_COMBOS, dtype=np.int64)
+_NUM_FIVE_CARD_COMBOS = len(_FIVE_CARD_COMBOS)
 
 
 def _straight_high(values: set) -> int | None:
@@ -143,11 +148,16 @@ def _pack_scores(category: np.ndarray, tiebreak: np.ndarray) -> np.ndarray:
     same number of "real" tiebreaker slots (a category is defined by its
     value-count shape), so the padding never competes with a real value,
     and across categories the category digit dominates regardless.
+
+    M81: one matrix-vector product instead of a five-step Python loop of
+    `tiebreak[:, i].astype(np.int64) * base**(4-i)`. Both inputs are
+    already int64 (they are slices of the int64 lookup tables built by
+    _build_value_lookup_table), so every one of those `astype` calls was
+    copying an array to the type it already had — profiled at **45,570
+    astype calls and 6.7s** on a single 6-max preflop solve, with
+    _pack_scores itself 12.35s of 102s. Same arithmetic, same result.
     """
-    score = category.astype(np.int64) * (_VALUE_BASE**5)
-    for i in range(5):
-        score = score + tiebreak[:, i].astype(np.int64) * (_VALUE_BASE ** (4 - i))
-    return score
+    return category * (_VALUE_BASE**5) + tiebreak @ _PACK_WEIGHTS
 
 
 # Prime per card value (0-12) — a hand's 5 values multiply to a product
@@ -157,6 +167,9 @@ def _pack_scores(category: np.ndarray, tiebreak: np.ndarray) -> np.ndarray:
 # family) use for O(1) hand-category lookup instead of per-hand
 # counting/sorting — see _build_value_lookup_table and CLAUDE.md's M48
 # entry for the real, cross-validated speedup this measured.
+# M81: positional weights for _pack_scores, precomputed once.
+_PACK_WEIGHTS = np.array([_VALUE_BASE ** (4 - i) for i in range(5)], dtype=np.int64)
+
 _VALUE_PRIMES = np.array([2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41], dtype=np.int64)
 
 
@@ -261,8 +274,11 @@ def best_hand_rank_batch(values: np.ndarray, suits: np.ndarray) -> np.ndarray:
     if values.shape[1] != 7 or suits.shape[1] != 7:
         raise ValueError(f"best_hand_rank_batch requires exactly 7 cards per hand, got {values.shape[1]}")
     m = values.shape[0]
-    combo_idx = np.array(_FIVE_CARD_COMBOS)  # (21, 5)
-    combo_values = values[:, combo_idx].reshape(m * len(_FIVE_CARD_COMBOS), 5)
-    combo_suits = suits[:, combo_idx].reshape(m * len(_FIVE_CARD_COMBOS), 5)
-    scores = _rank_five_batch(combo_values, combo_suits).reshape(m, len(_FIVE_CARD_COMBOS))
+    # M81: _COMBO_INDEX is built once at import. This line used to be
+    # `np.array(_FIVE_CARD_COMBOS)`, rebuilding the same (21, 5) array
+    # from a Python list of tuples on every single call — 7,595 times in
+    # one 6-max preflop solve.
+    combo_values = values[:, _COMBO_INDEX].reshape(m * _NUM_FIVE_CARD_COMBOS, 5)
+    combo_suits = suits[:, _COMBO_INDEX].reshape(m * _NUM_FIVE_CARD_COMBOS, 5)
+    scores = _rank_five_batch(combo_values, combo_suits).reshape(m, _NUM_FIVE_CARD_COMBOS)
     return scores.max(axis=1)

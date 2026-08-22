@@ -433,3 +433,45 @@ trained):
 
 **3.1x faster end to end**, with the equity estimator validated against
 exact enumeration at every step rather than assumed.
+
+---
+
+# Round 5 audit + M81
+
+With postflop down to 14.4s, the remaining latency was the **6-max
+preflop solve (~91s cold)** — pre-warmed for three depths, paid in full
+for any other. Profiling it put `best_hand_rank_batch` at **74.7s of
+102.5s (73%)**, which is real work. But two pieces inside it were pure
+overhead:
+
+- **`np.array(_FIVE_CARD_COMBOS)` rebuilt on every call** — the same
+  (21, 5) index array constructed from a Python list of tuples **7,595
+  times** in one solve.
+- **`_pack_scores` looping five `.astype(np.int64)` calls** on arrays
+  that were *already* int64 (they are slices of the int64 lookup tables).
+  Every one was a copy to the type it already had: **45,570 astype calls,
+  6.7s**, inside a function costing 12.35s of 102s.
+
+M81 hoists the index array to import time and replaces the loop with one
+matrix-vector product against precomputed positional weights.
+
+**Identical output, verified**: the old and new batch paths produce
+bit-equal score arrays, and the batch ordering still agrees with the
+scalar `best_hand_rank` path on random 7-card hands.
+
+Interleaved in-process A/B: **1.20x on hand evaluation**. End to end,
+6-max preflop **91s → 75s** and the flop **14.4s → 11.5s**.
+
+## Cumulative across rounds 2-5
+
+| | flop | turn | river | preflop (cold) |
+|---|---|---|---|---|
+| before R7 | 45.2s | 10.4s | — | ~91s |
+| M78 | 24.6s | — | — | — |
+| M79 | 19.9s | 4.0s | — | — |
+| M80 | 14.4s | 2.5s | 1.0s | — |
+| **M81** | **11.5s** | — | — | **75s** |
+
+**~3.9x on the flop**, at identical fidelity (151 combos), with the
+equity estimator validated against exact enumeration and the hand
+evaluator against its own scalar path at every step.
