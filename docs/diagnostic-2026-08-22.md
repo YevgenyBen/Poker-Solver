@@ -210,3 +210,77 @@ no longer speed or coverage — it is **correctness under real multi-user
 conditions (F1) and not lying to the user (F2, F4)**. R1-R4 come before
 any further speed or coverage work, because a fast, wide, wrong answer
 is worse than a slow, narrow, honest one.
+
+---
+
+# Round 2 re-audit (same day, after R1-R5)
+
+Same 17 live scenarios, same production settings, against the fixed code.
+
+## Every round-1 product failure is closed
+
+| Scenario | Round 1 | Round 2 |
+|---|---|---|
+| HU flop, AK overcards | **no advice at all** | advice, `trained: true` |
+| HU flop, top set | `trained: null` | `trained: true` |
+| All 17 | 1 hard failure, 1 null | all answered, all trained, none uniform |
+
+## What round 2 found that round 1 could not
+
+### N1 — Postflop latency roughly doubled, and that is the price of R1
+
+A heads-up turn went 20.3s → 44.5s, a 6-max flop 21.3s → 45.2s. This is
+not a regression to undo: it is the cost of three correctness fixes
+landing at once (M75 solving on-demand chance branches instead of
+returning them untrained, R1 keying caches on hero, R5 widening the
+ranges). A correct 45s answer beats a wrong 20s one — but latency is now
+**the binding constraint**, where in round 1 it was correctness.
+
+Preflop numbers also rose (6-max 93s → 139s), but **that path was not
+touched by any M76 change**, and this machine has been measured drifting
+~1.7x between sessions (M70). Treated as drift, not regression — the
+kind of cross-session comparison M70 established is not trustworthy.
+
+### N2 — 9-max is still wrong, now merely labelled
+
+T7s under the gun still returns *call*; AA still shoves. R2 added
+`solver_confidence: "low"` so a consumer can refuse to present it, which
+is honesty, not a fix. This is the one remaining correctness gap.
+
+### N3 — R6 was tried and is inert; widening the cap is counterproductive
+
+R6's idea: hero only needs its own cache entry when force-inclusion
+actually changed the pool, so an in-range hero could share. Implemented,
+correct — and **currently a no-op**, because `hero_in_range` requires
+hero's combo to be in *every* live position's range simultaneously, which
+essentially never happens (measured 0 of 6 hands).
+
+Widening the cap to make it happen was measured and rejected:
+
+| `MAX_PATH_QUERY_CLASSES_PER_SIDE` | in range | combos | six hands total |
+|---|---|---|---|
+| 6 (shipped) | 0/6 | 85 | 27.0s |
+| 12 | 0/6 | 154 | 78.9s |
+| 20 | 0/6 | 254 | 217.0s |
+
+No sharing at any width, 8x the cost. The conditional keying is kept
+because it is correct and costs nothing, and it starts paying the moment
+`hero_in_range` semantics or the cap change — but it is documented as
+inert rather than claimed as a win.
+
+## Round 2 recommendations
+
+**R7. Cut multiway postflop latency (addresses N1).** The 40-45s cases
+are multiway flop/turn and heads-up turn/river, all of which run a full
+solve per request. The per-hero cost is now unavoidable (R1), so the
+lever is the solve itself, not the cache.
+
+**R8. Make `hero_in_range` per-position (enables R6).** The current
+all-positions AND is the right semantics for the *honesty flag* — hero
+either earned its place everywhere or did not — but the wrong input for a
+*caching* decision, which only needs to know whether the pool changed.
+Splitting the two would make R6 live.
+
+**R9. 9-max: decide between offline pre-solve and removal.** Labelling is
+a stopgap. Either pre-solve it properly out of band at the depths that
+are pre-warmed, or stop offering the table size.

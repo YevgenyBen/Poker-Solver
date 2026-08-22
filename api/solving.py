@@ -81,7 +81,7 @@ def _cache_key(stack_bb: float, iterations: int) -> tuple:
     return (round(stack_bb), iterations)
 
 
-def _hero_cache_component(hero_combo):
+def _hero_cache_component(hero_combo, hero_in_range=None):
     """The hero part of a path-query cache key (M76).
 
     Every one of these caches keys on the action path, stack, board and
@@ -104,8 +104,30 @@ def _hero_cache_component(hero_combo):
     The expensive preflop leg is cached separately (_preflop_raw_cache /
     _multiway_cache) and keyed without hero, so it is still shared across
     every hero hand; only the postflop solve is duplicated per class.
+
+    **`hero_in_range` narrows that further (M77), and is the difference
+    between a correct cache and a useless one.** Force-inclusion only
+    changes the solved pool when hero's class was NOT already in the
+    capped range. When it WAS — the common case, since the cap keeps the
+    highest-frequency classes and most hands people hold are in them —
+    the solve is genuinely hero-independent and every hero can share one
+    cache entry. Returning None there restores that sharing.
+
+    This matters because the first re-audit after M76 measured postflop
+    latency roughly doubling (a heads-up turn 20.3s -> 44.5s, a 6-max
+    flop 21.3s -> 45.2s): correctness had been bought by making every
+    hero class miss the cache, including the majority that never needed
+    their own solve. Pass `hero_in_range=True` and the entry is shared;
+    pass False (or None, meaning "not known") and hero is keyed in.
     """
-    return None if hero_combo is None else str(_combo_to_class(hero_combo))
+    if hero_combo is None:
+        return None
+    if hero_in_range:
+        # Hero earned its place in the capped range on its own weight, so
+        # no force-inclusion happened and the solve does not depend on
+        # which hand was asked about.
+        return None
+    return str(_combo_to_class(hero_combo))
 
 
 def _get_multiway_equity_cache(hands) -> MultiwayEquityCache:
@@ -919,7 +941,7 @@ def _query_flop_from_path(
     effective_stack_bb = situation.effective_stack_bb
 
     partition_key = (tuple(action_kinds), round(stack_bb), iterations, players,
-                     _hero_cache_component(hero_combo))
+                     _hero_cache_component(hero_combo, situation.hero_in_range))
     with _path_query_libraries.lock:
         library = _path_query_libraries.entries.setdefault(partition_key, {})
         result = query_strategy_from_path(
@@ -998,7 +1020,7 @@ def _query_flop_multiway_from_path(
     effective_stack_bb = situation.effective_stack_bb
 
     key = (tuple(action_kinds), players, round(stack_bb), iterations, board_cards,
-           flop_iterations, _hero_cache_component(hero_combo))
+           flop_iterations, _hero_cache_component(hero_combo, situation.hero_in_range))
     with _flop_multiway_path_cache.lock:
         cached = _flop_multiway_path_cache.entries.get(key)
     if cached is None:
@@ -1089,7 +1111,7 @@ def _query_turn_from_path(
         board_cards,
         turn_iterations,
         players,
-        _hero_cache_component(hero_combo),
+        _hero_cache_component(hero_combo, situation.hero_in_range),
     )
     with _turn_path_cache.lock:
         result = _turn_path_cache.entries.get(turn_solve_key)
@@ -1252,7 +1274,7 @@ def _query_turn_multiway_from_path(
         board_cards,
         flop_iterations,
         to_river,
-        _hero_cache_component(hero_combo),
+        _hero_cache_component(hero_combo, situation.hero_in_range),
     )
     with _turn_multiway_path_cache.lock:
         result = _turn_multiway_path_cache.entries.get(turn_solve_key)
@@ -1479,7 +1501,7 @@ def _query_river_from_path(
         board_cards,
         river_iterations,
         players,
-        _hero_cache_component(hero_combo),
+        _hero_cache_component(hero_combo, situation.hero_in_range),
     )
     with _river_path_cache.lock:
         result = _river_path_cache.entries.get(river_solve_key)
