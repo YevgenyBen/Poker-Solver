@@ -4738,6 +4738,72 @@ entry's own corrections before trusting its conclusions.
     *wanders* (33.4% -> 35.5% -> 25.3%) instead of trending toward the
     near-zero a converged solve gives. More iterations will not fix the
     sizing axis.
+
+    **Partly explained and improved (M69):** one real cause was that the
+    time-average weighted every iteration equally, so the untrained
+    opening iterations — whose `current_strategy()` is exactly uniform —
+    never washed out. Linear averaging cuts AA's jam from 25% to 20% and
+    lifts T7s's UTG fold from 87% to 94% at the same cost. The axis is
+    improved, still not resolved.
   - **Verification:** 762 backend tests pass. Two new tests pin the
     shared-board estimator's contract (statistical agreement and
     order-independence). No frontend files touched.
+
+- **M69 — Linear averaging: the multiway strategy average was
+  contaminated by its own untrained opening iterations.** M67 shipped a
+  documented limitation (multiway preflop is trustworthy for
+  fold-vs-play, not for sizing) and M68 established it was structural
+  rather than budget-bound — AA's jam frequency *wandered* (33% -> 36%
+  -> 25% at 3k/6k/12k) instead of trending toward the ~3% a converged
+  solve gives. This milestone found a real cause and fixed part of it.
+  - **The tell was in the numbers themselves.** At 12,000 iterations AA's
+    mix was jam 0.253 / call 0.245 / raise 0.502 — two of four actions
+    sitting at almost exactly 0.25. `InfoSetTable.current_strategy()`
+    returns an *exactly* uniform `1/num_actions` while regrets are still
+    zero, and `strategy_sum += reach * strategy` weighted **every
+    iteration equally**. So iteration 1's untrained uniform guess counted
+    as much as iteration 12,000's converged one, and a long run's average
+    never escaped it. Not a subtle numerical issue — a missing standard
+    CFR+ practice.
+  - **The fix:** `mccfr_solve(linear_averaging=True)` (now the default)
+    weights iteration t's contribution by t, via a new `strategy_weight`
+    threaded through `_mccfr_recurse`. Applied ONLY to `strategy_sum` —
+    regret updates and therefore the sampled traversal are untouched, so
+    for a given seed both settings walk the identical tree.
+  - **Measured on a real 6-max 169-class solve, at identical cost** (the
+    change is one scalar multiply; 183s vs 179s at 3k, 481s vs 481s at
+    12k):
+    | iterations | weighting | AA jam | T7s UTG fold | 72o fold |
+    |---|---|---|---|---|
+    | 3,000 | equal | 0.33 | 0.66 | 0.98 |
+    | 3,000 | **linear** | **0.26** | **0.78** | 0.99 |
+    | 12,000 | equal | 0.25 | 0.87 | 0.99 |
+    | 12,000 | **linear** | **0.20** | **0.94** | 0.99 |
+    Every figure moves toward the truth, and linear at 3,000 beats equal
+    at 3,000 by roughly what quadrupling the iterations would buy.
+  - **It does NOT fully fix the sizing axis, and that is stated rather
+    than glossed:** AA still jams 20% where a converged solve is near 3%.
+    A real improvement on a known problem, not a resolution of it. The
+    fold-vs-play axis, which is what multiway advice is actually used
+    for, is now in good shape at 6-max (T7s folds 94% under the gun).
+  - **A test premise that was wrong, caught by writing the test.** The
+    intuitive assertion — "linear averaging moves the average further
+    from uniform" — is false in general, and measured false on the very
+    fixture written to check it (spread 0.859 vs 0.996). Replaced with
+    the property that is actually exact: because `strategy_weight` never
+    touches regrets, both runs traverse identically, so the linearly
+    weighted `strategy_sum` must exceed the equally weighted one and
+    cannot exceed it by more than a factor of `iterations`. The
+    behavioural claim lives on the 6-max measurements above, where it
+    belongs, not in a toy unit test that cannot support it.
+  - **A false alarm worth recording, because it nearly produced a wrong
+    conclusion.** The full suite measured 425s after this change against
+    M68's recorded 212s — an apparent 2x regression. Isolating it showed
+    `tests/test_cfr.py` was unchanged (35.70s vs 35.41s), and re-running
+    the suite on clean M68 `main` gave **429.69s**. So there was no
+    regression at all: **M68's 212s was the outlier**, a single reading
+    that should not have been recorded as a baseline. The same lesson
+    M49 and M54 each learned separately in this project — one reading is
+    not a measurement.
+  - **Verification:** 764 backend tests pass. Two new tests pin the
+    mechanism and the off-switch. No frontend files touched.

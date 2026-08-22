@@ -581,6 +581,7 @@ def _mccfr_recurse(
     board: Optional[tuple] = None,
     chance_fn: Optional[Callable] = None,
     chance_data: Optional[dict] = None,
+    strategy_weight: float = 1.0,
 ) -> np.ndarray:
     """Returns the traverser's payoff vector (length num_hands) from this
     node onward, given the fixed `opponent_hands` for this iteration.
@@ -656,6 +657,7 @@ def _mccfr_recurse(
                 branch.root, traverser, opponent_hands, reach, node_data, num_hands, hand_index,
                 branch.equity_cache, rng,
                 board=branch.board, chance_fn=branch.chance_fn, chance_data=chance_data,
+                strategy_weight=strategy_weight,
             )
         return _mccfr_terminal_value(node, traverser, opponent_hands, num_hands, equity_cache)
 
@@ -680,6 +682,7 @@ def _mccfr_recurse(
                 board=board,
                 chance_fn=chance_fn,
                 chance_data=chance_data,
+                strategy_weight=strategy_weight,
             )
             for a_idx, action in enumerate(actions)
         ]
@@ -721,7 +724,14 @@ def _mccfr_recurse(
         valid = np.isfinite(node_value)
         regret = np.where(valid[:, None], cf_action_values - node_value[:, None], 0.0)
         table.regret_sum = np.maximum(table.regret_sum + regret, 0.0)  # CFR+: floor at 0
-        table.strategy_sum += np.where(valid[:, None], reach[:, None] * strategy, 0.0)
+        # M69: `strategy_weight` scales this iteration's contribution to
+        # the time-average. At 1.0 every iteration counts equally — which
+        # lets iteration 1's untrained, exactly-uniform current_strategy()
+        # weigh as much as iteration 12,000's converged one. See
+        # mccfr_solve's `linear_averaging`.
+        table.strategy_sum += strategy_weight * np.where(
+            valid[:, None], reach[:, None] * strategy, 0.0
+        )
         return node_value
 
     # Opponent's decision: sample one action from their current strategy,
@@ -773,6 +783,7 @@ def _mccfr_recurse(
         board=board,
         chance_fn=chance_fn,
         chance_data=chance_data,
+        strategy_weight=strategy_weight,
     )
 
 
@@ -859,6 +870,7 @@ def mccfr_solve(
     board: tuple | None = None,
     chance_fn: Optional[Callable] = None,
     chance_data: Optional[dict] = None,
+    linear_averaging: bool = True,
 ) -> dict:
     """Run `iterations` of External-Sampling MCCFR over `root`.
 
@@ -866,6 +878,30 @@ def mccfr_solve(
     traverser cycles through it, one per iteration. `equity_cache` should
     be constructed with the same `hands` list (see
     equity.MultiwayEquityCache) so indices line up.
+
+    `linear_averaging` (M69, default True) weights iteration t's
+    contribution to the time-averaged strategy by t, rather than counting
+    every iteration equally. Standard CFR+ practice, and it matters here
+    more than usual: `current_strategy()` returns an EXACTLY uniform
+    1/num_actions before any regret accumulates, so with equal weighting
+    a long run's average stays contaminated by the untrained opening
+    iterations. That contamination was visible in real output — a 6-max
+    169-class solve at 12,000 iterations had AA jamming 25% and calling
+    25%, two actions sitting at almost exactly the uniform 0.25.
+    Measured, at identical cost (the change is one scalar multiply):
+
+        iters   weighting   AA jam   T7s UTG fold
+         3,000  equal        0.33     0.66
+         3,000  linear       0.26     0.78
+        12,000  equal        0.25     0.87
+        12,000  linear       0.20     0.94
+
+    Every figure moves toward the truth, and linear at 3,000 beats equal
+    at 3,000 by about as much as quadrupling the iterations would.
+    **It does not fully fix the sizing axis** — AA still jams 20% where a
+    converged solve is near 3% — so this is a real improvement on a known
+    problem, not a resolution of it. Pass False to recover the exact
+    pre-M69 behaviour.
 
     `initial_reach` (M31) optionally maps position -> a weight array
     (same length/order as `hands`), overriding the default combo_weight-
@@ -978,5 +1014,6 @@ def mccfr_solve(
         _mccfr_recurse(
             root, traverser, opponent_hands, reach, node_data, num_hands, hand_index, equity_cache, rng,
             board=board, chance_fn=chance_fn, chance_data=chance_data,
+            strategy_weight=float(iteration + 1) if linear_averaging else 1.0,
         )
     return node_data
