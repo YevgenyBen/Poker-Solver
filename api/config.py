@@ -33,6 +33,25 @@ from poker_solver.starting_hands import StartingHand, all_starting_hands
 FRONTEND_DIST_DIR = FilePath(__file__).resolve().parent.parent / "frontend" / "dist"
 
 PREWARM_STACK_DEPTHS = (20, 40, 50, 75, 100, 150, 200)
+
+# M76: which stack depths to pre-warm for the MULTIWAY tables. Separate
+# from PREWARM_STACK_DEPTHS above because the cost is different by two
+# orders of magnitude: a heads-up preflop solve is ~3s, a 6-max one over
+# the full 169-class pool is ~90-130s.
+#
+# Before this, multiway pre-warm covered stack_bb=100 only, which the
+# 2026-08-22 diagnostic measured as a real usability failure rather than
+# a theoretical one: a player sitting at a 30bb table waited **66
+# seconds** for their first answer, and a 9-max player 126s. That is not
+# a product a person can use with a clock running.
+#
+# Three depths, chosen for what people actually sit behind: 100bb (the
+# standard cash buy-in), 50bb (a common short-stack cash seat), and 20bb
+# (tournament/push-fold territory). Costs roughly 15 minutes of
+# background work at startup across the three table sizes — paid once, in
+# a daemon thread, while the server already serves everything else.
+# Depths outside this list still work; they just pay the solve.
+MULTIWAY_PREWARM_STACK_DEPTHS = (100.0, 50.0, 20.0)
 MAX_ITERATIONS = 20_000
 
 # The multiway preflop pool: the full 169-class canonical set, i.e. the
@@ -631,5 +650,29 @@ MAX_MULTIWAY_TURN_PATH_QUERY_CLASSES_PER_POSITION = 6
 # every node — and `trained` reports that honestly per combo rather than
 # pretending otherwise.
 MULTIWAY_BRANCH_TRAIN_ITERATIONS = 100
+
+
+# M76: table sizes whose solver is known NOT to converge, and the reason
+# a caller is given. Everything absent from this map is "high".
+#
+# 9-max earns its place by measurement, not suspicion. At the shipped
+# 3,000-iteration budget its opening advice is wrong in ways a player
+# would immediately notice: T7s under the gun comes back with *call* as
+# its top action where correct play folds it near 100% of the time, and
+# AA comes back as a 100bb shove. Both are reported `trained: true`,
+# because they ARE real solves — they are simply solves of a problem the
+# sampler has not had enough traversals to get right. Iterations divide
+# among seats (`traverser = positions[iteration % len(positions)]`), so
+# nine positions each receive a third of what six do at the same budget,
+# and the gap does not close with more: T7s's fold rate measured 0.117 at
+# 3,000 iterations and only 0.301 at 9,000, against 6-max's 0.94.
+LOW_CONFIDENCE_TABLE_SIZES = {
+    9: (
+        "9-max preflop does not converge at any affordable budget — iterations "
+        "divide among nine seats, so each gets a third of what 6-max gives. "
+        "Measured: T7s's under-the-gun fold rate reaches only 0.30 at 9,000 "
+        "iterations where 6-max reaches 0.94. Treat this as a hint, not GTO."
+    ),
+}
 DEFAULT_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS = DEFAULT_FLOP_TURN_MULTIWAY_ITERATIONS
 MAX_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS = 200

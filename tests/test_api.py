@@ -1438,6 +1438,52 @@ def test_advise_preflop_hero_is_keyed_by_hand_class_not_combo(client):
     assert sum(hero["strategy"].values()) == pytest.approx(1.0, abs=1e-6)
 
 
+def test_advise_gives_every_hero_advice_regardless_of_who_asked_first(client):
+    """M76: the severest bug the 2026-08-22 diagnostic found.
+
+    `_derive_path_situation` force-includes hero's own combo into every
+    live position's derived range before the top-K cap, so the SOLVE
+    depends on hero. No cache key included hero, so the first request for
+    a spot fixed the pool and every later request for that same spot
+    holding a different hand found its combo missing and got **no advice
+    at all**. On a server serving more than one hand, most users got
+    silence.
+
+    Invisible to the rest of the suite precisely because the autouse
+    fixture clears caches between tests — the one condition under which
+    the bug cannot appear. So this test deliberately does NOT clear
+    between asks: the shared cache is the thing under test.
+    """
+    body = {
+        "stack_bb": 100.0,
+        "players": 2,
+        "preflop_action_path": ["raise", "call_or_check"],
+        "board": "2h6d9c",
+    }
+    # Four different hero hands, same spot, same process, one cache.
+    # Deliberately different CLASSES (AK / 99 / AA / KQs) so each needs
+    # its own force-inclusion.
+    heroes = ["AsKd", "9s9d", "AsAh", "KsQs"]
+    answered = {}
+    for hero in heroes:
+        response = client.post("/advise", json={**body, "hero_cards": hero})
+        assert response.status_code == 200, f"{hero}: HTTP {response.status_code}"
+        answered[hero] = bool((response.json()["hero"] or {}).get("strategy"))
+
+    missing = [hero for hero, ok in answered.items() if not ok]
+    assert not missing, (
+        f"no advice for {missing} when asked after another hand — hero must be part "
+        "of the path-query cache key (see _hero_cache_component)"
+    )
+
+    # And the order must not matter: reversed, all four still answered.
+    for hero in reversed(heroes):
+        response = client.post("/advise", json={**body, "hero_cards": hero})
+        assert (response.json()["hero"] or {}).get("strategy"), (
+            f"{hero} lost its advice when asked in the reverse order"
+        )
+
+
 def test_advise_preflop_in_range_is_false_for_a_hand_outside_the_solved_pool(client):
     """M67: in_range used to be hardcoded True preflop, on the reasoning
     that "a preflop solve covers every class". True heads-up, false at

@@ -122,6 +122,32 @@ class AdviseResponse(BaseModel):
     # which derives no range at all (it reads the full solved 169-class
     # strategy directly, so there's nothing to have been fabricated).
     range_confidence: dict[str, RangeConfidence] | None = None
+    # M76: how far this cell's SOLVER can be trusted, independent of
+    # whether any particular hand was trained.
+    #
+    # `trained` and `range_confidence` both answer "did we actually
+    # compute this?". Neither answers "is what we computed right?", and
+    # the 2026-08-22 diagnostic found a cell where the honest answer is
+    # no: 9-max preflop returns `trained: true` on advice that is simply
+    # wrong (T7s's top action under the gun comes back as *call*, where
+    # correct play folds it near 100% of the time; AA comes back as a
+    # 100bb shove). The cause is measured and is not fixable by tuning —
+    # iterations divide among seats, so nine positions each get a third
+    # of what six do, and raising the budget does not close it (T7s's
+    # fold rate runs 0.117 at 3,000 iterations and only 0.301 at 9,000).
+    #
+    # So the cell is marked rather than silently served. A confidently
+    # wrong answer is the worst failure this product can have — worse
+    # than a slow one and worse than a refusal — and a caller that cannot
+    # tell the difference will present it as fact.
+    #
+    #   "high"   — trust it (heads-up, and 3-max/6-max preflop)
+    #   "low"    — a real solve, but known not to converge at this table
+    #              size; present it as a hint, never as GTO
+    solver_confidence: str = "high"
+    # Present iff solver_confidence != "high": a plain-language reason,
+    # so a consumer does not have to look one up.
+    solver_confidence_reason: str | None = None
 
 
 class SolveResponse(BaseModel):
