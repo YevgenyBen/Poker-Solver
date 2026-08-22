@@ -374,3 +374,62 @@ had only ever held because both implementations consumed the same RNG
 stream — a coincidence of shared plumbing, not evidence they agree about
 poker. Added a companion test proving the 1-card-runout path is
 enumerated rather than sampled (two different seeds must agree exactly).
+
+---
+
+# Round 4 audit + M80
+
+Re-profiling after M79 showed a transformed picture: **8.2M function
+calls, down from 94.5M**. The interpreter overhead was gone and the
+remaining cost was genuine numpy work — `best_hand_rank_batch` at 16.1s
+of 21.4s (75%).
+
+What was left was structural, not overhead. Every candidate dealt its own
+runouts (excluding its own two cards), so the **k opponent hands were
+re-ranked once per candidate**: work of `candidates x samples x (1 + k)`
+where `samples x (candidates + k)` suffices. At 120 candidates against 2
+opponents, ~3x more hand evaluations than necessary.
+
+**M80 shares one set of runouts across all candidates**, ranking the
+opponents once, and has each candidate ignore the ~8% of samples that
+collide with its own cards. The same trade M68 made in
+`equity._simulate_equity_shared_board`: a bounded variance cost, not a
+bias one, since which runouts a candidate blocks depends only on its own
+cards and never on how well it does.
+
+## A bias scare that was under-powered measurement
+
+The first validation showed bias at 2,000 samples of **−0.0035 and not
+shrinking**, against M79's −0.0008 — which looks exactly like a real
+estimator bias introduced by the collision masking. It was not. That
+figure came from 8 seeds x 5 candidates = 40 measurements, whose standard
+error is large enough to produce it by chance.
+
+Re-measured with 24 seeds (168 measurements) and standard errors
+reported:
+
+| samples | bias | SE | \|bias\|/SE | MAE |
+|---|---|---|---|---|
+| 2,000 | −0.00049 | 0.00065 | 0.7 | 0.0064 |
+| 6,000 | −0.00002 | 0.00036 | **0.1** | 0.0036 |
+
+Not significant at either count, with MAE falling as 1/√n. The estimator
+is unbiased. This is the "one reading is not a measurement" lesson
+(M49, M54, M70, M71) in its statistical form: **an effect size without a
+standard error is not a finding**, and it nearly cost a correct
+optimization.
+
+## Cumulative effect
+
+A 6-max flop request, identical fidelity throughout (151 combos, 63
+trained):
+
+| | flop | turn | river |
+|---|---|---|---|
+| before R7 | 45.2s | 10.4s | — |
+| M78 | 24.6s | — | — |
+| M79 | 19.9s | 4.0s | — |
+| **M80** | **14.4s** | **2.5s** | **1.0s** |
+
+**3.1x faster end to end**, with the equity estimator validated against
+exact enumeration at every step rather than assumed.
