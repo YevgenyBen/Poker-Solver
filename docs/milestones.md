@@ -4621,6 +4621,15 @@ entry's own corrections before trusting its conclusions.
     — is why multiway preflop is slow, and no amount of budget tuning
     fixes it. **The next milestone is a precomputed multiway equity
     structure**, the direct analog of what already makes heads-up work.
+
+    **Correction (M68): that recommendation was wrong.** It was tried and
+    measured. The tuple space cannot be collapsed without losing
+    hero-opponent interaction (domination, blockers): pairwise-derived
+    estimators reach correlation as low as 0.39 at 9-max, and bucketing
+    opponents by strength plateaus at ~3x the Monte Carlo noise floor no
+    matter how many buckets are used. The real inefficiency was
+    elsewhere — the same opponent hands were being re-ranked once per
+    candidate — and fixing that gave 1.95x. See M68.
   - **Two caps that had never actually bound, now measured.** M54 set
     `MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION` and its turn sibling to
     6, noting both were free *only* because the preflop leg solved 8
@@ -4635,3 +4644,100 @@ entry's own corrections before trusting its conclusions.
     rather than incidental grounds.
   - **Verification:** full backend suite green. No frontend files
     touched — nothing there depended on the pool's size.
+
+- **M68 — Multiway equity gets ~2x faster by sharing board runouts; the
+  precomputed-table idea M67 recommended does not work.** M67 closed by
+  naming its own next milestone: "a precomputed multiway equity
+  structure, the direct analog of what already makes heads-up work."
+  This milestone tried exactly that, measured it, and found it doesn't —
+  then found the real inefficiency somewhere else entirely.
+  - **Why a precomputed table can't work, measured three ways.**
+    Heads-up tabulates 169x169 pairwise equities to disk. The multiway
+    analog needs hero's equity against a *multiset* of opponents, and
+    169^5 is not tabulable, so the question is whether the tuple space
+    can be collapsed.
+      - *From pairwise equities.* Using the existing precomputed table:
+        `mean(p_i)` — which is what `_pairwise_fallback_equity` actually
+        does today — is biased **+0.18 / +0.32 / +0.39** at 2 / 5 / 8
+        opponents. It massively overstates. `prod(p_i)` (independence)
+        underestimates as board correlation predicts (-0.06 / -0.13 /
+        -0.10). A normalized product is nearly unbiased (+0.01 to +0.02)
+        but has MAE 0.08-0.14 and correlation as low as **0.39** at
+        9-max — it barely ranks hands correctly.
+      - *By bucketing opponents on strength.* Collapses the tuple space
+        to a tabulable 169 x C(B+k-1, k) while keeping each entry a real
+        simulation, so board correlation survives. Measured MAE
+        0.054-0.084 — and **more buckets did not help**, which is the
+        tell.
+      - *The tell, chased down.* Bucketing was on heads-up strength, and
+        heads-up strength is the wrong axis: correlation with true
+        multiway strength is only 0.885, and the disagreements are
+        exactly what poker theory predicts — suited hands are
+        systematically **under**rated (54s +56 rank places, 53s +52, 42s
+        +44: they make flushes, which win multiway pots) and small pairs
+        and weak aces **over**rated (55 drops 74 places, A7o 73). Redoing
+        the bucketing on a directly-measured multiway strength improved
+        bias (+0.009 vs +0.024) and correlation (0.657 vs 0.458) but left
+        MAE at ~0.068 — still **3x the measured noise floor of
+        0.019-0.023**. The residual is hero-opponent *interaction*:
+        domination and blockers (AKs against a dominated AQ that also
+        blocks hero's ace is nothing like AKs against 76s of equal
+        "strength"), which no summary of opponent strength can carry.
+    **So M67's recommendation was wrong, and is corrected in place there.**
+  - **The real inefficiency, found while measuring the above.**
+    `traverser_equity_vector` called `_simulate_equity` once per
+    candidate, and each call drew its own boards and ranked *all* hands
+    on them — so the k opponents' hands were re-ranked once per
+    candidate. At 169 candidates against 5 opponents that is
+    `169 * samples * 6` hand evaluations where `samples * (169 + 5)`
+    suffice: **the same 5 opponent hands were being evaluated 169 times
+    over.** New `_simulate_equity_shared_board` draws one set of boards
+    and evaluates every candidate and every opponent against them, making
+    the opponents' cost O(1) in the candidate count instead of O(n).
+  - **Measured payoff:** a 6-max 169-class solve at 3,000 iterations goes
+    **325s -> 166.5s (1.95x)**; at 300 iterations 46.5s -> 26.4s. Since
+    the budgets are cost-bound, this converts directly into convergence:
+    **12,000 iterations now costs 281s, less than M67's 3,000 cost
+    (325s)**, and T7s's UTG fold rate improves from 69.8% to 87.4%.
+  - **Accuracy checked, not assumed.** The shared-board estimator is
+    *not* bit-identical to the per-candidate loop and cannot be — it
+    draws a different number of boards in a different order. So it was
+    validated against high-sample ground truth instead: bias **-0.0065**,
+    MAE **0.0494** against a 4,000-sample truth, which is exactly what
+    pure sampling noise looks like at `samples=50` (SE ~0.053). No
+    systematic bias. The one real subtlety is that boards are drawn from
+    a deck excluding only the *opponents'* cards, so ~22% of samples
+    collide with a given candidate's own cards; those samples are skipped
+    for that candidate. That costs precision, not bias, because which
+    boards collide depends only on the candidate's cards, not on how it
+    performs.
+  - **A latent order-dependence bug, surfaced and fixed.**
+    `_pairwise_fallback_equity` drew from `rng` once per opponent while
+    iterating the *caller's* order, even though `MultiwayEquityCache`'s
+    key has always been sorted — so the same situation described as
+    (AKs, T9o, KK) or (KK, T9o, AKs) returned 0.690 and 0.700.
+    `test_multiway_cache_is_order_independent_across_fresh_caches` passed
+    before only because the two orders happened to coincide at the rng
+    state that test reached; changing how much rng is consumed upstream
+    exposed it. Now iterates sorted, so the property holds by
+    construction. **Worth noting this was pre-existing** — the M68 change
+    surfaced it rather than caused it.
+  - **Budgets re-set on measured cost, replacing M67's extrapolation.**
+    3-max 12,000 (48.3s), 6-max 12,000 (281s), 9-max 3,000 (248.9s).
+  - **A new honest limitation, measured: 9-max preflop output is not
+    reliable.** T7s folds only **12.5%** under the gun at a 9-handed
+    table, where it should be near 100% and 6-max reaches 87.4%. With 8
+    opponents the sampled-opponent variance is high enough that 3,000
+    iterations is proportionally far less converged than the same count
+    at 6-max, and per-iteration cost (~83ms) puts a converging count out
+    of reach. Documented in `api/config.py` and CLAUDE.md as the least
+    trustworthy cell in the product rather than left to be discovered.
+  - **M67's sizing limitation persists and is now known to be
+    structural.** Fold rates converge steadily with iterations (T7s
+    66.4% -> 80.1% -> 87.4% at 3k/6k/12k) but AA's jam frequency
+    *wanders* (33.4% -> 35.5% -> 25.3%) instead of trending toward the
+    near-zero a converged solve gives. More iterations will not fix the
+    sizing axis.
+  - **Verification:** 762 backend tests pass. Two new tests pin the
+    shared-board estimator's contract (statistical agreement and
+    order-independence). No frontend files touched.

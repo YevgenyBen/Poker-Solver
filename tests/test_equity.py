@@ -18,7 +18,7 @@ from poker_solver.equity import (
     monte_carlo_equity,
     monte_carlo_equity_n,
 )
-from poker_solver.starting_hands import StartingHand
+from poker_solver.starting_hands import StartingHand, all_starting_hands
 
 
 def test_deal_two_hands_returns_four_distinct_cards():
@@ -556,6 +556,53 @@ def test_multiway_cache_handles_blocked_traverser_hand_gracefully():
     assert np.all(vector <= 1.0)
     assert vector[0] > 0.4  # KK candidate: blocked, hand-aware fallback close to a real mirror-match 0.5
     assert vector[1] != pytest.approx(vector[0])  # AA candidate: not blocked, a real simulated value
+
+
+def test_shared_board_equity_agrees_with_per_candidate_simulation():
+    """M68 replaced a per-candidate simulation loop with one shared set of
+    board runouts. It is a different estimator of the same quantity — not
+    bit-identical and never can be — so it has to agree statistically with
+    high-sample ground truth rather than exactly with the old code.
+
+    Measured over a real 169-class pool: bias -0.0065, MAE 0.0494 against
+    a 4,000-sample truth, which is what pure sampling noise looks like at
+    samples=50 (SE ~0.053). The bounds here are deliberately loose enough
+    to be about correctness, not to re-pin the noise.
+    """
+    hands = list(all_starting_hands())
+    opponents = (
+        StartingHand("K", "K"),
+        StartingHand("7", "2", suited=False),
+        StartingHand("9", "8", suited=True),
+    )
+    cache = MultiwayEquityCache(hands=hands, samples=200, seed=11)
+    vector = cache.traverser_equity_vector(opponents)
+
+    assert len(vector) == len(hands)
+    finite = vector[~np.isnan(vector)]
+    assert np.all(finite >= 0.0) and np.all(finite <= 1.0)
+
+    index = {str(hand): i for i, hand in enumerate(hands)}
+    # A dominant hand must beat a trash hand by a wide, unambiguous margin
+    # — the property a broken shared-board mask would destroy first.
+    assert vector[index["AA"]] > vector[index["32o"]] + 0.20
+    # And the values must be in a sane multiway band, not heads-up-like:
+    # against 3 opponents a strong hand cannot be worth 0.8 of the pot.
+    assert 0.25 < vector[index["AA"]] < 0.75
+
+
+def test_shared_board_equity_is_order_independent_for_the_same_opponents():
+    """The same multiway situation described in two orders is one
+    situation. M68 found this held only by luck — _pairwise_fallback_
+    equity iterated the caller's order while the cache key was sorted, so
+    (AKs, T9o, KK) and (KK, T9o, AKs) produced 0.690 and 0.700."""
+    hands = [StartingHand("A", "A"), StartingHand("K", "K"), StartingHand("Q", "Q")]
+    a = StartingHand("A", "K", suited=True)
+    b = StartingHand("T", "9", suited=False)
+    c = StartingHand("K", "K")
+    forward = MultiwayEquityCache(hands=hands, samples=200, seed=5).traverser_equity_vector((a, b, c))
+    reverse = MultiwayEquityCache(hands=hands, samples=200, seed=5).traverser_equity_vector((c, b, a))
+    assert np.array_equal(forward, reverse)
 
 
 def test_multiway_validity_mask_flags_a_blocked_candidate():
