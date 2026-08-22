@@ -212,6 +212,77 @@ describe('AdviseSolver', () => {
     expect(screen.getByText(/untrained default/)).toBeInTheDocument();
   });
 
+  it("warns when hero's own hand was never solved for", async () => {
+    // M83: hero.trained was computed all along and never rendered, so a
+    // uniform placeholder strategy displayed exactly like a real one.
+    // This is the most direct honesty signal in the product — it is about
+    // YOUR hand, not the range around it.
+    vi.stubGlobal(
+      'fetch',
+      mockFetch(walkFor, () =>
+        adviceResponse({
+          hero: {
+            cards: 'AsKs',
+            in_range: true,
+            strategy: { fold: 0.333, call_or_check: 0.333, 'raise:2.50': 0.334 },
+            trained: false,
+            range_trained: null,
+          },
+        }),
+      ),
+    );
+    render(<AdviseSolver />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Get advice' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Get advice' }));
+
+    const warning = await screen.findByRole('alert');
+    expect(warning).toHaveTextContent('Not solved for your hand');
+  });
+
+  it('does not claim the hand is over when there is simply no advice for it', async () => {
+    // M83: a null hero strategy used to render "the hand resolved before
+    // this street" regardless of whether it had. At a LIVE node that is
+    // false — there IS a decision, we just have nothing for this hand.
+    vi.stubGlobal(
+      'fetch',
+      mockFetch(walkFor, () =>
+        adviceResponse({
+          is_terminal: false,
+          hero: { cards: 'AsKs', in_range: false, strategy: null, trained: null, range_trained: null },
+        }),
+      ),
+    );
+    render(<AdviseSolver />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Get advice' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Get advice' }));
+
+    const warning = await screen.findByRole('alert');
+    expect(warning).toHaveTextContent('No advice for this hand');
+    expect(screen.queryByText(/hand resolved before this street/)).not.toBeInTheDocument();
+  });
+
+  it('still says the hand resolved when it genuinely did', async () => {
+    // The other half — the honest message must survive for the case it
+    // was written for, or this fix just trades one wrong message for
+    // another.
+    vi.stubGlobal(
+      'fetch',
+      mockFetch(walkFor, () =>
+        adviceResponse({
+          is_terminal: true,
+          hero: { cards: 'AsKs', in_range: true, strategy: null, trained: null, range_trained: null },
+        }),
+      ),
+    );
+    render(<AdviseSolver />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Get advice' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Get advice' }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/hand resolved before this street/)).toBeInTheDocument(),
+    );
+  });
+
   it('warns loudly when the backend reports low solver confidence', async () => {
     // M82: the backend has been able to say "this table size does not
     // converge" since M76, but nothing in the UI read it — a 9-max user

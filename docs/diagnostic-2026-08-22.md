@@ -516,3 +516,48 @@ reasonably be skimmed; this one says the answer may simply be wrong.
 Two tests pin it: one that the warning appears with its reason, one that
 it is **absent** at `solver_confidence: "high"` — a warning that is
 always present is furniture, and users learn to ignore furniture.
+
+---
+
+# Round 7 audit + M83
+
+M82 named a class of bug — *a correctness signal no consumer reads is not
+a correctness signal* — so round 7 audited that class systematically:
+every `AdviseResponse` / `HeroAdvice` field against what the frontend
+actually renders. Two findings, the second worse than the first.
+
+### F8 — `hero.trained` was computed and never shown
+
+The single most direct honesty signal in the product: whether **your**
+hand's numbers came from real solving or are the uniform placeholder. It
+was in every response and rendered nowhere, so a placeholder displayed
+identically to a solved strategy. M75 measured multiway turn/river
+returning `0/132 trained` — a user in that state saw `0.333 / 0.333 /
+0.334` presented as advice.
+
+`ComboRow` had accepted a `trained` prop since M59. Nothing passed it.
+
+### F9 — the fallback message was actively false
+
+```tsx
+{result.hero.strategy ? ( ...advice... ) : (
+  <p>No decision to make here — the hand resolved before this street.</p>
+)}
+```
+
+That fired whenever hero had no strategy — including when there *is* a
+live decision and we simply have nothing for this particular hand. The
+user was told their hand was over when it wasn't. Worse than a missing
+signal: a missing signal omits information, this one supplies wrong
+information, and the response already carried `is_terminal` to tell the
+two apart.
+
+**M83 fixes both**: hero's `trained` flows into `ComboRow` and raises a
+loud warning when false; the fallback branches on `is_terminal` and says
+"there is a decision here, your hand wasn't in the solved range" when the
+hand is live.
+
+Three tests, including both halves of each fix — that the "hand resolved"
+message still appears when the hand genuinely resolved, and that the
+low-confidence warning is absent at `"high"`. A message that is always
+present teaches users to ignore it.
