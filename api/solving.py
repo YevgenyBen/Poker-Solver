@@ -945,6 +945,9 @@ def _query_flop_from_path(
         "hit": result.hit,
         "elapsed_seconds": result.elapsed_seconds,
         "strategy": result.strategy,
+        # M76: real per-combo confidence from the library, replacing the
+        # hardcoded null this cell used to report.
+        "trained": result.trained,
         "position": oop_position,
         "positions": [oop_position, ip_position],
         "players": players,
@@ -1797,10 +1800,16 @@ def _advise(request, street: str, iterations: int, solve_iterations: int, hero_c
             request.preflop_action_path, request.stack_bb, board_cards, iterations, request.players,
             hero_combo=hero_combo,
         )
-        # The canonical library persists only a flattened strategy dict,
-        # so per-hand confidence structurally isn't available here — an
-        # explicit null, not a silently-omitted field (M28's boundary).
-        return {**raw, "trained": None, "source": "library_hit" if raw["hit"] else "library_miss",
+        # M76: the canonical library now persists per-combo `trained`
+        # flags alongside the strategy, so this cell reports real
+        # confidence instead of a null. It USED to be documented as a
+        # structural limitation ("persists only a flattened strategy
+        # dict") — but the data was never structurally unavailable, the
+        # LibraryEntry dataclass simply did not carry it. Still falls back
+        # to None for a library built before M76, where the flags really
+        # are absent; that is a genuine "unknown", not a claim.
+        return {**raw, "trained": raw.get("trained"),
+                "source": "library_hit" if raw["hit"] else "library_miss",
                 "solve_iterations": None, "is_terminal": False, "player_to_act": raw["position"],
                 "street": street, "hero_key": hero_key}
 

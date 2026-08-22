@@ -183,6 +183,16 @@ and the cost of a correct cache is known.
 
 ---
 
+## 5b. Implementation status
+
+| | Recommendation | Status |
+|---|---|---|
+| R1 | Hero-aware cache keys | **DONE (M76)** — five path-query caches keyed on hero class; regression test does not clear caches |
+| R2 | Stop 9-max looking confident | **DONE (M76)** — `solver_confidence` / `solver_confidence_reason` on `AdviseResponse` |
+| R3 | Widen pre-warm | **DONE (M76)** — multiway now pre-warms 100/50/20bb across all table sizes |
+| R4 | Consistent `trained` | **DONE (M76)** — `LibraryEntry` carries per-combo flags; library path reports real confidence |
+| R5 | Widen multiway postflop ranges | open |
+
 ## 6. Plan amendment
 
 The v3 roadmap's priority order was: river coverage, then solve speed,

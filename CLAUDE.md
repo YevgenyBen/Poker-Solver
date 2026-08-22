@@ -113,8 +113,22 @@ every street (preflop through river) and every supported table size
   never did.
 - **`trained` / `range_confidence` / `source` exist because output can
   look confident and be fabricated.** Don't strip them for tidiness.
-- **The canonical-library path returns `trained: null`** — it persists
-  only a flattened strategy dict. That is a real limitation, surfaced
+- **`hero_cards` is part of the path-query cache keys — do not remove it
+  (M76).** Hero's combo is force-included into the derived range before
+  the top-K cap, so the SOLVE depends on hero. When the keys ignored
+  hero, the first request for a spot fixed the pool and every later
+  request with a different hand got NO advice. Keyed by hand *class*
+  (169 values, not 1,326). The suite could not see this because its
+  fixture clears caches between tests; the guard is
+  `test_advise_gives_every_hero_advice_regardless_of_who_asked_first`,
+  which deliberately does not.
+- **9-max is marked `solver_confidence: "low"` in `/advise` (M76)** —
+  it returns real solves of an under-trained problem (T7s's top action
+  UTG is *call*; AA shoves 100bb), and budget cannot fix it. Don't
+  present it as GTO.
+- **The canonical-library path reports real `trained` flags (M76).** It
+  used to return null, documented as structural; it was not — the
+  dataclass just didn't carry them. That is a real limitation, surfaced
   as an explicit null rather than hidden.
 - **Five `*_from_path` routes are deprecated** (superseded by
   `/advise`), still functional. New callers should use `/advise`.

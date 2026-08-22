@@ -1529,19 +1529,39 @@ def test_advise_preflop_rejects_an_already_terminal_path(client):
     assert "no preflop decision left" in response.json()["detail"]
 
 
-def test_advise_flop_heads_up_reports_library_miss_then_hit_and_null_trained(client):
+def test_advise_flop_heads_up_reports_library_miss_then_hit_with_real_trained(client):
+    """M76: this cell used to report `trained: null`, documented as a
+    structural limitation of the canonical library ("persists only a
+    flattened strategy dict, so per-hand confidence structurally isn't
+    available"). It was not structural — `LibraryEntry` simply did not
+    carry the flags `StrategyResult` already had. It does now, so a
+    library-served answer reports real per-combo confidence like every
+    other cell, on both the miss and the subsequent hit.
+    """
     body = _advise_body(board="2h6d9c")
     first = client.post("/advise", json=body)
     assert first.status_code == 200
     assert first.json()["source"] == "library_miss"
-    # The canonical library persists only a flattened strategy dict, so
-    # per-hand confidence structurally isn't available — an explicit
-    # null, not a silently-omitted field (M28's documented boundary).
-    assert first.json()["trained"] is None
     assert first.json()["street"] == "flop"
+
+    trained = first.json()["trained"]
+    assert isinstance(trained, dict) and trained, "library path must report real trained flags"
+    assert all(isinstance(flag, bool) for flag in trained.values())
+    assert set(trained) == set(first.json()["strategy"]), (
+        "trained and strategy must cover exactly the same combos"
+    )
+    # Not vacuous in either direction: a real solve trains some hands and
+    # leaves others untouched, and asserting only "is a dict" would pass
+    # on an all-False stub.
+    assert any(trained.values()), "no combo trained — the flags are not real"
 
     second = client.post("/advise", json=body)
     assert second.json()["source"] == "library_hit"
+    # A HIT must carry the flags too — they travel through a different
+    # code path (lookup_trained's suit translation) than the miss.
+    hit_trained = second.json()["trained"]
+    assert isinstance(hit_trained, dict) and hit_trained
+    assert hit_trained == trained, "hit and miss must agree on confidence"
 
 
 def test_advise_force_includes_hero_outside_the_cap_and_says_so(client):
