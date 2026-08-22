@@ -5089,3 +5089,49 @@ entry's own corrections before trusting its conclusions.
     at N=3 and never re-verified at N=6), and the interaction between
     linear averaging and a drifting current strategy. Both are real; do
     NOT re-test the uniform fallback or epsilon.
+
+- **M74 — The jam instability is policy OSCILLATION on a near-tied
+  decision, not a bug in any one rule.** M73 ruled out the CFR+ clamp,
+  the uniform regret-matching fallback, and the exploration floor. This
+  milestone found what is actually happening by separating the POLICY
+  from the AVERAGE, which nothing had done.
+  - **The diagnostic that settled it.** Reporting
+    `current_strategy()` alongside `average_strategy()` for AA at the
+    root, unclamped:
+    | iterations | seed | average jam | **current jam** |
+    |---|---|---|---|
+    | 3,000 | 1 / 2 | 0.034 / 0.033 | **0.000 / 0.000** |
+    | 12,000 | 1 / 2 | 0.381 / 0.426 | **1.000 / 0.000** |
+    The policy is **bang-bang** — exactly 0 or exactly 1, flipping
+    between runs. AA's raise-versus-jam is near-tied under this tree and
+    opponent model, so cumulative regret crosses zero repeatedly and
+    regret matching swings the whole probability mass from one action to
+    the other. The reported average is then just a function of which
+    phase a run happens to stop in. At 3,000 the oscillation has not
+    started (current jam is 0 on both seeds), which is exactly why the
+    shipped budget is stable.
+  - **Refuted #4: linear averaging as the cause.** It was the obvious
+    suspect once oscillation was visible, since M69's weighting is
+    recency-biased and would track the latest phase rather than smooth
+    it. Measured at 12,000, three seeds each: uniform averaging gives
+    0.257 / 0.397 / 0.445 (mean 0.366) against linear's 0.381 / 0.426 /
+    0.554 (mean 0.454). So linear averaging **amplifies** the problem by
+    roughly 0.09 — real, but it is not the cause, and uniform averaging
+    is still badly wrong and badly spread. Linear averaging stays: it is
+    a clear win on the fold axis (T7s folds 0.996 vs 0.950) and its
+    amplification is small next to the oscillation itself.
+  - **What this means, stated carefully.** The instability is not a
+    defect in the clamp, the fallback, epsilon, or the averaging — it is
+    that this decision is genuinely close under the model, and a
+    deterministic regret-matching policy has no reason to settle on a
+    mixture. Fixing it properly means damping the oscillation
+    (averaging the POLICY rather than the visit-weighted strategy, or a
+    simplex-projection / optimistic-regret variant), which is a real
+    algorithmic change and a milestone of its own.
+  - **Nothing shipped, deliberately.** M72 already set 6-max to 3,000,
+    which is below the onset of the oscillation and measured stable
+    (0.033 / 0.034). That remains the right operating point, now for a
+    understood reason rather than an empirical one.
+  - **Four hypotheses are now closed** (clamp, uniform fallback,
+    epsilon, averaging). Anyone picking this up should start from the
+    oscillation itself, not from another parameter.
