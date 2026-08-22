@@ -1147,6 +1147,78 @@ def test_mccfr_terminal_value_folds_a_validity_mask_into_nan():
     assert value[1] == pytest.approx(0.7 * 10.0 - 1.0)
 
 
+# --- M69: linear averaging of the time-averaged strategy ---
+
+
+def test_linear_averaging_weights_later_iterations_more():
+    """The mechanism, asserted directly.
+
+    `strategy_weight` is applied ONLY to strategy_sum — regret updates and
+    therefore the sampled traversal itself are untouched — so for a given
+    seed the two runs walk the identical tree and differ solely in how
+    each iteration's contribution is weighted. That makes the property
+    exact rather than statistical: every per-iteration term is identical,
+    so the linearly-weighted total must exceed the equally-weighted one
+    and cannot exceed it by more than a factor of `iterations`.
+
+    Deliberately NOT asserting that linear averaging moves the average
+    further from uniform — that seems intuitive but is false in general,
+    and was measured false on this very fixture (spread 0.859 vs 0.996).
+    The real behavioural claim lives on a 6-max 169-class solve and is
+    recorded with its measurements in mccfr_solve's own docstring.
+    """
+    combos = _TOY_COMBOS
+    iterations = 80
+    config = StreetConfig(positions=("BTN", "BB"), pot=10.0, stack_bb=20.0,
+                          raise_sizes=(), max_raises=1)
+    reach = {"BTN": np.ones(2), "BB": np.ones(2)}
+
+    # One tree for both runs: node_data is keyed by id(node), so a fresh
+    # tree per run would make the two dicts unmatchable. mccfr_solve
+    # mutates node_data, never the tree, so sharing the root is safe.
+    root = build_street_tree(config)
+
+    def solve(linear):
+        return mccfr_solve(root, combos, ("BTN", "BB"), _StubEquityCache(0.9, num_hands=2),
+                           iterations=iterations, seed=3, initial_reach=reach,
+                           linear_averaging=linear)
+
+    equal_data, linear_data = solve(False), solve(True)
+    assert equal_data and len(equal_data) == len(linear_data)
+
+    for key, equal_table in equal_data.items():
+        linear_table = linear_data[key]
+        # The traversal is identical, so regrets must match exactly.
+        assert np.array_equal(equal_table.regret_sum, linear_table.regret_sum)
+        equal_total = equal_table.strategy_sum.sum()
+        linear_total = linear_table.strategy_sum.sum()
+        assert linear_total > equal_total
+        assert linear_total <= iterations * equal_total
+        # Both remain valid distributions with nothing corrupted.
+        assert np.allclose(linear_table.average_strategy().sum(axis=1), 1.0)
+        assert not np.any(np.isnan(linear_table.strategy_sum))
+
+
+def test_linear_averaging_can_be_disabled_for_the_pre_m69_behaviour():
+    """The flag must actually be a switch, not decoration — a caller that
+    needs the old time-average can still get it, bit for bit."""
+    combos = _TOY_COMBOS
+    config = StreetConfig(positions=("BTN", "BB"), pot=10.0, stack_bb=20.0,
+                          raise_sizes=(), max_raises=1)
+    reach = {"BTN": np.ones(2), "BB": np.ones(2)}
+
+    def solve(linear):
+        root = build_street_tree(config)
+        data = mccfr_solve(root, combos, ("BTN", "BB"), _StubEquityCache(0.9, num_hands=2),
+                           iterations=60, seed=7, initial_reach=reach,
+                           linear_averaging=linear)
+        return [t.average_strategy() for t in data.values()]
+
+    first, second = solve(False), solve(False)
+    assert all(np.array_equal(a, b) for a, b in zip(first, second))
+    assert any(not np.allclose(a, b) for a, b in zip(solve(False), solve(True)))
+
+
 # --- M66: a fabricated value must produce NO learning, not wrong learning ---
 
 
