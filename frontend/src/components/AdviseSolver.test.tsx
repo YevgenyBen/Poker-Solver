@@ -212,6 +212,45 @@ describe('AdviseSolver', () => {
     expect(screen.getByText(/untrained default/)).toBeInTheDocument();
   });
 
+  it('warns loudly when the backend reports low solver confidence', async () => {
+    // M82: the backend has been able to say "this table size does not
+    // converge" since M76, but nothing in the UI read it — a 9-max user
+    // saw advice with no sign it is known-unreliable. That is the one
+    // failure mode this project's honesty signals exist to prevent, so
+    // the warning is pinned here rather than left to survive by luck.
+    vi.stubGlobal(
+      'fetch',
+      mockFetch(walkFor, () =>
+        adviceResponse({
+          players: 9,
+          solver_confidence: 'low',
+          solver_confidence_reason: '9-max preflop does not converge at any affordable budget.',
+        }),
+      ),
+    );
+    render(<AdviseSolver />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Get advice' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Get advice' }));
+
+    const warning = await screen.findByRole('alert');
+    expect(warning).toHaveTextContent('Low confidence');
+    // The REASON must reach the user too, not just the label — a bare
+    // "low confidence" tells them nothing actionable.
+    expect(warning).toHaveTextContent(/does not converge/);
+  });
+
+  it('shows no confidence warning when the solver is trusted', async () => {
+    // The other half: the warning must not be permanent furniture, or
+    // users learn to ignore it.
+    vi.stubGlobal('fetch', mockFetch(walkFor, () => adviceResponse({ solver_confidence: 'high' })));
+    render(<AdviseSolver />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Get advice' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Get advice' }));
+
+    await waitFor(() => expect(screen.getByText('AKs')).toBeInTheDocument());
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it("says the hand's over when the preflop path folds everyone out", async () => {
     vi.stubGlobal('fetch', mockFetch(walkFor));
     render(<AdviseSolver />);

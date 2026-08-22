@@ -411,6 +411,14 @@ export function AdviseSolver() {
             </div>
           )}
 
+          {result.solver_confidence === 'low' && (
+            <p className="solver-warning" role="alert">
+              <strong>Low confidence.</strong>{' '}
+              {result.solver_confidence_reason ??
+                'This table size is known not to converge — treat the advice as a hint, not GTO.'}
+            </p>
+          )}
+
           {result.range_confidence && (
             <p className="depth-hint">
               Range confidence:{' '}

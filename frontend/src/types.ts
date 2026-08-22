@@ -247,6 +247,13 @@ export interface AdviseResponse {
   solve_iterations: number | null;
   elapsed_seconds: number;
   range_confidence: Record<string, RangeConfidence> | null;
+  /** M82: how far this cell's SOLVER can be trusted, independent of
+   * whether any particular hand was trained. "high" everywhere except
+   * table sizes the backend knows do not converge (9-max today).
+   * `trained` answers "did we compute this"; this answers "is what we
+   * computed right", and only the second one can be no. */
+  solver_confidence?: string;
+  solver_confidence_reason?: string | null;
 }
 
 // The request shape /advise takes — street depth is INFERRED from which
