@@ -388,7 +388,15 @@ def test_mccfr_agrees_with_exact_solve_at_heads_up():
     hands = [StartingHand("A", "A"), StartingHand("7", "2", suited=False)]
 
     exact_equity_table = build_equity_table(hands=hands, samples=300)
-    exact_avg = solve(root, hands, exact_equity_table, iterations=500)[id(root)].average_strategy()
+    # 5,000 iterations, not 500. The exact solver is unsampled but its
+    # time-average still needs to converge, and at 500 it had not: AA's
+    # averaged all-in frequency read 0.656 there and drifts to 0.892 /
+    # 0.956 / 0.969 at 2k / 10k / 50k (M71 measured this directly). A
+    # cross-validation is only meaningful once BOTH arms are converged —
+    # otherwise it measures the reference's own error, and a correct
+    # change to the sampled solver shows up as a regression. That is
+    # exactly what happened when M71 dropped the CFR+ regret clamp.
+    exact_avg = solve(root, hands, exact_equity_table, iterations=5_000)[id(root)].average_strategy()
 
     mccfr_equity_cache = MultiwayEquityCache(hands=hands, samples=200, seed=1)
     mccfr_avg = mccfr_solve(

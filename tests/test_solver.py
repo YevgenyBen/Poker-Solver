@@ -2212,18 +2212,25 @@ def test_six_max_demo_pool_degrades_with_more_iterations():
         )
         return result.opening_range()["AKs"]["fold"]
 
-    at_shipped_budget = utg_fold_rate(300)
+    at_small_budget = utg_fold_rate(300)
     at_ten_times = utg_fold_rate(3_000)
 
-    # The shipped budget is where the answer is still sane — that is the
-    # whole reason it is 300 rather than something larger.
-    assert at_shipped_budget < 0.35, (
-        f"AKs UTG fold rate at the shipped budget is {at_shipped_budget:.1%}; "
-        "if this ever drifts high, the budget itself is no longer a safe choice"
+    # NOTE (M71): 300 is no longer "the shipped budget" — MULTIWAY_TABLE_
+    # CONFIGS has run 12,000 (3-max/6-max) since M67, over the full
+    # 169-class pool rather than this 8-class one. This test is now purely
+    # a characterization of what a PREMIUM-HEAVY POOL does, so the
+    # assertion below is about the DEGRADATION, which is the finding,
+    # rather than about hitting a particular level at a budget nothing
+    # ships any more. The level is still checked, but loosely — it drifts
+    # with solver changes (M71's convergence fixes moved it from 33% to
+    # 36%) without saying anything about the pool effect being tested.
+    assert at_small_budget < 0.55, (
+        f"AKs UTG fold rate at 300 iterations is {at_small_budget:.1%}; this is a "
+        "loose sanity bound, not a budget claim — see the note above"
     )
     # ...and 10x more solving makes it materially WORSE, not better.
-    assert at_ten_times > at_shipped_budget + 0.15, (
-        f"AKs UTG fold rate went {at_shipped_budget:.1%} -> {at_ten_times:.1%} with 10x "
+    assert at_ten_times > at_small_budget + 0.15, (
+        f"AKs UTG fold rate went {at_small_budget:.1%} -> {at_ten_times:.1%} with 10x "
         "the iterations. If this assertion now fails, the demo pool may have been "
         "replaced with a more realistic one — re-measure and revisit the iteration "
         "budgets in api/config.py, which are small only because of this effect."

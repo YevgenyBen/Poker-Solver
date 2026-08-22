@@ -196,7 +196,20 @@ MULTIWAY_PREFLOP_SAMPLES = 50
 MULTIWAY_TABLE_CONFIGS = {
     3: {"positions": ("BTN", "SB", "BB"), "iterations": 12_000},
     6: {"positions": ("UTG", "MP", "CO", "BTN", "SB", "BB"), "iterations": 12_000},
-    9: {"positions": ("UTG", "UTG1", "MP1", "MP2", "MP3", "CO", "BTN", "SB", "BB"), "iterations": 3_000},
+    # `floor_regret` (M71): every table size uses plain CFR regret
+    # matching now EXCEPT 9-max. CFR+'s clamp is a ratchet under sampling
+    # and dropping it is a large win at 3-max and 6-max (AA's jam
+    # frequency 0.468 -> 0.120 and 0.199 -> 0.032 respectively, three
+    # seeds each). But plain CFR converges more slowly, and 9-max's 3,000
+    # iterations split across nine seats give each only 333 traversals —
+    # too few, measured: AA's jam goes the WRONG way there (0.777 ->
+    # 0.982). So 9-max keeps the clamp until its budget can support the
+    # better rule. One more reason 9-max is the least trustworthy cell.
+    9: {
+        "positions": ("UTG", "UTG1", "MP1", "MP2", "MP3", "CO", "BTN", "SB", "BB"),
+        "iterations": 3_000,
+        "floor_regret": True,
+    },
 }
 
 # /solve_flop's curated demo ranges — small hand-*class* sets (not

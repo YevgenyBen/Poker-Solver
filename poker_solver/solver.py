@@ -226,6 +226,7 @@ def solve_preflop(
     equity_table=None,
     equity_cache: MultiwayEquityCache = None,
     seed: int = 0,
+    floor_regret: bool | None = None,
 ) -> StrategyResult:
     """Solve a preflop spot and return its strategy.
 
@@ -256,8 +257,14 @@ def solve_preflop(
     else:
         actual_iterations = iterations if iterations is not None else DEFAULT_MCCFR_ITERATIONS
         equity_cache = equity_cache if equity_cache is not None else MultiwayEquityCache(hands=hands)
+        # `floor_regret=None` means "whatever mccfr_solve defaults to"
+        # (plain CFR since M71); an explicit True restores CFR+'s clamp,
+        # which api/config.py does for 9-max only — see mccfr_solve's own
+        # docstring for the measurements behind that exception.
+        mccfr_kwargs = {} if floor_regret is None else {"floor_regret": floor_regret}
         node_data = mccfr_solve(
-            root, hands, config.positions, equity_cache, iterations=actual_iterations, seed=seed
+            root, hands, config.positions, equity_cache, iterations=actual_iterations,
+            seed=seed, **mccfr_kwargs,
         )
     elapsed = time.perf_counter() - start
 
