@@ -4887,3 +4887,74 @@ entry's own corrections before trusting its conclusions.
     absolute timings now known to be session-dependent. Re-tuning them on
     that basis would compound the error; they should be re-validated with
     the reference-workload method before being changed again.
+
+- **M71 — CFR+'s regret clamp was the sizing bug, and the "trusted"
+  heads-up reference was contaminated too.** M67 shipped multiway preflop
+  with a sizing caveat, M68 found it structural, M69 improved it via
+  linear averaging but left AA jamming ~20% where a converged solve is
+  ~3%. This milestone found the actual cause, and then found that the
+  reference used to judge everything all session had the same class of
+  defect.
+  - **The mechanism:** CFR+ clamps accumulated regret at zero. That is a
+    genuine win in an exact solver, but under SAMPLING it is a ratchet —
+    it discards negative regret while accumulating positive regret, so
+    whichever action's value estimate is noisiest collects spurious
+    positive regret that can never be cancelled. The all-in is by far the
+    noisiest action, since its payoff swings an entire stack. That is
+    exactly where the bias appeared, and it is why more iterations did
+    not help: the ratchet accumulates *with* iterations.
+  - **Measured at 6-max, 169 classes, 3,000 iterations, three seeds each**
+    (heads-up reference for AA's jam is ~3.1%):
+    | | AA jam | T7s UTG fold |
+    |---|---|---|
+    | CFR+ clamp (old) | 0.211 / 0.203 / 0.182 → **0.199** | 0.744 |
+    | plain CFR (new) | 0.034 / 0.033 / 0.029 → **0.032** | 0.938 |
+    Reproducible and tight, not a lucky seed. Plain CFR at 3,000
+    iterations beats CFR+ at 12,000 on every metric.
+  - **Published Discounted CFR was tried and was worse.** DCFR(1.5, 0)
+    gave AA jam 0.139 and DCFR(1.5, 0.5) gave 0.103, against plain CFR's
+    0.034 — at roughly twice the cost, since discounting walks every
+    table each iteration. `discount=(alpha, beta)` is kept as an option
+    but is not used. The textbook fix lost to simply removing the clamp.
+  - **One measured exception, and it is 9-max.** Plain CFR converges more
+    slowly than CFR+, so it needs enough iterations per position to get
+    there — and `traverser = positions[iteration % len(positions)]`
+    divides iterations among seats. 6-max at 3,000 gives 500 per
+    position and 3-max at 12,000 gives 4,000; both win big (3-max's AA
+    jam 0.468 → 0.120). **9-max at 3,000 gives only 333 per position and
+    goes the wrong way** (AA jam 0.777 → 0.982, three seeds), even as its
+    T7s fold improves. So `api/config.py` keeps 9-max on the CFR+ clamp
+    explicitly and says why. One more reason 9-max is the weakest cell.
+  - **A single reading nearly produced the wrong conclusion, again.** The
+    first 3-max and 9-max runs (one seed, at 3,000 iterations rather than
+    their configured budgets) both showed plain CFR looking *worse*,
+    which contradicted 6-max and would have sunk the change. Re-running
+    with three seeds at the real budgets reversed 3-max entirely and
+    confirmed only 9-max as a genuine exception. Same lesson as M49, M54
+    and M70 — four times in this project now.
+  - **The bigger find: the exact heads-up solver had M69's defect too.**
+    Removing the clamp broke
+    `test_mccfr_agrees_with_exact_solve_at_heads_up`, where the exact
+    solver said AA jams 0.656 and the sampled one said 0.977. Rather than
+    assume the exact solver was right because it is unsampled, its
+    convergence was measured: **0.656 → 0.892 → 0.956 → 0.969 at 500 /
+    2k / 10k / 50k iterations.** The 0.656 was not the equilibrium — it
+    was the untrained opening iterations still weighing in the average,
+    because `solve()` also did `strategy_sum += reach * strategy` with
+    equal weighting. **The sampled solver was right and the reference was
+    wrong.** Linear averaging now applies there too (0.765 / 0.958 /
+    0.972 / 0.973 — the same equilibrium, reached far sooner).
+    This matters beyond the test: every "trusted heads-up reference"
+    figure quoted across M67-M70 came from this solver.
+  - **Three tests fixed, each for a real reason rather than to go green:**
+    the cross-validation now runs its exact arm to 5,000 iterations
+    (a cross-check is meaningless until *both* arms converge, or it just
+    measures the reference's error); the blocked-board test no longer
+    hardcodes "BB's top class is the pair 22" (M71's reordering made it
+    A2, which no 3-card flop can block) and instead derives the pair and
+    asserts that premise explicitly; and the demo-pool characterization
+    test no longer claims 300 is "the shipped budget", which stopped
+    being true at M67.
+  - **Verification:** 765 backend tests pass. `_solve_recurse`'s CFR+
+    clamp is deliberately UNCHANGED — the clamp is only harmful under
+    sampling, and the exact solver does not sample.

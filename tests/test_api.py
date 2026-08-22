@@ -1703,15 +1703,33 @@ def test_advise_rejects_a_too_long_action_path(client):
 
 
 def test_derive_path_situation_rejects_a_board_that_blocks_a_whole_capped_range():
-    # A real, constructible case, not a contrived one: at a 1-class cap
-    # on this path, BB's single top class is the pair 22 — and a board of
-    # three deuces leaves only one deuce in the deck, so every one of
-    # 22's six combos is blocked. (Verified empirically before writing
-    # this assertion rather than assumed; a pair is the only class shape
-    # a 3-card flop can fully block, since 4 of a rank exist and a pair
-    # needs 2 of them.)
+    # A real, constructible case, not a contrived one: at a 1-class cap,
+    # if BB's single top class is a PAIR, a board of three of that rank
+    # leaves one card of it in the deck and blocks every combo. A pair is
+    # the only class shape a 3-card flop can fully block, since 4 of a
+    # rank exist and a pair needs 2 of them.
+    #
+    # WHICH pair is not hardcoded any more. It used to be 22 at
+    # _PATH_ITERATIONS, but M71's convergence fixes reordered the derived
+    # range (BB's top class there is now A2, which no flop can fully
+    # block) and this test failed for a reason that had nothing to do
+    # with the guard it exists to cover. So the premise is now derived and
+    # asserted explicitly: if it ever stops holding, the failure says so
+    # instead of looking like a broken guard.
+    iterations = 40
+    probe = _derive(iterations=iterations, max_classes_per_position=1)
+    bb_combos = list(probe.position_ranges["BB"])
+    assert bb_combos, "premise: BB's capped range must be non-empty on the probe board"
+    ranks = {combo.cards[0].rank for combo in bb_combos} | {combo.cards[1].rank for combo in bb_combos}
+    assert len(ranks) == 1, (
+        f"premise broken: BB's top capped class is not a pair (ranks {sorted(ranks)}), "
+        "so no 3-card flop can block it — pick an iteration count where it is one"
+    )
+    pair_rank = ranks.pop()
+    blocking_board = tuple(parse_cards("".join(f"{pair_rank}{suit}" for suit in ("h", "s", "d"))))
+
     with pytest.raises(ValueError, match=r"blocks every combo in BB's derived \(capped\) range"):
-        _derive(board_cards=tuple(parse_cards("2h2s2d")), max_classes_per_position=1)
+        _derive(board_cards=blocking_board, iterations=iterations, max_classes_per_position=1)
 
 
 def test_preflop_walk_closing_call_is_a_real_two_live_position_terminal(client):

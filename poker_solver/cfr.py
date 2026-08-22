@@ -278,6 +278,7 @@ def _solve_recurse(
     position_b: str,
     chance_fn: Optional[Callable] = None,
     chance_data: Optional[dict] = None,
+    strategy_weight: float = 1.0,
 ) -> np.ndarray:
     """Returns this node's value matrix (`position_a`'s payoff, shape NxN).
 
@@ -306,6 +307,7 @@ def _solve_recurse(
                 branch.root, reach_a, reach_b, updating_player, node_data,
                 branch.equity_table, position_a, position_b,
                 chance_fn=branch.chance_fn, chance_data=chance_data,
+                strategy_weight=strategy_weight,
             )
             for branch in node.branches.values()
         ]
@@ -320,6 +322,7 @@ def _solve_recurse(
             return _solve_recurse(
                 chance_node, reach_a, reach_b, updating_player, node_data,
                 equity_table, position_a, position_b, chance_fn, chance_data,
+                strategy_weight,
             )
         return _terminal_value_matrix(node, equity_table, position_a, position_b)
 
@@ -336,11 +339,13 @@ def _solve_recurse(
             child_value = _solve_recurse(
                 child, reach_a * strategy[:, a_idx], reach_b, updating_player,
                 node_data, equity_table, position_a, position_b, chance_fn, chance_data,
+                strategy_weight,
             )
         else:
             child_value = _solve_recurse(
                 child, reach_a, reach_b * strategy[:, a_idx], updating_player,
                 node_data, equity_table, position_a, position_b, chance_fn, chance_data,
+                strategy_weight,
             )
         child_values.append(child_value)
 
@@ -367,7 +372,17 @@ def _solve_recurse(
 
         regret = cf_action_values - cf_node_value[:, None]
         table.regret_sum = np.maximum(table.regret_sum + regret, 0.0)  # CFR+: floor at 0
-        table.strategy_sum += acting_reach[:, None] * strategy
+        # M71: weight this iteration's contribution to the time-average by
+        # `strategy_weight`, the same fix M69 applied to the sampled
+        # solver. The exact solver had the identical defect and it was
+        # NOT harmless: on a toy AA-vs-72o game its average all-in
+        # frequency read 0.656 at 500 iterations and only drifted to
+        # 0.892 / 0.956 / 0.969 at 2k / 10k / 50k. That 0.656 was not the
+        # equilibrium, it was the untrained opening iterations still
+        # sitting in the average — and it was being used as the "ground
+        # truth" that test_mccfr_agrees_with_exact_solve_at_heads_up
+        # checked the sampled solver against.
+        table.strategy_sum += strategy_weight * acting_reach[:, None] * strategy
 
     return node_value
 
@@ -381,8 +396,24 @@ def solve(
     initial_reach: dict | None = None,
     chance_fn: Optional[Callable] = None,
     chance_data: Optional[dict] = None,
+    linear_averaging: bool = True,
 ) -> dict:
     """Run `iterations` of CFR+ over `root`, for the given `hands`.
+
+    `linear_averaging` (M71, default True) weights iteration t's
+    contribution to the time-average by t. This solver is EXACT — it
+    marginalizes over the opponent's whole range instead of sampling — so
+    it was assumed not to need M69's fix. That assumption was wrong, and
+    the cost was measurable: on a toy AA-vs-72o game, AA's averaged
+    all-in frequency read **0.656 at 500 iterations and drifted to 0.892 /
+    0.956 / 0.969 at 2k / 10k / 50k**. The equilibrium is ~0.97; the 0.656
+    was the untrained opening iterations still weighing in the average.
+
+    That mattered beyond cosmetics, because this solver is the reference
+    the sampled one is validated against
+    (test_mccfr_agrees_with_exact_solve_at_heads_up). A contaminated
+    reference makes a correct sampled answer look like a regression, which
+    is exactly what happened when M71 removed the CFR+ regret clamp.
 
     `equity_table` must be shaped (len(hands), len(hands)) with rows/cols
     in the same order as `hands` (see equity.get_equity_table).
@@ -459,6 +490,7 @@ def solve(
             root, reach_a.copy(), reach_b.copy(), updating_player,
             node_data, equity_table, position_a, position_b,
             chance_fn, chance_data,
+            float(iteration + 1) if linear_averaging else 1.0,
         )
     return node_data
 
@@ -582,6 +614,7 @@ def _mccfr_recurse(
     chance_fn: Optional[Callable] = None,
     chance_data: Optional[dict] = None,
     strategy_weight: float = 1.0,
+    floor_regret: bool = True,
 ) -> np.ndarray:
     """Returns the traverser's payoff vector (length num_hands) from this
     node onward, given the fixed `opponent_hands` for this iteration.
@@ -657,7 +690,7 @@ def _mccfr_recurse(
                 branch.root, traverser, opponent_hands, reach, node_data, num_hands, hand_index,
                 branch.equity_cache, rng,
                 board=branch.board, chance_fn=branch.chance_fn, chance_data=chance_data,
-                strategy_weight=strategy_weight,
+                strategy_weight=strategy_weight, floor_regret=floor_regret,
             )
         return _mccfr_terminal_value(node, traverser, opponent_hands, num_hands, equity_cache)
 
@@ -683,6 +716,7 @@ def _mccfr_recurse(
                 chance_fn=chance_fn,
                 chance_data=chance_data,
                 strategy_weight=strategy_weight,
+                floor_regret=floor_regret,
             )
             for a_idx, action in enumerate(actions)
         ]
@@ -723,7 +757,15 @@ def _mccfr_recurse(
         # measured behaviour-neutral where answers are well-determined.
         valid = np.isfinite(node_value)
         regret = np.where(valid[:, None], cf_action_values - node_value[:, None], 0.0)
-        table.regret_sum = np.maximum(table.regret_sum + regret, 0.0)  # CFR+: floor at 0
+        # M71: the CFR+ floor is optional. It discards NEGATIVE regret
+        # entirely while accumulating positive regret, which is a ratchet
+        # on whichever action's value estimate is noisiest — under
+        # sampling that is the all-in, whose payoff swings a whole stack.
+        # See mccfr_solve's `floor_regret` / `discount`.
+        table.regret_sum = (
+            np.maximum(table.regret_sum + regret, 0.0) if floor_regret
+            else table.regret_sum + regret
+        )
         # M69: `strategy_weight` scales this iteration's contribution to
         # the time-average. At 1.0 every iteration counts equally — which
         # lets iteration 1's untrained, exactly-uniform current_strategy()
@@ -784,6 +826,7 @@ def _mccfr_recurse(
         chance_fn=chance_fn,
         chance_data=chance_data,
         strategy_weight=strategy_weight,
+        floor_regret=floor_regret,
     )
 
 
@@ -871,6 +914,8 @@ def mccfr_solve(
     chance_fn: Optional[Callable] = None,
     chance_data: Optional[dict] = None,
     linear_averaging: bool = True,
+    floor_regret: bool = False,
+    discount: tuple | None = None,
 ) -> dict:
     """Run `iterations` of External-Sampling MCCFR over `root`.
 
@@ -878,6 +923,38 @@ def mccfr_solve(
     traverser cycles through it, one per iteration. `equity_cache` should
     be constructed with the same `hands` list (see
     equity.MultiwayEquityCache) so indices line up.
+
+    `floor_regret` (M71, default **False** — i.e. plain CFR regret
+    matching, NOT CFR+) controls whether accumulated regret is clamped at
+    zero. CFR+'s clamp is a genuine win in the exact heads-up solver
+    (which still uses it — `_solve_recurse` is untouched), but under
+    SAMPLING it is a ratchet: it discards negative regret while
+    accumulating positive regret, so whichever action's value estimate is
+    noisiest collects spurious positive regret that can never be
+    cancelled. The all-in is by far the noisiest action, since its payoff
+    swings an entire stack, which is exactly where the bias showed up.
+
+    Measured at 6-max over 169 classes, 3,000 iterations, 3 seeds each —
+    AA's jam frequency, against a trusted heads-up reference of ~3.1%:
+
+        floor=True   0.211 / 0.203 / 0.182   (mean 0.199)
+        floor=False  0.034 / 0.033 / 0.029   (mean 0.032)
+
+    T7s's UTG fold rate moves 0.744 -> 0.938 over the same runs. 3-max at
+    its 12,000-iteration budget agrees (AA jam 0.468 -> 0.120).
+
+    **The exception, measured not assumed:** plain CFR converges more
+    slowly than CFR+, so it needs enough iterations per position to get
+    there. 9-max at 3,000 iterations gives each of nine seats only 333
+    traversals and is too under-trained to benefit — AA's jam goes the
+    wrong way (0.777 -> 0.982) even as T7s's fold improves (0.203 ->
+    0.349). `api/config.py` therefore keeps 9-max on the CFR+ clamp
+    explicitly, and says so.
+
+    Published Discounted CFR was tried too and was worse than plain CFR
+    here: DCFR(1.5, 0) gave AA jam 0.139 and DCFR(1.5, 0.5) gave 0.103,
+    against plain CFR's 0.034, at roughly twice the cost. `discount=
+    (alpha, beta)` remains available but is not used by default.
 
     `linear_averaging` (M69, default True) weights iteration t's
     contribution to the time-averaged strategy by t, rather than counting
@@ -1015,5 +1092,23 @@ def mccfr_solve(
             root, traverser, opponent_hands, reach, node_data, num_hands, hand_index, equity_cache, rng,
             board=board, chance_fn=chance_fn, chance_data=chance_data,
             strategy_weight=float(iteration + 1) if linear_averaging else 1.0,
+            floor_regret=floor_regret,
         )
+        if discount is not None:
+            # Discounted CFR: shrink accumulated regret toward zero each
+            # iteration, positives and negatives at different rates. The
+            # point is that early regret — accumulated while every
+            # strategy in the tree was still untrained — should not weigh
+            # as much as recent regret.
+            alpha, beta = discount
+            step = iteration + 1
+            positive_scale = step ** alpha / (step ** alpha + 1.0)
+            negative_scale = step ** beta / (step ** beta + 1.0)
+            for table in node_data.values():
+                accumulated = table.regret_sum
+                table.regret_sum = np.where(
+                    accumulated > 0.0,
+                    accumulated * positive_scale,
+                    accumulated * negative_scale,
+                )
     return node_data

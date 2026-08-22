@@ -49,15 +49,25 @@ every street (preflop through river) and every supported table size
 
 ### Known constraints — read before "improving" these
 
-- **Multiway preflop advice is trustworthy for FOLD-vs-PLAY, not for
-  SIZING (M67).** It solves all 169 classes now
-  (`MULTIWAY_PREFLOP_HANDS`) at 3,000 iterations / `samples=50`, which
-  makes fold rates good at 6-max (T7s folds 94% UTG, 72o 99%, AA 0%).
-  The split among non-fold actions is still NOT converged — AA jams
-  ~20% where a real solve is near 3%. **`trained` does not catch this**:
-  it reports that a hand got updates, not that they converged. Don't
-  present multiway sizing advice as authoritative. M69 improved this
-  (linear averaging) but did not resolve it.
+- **The sampled solver does NOT use CFR+'s regret clamp, and that is
+  deliberate (M71).** `mccfr_solve(floor_regret=False)` is the default.
+  Clamping regret at zero is a win in the exact solver (`_solve_recurse`
+  still does it) but a ratchet under sampling: it discards negative
+  regret while accumulating positive, so the noisiest action — the
+  all-in, which swings a whole stack — collects spurious regret that
+  more iterations only compound. Measured at 6-max over 3 seeds: AA's
+  jam 0.199 -> 0.032 (heads-up reference ~0.031), T7s's UTG fold
+  0.744 -> 0.938. **Exception: 9-max keeps the clamp** (`api/config.py`)
+  — plain CFR converges more slowly and 9-max's budget gives each seat
+  only 333 traversals, where it goes the wrong way. Published DCFR was
+  tried and was worse than plain CFR.
+- **Both solvers weight the time-average LINEARLY (M69 sampled, M71
+  exact).** `current_strategy()` returns an exactly uniform
+  1/num_actions before regrets accumulate, so equal weighting leaves a
+  long run's average contaminated by its own warm-up. The exact solver
+  had this too and it was not harmless — a toy AA-vs-72o game averaged
+  0.656 at 500 iterations against a ~0.97 equilibrium. **Any "trusted
+  heads-up reference" number predating M71 is suspect for this reason.**
 - **9-max preflop output is NOT reliable (M68, measured).** T7s folds
   only 12.5% under the gun at 9 handed, where it should be near 100%
   and 6-max reaches 87.4%. Eight opponents make the sampled variance

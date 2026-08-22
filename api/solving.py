@@ -131,6 +131,7 @@ def _get_or_solve_multiway(stack_bb: float, players: int) -> StrategyResult:
         equity_cache=equity_cache,
         iterations=table["iterations"],
         seed=1,
+        floor_regret=table.get("floor_regret"),
     )
 
     with _multiway_cache.lock:
