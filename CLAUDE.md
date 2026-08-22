@@ -125,8 +125,13 @@ every street (preflop through river) and every supported table size
   dominated by never-visited rows, and it *decreases* with iterations),
   and NOT `EXPLORATION_EPSILON` (M73 — 0.002 looked like a clean fix on
   one seed and gave 0.024/0.211/0.516 on three). Don't re-test those.
-  Untested: the no-importance-sampling choice in `_mccfr_recurse`'s
-  opponent sampling, verified at N=3 and never at N=6.
+  **M74 found what it IS:** the policy is bang-bang — `current_strategy()`
+  gives AA's jam exactly 0.000 or 1.000 depending on the run. Raise vs
+  jam is near-tied under this model, so regret matching oscillates
+  wholesale and the average reflects whichever phase a run ended in.
+  Linear averaging amplifies this (~0.09) but is not the cause and is
+  kept. Fixing it needs policy damping (averaging the policy, or an
+  optimistic-regret variant) — an algorithmic change, not a parameter.
 - **Validate solver changes at the SHIPPED operating point.** M71
   measured a real improvement at 3,000 iterations and left the budget at
   12,000, where the property does not hold — shipping a regression to
