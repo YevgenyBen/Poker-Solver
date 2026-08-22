@@ -92,6 +92,17 @@ class LibraryEntry:
     `strategy` is opening_range()'s output verbatim, in canonical-suit
     space (the solve itself ran against the canonical board) —
     {combo_str: {action_str: freq}}.
+
+    `trained` (M76) is the parallel {combo_str: bool} from the same
+    solve. It used to be dropped, which is why every library-served
+    answer reported `trained: null` all the way out to the API — a
+    documented limitation ("structurally cannot report per-hand
+    confidence"), but not actually a structural one: `StrategyResult`
+    had the data and this dataclass simply did not carry it. Storing it
+    costs one bool per combo and turns "we don't know whether this hand
+    was solved for" into a real answer, which matters because a uniform
+    strategy from an untrained hand is indistinguishable from a genuinely
+    mixed one without it.
     """
 
     canonical_board: tuple
@@ -100,6 +111,7 @@ class LibraryEntry:
     strategy: dict
     iterations: int
     elapsed_seconds: float
+    trained: dict | None = None
 
 
 def build_library(
@@ -159,6 +171,7 @@ def build_library(
             canonical_stack_bb=canonical_stack_bb,
             pot=pot,
             strategy=result.opening_range(),
+            trained=result.trained_hands(result.root),
             iterations=result.iterations,
             elapsed_seconds=result.elapsed_seconds,
         )
@@ -183,6 +196,7 @@ def save_library(library: dict, path) -> None:
             "iterations": entry.iterations,
             "elapsed_seconds": entry.elapsed_seconds,
             "strategy": entry.strategy,
+            "trained": entry.trained,
         }
         for entry in library.values()
     ]
@@ -205,6 +219,7 @@ def load_library(path) -> dict:
             canonical_stack_bb=canonical_stack_bb,
             pot=raw_entry["pot"],
             strategy=raw_entry["strategy"],
+            trained=raw_entry.get("trained"),
             iterations=raw_entry["iterations"],
             elapsed_seconds=raw_entry["elapsed_seconds"],
         )
@@ -240,6 +255,34 @@ def lookup_strategy(
     }
 
 
+def lookup_trained(
+    library: dict, board, effective_stack_bb: float, stack_bucket_bb: float = DEFAULT_STACK_BUCKET_BB
+) -> dict | None:
+    """`lookup_strategy`'s companion (M76): the same entry's per-combo
+    `trained` flags, translated back into the QUERY board's suit space
+    the identical way.
+
+    Returns None both when there is no entry AND when the entry predates
+    M76 and carries no trained data — the caller cannot distinguish "no
+    such spot" from "spot found, confidence unknown" from the return
+    value alone, which is deliberate: both mean "do not claim this hand
+    was solved for".
+    """
+    board = tuple(board)
+    canonical_board, suit_map = canonicalize_board(board)
+    canonical_stack_bb = canonical_stack_depth(effective_stack_bb, stack_bucket_bb)
+
+    entry = library.get((canonical_board, canonical_stack_bb))
+    if entry is None or entry.trained is None:
+        return None
+
+    inverse_map = invert_suit_map(suit_map)
+    return {
+        str(translate_combo(HandCombo.from_str(combo_str), inverse_map)): is_trained
+        for combo_str, is_trained in entry.trained.items()
+    }
+
+
 @dataclass(frozen=True)
 class QueryResult:
     """The outcome of one query_strategy call.
@@ -253,6 +296,9 @@ class QueryResult:
     strategy: dict
     hit: bool
     elapsed_seconds: float
+    # M76: per-combo trained flags in the same suit space as `strategy`.
+    # None when the backing entry predates M76 and has none stored.
+    trained: dict | None = None
 
 
 def query_strategy(
@@ -338,7 +384,12 @@ def query_strategy(
     start = time.perf_counter()
     strategy = lookup_strategy(library, board, effective_stack_bb, stack_bucket_bb)
     if strategy is not None:
-        return QueryResult(strategy=strategy, hit=True, elapsed_seconds=time.perf_counter() - start)
+        return QueryResult(
+            strategy=strategy,
+            hit=True,
+            elapsed_seconds=time.perf_counter() - start,
+            trained=lookup_trained(library, board, effective_stack_bb, stack_bucket_bb),
+        )
 
     new_entries = build_library(
         boards=[board],
@@ -363,7 +414,12 @@ def query_strategy(
             "board/stack — a canonicalize_board/canonical_stack_depth determinism "
             "invariant was violated; this should be impossible, please report"
         )
-    return QueryResult(strategy=strategy, hit=False, elapsed_seconds=time.perf_counter() - start)
+    return QueryResult(
+        strategy=strategy,
+        hit=False,
+        elapsed_seconds=time.perf_counter() - start,
+        trained=lookup_trained(library, board, effective_stack_bb, stack_bucket_bb),
+    )
 
 
 def query_strategy_from_path(

@@ -33,6 +33,25 @@ from poker_solver.starting_hands import StartingHand, all_starting_hands
 FRONTEND_DIST_DIR = FilePath(__file__).resolve().parent.parent / "frontend" / "dist"
 
 PREWARM_STACK_DEPTHS = (20, 40, 50, 75, 100, 150, 200)
+
+# M76: which stack depths to pre-warm for the MULTIWAY tables. Separate
+# from PREWARM_STACK_DEPTHS above because the cost is different by two
+# orders of magnitude: a heads-up preflop solve is ~3s, a 6-max one over
+# the full 169-class pool is ~90-130s.
+#
+# Before this, multiway pre-warm covered stack_bb=100 only, which the
+# 2026-08-22 diagnostic measured as a real usability failure rather than
+# a theoretical one: a player sitting at a 30bb table waited **66
+# seconds** for their first answer, and a 9-max player 126s. That is not
+# a product a person can use with a clock running.
+#
+# Three depths, chosen for what people actually sit behind: 100bb (the
+# standard cash buy-in), 50bb (a common short-stack cash seat), and 20bb
+# (tournament/push-fold territory). Costs roughly 15 minutes of
+# background work at startup across the three table sizes — paid once, in
+# a daemon thread, while the server already serves everything else.
+# Depths outside this list still work; they just pay the solve.
+MULTIWAY_PREWARM_STACK_DEPTHS = (100.0, 50.0, 20.0)
 MAX_ITERATIONS = 20_000
 
 # The multiway preflop pool: the full 169-class canonical set, i.e. the
@@ -552,8 +571,22 @@ MAX_RIVER_PATH_QUERY_ITERATIONS = DEFAULT_FLOP_TO_RIVER_ITERATIONS
 # non-binding 17.03s reading. (Not a like-for-like refutation: M54's
 # path was 3-max-origin, this one 6-max-origin. The durable point is
 # that cap=6 is comfortably inside the "tolerable for a live request"
-# bracket even now that it does real work.) Left at 6.
-MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION = 6
+# bracket even now that it does real work.)
+#
+# **M76 raised this to 8, and corrects M67's 11.5s figure.** Two changes
+# since then made the old number stale: M75 now SOLVES on-demand chance
+# branches rather than returning them untrained, and M76 keys the
+# path-query caches on hero's class so each class solves fresh. Both are
+# correctness fixes and both cost time. Re-measured on the same 6-max
+# 3-live-player line, preflop leg warm:
+#     cap=6   flop 39.7s  turn  9.3s   132 combos, 51/44 trained
+#     cap=8   flop 45.0s  turn 10.4s   151 combos, 63/56 trained
+#     cap=10  flop 51.1s  turn 11.8s   175 combos, 75/65 trained
+# The curve has no knee — cost and fidelity scale together — so this is a
+# judgement, not an optimum. 8 buys 14% more combos and 43% more actually
+# TRAINED hands for 13% more time, while keeping a cold flop under ~45s.
+# 10 is measured and available if the latency budget ever grows.
+MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION = 8
 
 # Iteration-count scaling at this cap's own 35-combo pool is NOT close
 # to flat, unlike DEMO_MULTIWAY_FLOP_CLASSES' own tiny 11-combo pool
@@ -598,8 +631,12 @@ MAX_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = 500
 # now the full 169-class pool, so the cap genuinely binds). Same 6-max
 # path as the flop cap above, preflop leg pre-warmed and excluded:
 # **cap=2 -> 0.6s, cap=4 -> 1.0s, cap=6 -> 1.5s.** Comfortably the
-# cheapest capped path in the codebase; left at 6.
-MAX_MULTIWAY_TURN_PATH_QUERY_CLASSES_PER_POSITION = 6
+# cheapest capped path in the codebase.
+#
+# M76 raised it to 8 alongside the flop cap, for the same reason and from
+# the same measurement (turn: 9.3s at cap=6, 10.4s at 8, 11.8s at 10).
+# It stays the cheapest capped path by a wide margin.
+MAX_MULTIWAY_TURN_PATH_QUERY_CLASSES_PER_POSITION = 8
 
 # M75: how many MCCFR iterations to spend SOLVING an on-demand chance
 # branch (see solver.ensure_mccfr_chance_branch).
@@ -631,5 +668,29 @@ MAX_MULTIWAY_TURN_PATH_QUERY_CLASSES_PER_POSITION = 6
 # every node — and `trained` reports that honestly per combo rather than
 # pretending otherwise.
 MULTIWAY_BRANCH_TRAIN_ITERATIONS = 100
+
+
+# M76: table sizes whose solver is known NOT to converge, and the reason
+# a caller is given. Everything absent from this map is "high".
+#
+# 9-max earns its place by measurement, not suspicion. At the shipped
+# 3,000-iteration budget its opening advice is wrong in ways a player
+# would immediately notice: T7s under the gun comes back with *call* as
+# its top action where correct play folds it near 100% of the time, and
+# AA comes back as a 100bb shove. Both are reported `trained: true`,
+# because they ARE real solves — they are simply solves of a problem the
+# sampler has not had enough traversals to get right. Iterations divide
+# among seats (`traverser = positions[iteration % len(positions)]`), so
+# nine positions each receive a third of what six do at the same budget,
+# and the gap does not close with more: T7s's fold rate measured 0.117 at
+# 3,000 iterations and only 0.301 at 9,000, against 6-max's 0.94.
+LOW_CONFIDENCE_TABLE_SIZES = {
+    9: (
+        "9-max preflop does not converge at any affordable budget — iterations "
+        "divide among nine seats, so each gets a third of what 6-max gives. "
+        "Measured: T7s's under-the-gun fold rate reaches only 0.30 at 9,000 "
+        "iterations where 6-max reaches 0.94. Treat this as a hint, not GTO."
+    ),
+}
 DEFAULT_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS = DEFAULT_FLOP_TURN_MULTIWAY_ITERATIONS
 MAX_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS = 200

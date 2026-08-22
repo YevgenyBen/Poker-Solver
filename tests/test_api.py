@@ -1438,6 +1438,52 @@ def test_advise_preflop_hero_is_keyed_by_hand_class_not_combo(client):
     assert sum(hero["strategy"].values()) == pytest.approx(1.0, abs=1e-6)
 
 
+def test_advise_gives_every_hero_advice_regardless_of_who_asked_first(client):
+    """M76: the severest bug the 2026-08-22 diagnostic found.
+
+    `_derive_path_situation` force-includes hero's own combo into every
+    live position's derived range before the top-K cap, so the SOLVE
+    depends on hero. No cache key included hero, so the first request for
+    a spot fixed the pool and every later request for that same spot
+    holding a different hand found its combo missing and got **no advice
+    at all**. On a server serving more than one hand, most users got
+    silence.
+
+    Invisible to the rest of the suite precisely because the autouse
+    fixture clears caches between tests — the one condition under which
+    the bug cannot appear. So this test deliberately does NOT clear
+    between asks: the shared cache is the thing under test.
+    """
+    body = {
+        "stack_bb": 100.0,
+        "players": 2,
+        "preflop_action_path": ["raise", "call_or_check"],
+        "board": "2h6d9c",
+    }
+    # Four different hero hands, same spot, same process, one cache.
+    # Deliberately different CLASSES (AK / 99 / AA / KQs) so each needs
+    # its own force-inclusion.
+    heroes = ["AsKd", "9s9d", "AsAh", "KsQs"]
+    answered = {}
+    for hero in heroes:
+        response = client.post("/advise", json={**body, "hero_cards": hero})
+        assert response.status_code == 200, f"{hero}: HTTP {response.status_code}"
+        answered[hero] = bool((response.json()["hero"] or {}).get("strategy"))
+
+    missing = [hero for hero, ok in answered.items() if not ok]
+    assert not missing, (
+        f"no advice for {missing} when asked after another hand — hero must be part "
+        "of the path-query cache key (see _hero_cache_component)"
+    )
+
+    # And the order must not matter: reversed, all four still answered.
+    for hero in reversed(heroes):
+        response = client.post("/advise", json={**body, "hero_cards": hero})
+        assert (response.json()["hero"] or {}).get("strategy"), (
+            f"{hero} lost its advice when asked in the reverse order"
+        )
+
+
 def test_advise_preflop_in_range_is_false_for_a_hand_outside_the_solved_pool(client):
     """M67: in_range used to be hardcoded True preflop, on the reasoning
     that "a preflop solve covers every class". True heads-up, false at
@@ -1483,19 +1529,39 @@ def test_advise_preflop_rejects_an_already_terminal_path(client):
     assert "no preflop decision left" in response.json()["detail"]
 
 
-def test_advise_flop_heads_up_reports_library_miss_then_hit_and_null_trained(client):
+def test_advise_flop_heads_up_reports_library_miss_then_hit_with_real_trained(client):
+    """M76: this cell used to report `trained: null`, documented as a
+    structural limitation of the canonical library ("persists only a
+    flattened strategy dict, so per-hand confidence structurally isn't
+    available"). It was not structural — `LibraryEntry` simply did not
+    carry the flags `StrategyResult` already had. It does now, so a
+    library-served answer reports real per-combo confidence like every
+    other cell, on both the miss and the subsequent hit.
+    """
     body = _advise_body(board="2h6d9c")
     first = client.post("/advise", json=body)
     assert first.status_code == 200
     assert first.json()["source"] == "library_miss"
-    # The canonical library persists only a flattened strategy dict, so
-    # per-hand confidence structurally isn't available — an explicit
-    # null, not a silently-omitted field (M28's documented boundary).
-    assert first.json()["trained"] is None
     assert first.json()["street"] == "flop"
+
+    trained = first.json()["trained"]
+    assert isinstance(trained, dict) and trained, "library path must report real trained flags"
+    assert all(isinstance(flag, bool) for flag in trained.values())
+    assert set(trained) == set(first.json()["strategy"]), (
+        "trained and strategy must cover exactly the same combos"
+    )
+    # Not vacuous in either direction: a real solve trains some hands and
+    # leaves others untouched, and asserting only "is a dict" would pass
+    # on an all-False stub.
+    assert any(trained.values()), "no combo trained — the flags are not real"
 
     second = client.post("/advise", json=body)
     assert second.json()["source"] == "library_hit"
+    # A HIT must carry the flags too — they travel through a different
+    # code path (lookup_trained's suit translation) than the miss.
+    hit_trained = second.json()["trained"]
+    assert isinstance(hit_trained, dict) and hit_trained
+    assert hit_trained == trained, "hit and miss must agree on confidence"
 
 
 def test_advise_force_includes_hero_outside_the_cap_and_says_so(client):

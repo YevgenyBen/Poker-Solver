@@ -81,6 +81,33 @@ def _cache_key(stack_bb: float, iterations: int) -> tuple:
     return (round(stack_bb), iterations)
 
 
+def _hero_cache_component(hero_combo):
+    """The hero part of a path-query cache key (M76).
+
+    Every one of these caches keys on the action path, stack, board and
+    iteration counts — and, before M76, on nothing about hero. That was
+    wrong, because `_derive_path_situation` force-includes hero's own
+    combo into every live position's derived range BEFORE the top-K cap.
+    The SOLVE therefore depends on hero, while the KEY did not, so the
+    first request for a spot fixed the pool and every later request for
+    the same spot holding a different hand found its own combo missing
+    and got no advice at all. Measured both directions: asking AsKd then
+    9s9d gave advice then silence; reversing the order reversed which one
+    was answered; clearing the cache between requests answered both.
+
+    Keyed by hand CLASS, not concrete combo. The force-inclusion that
+    makes the solve hero-dependent is class-shaped in every case that
+    matters (a capped range is a set of classes expanded to combos), so
+    two suit-isomorphic hero hands genuinely share a solve — 169 possible
+    key values instead of 1,326, for the same correctness.
+
+    The expensive preflop leg is cached separately (_preflop_raw_cache /
+    _multiway_cache) and keyed without hero, so it is still shared across
+    every hero hand; only the postflop solve is duplicated per class.
+    """
+    return None if hero_combo is None else str(_combo_to_class(hero_combo))
+
+
 def _get_multiway_equity_cache(hands) -> MultiwayEquityCache:
     """The shared MultiwayEquityCache for `hands` (M67).
 
@@ -891,7 +918,8 @@ def _query_flop_from_path(
     oop_position, ip_position = situation.postflop_positions
     effective_stack_bb = situation.effective_stack_bb
 
-    partition_key = (tuple(action_kinds), round(stack_bb), iterations, players)
+    partition_key = (tuple(action_kinds), round(stack_bb), iterations, players,
+                     _hero_cache_component(hero_combo))
     with _path_query_libraries.lock:
         library = _path_query_libraries.entries.setdefault(partition_key, {})
         result = query_strategy_from_path(
@@ -917,6 +945,9 @@ def _query_flop_from_path(
         "hit": result.hit,
         "elapsed_seconds": result.elapsed_seconds,
         "strategy": result.strategy,
+        # M76: real per-combo confidence from the library, replacing the
+        # hardcoded null this cell used to report.
+        "trained": result.trained,
         "position": oop_position,
         "positions": [oop_position, ip_position],
         "players": players,
@@ -966,7 +997,8 @@ def _query_flop_multiway_from_path(
     postflop_positions = situation.postflop_positions
     effective_stack_bb = situation.effective_stack_bb
 
-    key = (tuple(action_kinds), players, round(stack_bb), iterations, board_cards, flop_iterations)
+    key = (tuple(action_kinds), players, round(stack_bb), iterations, board_cards,
+           flop_iterations, _hero_cache_component(hero_combo))
     with _flop_multiway_path_cache.lock:
         cached = _flop_multiway_path_cache.entries.get(key)
     if cached is None:
@@ -1057,6 +1089,7 @@ def _query_turn_from_path(
         board_cards,
         turn_iterations,
         players,
+        _hero_cache_component(hero_combo),
     )
     with _turn_path_cache.lock:
         result = _turn_path_cache.entries.get(turn_solve_key)
@@ -1219,6 +1252,7 @@ def _query_turn_multiway_from_path(
         board_cards,
         flop_iterations,
         to_river,
+        _hero_cache_component(hero_combo),
     )
     with _turn_multiway_path_cache.lock:
         result = _turn_multiway_path_cache.entries.get(turn_solve_key)
@@ -1445,6 +1479,7 @@ def _query_river_from_path(
         board_cards,
         river_iterations,
         players,
+        _hero_cache_component(hero_combo),
     )
     with _river_path_cache.lock:
         result = _river_path_cache.entries.get(river_solve_key)
@@ -1765,10 +1800,16 @@ def _advise(request, street: str, iterations: int, solve_iterations: int, hero_c
             request.preflop_action_path, request.stack_bb, board_cards, iterations, request.players,
             hero_combo=hero_combo,
         )
-        # The canonical library persists only a flattened strategy dict,
-        # so per-hand confidence structurally isn't available here — an
-        # explicit null, not a silently-omitted field (M28's boundary).
-        return {**raw, "trained": None, "source": "library_hit" if raw["hit"] else "library_miss",
+        # M76: the canonical library now persists per-combo `trained`
+        # flags alongside the strategy, so this cell reports real
+        # confidence instead of a null. It USED to be documented as a
+        # structural limitation ("persists only a flattened strategy
+        # dict") — but the data was never structurally unavailable, the
+        # LibraryEntry dataclass simply did not carry it. Still falls back
+        # to None for a library built before M76, where the flags really
+        # are absent; that is a genuine "unknown", not a claim.
+        return {**raw, "trained": raw.get("trained"),
+                "source": "library_hit" if raw["hit"] else "library_miss",
                 "solve_iterations": None, "is_terminal": False, "player_to_act": raw["position"],
                 "street": street, "hero_key": hero_key}
 

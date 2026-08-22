@@ -690,12 +690,16 @@ def _prewarm_common_depths() -> None:
         except Exception:
             logger.exception("pre-warm failed for stack_bb=%s", depth)
 
+    # M76: every (table size, depth) pair, not just stack_bb=100 — see
+    # cfg.MULTIWAY_PREWARM_STACK_DEPTHS for why the depth list is
+    # separate from the heads-up one and why these three depths.
     for players in cfg.MULTIWAY_TABLE_CONFIGS:
-        try:
-            logger.info("pre-warming %s-max solve for stack_bb=100", players)
-            _get_or_solve_multiway(100.0, players)
-        except Exception:
-            logger.exception("pre-warm failed for %s-max stack_bb=100", players)
+        for depth in cfg.MULTIWAY_PREWARM_STACK_DEPTHS:
+            try:
+                logger.info("pre-warming %s-max solve for stack_bb=%s", players, depth)
+                _get_or_solve_multiway(depth, players)
+            except Exception:
+                logger.exception("pre-warm failed for %s-max stack_bb=%s", players, depth)
 
     # solve_flop itself (~2.6s) isn't worth pre-warming — /solve_flop
     # was never given this treatment, since a couple seconds is a fine
@@ -1168,6 +1172,17 @@ async def advise_endpoint(request: AdviseRequest):
             "solve_iterations": raw.get("solve_iterations"),
             "elapsed_seconds": raw["elapsed_seconds"],
             "range_confidence": raw.get("range_confidence"),
+            # M76: whether this cell's SOLVER can be trusted at all,
+            # which is a different question from whether a given hand was
+            # trained. Keyed off the ORIGIN table size the client asked
+            # about, not the number of players still live: 9-max's
+            # problem is that its preflop solve divides iterations among
+            # nine seats, and that has already happened by the time
+            # anyone folds. See cfg.LOW_CONFIDENCE_TABLE_SIZES.
+            "solver_confidence": (
+                "low" if request.players in cfg.LOW_CONFIDENCE_TABLE_SIZES else "high"
+            ),
+            "solver_confidence_reason": cfg.LOW_CONFIDENCE_TABLE_SIZES.get(request.players),
         }
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
