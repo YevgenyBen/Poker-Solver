@@ -191,7 +191,13 @@ and the cost of a correct cache is known.
 | R2 | Stop 9-max looking confident | **DONE (M76)** — `solver_confidence` / `solver_confidence_reason` on `AdviseResponse` |
 | R3 | Widen pre-warm | **DONE (M76)** — multiway now pre-warms 100/50/20bb across all table sizes |
 | R4 | Consistent `trained` | **DONE (M76)** — `LibraryEntry` carries per-combo flags; library path reports real confidence |
-| R5 | Widen multiway postflop ranges | open |
+| R5 | Widen multiway postflop ranges | **DONE (M76)** — caps 6 → 8; +14% combos, +43% trained hands, +13% time |
+
+All five shipped. Note R5's measurement also **corrected a stale figure
+in `api/config.py`**: the multiway flop cap was documented at 11.5s from
+M67, but is 39.7s now — M75's on-demand branch training and M76's
+hero-aware cache keys are both correctness fixes that cost real time. The
+old number would have made any future latency decision wrong.
 
 ## 6. Plan amendment
 

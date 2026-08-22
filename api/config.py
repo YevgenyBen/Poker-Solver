@@ -571,8 +571,22 @@ MAX_RIVER_PATH_QUERY_ITERATIONS = DEFAULT_FLOP_TO_RIVER_ITERATIONS
 # non-binding 17.03s reading. (Not a like-for-like refutation: M54's
 # path was 3-max-origin, this one 6-max-origin. The durable point is
 # that cap=6 is comfortably inside the "tolerable for a live request"
-# bracket even now that it does real work.) Left at 6.
-MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION = 6
+# bracket even now that it does real work.)
+#
+# **M76 raised this to 8, and corrects M67's 11.5s figure.** Two changes
+# since then made the old number stale: M75 now SOLVES on-demand chance
+# branches rather than returning them untrained, and M76 keys the
+# path-query caches on hero's class so each class solves fresh. Both are
+# correctness fixes and both cost time. Re-measured on the same 6-max
+# 3-live-player line, preflop leg warm:
+#     cap=6   flop 39.7s  turn  9.3s   132 combos, 51/44 trained
+#     cap=8   flop 45.0s  turn 10.4s   151 combos, 63/56 trained
+#     cap=10  flop 51.1s  turn 11.8s   175 combos, 75/65 trained
+# The curve has no knee — cost and fidelity scale together — so this is a
+# judgement, not an optimum. 8 buys 14% more combos and 43% more actually
+# TRAINED hands for 13% more time, while keeping a cold flop under ~45s.
+# 10 is measured and available if the latency budget ever grows.
+MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION = 8
 
 # Iteration-count scaling at this cap's own 35-combo pool is NOT close
 # to flat, unlike DEMO_MULTIWAY_FLOP_CLASSES' own tiny 11-combo pool
@@ -617,8 +631,12 @@ MAX_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = 500
 # now the full 169-class pool, so the cap genuinely binds). Same 6-max
 # path as the flop cap above, preflop leg pre-warmed and excluded:
 # **cap=2 -> 0.6s, cap=4 -> 1.0s, cap=6 -> 1.5s.** Comfortably the
-# cheapest capped path in the codebase; left at 6.
-MAX_MULTIWAY_TURN_PATH_QUERY_CLASSES_PER_POSITION = 6
+# cheapest capped path in the codebase.
+#
+# M76 raised it to 8 alongside the flop cap, for the same reason and from
+# the same measurement (turn: 9.3s at cap=6, 10.4s at 8, 11.8s at 10).
+# It stays the cheapest capped path by a wide margin.
+MAX_MULTIWAY_TURN_PATH_QUERY_CLASSES_PER_POSITION = 8
 
 # M75: how many MCCFR iterations to spend SOLVING an on-demand chance
 # branch (see solver.ensure_mccfr_chance_branch).
