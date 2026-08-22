@@ -170,19 +170,33 @@ MULTIWAY_PREFLOP_SAMPLES = 50
 # tuple, which is why iterations cost what they do. See docs/milestones.md
 # M67 for the profiling that establishes this and the proposed fix.
 #
-# 3-max drops from 100,000 to the same 3,000 — that 100,000 was tuned
-# against the old 8-class pool, where an iteration was ~20x cheaper.
-# 9-max is set lower than 6-max because its per-iteration cost is higher:
-# EXTRAPOLATED from a measured 79.4s at 300 iterations (samples=50), not
-# measured at 1,000 directly — flagged rather than presented as measured,
-# and worth confirming before relying on it.
+# M68 RAISED THESE, and they now cost LESS than M67's smaller numbers
+# did: sharing board runouts across candidates (see equity.
+# _simulate_equity_shared_board) made a 6-max solve ~1.95x faster, so
+# 12,000 iterations costs 281s where M67's 3,000 cost 325s. Every number
+# below is measured with the current code, not extrapolated — M67's
+# 9-max budget was extrapolated and flagged as such, and this replaces
+# it with a direct measurement.
+#     3-max, 12,000 iters:  48.3s   T7s fold 93.9%, 72o 98.2%
+#     6-max, 12,000 iters: 281.0s   T7s fold 87.4%, 72o 98.9%
+#     9-max,  3,000 iters: 248.9s   T7s fold 12.5%  <-- see below
+#
+# **9-max preflop output is NOT reliable, and that is measured, not
+# suspected.** T7s folding 12.5% under the gun at a 9-handed table is
+# flatly wrong — it should be near 100%, and 6-max reaches 87.4%. With 8
+# opponents the sampled-opponent variance is high enough that 3,000
+# iterations is proportionally far less converged than the same count at
+# 6-max, and the per-iteration cost (~83ms) makes the count that would
+# converge unaffordable. 3,000 is kept because more is directionally
+# better, not because it is enough. Treat 9-max as the least trustworthy
+# cell in the whole product; 3-max and 6-max are in much better shape.
 # Pinned by tests/test_solver.py's paired
 # test_six_max_demo_pool_degrades_with_more_iterations and
 # test_six_max_converges_with_a_realistic_pool.
 MULTIWAY_TABLE_CONFIGS = {
-    3: {"positions": ("BTN", "SB", "BB"), "iterations": 3_000},
-    6: {"positions": ("UTG", "MP", "CO", "BTN", "SB", "BB"), "iterations": 3_000},
-    9: {"positions": ("UTG", "UTG1", "MP1", "MP2", "MP3", "CO", "BTN", "SB", "BB"), "iterations": 1_000},
+    3: {"positions": ("BTN", "SB", "BB"), "iterations": 12_000},
+    6: {"positions": ("UTG", "MP", "CO", "BTN", "SB", "BB"), "iterations": 12_000},
+    9: {"positions": ("UTG", "UTG1", "MP1", "MP2", "MP3", "CO", "BTN", "SB", "BB"), "iterations": 3_000},
 }
 
 # /solve_flop's curated demo ranges — small hand-*class* sets (not

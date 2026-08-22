@@ -57,16 +57,23 @@ every street (preflop through river) and every supported table size
   ~22% where a real solve is near 0. **`trained` does not catch this**:
   it reports that a hand got updates, not that they converged. Don't
   present multiway sizing advice as authoritative.
-- **Multiway preflop is slow for an ARCHITECTURAL reason, and budget
-  tuning won't fix it.** Heads-up is fast *and* converged because it
-  solves exactly against a precomputed, disk-cached 169x169 equity
-  table. Multiway has no such table — `MultiwayEquityCache` Monte-Carlo
-  simulates per opponent tuple, and with 5 opponents from 169 classes
-  nearly every iteration is a fresh tuple, so cost never amortizes. A
-  6-max spot is ~325s. **The fix is a precomputed multiway equity
-  structure**, not more iterations, not micro-optimization (M67 tried
-  the latter: profiler said `Card.value`/`rank_value` dominated, real
-  wall-clock gain was zero — the same trap as M47).
+- **9-max preflop output is NOT reliable (M68, measured).** T7s folds
+  only 12.5% under the gun at 9 handed, where it should be near 100%
+  and 6-max reaches 87.4%. Eight opponents make the sampled variance
+  too high for any affordable iteration count. 3-max and 6-max are in
+  much better shape. Don't present 9-max advice as authoritative.
+- **A precomputed multiway equity table DOESN'T WORK — don't re-try it
+  (M68).** It's the intuitive analog of heads-up's disk-cached 169x169
+  table and M67 recommended it, but the tuple space can't be collapsed
+  without losing hero-opponent interaction (domination, blockers):
+  pairwise-derived estimators hit correlation 0.39 at 9-max, and
+  bucketing opponents by strength plateaus at ~3x the Monte Carlo noise
+  floor regardless of bucket count. Also don't re-try micro-optimizing
+  the Python hot path (M67: profiler said `Card.value`/`rank_value`
+  dominated, real gain was zero — the M47 trap).
+  **What did work:** sharing board runouts across candidates
+  (`equity._simulate_equity_shared_board`, M68) — the opponents' hands
+  were being re-ranked once per candidate. 1.95x.
 - **The old "6-max diverges with more iterations" constraint is RETIRED
   (M66 diagnosed, M67 fixed).** It was never a solver bug — the old
   8-class pool was 48.6% premium, so folding AKs under the gun really

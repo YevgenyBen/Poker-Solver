@@ -380,6 +380,114 @@ def _simulate_equity(dealt: list, samples: int, rng: random.Random) -> list:
     return (shares.sum(axis=0) / samples).tolist()
 
 
+def _simulate_equity_shared_board(
+    candidates_dealt: list, opponent_dealt: list, samples: int, rng: random.Random
+) -> np.ndarray:
+    """Every candidate's equity against ONE fixed set of opponents, all
+    measured over the SAME set of sampled board runouts (M68).
+
+    `candidates_dealt` is one (card, card) tuple per candidate;
+    `opponent_dealt` is the fixed opponent assignment. Returns a
+    length-len(candidates_dealt) array, NaN for any candidate that had no
+    usable sample (see below) — the same "no placeholder value, ever"
+    convention `multiway_board_equity` uses and that `cfr` masks on.
+
+    Why this exists. The obvious loop — call `_simulate_equity` once per
+    candidate — re-deals a fresh board for each one and, far worse,
+    re-evaluates the SAME k opponent hands on those boards once per
+    candidate. At 169 candidates against 5 opponents that is
+    169 * samples * 6 hand evaluations where samples * (169 + 5) suffice:
+    the opponents' 5 hands were being ranked 169 times over. Sharing the
+    boards makes the opponents' cost O(1) in the candidate count instead
+    of O(n), which is ~5.8x fewer evaluations at 6-max.
+
+    The one real complication is card conflicts. Boards are drawn from a
+    deck that excludes only the OPPONENTS' cards, since the candidates
+    differ from each other — so a given board may collide with a given
+    candidate's own two cards. Rather than redraw per candidate (which
+    would destroy the sharing that makes this fast), each candidate
+    simply ignores the samples it collides with, and averages over the
+    rest. About 22% of samples collide for a typical candidate at 6-max,
+    so the effective sample count per candidate is ~0.78x nominal — a
+    precision cost, not a bias one, because which boards collide depends
+    only on the candidate's own cards and not on how it performs.
+
+    NOT bit-identical to the per-candidate loop, and cannot be: it draws
+    a different number of boards in a different order. It is the same
+    estimator of the same quantity, and still fully deterministic given
+    `rng`, which is the contract that matters (see `_stable_seed`).
+    """
+    opponent_cards = [card for pair in opponent_dealt for card in pair]
+    deck = _remaining_deck(opponent_cards)
+    deck_values = np.array([card.value for card in deck], dtype=np.int64)
+    deck_suits = np.array([_SUIT_INDEX[card.suit] for card in deck], dtype=np.int64)
+    deck_ids = deck_values * 4 + deck_suits
+
+    board_positions = np.empty((samples, 5), dtype=np.int64)
+    positions = range(len(deck))
+    for sample_idx in range(samples):
+        board_positions[sample_idx] = rng.sample(positions, 5)
+
+    board_values = deck_values[board_positions]  # (samples, 5)
+    board_suits = deck_suits[board_positions]
+    board_ids = deck_ids[board_positions]
+
+    num_opponents = len(opponent_dealt)
+    opponent_values = np.array([[a.value, b.value] for a, b in opponent_dealt])
+    opponent_suits = np.array(
+        [[_SUIT_INDEX[a.suit], _SUIT_INDEX[b.suit]] for a, b in opponent_dealt]
+    )
+    # (samples, num_opponents, 7) — hole cards broadcast across samples,
+    # board shared across opponents. Evaluated ONCE for all candidates.
+    opp_values = np.empty((samples, num_opponents, 7), dtype=np.int64)
+    opp_suits = np.empty((samples, num_opponents, 7), dtype=np.int64)
+    opp_values[:, :, :2] = opponent_values[None, :, :]
+    opp_suits[:, :, :2] = opponent_suits[None, :, :]
+    opp_values[:, :, 2:] = board_values[:, None, :]
+    opp_suits[:, :, 2:] = board_suits[:, None, :]
+    opponent_scores = best_hand_rank_batch(
+        opp_values.reshape(samples * num_opponents, 7),
+        opp_suits.reshape(samples * num_opponents, 7),
+    ).reshape(samples, num_opponents)
+
+    best_opponent = opponent_scores.max(axis=1)  # (samples,)
+    opponents_at_best = (opponent_scores == best_opponent[:, None]).sum(axis=1)
+
+    num_candidates = len(candidates_dealt)
+    candidate_values = np.array([[a.value, b.value] for a, b in candidates_dealt])
+    candidate_suits = np.array(
+        [[_SUIT_INDEX[a.suit], _SUIT_INDEX[b.suit]] for a, b in candidates_dealt]
+    )
+    cand_values = np.empty((num_candidates, samples, 7), dtype=np.int64)
+    cand_suits = np.empty((num_candidates, samples, 7), dtype=np.int64)
+    cand_values[:, :, :2] = candidate_values[:, None, :]
+    cand_suits[:, :, :2] = candidate_suits[:, None, :]
+    cand_values[:, :, 2:] = board_values[None, :, :]
+    cand_suits[:, :, 2:] = board_suits[None, :, :]
+    candidate_scores = best_hand_rank_batch(
+        cand_values.reshape(num_candidates * samples, 7),
+        cand_suits.reshape(num_candidates * samples, 7),
+    ).reshape(num_candidates, samples)
+
+    candidate_ids = candidate_values * 4 + candidate_suits  # (num_candidates, 2)
+    collides = (
+        board_ids[None, :, :, None] == candidate_ids[:, None, None, :]
+    ).any(axis=3).any(axis=2)  # (num_candidates, samples)
+    usable = ~collides
+
+    wins = candidate_scores > best_opponent[None, :]
+    ties = candidate_scores == best_opponent[None, :]
+    share = np.where(wins, 1.0, 0.0) + np.where(
+        ties, 1.0 / (1.0 + opponents_at_best[None, :]), 0.0
+    )
+
+    usable_counts = usable.sum(axis=1)
+    totals = np.where(usable, share, 0.0).sum(axis=1)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        equities = np.where(usable_counts > 0, totals / usable_counts, np.nan)
+    return equities
+
+
 def monte_carlo_equity_n(
     hands: list,
     samples: int = MULTIWAY_DEFAULT_SAMPLES,
@@ -437,9 +545,23 @@ def _pairwise_fallback_equity(hand: StartingHand, opponent_hands: tuple, rng: ra
     real, measurable source of bias — see traverser_equity_vector's own
     docstring for the fuller story.
     """
+    # M68: iterate the opponents in SORTED order, matching the order
+    # MultiwayEquityCache builds its own key in. This function draws from
+    # `rng` once per opponent, so iterating in the caller's order made the
+    # result depend on the order the opponents happened to be passed in —
+    # (AKs, T9o, KK) and (KK, T9o, AKs) are the same multiway situation
+    # and must produce the same number, but produced 0.690 and 0.700.
+    #
+    # That was a latent bug, not a new one: the cache key has always been
+    # sorted, so the caller's order was never meant to be observable.
+    # test_multiway_cache_is_order_independent_across_fresh_caches passed
+    # before only because the two orders happened to coincide at the
+    # specific rng state that test reached; a change in how much rng is
+    # consumed upstream exposed it. Sorting here makes the property hold
+    # by construction rather than by luck.
     return float(np.mean([
         monte_carlo_equity(hand, opponent, samples=FALLBACK_PAIRWISE_SAMPLES, rng=rng)
-        for opponent in opponent_hands
+        for opponent in sorted(opponent_hands, key=str)
     ]))
 
 
@@ -588,13 +710,42 @@ class MultiwayEquityCache:
             return vector
         opponent_used = frozenset(card for pair in opponent_dealt for card in pair)
 
+        # M68: deal every candidate FIRST, then simulate them all against
+        # one shared set of board runouts. Dealing is cheap; ranking is
+        # not, and the old shape re-ranked the same k opponent hands once
+        # per candidate. See _simulate_equity_shared_board.
+        shared_dealt: dict = {}
+        for index, hand in enumerate(self.hands):
+            try:
+                shared_dealt[index] = deal_n_hands([hand], avoiding=opponent_used, rng=rng)[0]
+            except RuntimeError:
+                pass  # handled by the per-candidate fallback path below
+
+        shared_equities: dict = {}
+        if shared_dealt:
+            indices = list(shared_dealt)
+            simulated = _simulate_equity_shared_board(
+                [shared_dealt[i] for i in indices], opponent_dealt, self.samples, rng
+            )
+            shared_equities = {
+                index: value
+                for index, value in zip(indices, simulated)
+                if not np.isnan(value)
+            }
+
         values = []
         valid_flags = []
-        for hand in self.hands:
+        for index, hand in enumerate(self.hands):
             try:
-                candidate_dealt = deal_n_hands([hand], avoiding=opponent_used, rng=rng)
-                equity = _simulate_equity(candidate_dealt + opponent_dealt, self.samples, rng)[0]
-                valid = True
+                if index in shared_equities:
+                    equity = float(shared_equities[index])
+                    valid = True
+                else:
+                    # Either the candidate couldn't be dealt alongside the
+                    # fixed opponent assignment at all, or every shared
+                    # board collided with its own cards. Both fall through
+                    # to the same escalation the per-candidate loop used.
+                    raise RuntimeError("no shared-board estimate for this candidate")
             except RuntimeError:
                 # `hand` conflicts with the SHARED opponent assignment
                 # dealt above — but that assignment was chosen once,
