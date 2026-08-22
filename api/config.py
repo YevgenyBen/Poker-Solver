@@ -600,5 +600,36 @@ MAX_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = 500
 # **cap=2 -> 0.6s, cap=4 -> 1.0s, cap=6 -> 1.5s.** Comfortably the
 # cheapest capped path in the codebase; left at 6.
 MAX_MULTIWAY_TURN_PATH_QUERY_CLASSES_PER_POSITION = 6
+
+# M75: how many MCCFR iterations to spend SOLVING an on-demand chance
+# branch (see solver.ensure_mccfr_chance_branch).
+#
+# Without this, multiway turn and river advice was uniform and untrained
+# — not occasionally, but always. Measured through /advise at production
+# settings: a real 6-max turn node reported **0 of 132 combos trained**,
+# and the river node the same, every strategy exactly 1/num_actions.
+# Confirmed long-standing, not a recent regression: the same probe on
+# pre-M66 code gives 0 of 53.
+#
+# The cause is structural. MCCFR samples ONE next card per terminal per
+# iteration, so the specific card a client asks about is almost never one
+# the solve happened to sample at the specific terminal their line
+# reaches — and the client picks that card, not the solver. Heads-up
+# never had this because the exact solver's build_chance_node enumerates
+# every card eagerly. `ensure_mccfr_chance_branch` built the missing
+# branch correctly but left it unsolved, which its own docstring called
+# "a live endpoint's own necessary cost tradeoff, not a bug" — accurate
+# about the mechanism, too optimistic about the frequency.
+#
+# 100 measured against 0 and 400, at production settings, on a real 6-max
+# 3-live-player line (marginal cost, preflop leg already warm):
+#     train=0    turn 0/132 trained, hero untrained
+#     train=100  turn 44/132, river 44/132, hero TRAINED, ~7-9s
+#     train=400  turn 44/132, river 27/132, hero trained, ~14-17s
+# 400 buys no extra coverage for double the cost, so 100 it is. Coverage
+# stops at ~44/132 because MCCFR samples paths — not every combo reaches
+# every node — and `trained` reports that honestly per combo rather than
+# pretending otherwise.
+MULTIWAY_BRANCH_TRAIN_ITERATIONS = 100
 DEFAULT_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS = DEFAULT_FLOP_TURN_MULTIWAY_ITERATIONS
 MAX_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS = 200

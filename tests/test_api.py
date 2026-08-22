@@ -2484,13 +2484,22 @@ def test_solve_turn_multiway_from_path_partitions_different_preflop_legs_into_se
     assert len(api_main._turn_multiway_path_cache) == 2
 
 
-def test_solve_turn_multiway_from_path_builds_and_returns_an_untrained_strategy_for_an_unsampled_but_legal_card(
+def test_solve_turn_multiway_from_path_builds_and_trains_an_unsampled_but_legal_card(
     client,
 ):
     # The real, structural gap M44 exists to close: solve_flop_turn_
     # multiway's own chance_data only contains (terminal, card) pairs
     # MCCFR actually sampled while solving — a real, legal turn card can
-    # easily be one it never happened to sample. Drive this through the
+    # easily be one it never happened to sample.
+    #
+    # M75 CHANGED WHAT HAPPENS NEXT, and this test with it. It used to
+    # assert the branch came back UNTRAINED, which was the documented
+    # behaviour. Measured through /advise at production settings, that
+    # tradeoff turned out to be total rather than occasional: a real
+    # 6-max turn node reported 0 of 132 combos trained, every strategy
+    # exactly uniform, and the river the same. The branch is now SOLVED
+    # on demand, so this asserts the fix rather than the limitation.
+    # Drive this through the
     # real HTTP layer, not just the engine-level ensure_flop_turn_
     # multiway_branch tests in test_solver.py: populate the cache with
     # one real request, inspect the cached StrategyResult's own
@@ -2521,4 +2530,18 @@ def test_solve_turn_multiway_from_path_builds_and_returns_an_untrained_strategy_
     # regardless of whether the branch was freshly built or sampled).
     if not body["is_terminal"]:
         assert len(body["trained"]) > 0
-        assert all(is_trained is False for is_trained in body["trained"].values())
+        # At least SOME combo must now be genuinely trained — the whole
+        # point of M75. Not all of them: MCCFR samples paths, so not every
+        # combo reaches every node, and `trained` reports that honestly
+        # per combo instead of pretending otherwise.
+        assert any(body["trained"].values()), (
+            "an on-demand branch must be solved, not returned uniform — if this "
+            "fails, MULTIWAY_BRANCH_TRAIN_ITERATIONS is likely 0"
+        )
+        # And a trained combo must carry a real, non-uniform strategy.
+        trained_combos = [combo for combo, ok in body["trained"].items() if ok]
+        spreads = [
+            max(body["strategy"][combo].values()) - min(body["strategy"][combo].values())
+            for combo in trained_combos
+        ]
+        assert max(spreads) > 1e-9, "every trained combo is still exactly uniform"

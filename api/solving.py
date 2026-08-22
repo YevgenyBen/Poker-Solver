@@ -1282,6 +1282,8 @@ def _query_turn_multiway_from_path(
         "raise_sizes": cfg.MULTIWAY_FLOP_RAISE_SIZES,
         "max_raises": cfg.MULTIWAY_FLOP_MAX_RAISES,
         "chain_to_river": to_river,
+        # M75: solve the branch rather than returning it untrained.
+        "train_iterations": cfg.MULTIWAY_BRANCH_TRAIN_ITERATIONS,
     }
     with _turn_multiway_path_cache.lock:
         try:

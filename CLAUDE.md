@@ -95,6 +95,15 @@ every street (preflop through river) and every supported table size
   `test_six_max_demo_pool_degrades_with_more_iterations` and
   `test_six_max_converges_with_a_realistic_pool`, which now document a
   property of *any* premium-heavy pool rather than a live defect.
+- **Multiway turn/river branches are SOLVED on demand (M75) — don't
+  remove that.** MCCFR samples one next card per terminal, so the card a
+  client actually asks about is almost never one the solve sampled.
+  `ensure_mccfr_chance_branch` builds the missing branch and now also
+  trains it (`MULTIWAY_BRANCH_TRAIN_ITERATIONS = 100`, ~7-9s). Before
+  this, multiway turn and river returned **0 of 132 combos trained,
+  every strategy exactly uniform** — always, not occasionally, and since
+  the feature shipped. Heads-up is unaffected: its exact solver
+  enumerates every card eagerly.
 - **Multiway POSTFLOP still answers an easier question than heads-up.**
   M67 fixed the preflop leg (all 169 classes now), but postflop path
   queries cap derived ranges per position

@@ -902,6 +902,8 @@ def ensure_mccfr_chance_branch(
     equity_samples: int = None,
     equity_seed: int = DEFAULT_EQUITY_SEED,
     chain_to_river: bool = False,
+    train_iterations: int = 0,
+    seed: int = 0,
 ) -> SampledChanceBranch:
     """Returns `result.chance_data`'s entry for `(id(terminal), card)`,
     building and caching it on demand (via `chance.build_mccfr_chance_
@@ -986,6 +988,53 @@ def ensure_mccfr_chance_branch(
         **({"equity_samples": equity_samples} if equity_samples is not None else {}),
     )
     result.chance_data[key] = branch
+
+    if train_iterations > 0:
+        # M75: actually SOLVE the freshly-built branch, instead of handing
+        # back an untrained one.
+        #
+        # The docstring above calls the untrained branch "a live
+        # endpoint's own necessary cost tradeoff, not a bug", and treats
+        # a miss as something that "can easily" happen. Measured through
+        # /advise at production settings, it is not occasional — it is
+        # universal: a real 6-max turn node reported **0 of 132 combos
+        # trained**, and a river node the same, every strategy exactly
+        # uniform. The reason is structural rather than unlucky. MCCFR
+        # samples ONE card per terminal per iteration, so the chance that
+        # the specific card a client asks about was ever sampled at the
+        # specific terminal their line reaches is small — and a client
+        # asks about a card THEY chose, not one the solver happened to
+        # like. Heads-up never had this because `build_chance_node`
+        # enumerates every card eagerly.
+        #
+        # Training the branch here costs a solve over ONE street's subtree
+        # (no further chance dispatch at the turn hop, and none at all at
+        # the river), which is far cheaper than the parent solve that
+        # produced `result`. `initial_reach` reuses the same per-position
+        # ranges the branch was built from, so the branch is solved
+        # against the same beliefs the parent used rather than a fresh
+        # uniform prior.
+        reach = {
+            position: np.array([position_ranges[position].get(combo, 0.0) for combo in combos])
+            for position in positions
+        }
+        branch_data = mccfr_solve(
+            branch.root,
+            combos,
+            positions,
+            branch.equity_cache,
+            iterations=train_iterations,
+            seed=seed,
+            initial_reach=reach,
+            board=branch.board,
+            chance_fn=branch.chance_fn,
+            chance_data=result.chance_data,
+        )
+        # Merge rather than replace: node_data is keyed by id(node) and
+        # the branch's nodes are freshly built objects, so these keys
+        # cannot collide with the parent solve's own.
+        result.node_data.update(branch_data)
+
     return branch
 
 
