@@ -7,6 +7,7 @@ import pytest
 
 from poker_solver.cards import Card
 from poker_solver.equity import (
+    _HAND_TABLE_INDEX,
     MultiwayEquityCache,
     _pairwise_fallback_equity,
     _provably_infeasible,
@@ -432,14 +433,43 @@ def test_pairwise_fallback_equity_is_deterministic_given_a_seed():
     assert first == second
 
 
-def test_pairwise_fallback_equity_matches_monte_carlo_equity_for_one_opponent():
+def test_pairwise_fallback_equity_reduces_to_the_pairwise_value_for_one_opponent():
     # mean() of a length-1 list is just that element — this fallback
-    # should reduce to a plain pairwise call for a single opponent,
-    # given the same rng state either way.
+    # should reduce to a plain pairwise equity for a single opponent.
+    #
+    # M70 changed WHERE that pairwise number comes from: the precomputed
+    # 169x169 table rather than a fresh 50-sample Monte Carlo. So this
+    # asserts the contract (it is that hand's pairwise equity) instead of
+    # the old implementation detail (it is that specific MC call with
+    # that specific rng state). The table is built at 200 samples, so it
+    # is the more precise estimate of the two; a fresh 50-sample run is
+    # only required to agree within its own sampling noise.
     hand, opponent = StartingHand("A", "A"), StartingHand("K", "K")
     fallback = _pairwise_fallback_equity(hand, (opponent,), random.Random(3))
-    direct = monte_carlo_equity(hand, opponent, samples=50, rng=random.Random(3))
-    assert fallback == pytest.approx(direct)
+    table = get_equity_table()
+    expected = table[_HAND_TABLE_INDEX[str(hand)], _HAND_TABLE_INDEX[str(opponent)]]
+    assert fallback == pytest.approx(expected)
+
+    noisy = monte_carlo_equity(hand, opponent, samples=50, rng=random.Random(3))
+    assert fallback == pytest.approx(noisy, abs=0.12)
+
+
+def test_pairwise_fallback_equity_consumes_no_randomness():
+    """M70: reading the table instead of simulating means the fallback no
+    longer depends on rng state at all. That kills, by construction, the
+    order-dependence M68 had to fix by sorting — and it means the amount
+    of rng an upstream caller consumes can no longer perturb this value.
+    """
+    hand = StartingHand("A", "K", suited=True)
+    opponents = (StartingHand("Q", "Q"), StartingHand("7", "2", suited=False))
+    rng = random.Random(11)
+    before = rng.getstate()
+    first = _pairwise_fallback_equity(hand, opponents, rng)
+    assert rng.getstate() == before, "the fallback must not advance the rng"
+
+    # Same value from any rng state, and from any argument order.
+    assert first == _pairwise_fallback_equity(hand, opponents, random.Random(999))
+    assert first == pytest.approx(_pairwise_fallback_equity(hand, opponents[::-1], random.Random(4)))
 
 
 def test_pairwise_fallback_equity_reflects_relative_strength():

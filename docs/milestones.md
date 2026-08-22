@@ -4695,7 +4695,16 @@ entry's own corrections before trusting its conclusions.
     and evaluates every candidate and every opponent against them, making
     the opponents' cost O(1) in the candidate count instead of O(n).
   - **Measured payoff:** a 6-max 169-class solve at 3,000 iterations goes
-    **325s -> 166.5s (1.95x)**; at 300 iterations 46.5s -> 26.4s. Since
+    **325s -> 166.5s (1.95x)**; at 300 iterations 46.5s -> 26.4s.
+
+    **CORRECTION (M70): withdraw the 1.95x.** Those two numbers were
+    measured in different sessions, and this machine was later observed
+    running the same workloads ~1.7x slower than when they were taken, so
+    the ratio cannot separate the optimization from machine drift.
+    Re-measured controlled (one process, interleaved): the shared-board
+    change is **6.06x at the equity layer**, matching its own structural
+    prediction. Bigger than claimed, but the end-to-end figure was not a
+    valid measurement. Since
     the budgets are cost-bound, this converts directly into convergence:
     **12,000 iterations now costs 281s, less than M67's 3,000 cost
     (325s)**, and T7s's UTG fold rate improves from 69.8% to 87.4%.
@@ -4807,3 +4816,74 @@ entry's own corrections before trusting its conclusions.
     not a measurement.
   - **Verification:** 764 backend tests pass. Two new tests pin the
     mechanism and the off-switch. No frontend files touched.
+
+- **M70 — Stop computing values that are then thrown away; and a
+  correction to M68's own headline number.** Two open defects went into
+  this milestone (9-max unreliability, the sizing axis) and neither came
+  out fixed — but chasing them turned up a 1.38x speedup, a measurement
+  methodology this project needed, and a published figure that was wrong.
+  - **M68's "1.95x" was not a trustworthy number, and is corrected.** It
+    compared 325s (measured during M67) against 166.5s (measured during
+    M68) — different sessions. This milestone observed the same
+    workloads running **~1.7x slower** than when M68 measured them
+    (9-max/3,000 iters: 418s here vs 249s there; 6-max/12,000: 491s vs
+    281s), so a cross-session ratio cannot separate the optimization from
+    machine drift. Re-measured **controlled** — both implementations, one
+    process, interleaved, same opponent tuple — the shared-board change
+    is **6.06x at the equity layer**, matching its own structural
+    prediction of ~5.8x fewer hand evaluations. The optimization is real
+    and larger than claimed; the end-to-end 1.95x figure is withdrawn.
+  - **The methodology fix, which this project needed more than the
+    speedup:** absolute wall-clock timings recorded in different sessions
+    are not comparable here. Every timing claim from now on should either
+    be an interleaved A/B in one process, or be normalized against a
+    fixed reference workload measured in the same run (M70's own speed
+    script does the latter, reporting "reference units" alongside
+    seconds). Recorded in CLAUDE.md, because this log is full of absolute
+    numbers that later milestones compare against.
+  - **The real find: ~30% of a solve was computing values M66 already
+    discards.** Profiling the current 6-max 169-class solve showed
+    **821,100 calls to the SCALAR `hand_eval.rank_five` path** — not the
+    vectorized one M48 built. They came from `_pairwise_fallback_equity`,
+    which ran a fresh 50-sample Monte Carlo per opponent. But since M66,
+    `cfr._mccfr_recurse` masks exactly those entries out of the regret
+    and strategy updates, so the number was never learned from.
+  - **The fix is a lookup, and it is strictly better on three axes.**
+    `_pairwise_fallback_equity` now reads the precomputed 169x169
+    pairwise table. It is the *same* quantity by definition; the table is
+    built at 200 samples against the fallback's own 50, so the lookup is
+    the **more** precise estimate, not a cheaper approximation; and it
+    consumes no `rng` at all, which retires by construction the entire
+    order-dependence bug class M68 had to fix by sorting.
+    **Measured controlled (one process, interleaved, with a reference
+    workload): 49.8s -> 36.1s on a real 600-iteration 6-max solve, 1.38x.**
+  - **9-max is under-trained, not broken — confirmed, and the cost of
+    fixing it is now known.** `traverser = positions[iteration % len(
+    positions)]` divides iterations among seats, so 6-max at 12,000 gives
+    2,000 per position while 9-max at 3,000 gives 333 — 6x less. Tripling
+    9-max's budget moved T7s's UTG fold rate **0.117 -> 0.301** (3,000 ->
+    9,000 iterations), confirming it responds to training rather than
+    being structurally wrong. But 9,000 iterations cost 1,241s, and
+    reaching 6-max's per-position parity needs ~18,000 (~40 min/spot) —
+    and even that would likely fall short, since T7s should fold *more*
+    at 9-max than 6-max's 0.94, not less. Left at 3,000 and still
+    documented as the least trustworthy cell.
+  - **`EXPLORATION_EPSILON` is NOT the sizing culprit.** The hypothesis
+    was that a 0.05 exploration floor makes opponents call jams more
+    often than they should, inflating the jam's apparent value. Measured
+    at 6-max/12,000: dropping it to 0.01 cut AA's jam 0.201 -> 0.169 but
+    *raised* AKs's 0.218 -> 0.264. Mixed, not a clean mechanism, so
+    epsilon is left at 0.05 rather than tuned on an ambiguous result.
+  - **A test that pinned the implementation, not the contract.**
+    `test_pairwise_fallback_equity_matches_monte_carlo_equity_for_one_
+    opponent` asserted exact equality with a specific 50-sample Monte
+    Carlo call at a specific rng state. That is the implementation, not
+    the behaviour, and it broke on a change that made the value *more*
+    accurate. Rewritten to assert the contract — the fallback is that
+    hand's pairwise equity — plus a new test that it consumes no
+    randomness at all.
+  - **Verification:** 765 backend tests pass. No frontend files touched.
+  - **Budgets deliberately left alone.** They were set in M67/M68 on
+    absolute timings now known to be session-dependent. Re-tuning them on
+    that basis would compound the error; they should be re-validated with
+    the reference-workload method before being changed again.
