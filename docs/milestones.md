@@ -4874,6 +4874,11 @@ entry's own corrections before trusting its conclusions.
     at 6-max/12,000: dropping it to 0.01 cut AA's jam 0.201 -> 0.169 but
     *raised* AKs's 0.218 -> 0.264. Mixed, not a clean mechanism, so
     epsilon is left at 0.05 rather than tuned on an ambiguous result.
+
+    **Confirmed refuted (M73), on stronger evidence.** Epsilon 0.002 at
+    12,000 iterations looked like a clean fix on one seed (AA jam 0.024,
+    AKs 0.034) and then gave 0.024 / 0.211 / 0.516 across three. Do not
+    re-tune epsilon for this.
   - **A test that pinned the implementation, not the contract.**
     `test_pairwise_fallback_equity_matches_monte_carlo_equity_for_one_
     opponent` asserted exact equality with a specific 50-sample Monte
@@ -5014,6 +5019,73 @@ entry's own corrections before trusting its conclusions.
     `current_strategy()` falling back to a UNIFORM distribution when
     every action's regret is negative, which puts real weight on the
     all-in. That fallback is the natural next thing to investigate.
+
+    **Correction (M73): refuted.** The all-negative fraction is ~67-71%
+    in every arm and DECREASES with iterations, nearly identical clamped
+    vs unclamped — it is dominated by rows that were never visited (~70%
+    of all rows), not by rows that went negative. The exploration floor
+    was tested too and also refuted. The instability at 12,000 is real
+    but none of the three suspected causes explain it.
   - **Verification:** full backend suite green; end-to-end `/advise`
     check passes at production settings across heads-up preflop/flop and
     6-max preflop.
+
+- **M73 — Two hypotheses for the jam instability, both refuted; the
+  shipped configuration re-validated.** M72 closed by naming the uniform
+  regret-matching fallback as the likely cause of AA's jam frequency
+  growing with iterations. This milestone tested that, and the
+  exploration-floor theory alongside it. Neither survived. No source
+  changed — like M63, the deliverable is a closed-off search space and a
+  corrected record.
+  - **Refuted #1: the uniform fallback.** `current_strategy()` returns an
+    exactly uniform distribution when every action's regret is <= 0,
+    which hands the all-in a full 1/num_actions share; the theory was
+    that without the CFR+ clamp more (infoset, hand) rows drift
+    all-negative as iterations grow. Measured directly — the fraction of
+    rows in that state is **~67-71% in every arm, and it DECREASES
+    slightly with iterations** (clamped 70.9% -> 67.5%, unclamped 70.6%
+    -> 67.2%). Nearly identical clamped vs not, and moving the wrong way.
+    It cannot explain growth.
+  - **A real characterization found while measuring it:** roughly **70%
+    of all (infoset, hand) rows are never trained at all** on a 6-max
+    169-class solve. MCCFR only visits sampled paths, so most rows never
+    receive an update. This is the same phenomenon
+    `InfoSetTable.trained_mask` exists to expose and that the M27-era
+    diagnostic measured at 9-max; now quantified at 6-max, and it is why
+    the clamped and unclamped arms look identical on this metric — in
+    both, "all regrets <= 0" is dominated by "never visited", not by
+    "went negative".
+  - **Refuted #2: the exploration floor.** `EXPLORATION_EPSILON = 0.05`
+    means opponents keep calling a 100bb shove ~1.25% of the time with
+    ANY hand, forever. AA is never behind preflop, so a call from a
+    random hand is a large win for the shover — and as CFR converges,
+    opponents' genuine calling frequency falls toward zero and only the
+    floor is left, which would keep jamming profitable and growing.
+    Coherent, and it looked confirmed on first measurement: at 12,000
+    iterations, dropping epsilon to 0.002 gave AA jam **0.024** and AKs
+    **0.034**, both landing on the ~3% reference, against 0.381/0.483 at
+    epsilon 0.05.
+    **Then three seeds killed it:** 0.024 / 0.211 / **0.516**. The first
+    reading was luck. Epsilon 0.01 had already been non-monotonic
+    (worse than 0.05), which was the warning sign. This also firms up
+    M70's own weaker "epsilon is not the culprit" result, which rested
+    on a mixed reading in the clamped arm.
+  - **What the data actually says, stated as a property rather than a
+    cause:** at 6-max, AA's jam frequency is **stable and correct at
+    3,000 iterations** (0.033 / 0.034 at epsilon 0.05; 0.039 / 0.017 at
+    epsilon 0.002 — tight regardless of epsilon) and **unstable at
+    12,000** (0.02 to 0.52 across seeds, at every epsilon tried). The
+    instability is not caused by the clamp, not by the uniform fallback,
+    and not by the exploration floor. M72's choice to ship 3,000 is
+    re-validated by an independent route.
+  - **Corrections applied in place:** M72's "the underlying cause is
+    likely `current_strategy()` falling back to uniform" is marked
+    refuted at that entry, and M70's epsilon note is strengthened from
+    "mixed result" to "refuted with seeds".
+  - **What is left for whoever picks this up:** the remaining untested
+    candidates are the no-importance-sampling choice in
+    `_mccfr_recurse`'s opponent action sampling (documented there as a
+    bias "proportional to EXPLORATION_EPSILON, not tree depth", verified
+    at N=3 and never re-verified at N=6), and the interaction between
+    linear averaging and a drifting current strategy. Both are real; do
+    NOT re-test the uniform fallback or epsilon.

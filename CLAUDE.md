@@ -117,6 +117,16 @@ every street (preflop through river) and every supported table size
   3,000 and 3-max ships 12,000. `test_six_max_jam_frequency_at_the_
   shipped_budget` reads the config and asserts at whatever budget is set,
   so raising it fails loudly.
+- **The 6-max jam instability at high budgets is UNEXPLAINED — three
+  causes are ruled out (M73).** AA's jam is stable and correct at 3,000
+  iterations (~0.03) and swings 0.02-0.52 across seeds at 12,000. It is
+  NOT the CFR+ clamp (M71), NOT `current_strategy()`'s uniform fallback
+  (M73 — the all-negative row fraction is ~70% in every arm and is
+  dominated by never-visited rows, and it *decreases* with iterations),
+  and NOT `EXPLORATION_EPSILON` (M73 — 0.002 looked like a clean fix on
+  one seed and gave 0.024/0.211/0.516 on three). Don't re-test those.
+  Untested: the no-importance-sampling choice in `_mccfr_recurse`'s
+  opponent sampling, verified at N=3 and never at N=6.
 - **Validate solver changes at the SHIPPED operating point.** M71
   measured a real improvement at 3,000 iterations and left the budget at
   12,000, where the property does not hold — shipping a regression to
