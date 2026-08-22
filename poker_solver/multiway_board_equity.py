@@ -119,102 +119,124 @@ def nway_combo_equity_vector(
     if len(set(opponent_cards)) != len(opponent_cards) or any(card in board_set for card in opponent_cards):
         return result  # opponents mutually conflict, or conflict with the board — every entry stays NaN
 
-    board_values = [card.value for card in board]
-    board_suits = [_SUIT_INDEX[card.suit] for card in board]
-    num_hands = 1 + len(opponent_combos)  # the candidate, plus every fixed opponent
+    board_values = np.array([card.value for card in board], dtype=np.int64)
+    board_suits = np.array([_SUIT_INDEX[card.suit] for card in board], dtype=np.int64)
+    num_opponents = len(opponent_combos)
 
-    for idx, candidate in enumerate(candidate_combos):
-        if candidate.blocks(board_set) or candidate.blocks(opponent_cards):
-            continue  # stays NaN — physically impossible for this candidate specifically
+    # M80: ONE set of runouts, shared by every candidate, with each
+    # candidate ignoring the samples that collide with its own two cards.
+    #
+    # The loop this replaces gave every candidate its own deck (excluding
+    # that candidate's cards) and therefore its own runouts — precise, and
+    # the docstring above defends it as such. The cost was that the k
+    # opponent hands were re-ranked once per candidate: work of
+    # `candidates x samples x (1 + k)` where `samples x (candidates + k)`
+    # suffices. At 120 candidates against 2 opponents that is ~3x more
+    # hand evaluations than necessary, and after M79 removed the
+    # interpreter overhead, hand evaluation was 75% of the request.
+    #
+    # Sharing costs precision in one specific, bounded way: runouts are
+    # drawn from a deck that excludes only the board and the opponents, so
+    # ~8% of them collide with a given candidate's own cards. Those
+    # samples are dropped FOR THAT CANDIDATE rather than redrawn, which
+    # would destroy the sharing. That is a variance cost, not a bias one —
+    # which board cards a candidate blocks depends only on its own cards,
+    # never on how well it does — and it is the same trade M68 made in
+    # equity._simulate_equity_shared_board for the same reason.
+    shared_used = board_set | frozenset(opponent_cards)
+    deck = remaining_deck(shared_used)
+    if remaining_needed > len(deck):
+        return result  # cannot complete the board at all — every entry stays NaN
 
-        used = board_set | frozenset(candidate.cards) | frozenset(opponent_cards)
-        deck = remaining_deck(used)
-        if remaining_needed > len(deck):
-            continue  # not enough cards left to complete the board — stays NaN
+    deck_values = np.fromiter((card.value for card in deck), dtype=np.int64, count=len(deck))
+    deck_suits = np.fromiter(
+        (_SUIT_INDEX[card.suit] for card in deck), dtype=np.int64, count=len(deck)
+    )
+    deck_ids = deck_values * 4 + deck_suits
 
-        # M78: sample deck INDICES and gather the runout's ranks/suits out
-        # of two arrays built once per candidate, instead of sampling Card
-        # objects and rebuilding a Python list per sample.
-        #
-        # This function was measured as **42.25s of a 42.17s multiway flop
-        # request** — essentially the whole thing — with 5.1 MILLION
-        # `random.sample` calls inside it. That is the same shape M68 fixed
-        # in equity._simulate_equity; this module never got the same
-        # treatment.
-        #
-        # Bit-identical, not merely equivalent, and that matters because
-        # this cache's determinism guarantee is part of its contract:
-        # `random.sample` picks positions in the population and returns
-        # population[j], so sampling from `range(len(deck))` consumes the
-        # RNG in exactly the same sequence and yields exactly the j's the
-        # old call mapped through `deck`. Verified against stored vectors
-        # for flop/turn/river boards, not just reasoned about.
-        deck_values = np.fromiter((card.value for card in deck), dtype=np.int64, count=len(deck))
-        deck_suits = np.fromiter(
-            (_SUIT_INDEX[card.suit] for card in deck), dtype=np.int64, count=len(deck)
-        )
+    if remaining_needed == 0:
+        runout_values = np.empty((1, 0), dtype=np.int64)
+        runout_suits = np.empty((1, 0), dtype=np.int64)
+        runout_ids = np.empty((1, 0), dtype=np.int64)
+    elif remaining_needed == 1:
+        # Exact enumeration, unchanged: every single-card runout.
+        runout_values = deck_values[:, None]
+        runout_suits = deck_suits[:, None]
+        runout_ids = deck_ids[:, None]
+    else:
+        generator = np.random.default_rng(rng.getrandbits(64))
+        keys = generator.random((samples, len(deck)))
+        picked = np.argpartition(keys, remaining_needed - 1, axis=1)[:, :remaining_needed]
+        runout_values = deck_values[picked]
+        runout_suits = deck_suits[picked]
+        runout_ids = deck_ids[picked]
 
-        if remaining_needed == 0:
-            runout_values = np.empty((1, 0), dtype=np.int64)
-            runout_suits = np.empty((1, 0), dtype=np.int64)
-            m = 1
-        elif remaining_needed == 1:
-            # Exact enumeration, unchanged — every single-card runout.
-            runout_values = deck_values[:, None]
-            runout_suits = deck_suits[:, None]
-            m = len(deck)
-        else:
-            # M79: draw ALL of this candidate's runouts in one vectorized
-            # step. M78 stopped sampling Card objects but kept one
-            # `random.sample` call per sample, and re-profiling showed
-            # that was where the time actually was: **5.15 million calls,
-            # 17.9s** of a 36.3s request, plus 5.1M abc isinstance checks
-            # that passing a `range` as the population had newly
-            # introduced. The per-call interpreter overhead was the cost,
-            # not the work inside.
-            #
-            # Random keys + argpartition gives `remaining_needed` distinct
-            # indices per row without replacement, for one O(samples x
-            # deck) numpy op instead of `samples` Python calls.
-            #
-            # NOT bit-identical to M78, and cannot be — a different
-            # sampler draws different specific runouts. The contract this
-            # module actually guarantees is "deterministic given `seed`"
-            # (see NwayBoardEquityCache's docstring), and that still
-            # holds: the Generator is seeded off the incoming rng, so the
-            # same seed reproduces the same vectors. Equity values move
-            # within Monte Carlo noise; validated statistically against
-            # the old implementation rather than asserted to match.
-            generator = np.random.default_rng(rng.getrandbits(64))
-            keys = generator.random((samples, len(deck)))
-            picked = np.argpartition(keys, remaining_needed - 1, axis=1)[:, :remaining_needed]
-            runout_values = deck_values[picked]
-            runout_suits = deck_suits[picked]
-            m = samples
+    num_samples = runout_values.shape[0]
+    full_values = np.concatenate(
+        [np.broadcast_to(board_values, (num_samples, len(board_values))), runout_values], axis=1
+    )
+    full_suits = np.concatenate(
+        [np.broadcast_to(board_suits, (num_samples, len(board_suits))), runout_suits], axis=1
+    )
 
-        hands = (candidate, *opponent_combos)
-        values = np.empty((m, num_hands, 7), dtype=np.int64)
-        suits = np.empty((m, num_hands, 7), dtype=np.int64)
-        for hand_idx, combo in enumerate(hands):
-            values[:, hand_idx, 0] = combo.card_a.value
-            values[:, hand_idx, 1] = combo.card_b.value
-            suits[:, hand_idx, 0] = _SUIT_INDEX[combo.card_a.suit]
-            suits[:, hand_idx, 1] = _SUIT_INDEX[combo.card_b.suit]
-        # Board is shared by every hand and every sample; the runout
-        # varies by sample only. Both broadcast across the hand axis.
-        values[:, :, 2:2 + len(board_values)] = np.array(board_values, dtype=np.int64)
-        suits[:, :, 2:2 + len(board_suits)] = np.array(board_suits, dtype=np.int64)
-        if remaining_needed > 0:
-            values[:, :, 2 + len(board_values):] = runout_values[:, None, :]
-            suits[:, :, 2 + len(board_suits):] = runout_suits[:, None, :]
+    def _score(combos_to_score):
+        """Rank each of `combos_to_score` on every shared runout."""
+        count = len(combos_to_score)
+        values = np.empty((count, num_samples, 7), dtype=np.int64)
+        suits = np.empty((count, num_samples, 7), dtype=np.int64)
+        for position, entry in enumerate(combos_to_score):
+            values[position, :, 0] = entry.card_a.value
+            values[position, :, 1] = entry.card_b.value
+            suits[position, :, 0] = _SUIT_INDEX[entry.card_a.suit]
+            suits[position, :, 1] = _SUIT_INDEX[entry.card_b.suit]
+        values[:, :, 2:] = full_values[None, :, :]
+        suits[:, :, 2:] = full_suits[None, :, :]
+        return best_hand_rank_batch(
+            values.reshape(count * num_samples, 7), suits.reshape(count * num_samples, 7)
+        ).reshape(count, num_samples)
 
-        scores = best_hand_rank_batch(
-            values.reshape(m * num_hands, 7), suits.reshape(m * num_hands, 7)
-        ).reshape(m, num_hands)
-        best = scores.max(axis=1, keepdims=True)
-        is_winner = scores == best
-        shares = is_winner / is_winner.sum(axis=1, keepdims=True)
-        result[idx] = float(shares[:, 0].sum() / m)  # the candidate is always hand index 0
+    # Opponents: ranked ONCE for all candidates, instead of once each.
+    if num_opponents:
+        opponent_scores = _score(opponent_combos)
+        best_opponent = opponent_scores.max(axis=0)
+        opponents_at_best = (opponent_scores == best_opponent[None, :]).sum(axis=0)
+    else:
+        best_opponent = np.full(num_samples, np.iinfo(np.int64).min, dtype=np.int64)
+        opponents_at_best = np.zeros(num_samples, dtype=np.int64)
+
+    playable = [
+        (idx, entry)
+        for idx, entry in enumerate(candidate_combos)
+        if not (entry.blocks(board_set) or entry.blocks(opponent_cards))
+    ]
+    if not playable:
+        return result
+
+    candidate_scores = _score([entry for _, entry in playable])
+    candidate_ids = np.array(
+        [
+            [entry.card_a.value * 4 + _SUIT_INDEX[entry.card_a.suit],
+             entry.card_b.value * 4 + _SUIT_INDEX[entry.card_b.suit]]
+            for _, entry in playable
+        ],
+        dtype=np.int64,
+    )
+    collides = (
+        runout_ids[None, :, :, None] == candidate_ids[:, None, None, :]
+    ).any(axis=3).any(axis=2)
+    usable = ~collides
+
+    wins = candidate_scores > best_opponent[None, :]
+    ties = candidate_scores == best_opponent[None, :]
+    shares = np.where(wins, 1.0, 0.0) + np.where(
+        ties, 1.0 / (1.0 + opponents_at_best[None, :]), 0.0
+    )
+    usable_counts = usable.sum(axis=1)
+    totals = np.where(usable, shares, 0.0).sum(axis=1)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        equities = np.where(usable_counts > 0, totals / usable_counts, np.nan)
+    for position, (idx, _entry) in enumerate(playable):
+        result[idx] = equities[position]
 
     return result
 
