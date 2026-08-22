@@ -5135,3 +5135,64 @@ entry's own corrections before trusting its conclusions.
   - **Four hypotheses are now closed** (clamp, uniform fallback,
     epsilon, averaging). Anyone picking this up should start from the
     oscillation itself, not from another parameter.
+
+- **M75 — Multiway turn and river were returning uniform, untrained
+  "advice" 100% of the time. Now they are solved.** Started as "build
+  multiway river"; found it already existed (M53 filled the last
+  `/advise` cell — the "unscoped" note in CLAUDE.md referred to a
+  dedicated `*_from_path` route, not the front door). Applying M72's
+  lesson that HTTP 200 is not sanity turned up something much worse than
+  a missing feature.
+  - **The finding.** At production settings, a real 6-max 3-live-player
+    line asking for turn advice returned **0 of 132 combos trained, every
+    strategy exactly 1/num_actions**. The river the same. Hero holding a
+    set of nines got `{call: 0.333, raise: 0.333, all_in: 0.333}` — a
+    placeholder, not advice. Heads-up on the identical board and line
+    returned a real strategy (`call 0.522 / all_in 0.478`,
+    `trained=True`), which is what made it clearly multiway-specific.
+  - **Confirmed NOT a regression from M66-M74.** The same probe on
+    pre-M66 code (the M65 merge) gives 0 of 53. This has been true for as
+    long as multiway turn/river has existed.
+  - **The cause is structural, and was half-documented already.** MCCFR
+    samples ONE next card per terminal per iteration, so
+    `chance_data` only ever holds cards the solve happened to sample.
+    `ensure_mccfr_chance_branch` (M44) correctly builds a missing
+    (terminal, card) branch on demand — but left it **unsolved**, and its
+    own docstring called that "a live endpoint's own necessary cost
+    tradeoff, not a bug", describing a miss as something that "can
+    easily" happen. The mechanism was right; the frequency estimate was
+    not. A client asks about the card THEY were dealt, not one the solver
+    liked, so the miss is essentially certain. Heads-up never had this
+    because the exact solver's `build_chance_node` enumerates every card
+    eagerly.
+  - **The fix:** `ensure_mccfr_chance_branch` gained `train_iterations`,
+    and runs `mccfr_solve` over the freshly-built branch's own subtree,
+    seeded with the same per-position ranges the branch was built from,
+    merging the result into `result.node_data` (safe — `node_data` is
+    keyed by `id(node)` and the branch's nodes are fresh objects). One
+    street's subtree is far cheaper than the parent solve.
+  - **Measured at production settings** (marginal cost, preflop leg
+    already warm):
+    | train_iterations | turn | river | hero |
+    |---|---|---|---|
+    | 0 | 0/132 trained | 0/132 | untrained |
+    | **100** | **44/132, 9.3s** | **44/132, 7.4s** | **TRAINED** |
+    | 400 | 44/132, 17.1s | 27/132, 13.6s | trained |
+    400 buys no extra coverage for double the cost, so
+    `MULTIWAY_BRANCH_TRAIN_ITERATIONS = 100`. Coverage stops around
+    44/132 because MCCFR samples paths — not every combo reaches every
+    node — and `trained` reports that per combo rather than pretending.
+  - **A test that asserted the limitation now asserts the fix.**
+    `test_solve_turn_multiway_from_path_builds_and_returns_an_untrained_
+    strategy_for_an_unsampled_but_legal_card` explicitly checked that
+    every combo came back untrained. Renamed to `..._builds_and_trains_
+    an_unsampled_but_legal_card` and rewritten to require that some combo
+    is genuinely trained AND carries a non-uniform strategy — the second
+    half matters, since "trained" alone would pass on a uniform answer.
+  - **What this does NOT fix:** the honesty signals were working the
+    whole time. `trained: False` was reported correctly on every one of
+    those uniform strategies; nothing lied. What was missing was anyone
+    reading it at production settings — which is exactly the gap M72's
+    end-to-end check was introduced to close, now paying off a second
+    time.
+  - **Verification:** full backend suite green.
