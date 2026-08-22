@@ -110,6 +110,20 @@ every street (preflop through river) and every supported table size
 - **Five `*_from_path` routes are deprecated** (superseded by
   `/advise`), still functional. New callers should use `/advise`.
 
+- **Multiway iteration budgets are per-table-size and MEASURED — do not
+  unify them (M72).** Without the CFR+ clamp, AA's jam frequency grows
+  with iterations at 6-max (0.033 at 3k -> 0.404 at 12k), while 3-max
+  measured the opposite (0.527 at 3k -> 0.120 at 12k). So 6-max ships
+  3,000 and 3-max ships 12,000. `test_six_max_jam_frequency_at_the_
+  shipped_budget` reads the config and asserts at whatever budget is set,
+  so raising it fails loudly.
+- **Validate solver changes at the SHIPPED operating point.** M71
+  measured a real improvement at 3,000 iterations and left the budget at
+  12,000, where the property does not hold — shipping a regression to
+  `main`. Unit tests could not catch it: the suite's fixtures shrink
+  pools and budgets for speed. Run an end-to-end `/advise` check at
+  production settings after any solver change.
+
 ### Measuring performance — read before trusting any timing
 
 **This machine drifts.** M70 observed identical workloads running ~1.7x

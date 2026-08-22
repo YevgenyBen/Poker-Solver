@@ -4958,3 +4958,62 @@ entry's own corrections before trusting its conclusions.
   - **Verification:** 765 backend tests pass. `_solve_recurse`'s CFR+
     clamp is deliberately UNCHANGED — the clamp is only harmful under
     sampling, and the exact solver does not sample.
+
+- **M72 — An end-to-end check found that M71 shipped a configuration it
+  never measured.** Five milestones (M66-M71) changed solver defaults —
+  the regret clamp, linear averaging in both solvers, the equity
+  fallback, shared board runouts. Every one was validated by unit tests
+  and by targeted measurements. Nothing had exercised the actual product
+  surface since. This milestone did, and immediately found a real defect
+  in what was already on `main`.
+  - **The defect.** M71 removed CFR+'s regret clamp after validating it
+    at **3,000** iterations (AA's jam 0.199 -> 0.033, three seeds). The
+    shipped 6-max budget was **12,000**, and that point was never
+    re-measured. Without the clamp AA's jam frequency GROWS with
+    iterations — measured, two seeds each: **0.033 at 3k -> 0.149 at 6k
+    -> 0.404 at 12k.** So at the budget actually shipped, M71's change
+    was *worse* than the thing it replaced (clamped 12,000 gave ~0.20).
+    A correct finding, applied at an unvalidated operating point.
+  - **How it was caught, and why nothing else caught it.** A direct
+    `/advise` check at production settings, asserting poker-sane
+    properties that hold regardless of solver internals: AA never folds,
+    72o folds a lot from early position, a set continues more than air.
+    AA-folds and T7s-folds passed; **AA-jams-under-15% failed.** No unit
+    test covers this, because the suite's fixtures shrink pools and
+    iteration counts for speed — which is correct for testing plumbing
+    and exactly why it cannot see a budget-dependent solver property.
+  - **The fix: each table size's budget set from its own measurement.**
+    6-max drops 12,000 -> **3,000**, which is simultaneously the best
+    measured point on both axes and the cheapest (AA jam 0.033, T7s UTG
+    fold 0.963, 133s against 309s). 3-max **keeps 12,000**, because it
+    measured the opposite way (AA jam 0.527 at 3,000 vs 0.120 at 12,000,
+    three seeds) and costs only 48s. The two table sizes genuinely
+    disagree about the right budget; pretending otherwise is what caused
+    this.
+  - **Product effect, not just a metric.** At 6-max, AA's top action goes
+    from `call_or_check` to `raise:2.50` — the correct GTO action. The
+    end-to-end check now passes on every assertion, and the 6-max solve
+    is 137.7s rather than 203.6s.
+  - **A regression test at the SHIPPED budget**, which is the part that
+    was missing:
+    `test_six_max_jam_frequency_at_the_shipped_budget` reads
+    `MULTIWAY_TABLE_CONFIGS[6]` and asserts the property there rather
+    than at a convenient count. It costs ~133s, which is a real addition
+    to a ~360s suite and is accepted deliberately: the bug it guards
+    reached `main` and would have stayed. If someone raises the budget,
+    this fails, and the failure message says to re-measure.
+  - **The honest framing.** This is the same error this project has now
+    documented four times in other forms (M49, M54, M70, M71) wearing a
+    new disguise: not "one reading is not a measurement" but **"a
+    measurement at one operating point is not a measurement at the
+    shipped one."** M71's conclusion was right; its application was not
+    checked where it mattered.
+  - **Open, and now precisely stated:** without the clamp, jam frequency
+    grows with iterations at 6-max. 3,000 is a measured-best operating
+    point, not a stable property — the underlying cause is likely
+    `current_strategy()` falling back to a UNIFORM distribution when
+    every action's regret is negative, which puts real weight on the
+    all-in. That fallback is the natural next thing to investigate.
+  - **Verification:** full backend suite green; end-to-end `/advise`
+    check passes at production settings across heads-up preflop/flop and
+    6-max preflop.
