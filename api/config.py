@@ -193,9 +193,26 @@ MULTIWAY_PREFLOP_SAMPLES = 50
 # Pinned by tests/test_solver.py's paired
 # test_six_max_demo_pool_degrades_with_more_iterations and
 # test_six_max_converges_with_a_realistic_pool.
+# **M72: 6-max drops to 3,000, and the reason is a real constraint, not
+# a cost cut.** M71 removed the CFR+ regret clamp after validating it at
+# 3,000 iterations, but left the budget at 12,000 without re-measuring
+# there. Without the clamp, AA's jam frequency GROWS with iterations
+# (2 seeds each): 0.033 at 3,000 -> 0.149 at 6,000 -> 0.404 at 12,000.
+# So the shipped 12,000 was worse than what M71 replaced. Caught by an
+# end-to-end /advise check, not by any unit test.
+#
+# 3,000 is where 6-max is measured best on BOTH axes and is also the
+# cheapest (133s vs 309s): AA jam 0.033 (reference ~0.031), T7s UTG fold
+# 0.963. Do not raise it without re-measuring the jam frequency —
+# `test_six_max_jam_frequency_at_the_shipped_budget` pins this.
+#
+# 3-max keeps 12,000 because it measured the OPPOSITE way (AA jam 0.527
+# at 3,000 vs 0.120 at 12,000, 3 seeds) and costs only 48s there. The two
+# table sizes genuinely disagree about the right budget; each is set from
+# its own measurement rather than from a shared assumption.
 MULTIWAY_TABLE_CONFIGS = {
     3: {"positions": ("BTN", "SB", "BB"), "iterations": 12_000},
-    6: {"positions": ("UTG", "MP", "CO", "BTN", "SB", "BB"), "iterations": 12_000},
+    6: {"positions": ("UTG", "MP", "CO", "BTN", "SB", "BB"), "iterations": 3_000},
     # `floor_regret` (M71): every table size uses plain CFR regret
     # matching now EXCEPT 9-max. CFR+'s clamp is a ratchet under sampling
     # and dropping it is a large win at 3-max and 6-max (AA's jam

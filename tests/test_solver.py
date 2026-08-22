@@ -41,7 +41,7 @@ from poker_solver.solver import (
     solve_flop_turn_multiway,
     solve_preflop,
 )
-from poker_solver.starting_hands import StartingHand
+from poker_solver.starting_hands import StartingHand, all_starting_hands
 
 # A tiny hand set + freshly-built (small, fast) equity table, so these
 # structural tests never touch the slow-to-build-the-first-time full
@@ -2234,6 +2234,51 @@ def test_six_max_demo_pool_degrades_with_more_iterations():
         "the iterations. If this assertion now fails, the demo pool may have been "
         "replaced with a more realistic one — re-measure and revisit the iteration "
         "budgets in api/config.py, which are small only because of this effect."
+    )
+
+
+def test_six_max_jam_frequency_at_the_shipped_budget():
+    """M72: pins the thing that silently broke between M71 and M72.
+
+    M71 removed the CFR+ regret clamp because it is a ratchet under
+    sampling, validated that at 3,000 iterations (AA's jam 0.199 ->
+    0.033), and left the shipped budget at 12,000 — where the property
+    does not hold. Without the clamp AA's jam GROWS with iterations:
+    0.033 at 3k, 0.149 at 6k, 0.404 at 12k. Nothing in the suite noticed;
+    it took an end-to-end /advise check.
+
+    So this asserts the property AT the configured budget rather than at
+    whatever count happened to be convenient — the specific mistake being
+    guarded against. If the budget is raised, this test is expected to
+    fail, and that failure is the point.
+    """
+    from api import config as api_config
+
+    table = api_config.MULTIWAY_TABLE_CONFIGS[6]
+    hands = list(all_starting_hands())
+    result = solve_preflop(
+        config=GameConfig(positions=table["positions"], stack_bb=100.0),
+        hands=hands,
+        equity_cache=MultiwayEquityCache(
+            hands=hands, samples=api_config.MULTIWAY_PREFLOP_SAMPLES, seed=1
+        ),
+        iterations=table["iterations"],
+        seed=1,
+        floor_regret=table.get("floor_regret"),
+    )
+    opening = result.opening_range()["AA"]
+    jam = sum(freq for action, freq in opening.items() if action.startswith("all_in"))
+
+    # AA never folds an opening decision, at any table size.
+    assert opening["fold"] < 0.02, f"AA folds {opening['fold']:.1%} at 6-max"
+    # And it does not shove 100bb. The exact heads-up solver puts this
+    # near 3%; anything past 15% means the budget has drifted into the
+    # regime where the no-clamp rule stops holding.
+    assert jam < 0.15, (
+        f"AA jams {jam:.1%} at the shipped 6-max budget of {table['iterations']} "
+        "iterations. Without the CFR+ clamp this frequency grows with iteration "
+        "count (0.033 at 3k -> 0.404 at 12k), so a raised budget breaks it. "
+        "Re-measure before changing MULTIWAY_TABLE_CONFIGS[6]."
     )
 
 
