@@ -284,3 +284,47 @@ Splitting the two would make R6 live.
 **R9. 9-max: decide between offline pre-solve and removal.** Labelling is
 a stopgap. Either pre-solve it properly out of band at the depths that
 are pre-warmed, or stop offering the table size.
+
+---
+
+# Round 2 implementation (M78)
+
+**R8 — withdrawn, premise was wrong.** The recommendation said
+`hero_in_range`'s all-positions AND was the wrong input for a caching
+decision. Reading it again: `all(hero_combo in combo_dict for ...)` is
+exactly "no position needed force-inclusion", which *is* the correct
+caching signal. It is not wrong semantics — it is simply rarely true,
+because the cap keeps the top classes by frequency and a specific hand
+usually is not among them. Nothing to fix.
+
+**R7 — done, and the profile named a different culprit than expected.**
+Profiling a 6-max flop request (preflop leg warmed and excluded) put
+**`nway_combo_equity_vector` at 42.25s of a 42.17s request** — the entire
+thing — with **5.1 million `random.sample` calls** inside it. That is the
+same shape M68 fixed in `equity._simulate_equity`; `multiway_board_
+equity.py` never received the same treatment.
+
+Fixed the same way: sample deck *indices* and gather ranks/suits from two
+arrays built once per candidate, instead of sampling `Card` objects and
+rebuilding a Python list per sample. Verified **bit-identical** against
+stored vectors for flop, turn and river boards — `random.sample` picks
+positions in the population, so sampling `range(len(deck))` consumes the
+RNG identically. That matters here because this cache's determinism is
+part of its contract.
+
+**Measured end to end: a 6-max flop request went 45.2s → 24.6s** at
+identical settings (151 combos, cap 8). Roughly 1.8x. Cross-session
+comparison, so treat the magnitude as approximate — but the direction is
+not in doubt: the profile attributed ~100% of the request to this
+function and the change removes 5.1M interpreter-level calls from it.
+
+**R9 — resolved as "keep labelled", not deferred.** 9-max cannot be fixed
+by budget; that is measured, not assumed (T7s's fold rate reaches 0.117 at
+3,000 iterations and only 0.301 at 9,000, against 6-max's 0.94, and
+per-position parity would need ~18,000 iterations at ~40 min/spot). The
+two real options were offline pre-solve — which the measurements say would
+still be wrong — and removing the table size, which is a product decision
+rather than an engineering one. It stays available and marked
+`solver_confidence: "low"` with a plain-language reason, which is the
+honest state: a real solve of an under-trained problem, flagged so no
+consumer presents it as GTO.
