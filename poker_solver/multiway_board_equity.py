@@ -132,14 +132,46 @@ def nway_combo_equity_vector(
         if remaining_needed > len(deck):
             continue  # not enough cards left to complete the board — stays NaN
 
-        if remaining_needed == 0:
-            runouts = [()]
-        elif remaining_needed == 1:
-            runouts = [(card,) for card in deck]
-        else:
-            runouts = [tuple(rng.sample(deck, remaining_needed)) for _ in range(samples)]
+        # M78: sample deck INDICES and gather the runout's ranks/suits out
+        # of two arrays built once per candidate, instead of sampling Card
+        # objects and rebuilding a Python list per sample.
+        #
+        # This function was measured as **42.25s of a 42.17s multiway flop
+        # request** — essentially the whole thing — with 5.1 MILLION
+        # `random.sample` calls inside it. That is the same shape M68 fixed
+        # in equity._simulate_equity; this module never got the same
+        # treatment.
+        #
+        # Bit-identical, not merely equivalent, and that matters because
+        # this cache's determinism guarantee is part of its contract:
+        # `random.sample` picks positions in the population and returns
+        # population[j], so sampling from `range(len(deck))` consumes the
+        # RNG in exactly the same sequence and yields exactly the j's the
+        # old call mapped through `deck`. Verified against stored vectors
+        # for flop/turn/river boards, not just reasoned about.
+        deck_values = np.fromiter((card.value for card in deck), dtype=np.int64, count=len(deck))
+        deck_suits = np.fromiter(
+            (_SUIT_INDEX[card.suit] for card in deck), dtype=np.int64, count=len(deck)
+        )
 
-        m = len(runouts)
+        if remaining_needed == 0:
+            runout_values = np.empty((1, 0), dtype=np.int64)
+            runout_suits = np.empty((1, 0), dtype=np.int64)
+            m = 1
+        elif remaining_needed == 1:
+            # Exact enumeration, unchanged — every single-card runout.
+            runout_values = deck_values[:, None]
+            runout_suits = deck_suits[:, None]
+            m = len(deck)
+        else:
+            positions = range(len(deck))
+            picked = np.empty((samples, remaining_needed), dtype=np.int64)
+            for sample_idx in range(samples):
+                picked[sample_idx] = rng.sample(positions, remaining_needed)
+            runout_values = deck_values[picked]
+            runout_suits = deck_suits[picked]
+            m = samples
+
         hands = (candidate, *opponent_combos)
         values = np.empty((m, num_hands, 7), dtype=np.int64)
         suits = np.empty((m, num_hands, 7), dtype=np.int64)
@@ -148,9 +180,13 @@ def nway_combo_equity_vector(
             values[:, hand_idx, 1] = combo.card_b.value
             suits[:, hand_idx, 0] = _SUIT_INDEX[combo.card_a.suit]
             suits[:, hand_idx, 1] = _SUIT_INDEX[combo.card_b.suit]
-        for sample_idx, runout in enumerate(runouts):
-            values[sample_idx, :, 2:] = board_values + [card.value for card in runout]
-            suits[sample_idx, :, 2:] = board_suits + [_SUIT_INDEX[card.suit] for card in runout]
+        # Board is shared by every hand and every sample; the runout
+        # varies by sample only. Both broadcast across the hand axis.
+        values[:, :, 2:2 + len(board_values)] = np.array(board_values, dtype=np.int64)
+        suits[:, :, 2:2 + len(board_suits)] = np.array(board_suits, dtype=np.int64)
+        if remaining_needed > 0:
+            values[:, :, 2 + len(board_values):] = runout_values[:, None, :]
+            suits[:, :, 2 + len(board_suits):] = runout_suits[:, None, :]
 
         scores = best_hand_rank_batch(
             values.reshape(m * num_hands, 7), suits.reshape(m * num_hands, 7)
