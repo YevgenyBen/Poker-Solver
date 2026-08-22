@@ -164,10 +164,30 @@ def nway_combo_equity_vector(
             runout_suits = deck_suits[:, None]
             m = len(deck)
         else:
-            positions = range(len(deck))
-            picked = np.empty((samples, remaining_needed), dtype=np.int64)
-            for sample_idx in range(samples):
-                picked[sample_idx] = rng.sample(positions, remaining_needed)
+            # M79: draw ALL of this candidate's runouts in one vectorized
+            # step. M78 stopped sampling Card objects but kept one
+            # `random.sample` call per sample, and re-profiling showed
+            # that was where the time actually was: **5.15 million calls,
+            # 17.9s** of a 36.3s request, plus 5.1M abc isinstance checks
+            # that passing a `range` as the population had newly
+            # introduced. The per-call interpreter overhead was the cost,
+            # not the work inside.
+            #
+            # Random keys + argpartition gives `remaining_needed` distinct
+            # indices per row without replacement, for one O(samples x
+            # deck) numpy op instead of `samples` Python calls.
+            #
+            # NOT bit-identical to M78, and cannot be — a different
+            # sampler draws different specific runouts. The contract this
+            # module actually guarantees is "deterministic given `seed`"
+            # (see NwayBoardEquityCache's docstring), and that still
+            # holds: the Generator is seeded off the incoming rng, so the
+            # same seed reproduces the same vectors. Equity values move
+            # within Monte Carlo noise; validated statistically against
+            # the old implementation rather than asserted to match.
+            generator = np.random.default_rng(rng.getrandbits(64))
+            keys = generator.random((samples, len(deck)))
+            picked = np.argpartition(keys, remaining_needed - 1, axis=1)[:, :remaining_needed]
             runout_values = deck_values[picked]
             runout_suits = deck_suits[picked]
             m = samples
