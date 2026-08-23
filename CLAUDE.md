@@ -179,6 +179,15 @@ every street (preflop through river) and every supported table size
   pools and budgets for speed. Run an end-to-end `/advise` check at
   production settings after any solver change.
 
+- **Solve caches are BOUNDED (M93) — `_SolveCache(name, maxsize=N)`
+  with LRU eviction.** Nothing evicted anything before, so a
+  long-running server accumulated an entry per (spot, stack, hero class,
+  action path) forever: heap grew ~0.065 MB per request with no ceiling.
+  `_multiway_cache` and `_preflop_raw_cache` stay unbounded on purpose —
+  a few dozen entries, 75-140s each, filled by the startup pre-warm.
+  **`_SolveCache.lock` is an RLock deliberately**: call sites hold it
+  across read-check-write and call `store`/`get` from inside. A plain
+  Lock self-deadlocks — it hung the whole suite once.
 - **Expensive solves go through `_SolveCache.get_or_compute`, not
   check-then-compute (M92).** The old pattern let N concurrent misses on
   one key each run the full solve — measured at **8 concurrent requests
