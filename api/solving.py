@@ -1172,6 +1172,7 @@ def _query_turn_from_path(
     turn_iterations: int,
     players: int = 2,
     hero_combo=None,
+    turn_action_kinds: list | None = None,
 ) -> dict:
     """Orchestrates POST /solve_turn_from_path end to end: a real
     (cached, raw) preflop solve -> resolve the client's preflop action
@@ -1297,15 +1298,29 @@ def _query_turn_from_path(
             "effective_stack_bb": remaining_stack,
         }
 
-    # Only the FIRST turn decision is ever exposed here (branch.root
-    # itself), never a deeper turn-street path — see the module
-    # docstring for why that's a deliberate cut, not an oversight.
+    # M85: a deeper turn decision, not just branch.root. This used to be
+    # "only the FIRST turn decision is ever exposed here... a deliberate
+    # cut, not an oversight" — the same cut M84 removed on the flop, and
+    # wrong for the same reason: a player FACING A BET on the turn could
+    # not get advice, which is the decision they most need. The subtree is
+    # already solved; resolving into it costs nothing.
+    if turn_action_kinds:
+        _turn_actions, turn_node = _resolve_action_path(turn_node, turn_action_kinds)
+        if isinstance(turn_node, TerminalNode):
+            raise ValueError(
+                "turn_action_path reaches a terminal — the turn's action has closed, so there is "
+                "no turn decision left to advise. Supply a river_card for river advice."
+            )
+        remaining_stack = effective_stack_bb - max(turn_node.invested.values())
+
     strategy = result.strategy_at(turn_node)
     trained = result.trained_hands(turn_node)
     return {
         **response,
+        "turn_action_path": list(turn_action_kinds or []),
         "is_terminal": False,
         "player_to_act": turn_node.player_to_act,
+        "position": turn_node.player_to_act,
         "strategy": strategy,
         "trained": trained,
         "pot": turn_node.pot,
@@ -1811,8 +1826,9 @@ def _infer_street(request) -> str:
         raise ValueError("turn_card requires flop_action_path — the flop's action has to close first")
 
     if request.river_card is None:
-        if request.turn_action_path is not None:
-            raise ValueError("turn_action_path was supplied without a river_card — a turn query takes neither")
+        # M85: a turn query MAY now carry a turn_action_path, for the same
+        # reason M84 allowed one on the flop — otherwise only the street's
+        # opening decision is reachable.
         return "turn"
 
     if request.turn_action_path is None:
@@ -1971,9 +1987,24 @@ def _advise(request, street: str, iterations: int, solve_iterations: int, hero_c
 
     if street == "turn":
         query = _query_turn_multiway_from_path if multiway else _query_turn_from_path
+        # M85: turn_action_path reaches a turn decision deeper than the
+        # street's first, the same way M84's flop_action_path does.
+        # Heads-up only for now — the multiway turn cell reads its node
+        # off a sampled chance branch and needs its own pass.
+        extra = (
+            {"turn_action_kinds": request.turn_action_path}
+            if (not multiway and request.turn_action_path)
+            else {}
+        )
+        if multiway and request.turn_action_path:
+            raise ValueError(
+                "turn_action_path isn't supported at multiway tables yet — only the turn's first "
+                "decision is reachable there. Heads-up supports any turn decision."
+            )
         raw = query(
             request.preflop_action_path, request.flop_action_path, turn_cards[0], request.stack_bb,
             board_cards, iterations, solve_iterations, request.players, hero_combo=hero_combo,
+            **extra,
         )
         return {**raw, "source": "mccfr" if multiway else "exact",
                 "solve_iterations": raw.get("flop_iterations", solve_iterations), "street": street,

@@ -694,3 +694,47 @@ answered.
 **R13 — open.** Extend R10 to the turn: `turn_action_path` without a
 `river_card` is still rejected, so turn decisions after the first have
 the same gap the flop just lost.
+
+---
+
+# R13 implementation (M85)
+
+The turn had the same gap M84 removed from the flop. The turn cell read
+`chance_node.branches[turn_card].root` and its own comment described
+exposing only that node as "a deliberate cut, not an oversight". It was
+the same cut, wrong for the same reason: **a player facing a bet on the
+turn could not ask.** The subtree was already solved.
+
+`turn_action_path` is now accepted on a turn query and resolved into that
+subtree, rejecting only paths that reach a terminal (nothing left to
+advise — the message points at the river).
+
+Turn behaviour on 2h6d9c + Kd, previously unreachable:
+
+| node | set of nines | air (5c4d) |
+|---|---|---|
+| first to act (BB) | check 0.79, raise 0.18 | shove 0.43, raise 0.57 |
+| after a check (BTN) | **shove 0.83** | check 0.90 |
+| facing a bet (BTN) | **call 1.00** | **fold 1.00** |
+
+Value and give-up separate correctly, and the first-to-act row shows the
+check-raise / bluff structure a real solve produces.
+
+**Multiway turn paths are refused, not silently mis-answered.** That cell
+reads its node off a *sampled* chance branch and needs its own pass; a
+422 saying so beats a plausible answer about the wrong node — the lesson
+F2 and F10 both taught.
+
+## Coverage after M84 + M85
+
+| street | first decision | later decisions |
+|---|---|---|
+| preflop | yes | yes (action path always supported) |
+| flop, heads-up | yes | **yes (M84)** |
+| turn, heads-up | yes | **yes (M85)** |
+| river, heads-up | yes | no |
+| flop/turn, multiway | yes | no |
+
+"Advice at any point" is now true for the whole heads-up tree except the
+river's later decisions, and for the opening decision of every multiway
+street.

@@ -1508,6 +1508,78 @@ def test_advise_rejects_a_flop_path_whose_action_already_closed(client):
     assert "no flop decision left" in response.json()["detail"]
 
 
+def test_advise_answers_a_turn_decision_that_is_not_the_streets_first(client):
+    """M85: the turn half of M84's gap.
+
+    The turn cell read `chance_node.branches[turn_card].root` and its own
+    comment called exposing only that "a deliberate cut, not an
+    oversight". It was the same cut M84 removed on the flop, wrong for
+    the same reason — a player facing a bet on the turn could not ask.
+    The subtree is already solved; resolving into it costs nothing.
+    """
+    base = _advise_body(
+        board="2h6d9c",
+        flop_action_path=["call_or_check", "call_or_check"],
+        turn_card="Kd",
+    )
+    opening = client.post("/advise", json=base)
+    assert opening.status_code == 200
+    first_actor = opening.json()["position"]
+
+    facing_a_bet = client.post("/advise", json={**base, "turn_action_path": ["all_in"]})
+    assert facing_a_bet.status_code == 200, facing_a_bet.json()
+    body = facing_a_bet.json()
+    assert body["street"] == "turn"
+    assert body["position"] != first_actor
+    # Facing a bet means fold is on the table; the opening turn decision
+    # has no fold, so this is the tell that a different node answered.
+    assert "fold" in next(iter(body["strategy"].values()))
+
+
+def test_advise_turn_decision_discriminates_by_hand_strength(client):
+    base = _advise_body(
+        board="2h6d9c",
+        flop_action_path=["call_or_check", "call_or_check"],
+        turn_card="Kd",
+        turn_action_path=["all_in"],
+    )
+    strong = client.post("/advise", json={**base, "hero_cards": "9s9d"}).json()["hero"]
+    weak = client.post("/advise", json={**base, "hero_cards": "5c4d"}).json()["hero"]
+    assert strong["strategy"] and weak["strategy"]
+    assert weak["strategy"].get("fold", 0.0) > strong["strategy"].get("fold", 0.0) + 0.5
+
+
+def test_advise_rejects_a_turn_path_whose_action_already_closed(client):
+    base = _advise_body(
+        board="2h6d9c",
+        flop_action_path=["call_or_check", "call_or_check"],
+        turn_card="Kd",
+    )
+    response = client.post(
+        "/advise", json={**base, "turn_action_path": ["call_or_check", "call_or_check"]}
+    )
+    assert response.status_code == 422
+    assert "no turn decision left" in response.json()["detail"]
+
+
+def test_advise_says_plainly_that_multiway_turn_paths_are_not_supported(client):
+    """The multiway turn cell reads its node off a SAMPLED chance branch
+    and needs its own pass, so it is refused rather than silently
+    answering the wrong node. An honest 422 beats a plausible wrong
+    answer — the lesson F2/F10 both taught."""
+    body = _advise_body(
+        preflop_action_path=_THREE_LIVE_PATH,
+        board="2h6d9c",
+        flop_action_path=["call_or_check"] * 3,
+        turn_card="Kd",
+        turn_action_path=["all_in"],
+        players=3,
+    )
+    response = client.post("/advise", json=body)
+    assert response.status_code == 422
+    assert "multiway" in response.json()["detail"]
+
+
 def test_advise_gives_every_hero_advice_regardless_of_who_asked_first(client):
     """M76: the severest bug the 2026-08-22 diagnostic found.
 
