@@ -1384,6 +1384,7 @@ def _query_turn_multiway_from_path(
     hero_combo=None,
     turn_action_kinds: list | None = None,
     river_card=None,
+    river_action_kinds: list | None = None,
 ) -> dict:
     """Orchestrates POST /solve_turn_multiway_from_path end to end — the
     multiway analog of _query_turn_from_path (M26): a real (cached, raw)
@@ -1533,12 +1534,40 @@ def _query_turn_multiway_from_path(
         }
 
     if not to_river:
+        # M89: a multiway turn decision deeper than the street's first.
+        #
+        # M87 said the turn and river could not extend the way the flop
+        # did, because they read their node off a SAMPLED chance branch
+        # where a deeper node may never have been built. That was true
+        # when written and is no longer: **M75 already TRAINS the
+        # on-demand branch** — `ensure_mccfr_chance_branch` runs
+        # mccfr_solve over the branch's own subtree and merges the result
+        # into `result.node_data`. So every node inside the branch is
+        # solved for, and reaching a deeper one is the same lookup the
+        # flop does. The blocker M87 named had been removed by an earlier
+        # milestone; nothing new was needed here beyond asking.
+        #
+        # Confidence still degrades with depth, because branch training
+        # samples paths like any other MCCFR run — a deeper node may be
+        # visited less. `trained` reports that per combo, as everywhere
+        # else, rather than the depth being silently flattened.
+        if turn_action_kinds:
+            _turn_actions, turn_node = _resolve_action_path(turn_node, turn_action_kinds)
+            if isinstance(turn_node, TerminalNode):
+                raise ValueError(
+                    "turn_action_path reaches a terminal — the turn's action has closed, so there "
+                    "is no turn decision left to advise. Supply a river_card for river advice."
+                )
+            remaining_stack = remaining_stack - max(turn_node.invested.values())
+
         strategy = result.strategy_at(turn_node)
         trained = result.trained_hands(turn_node)
         return {
             **response,
+            "turn_action_path": list(turn_action_kinds or []),
             "is_terminal": False,
             "player_to_act": turn_node.player_to_act,
+            "position": turn_node.player_to_act,
             "strategy": strategy,
             "trained": trained,
             "pot": turn_node.pot,
@@ -1593,10 +1622,24 @@ def _query_turn_multiway_from_path(
             "effective_stack_bb": remaining_after_turn,
         }
 
+    # M89: a multiway river decision deeper than the street's first, for
+    # the same reason the turn above supports one — M75 trains the
+    # on-demand branch, so its whole subtree is solved for.
+    if river_action_kinds:
+        _river_actions, river_node = _resolve_action_path(river_node, river_action_kinds)
+        if isinstance(river_node, TerminalNode):
+            raise ValueError(
+                "river_action_path reaches a terminal — the hand is over, so there is no river "
+                "decision left to advise."
+            )
+        remaining_after_turn = remaining_after_turn - max(river_node.invested.values())
+
     return {
         **response,
+        "river_action_path": list(river_action_kinds or []),
         "is_terminal": False,
         "player_to_act": river_node.player_to_act,
+        "position": river_node.player_to_act,
         "strategy": result.strategy_at(river_node),
         "trained": result.trained_hands(river_node),
         "pot": river_node.pot,
@@ -2058,16 +2101,13 @@ def _advise(request, street: str, iterations: int, solve_iterations: int, hero_c
         # street's first, the same way M84's flop_action_path does.
         # Heads-up only for now — the multiway turn cell reads its node
         # off a sampled chance branch and needs its own pass.
+        # M89: multiway supports this too now — M75's branch training
+        # made the deeper nodes real, which is the blocker M87 named.
         extra = (
             {"turn_action_kinds": request.turn_action_path}
-            if (not multiway and request.turn_action_path)
+            if request.turn_action_path
             else {}
         )
-        if multiway and request.turn_action_path:
-            raise ValueError(
-                "turn_action_path isn't supported at multiway tables yet — only the turn's first "
-                "decision is reachable there. Heads-up supports any turn decision."
-            )
         raw = query(
             request.preflop_action_path, request.flop_action_path, turn_cards[0], request.stack_bb,
             board_cards, iterations, solve_iterations, request.players, hero_combo=hero_combo,
@@ -2089,16 +2129,12 @@ def _advise(request, street: str, iterations: int, solve_iterations: int, hero_c
             request.preflop_action_path, request.flop_action_path, turn_cards[0], request.stack_bb,
             board_cards, iterations, solve_iterations, request.players, hero_combo=hero_combo,
             turn_action_kinds=request.turn_action_path, river_card=river_cards[0],
+            river_action_kinds=request.river_action_path,
         )
         return {**raw, "source": "mccfr", "solve_iterations": raw["flop_iterations"],
                 "street": street, "hero_key": hero_key}
     # M86: river_action_path reaches a river decision deeper than the
     # street's first, completing what M84 (flop) and M85 (turn) began.
-    if multiway and request.river_action_path:
-        raise ValueError(
-            "river_action_path isn't supported at multiway tables yet — only the river's first "
-            "decision is reachable there. Heads-up supports any river decision."
-        )
     raw = _query_river_from_path(
         request.preflop_action_path, request.flop_action_path, turn_cards[0], request.turn_action_path,
         river_cards[0], request.stack_bb, board_cards, iterations, solve_iterations, request.players,

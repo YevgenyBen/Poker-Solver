@@ -1562,22 +1562,50 @@ def test_advise_rejects_a_turn_path_whose_action_already_closed(client):
     assert "no turn decision left" in response.json()["detail"]
 
 
-def test_advise_says_plainly_that_multiway_turn_paths_are_not_supported(client):
-    """The multiway turn cell reads its node off a SAMPLED chance branch
-    and needs its own pass, so it is refused rather than silently
-    answering the wrong node. An honest 422 beats a plausible wrong
-    answer — the lesson F2/F10 both taught."""
+def test_advise_answers_a_multiway_turn_decision_that_is_not_the_first(client):
+    """M89. This test asserted the OPPOSITE until M89 — that multiway turn
+    paths were refused — because M85/M87 reasoned the cell reads its node
+    off a SAMPLED chance branch where a deeper node may never have been
+    built.
+
+    That was true when written and had already stopped being true: **M75
+    trains the on-demand branch**, running mccfr_solve over its subtree
+    and merging into result.node_data, so every node inside it is solved
+    for. The blocker had been removed by an earlier milestone and nobody
+    went back to check. Worth remembering — a limitation documented as
+    structural can quietly become false.
+    """
     body = _advise_body(
         preflop_action_path=_THREE_LIVE_PATH,
         board="2h6d9c",
         flop_action_path=["call_or_check"] * 3,
         turn_card="Kd",
-        turn_action_path=["all_in"],
+        players=3,
+    )
+    opening = client.post("/advise", json=body)
+    assert opening.status_code == 200
+    first_actor = opening.json()["position"]
+
+    facing_a_bet = client.post("/advise", json={**body, "turn_action_path": ["all_in"]})
+    assert facing_a_bet.status_code == 200, facing_a_bet.json()
+    deeper = facing_a_bet.json()
+    assert deeper["players"] == 3
+    assert deeper["position"] != first_actor
+    assert "fold" in next(iter(deeper["strategy"].values()))
+
+
+def test_advise_rejects_a_closed_multiway_turn_path(client):
+    body = _advise_body(
+        preflop_action_path=_THREE_LIVE_PATH,
+        board="2h6d9c",
+        flop_action_path=["call_or_check"] * 3,
+        turn_card="Kd",
+        turn_action_path=["call_or_check"] * 3,
         players=3,
     )
     response = client.post("/advise", json=body)
     assert response.status_code == 422
-    assert "multiway" in response.json()["detail"]
+    assert "no turn decision left" in response.json()["detail"]
 
 
 def _advise_river_body(**overrides):
