@@ -49,6 +49,17 @@ every street (preflop through river) and every supported table size
 
 ### Known constraints — read before "improving" these
 
+- **The two flop decisions model DIFFERENT trees (F12, unfixed).** The
+  street's opening decision is served by the canonical library at
+  `solve_flop`'s defaults (raise sizes 2.5/3.0/2.2, max_raises 4); any
+  later flop decision comes from `solve_flop_turn` (one raise size,
+  max_raises 2). A user offered `raise:12.50` first can find it gone one
+  decision later. Neither answer is wrong — they are correct solves of
+  different games — but the product presents them as one street. Fixing
+  it means either giving the mid-flop cell its own solve (losing the
+  shared turn cache) or retuning the library (invalidating every stored
+  entry). See R12 in docs/diagnostic-2026-08-22.md.
+
 - **The sampled solver does NOT use CFR+'s regret clamp, and that is
   deliberate (M71).** `mccfr_solve(floor_regret=False)` is the default.
   Clamping regret at zero is a win in the exact solver (`_solve_recurse`

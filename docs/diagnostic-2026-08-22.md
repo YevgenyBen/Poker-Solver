@@ -561,3 +561,136 @@ Three tests, including both halves of each fix — that the "hand resolved"
 message still appears when the hand genuinely resolved, and that the
 low-confidence warning is absent at `"high"`. A message that is always
 present teaches users to ignore it.
+
+---
+
+# Round 8: full diagnostic (broadened simulation)
+
+The earlier harness used 17 spots, mostly premium/trash hands, on one dry
+board. Real play is not that. Round 8 broadened it to 25 spots covering
+**board texture** (dry rainbow, wet connected, monotone, paired, ace-high),
+**hand types the old set never touched** (flush draws, weak made hands,
+bluff candidates), **action lines beyond raise-call** (3-bet pots, limped
+pots, facing a raise, facing a 3-bet), and **stack depths** from 200bb to
+15bb.
+
+## Code audit
+
+| | |
+|---|---|
+| Backend tests | 768 passing |
+| Frontend | 150 tests, `tsc` clean, `oxlint` clean |
+| TODO / FIXME / HACK markers | **0** across engine, API and frontend |
+| Dead public engine functions | 0 |
+| Registered caches | 15, all via the M60 self-registering registry |
+| Deprecated routes still served | 5 (functional, superseded by `/advise`) |
+
+Structurally healthy. `api/solving.py` has grown to 1,882 lines — the
+largest file — but it is the orchestration layer and the growth is
+per-cell logic, not duplication.
+
+## F10 — `/advise` can only answer the FIRST decision on each street (SEVERE)
+
+The broadened simulation returned `call_or_check` as the top action for
+**every** postflop scenario — every texture, every hand strength. That
+first looked like a degenerate solver. It is not: the node being answered
+is always BB first-to-act after calling a raise, where checking the whole
+range genuinely *is* correct GTO (there is no fold action; checking is
+free).
+
+The real problem is why that is the *only* node reachable:
+
+```
+flop, first to act        -> 200 OK
+flop, after villain checks-> 422 "flop_action_path was supplied without a turn_card"
+flop, facing a bet        -> 422 "flop_action_path was supplied without a turn_card"
+```
+
+**A player facing a bet on the flop cannot get advice.** That is the most
+common and most consequential decision in poker, and it is unreachable.
+The same holds on the turn. `/advise` answers "what do I do first on this
+street", not "what do I do now" — which is the product's entire stated
+purpose.
+
+This is an *addressability* gap, not a solver gap: the solve already
+covers the whole flop subtree, and `_resolve_action_path` already walks a
+path to an arbitrary node (the turn cell uses it to find the flop
+terminal). The data exists and is thrown away.
+
+**Why no earlier round caught it:** every scenario I had written asked
+about the first decision, because that is the only shape the API accepts.
+The harness was shaped by the API's own limitation — a reminder that a
+test suite written against an interface cannot discover what the
+interface refuses to express.
+
+## F11 — sanity checks were too weak to catch F10's symptom
+
+The `sane` predicates only ever checked fold frequencies. A strategy of
+"check 100% with everything" passes every one of them. Round 8 added
+distribution-level inspection and that is what surfaced the uniformity.
+
+## Recommendations
+
+**R10. Make every decision addressable (fixes F10).** Accept
+`flop_action_path` without `turn_card`, resolving to whatever flop node
+that path reaches, and `turn_action_path` without `river_card` likewise.
+Reject only paths that reach a terminal (nothing to advise) or are
+illegal. This is the difference between a street-opening advisor and the
+live-table advisor this project set out to build.
+
+**R11. Assert on distributions, not just fold rates (fixes F11).** A
+scenario check that cannot distinguish "checks everything" from real play
+is not a check.
+
+## F12 — the two flop decisions model different games
+
+Found while writing R10's tests. The **opening** flop decision is served
+by the canonical library at `solve_flop`'s defaults — raise sizes
+`(2.5, 3.0, 2.2)`, `max_raises=4`. Any **later** flop decision is served
+by `solve_flop_turn` at `FLOP_TURN_RAISE_SIZES=(2.5,)`,
+`FLOP_TURN_MAX_RAISES=2`.
+
+Same street, same hand, two different trees. A user offered
+`raise:12.50` at their first decision can find that action does not exist
+one decision later. Nothing is *wrong* in either answer — each is a
+correct solve of the game it models — but they are not the same game, and
+the product presents them as one continuous street.
+
+Deliberately **not** fixed in M84. Aligning them means either giving the
+mid-flop cell its own solve at `solve_flop`'s config (losing the shared
+turn cache, so a flop-then-turn user pays twice) or retuning the library's
+tree (invalidating every stored canonical entry and changing every
+heads-up flop answer the product currently gives). Both are real changes
+needing their own measurement pass; neither is something to land
+untested alongside the feature that exposed it. Recorded as R12.
+
+## Round 8 recommendations
+
+**R10 — DONE (M84).** `/advise` now answers any flop decision, not just
+the street's opening one. Shares the turn cell's solve and cache, so a
+player who asks about a flop decision and then the turn pays for one
+solve. A path that reaches a terminal is rejected with a message pointing
+at the turn rather than being answered with a fabricated node.
+
+Behaviour, on a real heads-up flop (2h6d9c), previously unreachable:
+
+| node | set of nines | air (5c4d) |
+|---|---|---|
+| first to act (BB) | check 0.99 | check 1.00 |
+| after a check (BTN) | check 0.95, shove 0.05 | check 1.00 |
+| **facing a bet (BTN)** | **shove 1.00** | **fold 1.00** |
+
+The hand-strength discrimination that rounds 1-7 never saw, because the
+node where it happens was not addressable.
+
+**R11 — DONE (M84).** The simulation now inspects distributions, not just
+fold rates. The old predicates passed a strategy of "check 100% with
+everything".
+
+**R12 — open.** Align the two flop trees (F12), or accept and document
+the discontinuity at the API surface so a consumer can see which tree
+answered.
+
+**R13 — open.** Extend R10 to the turn: `turn_action_path` without a
+`river_card` is still rejected, so turn decisions after the first have
+the same gap the flop just lost.

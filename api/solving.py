@@ -1058,6 +1058,110 @@ def _query_flop_multiway_from_path(
     }
 
 
+def _query_flop_node_from_path(
+    preflop_action_kinds: list,
+    flop_action_kinds: list,
+    stack_bb: float,
+    board_cards: tuple,
+    iterations: int,
+    turn_iterations: int,
+    players: int = 2,
+    hero_combo=None,
+) -> dict:
+    """Advice at a flop decision that is NOT the first one (M84).
+
+    The gap this closes, found by the round-8 diagnostic: `/advise` could
+    only answer the opening decision of each street. A player **facing a
+    bet on the flop** — the most common and most consequential decision in
+    poker — got a 422. `/advise` answered "what do I do first on this
+    street" when the product's whole purpose is "what do I do now".
+
+    It was never a solver limitation. `solve_flop_turn` already solves the
+    entire flop subtree; the turn cell already walks an arbitrary path
+    into it with `_resolve_action_path`. The data existed and was thrown
+    away because nothing asked for it.
+
+    So this shares the turn cell's solve and cache verbatim — same key,
+    same `solve_flop_turn` call — and differs in exactly one respect:
+    where `_query_turn_from_path` requires the resolved flop node to be a
+    TerminalNode (the flop's action has closed, so a turn card can be
+    dealt), this one requires the opposite. A DecisionNode means there is
+    still a decision to advise, which is the whole point. A client asking
+    about a closed line gets told to ask about the turn instead.
+
+    Sharing the cache is not incidental: a player who asks about a flop
+    decision and then about the turn pays for one solve, not two.
+    """
+    situation = _derive_path_situation(
+        action_kinds=preflop_action_kinds,
+        stack_bb=stack_bb,
+        board_cards=board_cards,
+        iterations=iterations,
+        players=players,
+        multiway=False,
+        sibling_endpoint="/solve_turn_multiway_from_path",
+        max_classes_per_position=cfg.MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE,
+        path_field_name="preflop_action_path",
+        hero_combo=hero_combo,
+    )
+    oop_position, ip_position = situation.postflop_positions
+    effective_stack_bb = situation.effective_stack_bb
+    path_scenario = situation.path_scenario
+
+    turn_solve_key = (
+        tuple(preflop_action_kinds),
+        round(stack_bb),
+        iterations,
+        board_cards,
+        turn_iterations,
+        players,
+        _hero_cache_component(hero_combo, situation.hero_in_range),
+    )
+    with _turn_path_cache.lock:
+        result = _turn_path_cache.entries.get(turn_solve_key)
+    if result is None:
+        result = solve_flop_turn(
+            board=board_cards,
+            hero_range=situation.position_ranges[oop_position],
+            villain_range=situation.position_ranges[ip_position],
+            pot=path_scenario.pot,
+            effective_stack_bb=effective_stack_bb,
+            positions=(oop_position, ip_position),
+            raise_sizes=cfg.FLOP_TURN_RAISE_SIZES,
+            max_raises=cfg.FLOP_TURN_MAX_RAISES,
+            iterations=turn_iterations,
+        )
+        with _turn_path_cache.lock:
+            _turn_path_cache.entries[turn_solve_key] = result
+
+    _actions, flop_node = _resolve_action_path(result.root, flop_action_kinds)
+    if isinstance(flop_node, TerminalNode):
+        raise ValueError(
+            "flop_action_path reaches a terminal — the flop's action has closed, so there is no "
+            "flop decision left to advise. Supply a turn_card for turn advice."
+        )
+
+    return {
+        "board": "".join(str(c) for c in board_cards),
+        "action_path": list(preflop_action_kinds),
+        "flop_action_path": list(flop_action_kinds),
+        "stack_bb": stack_bb,
+        "effective_stack_bb": effective_stack_bb - max(flop_node.invested.values()),
+        "pot": flop_node.pot,
+        "strategy": result.strategy_at(flop_node),
+        "trained": result.trained_hands(flop_node),
+        "position": flop_node.player_to_act,
+        "player_to_act": flop_node.player_to_act,
+        "positions": [oop_position, ip_position],
+        "players": players,
+        "is_terminal": False,
+        "hero_in_range": situation.hero_in_range,
+        "range_confidence": situation.range_confidence,
+        "solve_iterations": result.iterations,
+        "elapsed_seconds": result.elapsed_seconds,
+    }
+
+
 def _query_turn_from_path(
     preflop_action_kinds: list,
     flop_action_kinds: list,
@@ -1696,8 +1800,11 @@ def _infer_street(request) -> str:
         for field in ("turn_action_path", "river_card"):
             if getattr(request, field) is not None:
                 raise ValueError(f"{field} was supplied without a turn_card")
-        if request.flop_action_path is not None:
-            raise ValueError("flop_action_path was supplied without a turn_card — a flop query takes neither")
+        # M84: a flop query MAY now carry a flop_action_path. It used to
+        # be rejected outright, which meant only the OPENING decision of
+        # the street was reachable — a player facing a bet on the flop got
+        # a 422. The path simply says which flop decision is being asked
+        # about; an empty or absent one still means the first.
         return "flop"
 
     if request.flop_action_path is None:
@@ -1816,6 +1923,20 @@ def _advise(request, street: str, iterations: int, solve_iterations: int, hero_c
     board_cards = tuple(parse_cards(request.board))
     if len(board_cards) != 3:
         raise ValueError(f"board must have exactly 3 cards for a flop, got {len(board_cards)}")
+
+    if street == "flop" and not multiway and request.flop_action_path:
+        # M84: a flop decision that isn't the street's first. Goes through
+        # solve_flop_turn (which solves the whole flop subtree) rather
+        # than the canonical library, because the library persists only a
+        # flattened ROOT strategy and structurally cannot answer about a
+        # deeper node. Shares the turn cell's cache, so asking about a
+        # flop decision and then the turn costs one solve.
+        raw = _query_flop_node_from_path(
+            request.preflop_action_path, request.flop_action_path, request.stack_bb,
+            board_cards, iterations, solve_iterations, request.players,
+            hero_combo=hero_combo,
+        )
+        return {**raw, "source": "exact", "street": street, "hero_key": hero_key}
 
     if street == "flop" and not multiway:
         raw = _query_flop_from_path(
