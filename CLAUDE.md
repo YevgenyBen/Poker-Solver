@@ -49,16 +49,17 @@ every street (preflop through river) and every supported table size
 
 ### Known constraints — read before "improving" these
 
-- **The two flop decisions model DIFFERENT trees (F12, unfixed).** The
-  street's opening decision is served by the canonical library at
-  `solve_flop`'s defaults (raise sizes 2.5/3.0/2.2, max_raises 4); any
-  later flop decision comes from `solve_flop_turn` (one raise size,
-  max_raises 2). A user offered `raise:12.50` first can find it gone one
-  decision later. Neither answer is wrong — they are correct solves of
-  different games — but the product presents them as one street. Fixing
-  it means either giving the mid-flop cell its own solve (losing the
-  shared turn cache) or retuning the library (invalidating every stored
-  entry). See R12 in docs/diagnostic-2026-08-22.md.
+- **Both flop decisions now share one tree (F12 fixed in M88)** — the
+  mid-flop cell runs `solve_flop` at the canonical library's own config
+  instead of `solve_flop_turn`'s narrower one. Don't "optimize" it back
+  onto the turn cache: that sharing is what made the raise sizes differ
+  between two decisions on the same street.
+- **The library solves at a BUCKETED stack depth (F13).** 5bb buckets are
+  what make canonical reuse work, but a real 97.5bb spot is solved at
+  100bb — so the opening flop decision can offer `all_in:100.00` while
+  its own response reports `effective_stack_bb: 97.5`. The action KIND is
+  right; the size can overstate by up to a bucket. Inherent to the
+  bucketing, not a bug to fix casually.
 
 - **The sampled solver does NOT use CFR+'s regret clamp, and that is
   deliberate (M71).** `mccfr_solve(floor_regret=False)` is the default.

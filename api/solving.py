@@ -67,6 +67,7 @@ from .caches import (
     _flop_to_river_multiway_cache,
     _flop_turn_cache,
     _flop_turn_multiway_cache,
+    _flop_node_cache,
     _multiway_cache,
     _multiway_equity_caches,
     _path_query_libraries,
@@ -1126,8 +1127,8 @@ def _query_flop_node_from_path(
         iterations=iterations,
         players=players,
         multiway=False,
-        sibling_endpoint="/solve_turn_multiway_from_path",
-        max_classes_per_position=cfg.MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE,
+        sibling_endpoint="/solve_flop_multiway_from_path",
+        max_classes_per_position=cfg.MAX_PATH_QUERY_CLASSES_PER_SIDE,
         path_field_name="preflop_action_path",
         hero_combo=hero_combo,
     )
@@ -1135,31 +1136,47 @@ def _query_flop_node_from_path(
     effective_stack_bb = situation.effective_stack_bb
     path_scenario = situation.path_scenario
 
-    turn_solve_key = (
+    # M88 (R12): `solve_flop` at the SAME tree the canonical library uses
+    # for this street's opening decision, rather than solve_flop_turn's
+    # narrower one.
+    #
+    # M84 shared the turn cell's solve, which was cheap but meant the two
+    # flop decisions modelled different games (F12): the opening one
+    # offered three raise sizes and a 4-raise cap, one decision later only
+    # a single size and a 2-raise cap. A user offered `raise:12.50` could
+    # find that action simply gone. Neither answer was wrong; they were
+    # answers to different questions, presented as one continuous street.
+    #
+    # The cost of sharing was also the wrong way round: `solve_flop` is
+    # flop-only (runouts averaged at the terminal) where `solve_flop_turn`
+    # chains a real turn, so the consistent option is also the cheaper
+    # one. What it gives up is the shared cache — a user who asks about a
+    # mid-flop decision AND the turn now pays for two solves instead of
+    # one. That is the right trade: the doubled cost hits only users who
+    # ask both questions, while the inconsistency hit everyone who asked
+    # twice on the same street.
+    flop_solve_key = (
         tuple(preflop_action_kinds),
         round(stack_bb),
         iterations,
         board_cards,
-        turn_iterations,
         players,
         _hero_cache_component(hero_combo, situation.hero_in_range),
     )
-    with _turn_path_cache.lock:
-        result = _turn_path_cache.entries.get(turn_solve_key)
+    with _flop_node_cache.lock:
+        result = _flop_node_cache.entries.get(flop_solve_key)
     if result is None:
-        result = solve_flop_turn(
+        result = solve_flop(
             board=board_cards,
             hero_range=situation.position_ranges[oop_position],
             villain_range=situation.position_ranges[ip_position],
             pot=path_scenario.pot,
             effective_stack_bb=effective_stack_bb,
             positions=(oop_position, ip_position),
-            raise_sizes=cfg.FLOP_TURN_RAISE_SIZES,
-            max_raises=cfg.FLOP_TURN_MAX_RAISES,
-            iterations=turn_iterations,
+            iterations=cfg.PATH_QUERY_ITERATIONS,
         )
-        with _turn_path_cache.lock:
-            _turn_path_cache.entries[turn_solve_key] = result
+        with _flop_node_cache.lock:
+            _flop_node_cache.entries[flop_solve_key] = result
 
     _actions, flop_node = _resolve_action_path(result.root, flop_action_kinds)
     if isinstance(flop_node, TerminalNode):
