@@ -826,3 +826,49 @@ to be a copy of this fix. They keep refusing with a clear 422.
 - **R12** — the two flop trees still differ (F12).
 - **R15 part 2** — multiway turn/river later decisions, needing the
   on-demand-branch work described above.
+
+---
+
+# R12 implementation (M88) — one tree per street
+
+Two corrections to F12's own write-up, found by checking rather than
+trusting it:
+
+1. It claimed fixing this meant "invalidating every stored canonical
+   entry". **There are no stored entries.** `_path_query_libraries` is an
+   in-memory `_SolveCache` rebuilt per process; the only thing on disk is
+   `preflop_equity.npy`. That risk did not exist.
+2. It framed the choice as consistency *versus* cost. The opposite is
+   true: `solve_flop` is flop-only (runouts averaged at the terminal)
+   where `solve_flop_turn` chains a real turn, so **the consistent option
+   is also the cheaper one** — a later flop decision measured 7.5s
+   against the opening decision's 11.2s library miss.
+
+**M88 points the mid-flop cell at `solve_flop` with the library's own
+config.** Both flop decisions now offer the same actions:
+
+| | opening decision | later decision |
+|---|---|---|
+| before | `call`, `raise:12.50`, `all_in:100.00` | `call`, `all_in:97.50` |
+| after | `call`, `raise:12.50`, `all_in:100.00` | `call`, **`raise:12.50`**, `all_in:97.50` |
+
+What it gives up is the shared turn cache: a user asking about a mid-flop
+decision *and* the turn now pays two solves. That is the right trade —
+the doubled cost hits only users who ask both questions, while the
+inconsistency hit everyone who asked twice on one street.
+
+## F13 — the library solves at a bucketed stack depth
+
+The residual difference above is the all-in *size*: `100.00` at the
+opening decision, `97.50` one later. Not a tree mismatch — the library
+canonicalizes stack depth into **5bb buckets**, and
+`canonical_stack_depth(97.5) == 100.0`. So a real 97.5bb spot is solved
+at 100bb, and the response reports `effective_stack_bb: 97.5` while
+offering `all_in:100.00`. A user cannot shove 100 holding 97.5.
+
+Deliberately not "fixed": the bucketing is the mechanism that makes
+canonical reuse work at all, and it is the library's entire reason for
+existing. Relabelling the action to the real stack would make the number
+honest while leaving the strategy behind it computed for a different
+depth — a worse kind of wrong. Documented in CLAUDE.md instead: the
+action **kind** is right, the size can overstate by up to one bucket.

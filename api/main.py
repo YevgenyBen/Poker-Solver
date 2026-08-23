@@ -628,6 +628,7 @@ from .caches import (
     _flop_to_river_multiway_cache,
     _flop_turn_cache,
     _flop_turn_multiway_cache,
+    _flop_node_cache,
     _multiway_cache,
     _multiway_equity_caches,
     _path_query_libraries,

@@ -164,6 +164,14 @@ _turn_multiway_path_cache = _SolveCache("turn_multiway_path")
 # slow test. Keying by the pool makes the two impossible to desync.
 _multiway_equity_caches = _SolveCache("multiway_equity")
 
+# M88: flop solves backing a NON-opening flop decision (see solving.
+# _query_flop_node_from_path). Separate from _turn_path_cache because it
+# holds a different solve — solve_flop at the canonical library's own
+# tree, so both flop decisions model one game (F12) — and separate from
+# _flop_query_library because that one stores flattened root strategies
+# with no tree to resolve a path into.
+_flop_node_cache = _SolveCache("flop_node")
+
 _preflop_raw_cache = _SolveCache("preflop_raw")
 # Deliberately NOT one shared dict like _flop_query_library above — see
 # the module docstring's Finding 2. This endpoint's range/pot are
