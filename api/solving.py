@@ -784,7 +784,11 @@ def _derive_path_situation(
     # this extraction; the response-shape decision it needs is still its
     # own separate work.
     if not isinstance(path_scenario.node, TerminalNode):
-        raise ValueError(f"{path_field_name} does not reach a terminal — action isn't capped yet")
+        raise ValueError(
+            f"{path_field_name} does not close the preflop betting, so no board can be dealt "
+            "yet. To ask about a postflop decision, the preflop action has to run to the end; "
+            "to ask about a PREFLOP decision instead, send the partial path with no board."
+        )
 
     live_count = len(path_scenario.live_positions)
     if multiway and live_count < 3:
@@ -1281,7 +1285,13 @@ def _query_turn_from_path(
 
     _flop_actions, flop_node = _resolve_action_path(result.root, flop_action_kinds)
     if not isinstance(flop_node, TerminalNode):
-        raise ValueError("flop_action_path does not reach a terminal — action isn't capped yet")
+        raise ValueError(
+            "flop_action_path does not close the flop's betting, so no turn card can be dealt "
+            "yet. Two different things are being asked for here and it is easy to mix them up: "
+            "to ask about a TURN decision, flop_action_path must run to the end of the flop's "
+            "action; to ask about a later FLOP decision instead, send the same partial path "
+            "WITHOUT a turn_card."
+        )
 
     response = {
         "board": "".join(str(c) for c in board_cards),
@@ -1458,7 +1468,13 @@ def _query_turn_multiway_from_path(
 
     _flop_actions, flop_node = _resolve_action_path(result.root, flop_action_kinds)
     if not isinstance(flop_node, TerminalNode):
-        raise ValueError("flop_action_path does not reach a terminal — action isn't capped yet")
+        raise ValueError(
+            "flop_action_path does not close the flop's betting, so no turn card can be dealt "
+            "yet. Two different things are being asked for here and it is easy to mix them up: "
+            "to ask about a TURN decision, flop_action_path must run to the end of the flop's "
+            "action; to ask about a later FLOP decision instead, send the same partial path "
+            "WITHOUT a turn_card."
+        )
 
     response = {
         "board": "".join(str(c) for c in board_cards),
@@ -1581,7 +1597,12 @@ def _query_turn_multiway_from_path(
     # card-richer board, one street-deeper remaining stack.
     _turn_actions, turn_terminal = _resolve_action_path(turn_node, turn_action_kinds)
     if not isinstance(turn_terminal, TerminalNode):
-        raise ValueError("turn_action_path does not reach a terminal — action isn't capped yet")
+        raise ValueError(
+            "turn_action_path does not close the turn's betting, so no river card can be dealt "
+            "yet. To ask about a RIVER decision, turn_action_path must run to the end of the "
+            "turn's action; to ask about a later TURN decision instead, send the same partial "
+            "path WITHOUT a river_card."
+        )
 
     # The TURN street's own fresh, 0-based investment tracking, not
     # cumulative with the flop's (game_tree.StreetConfig's per-street
@@ -1729,7 +1750,13 @@ def _query_river_from_path(
 
     _flop_actions, flop_node = _resolve_action_path(result.root, flop_action_kinds)
     if not isinstance(flop_node, TerminalNode):
-        raise ValueError("flop_action_path does not reach a terminal — action isn't capped yet")
+        raise ValueError(
+            "flop_action_path does not close the flop's betting, so no turn card can be dealt "
+            "yet. Two different things are being asked for here and it is easy to mix them up: "
+            "to ask about a TURN decision, flop_action_path must run to the end of the flop's "
+            "action; to ask about a later FLOP decision instead, send the same partial path "
+            "WITHOUT a turn_card."
+        )
 
     response = {
         "board": "".join(str(c) for c in board_cards),
@@ -1795,7 +1822,12 @@ def _query_river_from_path(
     # path resolved against turn_root, not turn_root itself.
     _turn_actions, turn_node = _resolve_action_path(turn_root, turn_action_kinds)
     if not isinstance(turn_node, TerminalNode):
-        raise ValueError("turn_action_path does not reach a terminal — action isn't capped yet")
+        raise ValueError(
+            "turn_action_path does not close the turn's betting, so no river card can be dealt "
+            "yet. To ask about a RIVER decision, turn_action_path must run to the end of the "
+            "turn's action; to ask about a later TURN decision instead, send the same partial "
+            "path WITHOUT a river_card."
+        )
 
     # The amount remaining entering the river — turn_node.invested is
     # the TURN street's own fresh (0-based) investment tracking, not

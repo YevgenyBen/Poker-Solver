@@ -1364,7 +1364,14 @@ def test_derive_path_situation_requires_exactly_one_capping_mode():
 
 
 def test_derive_path_situation_rejects_a_non_terminal_path_naming_the_client_field():
-    with pytest.raises(ValueError, match="preflop_action_path does not reach a terminal"):
+    # The point is that the error names the CLIENT's own field rather
+    # than an internal one — unchanged by M90, which rewrote the wording
+    # from "does not reach a terminal" (a fact about the tree that taught
+    # the caller nothing) to something that explains the rule and both
+    # ways to satisfy it.
+    with pytest.raises(ValueError, match="preflop_action_path does not close the preflop betting"):
+        _derive(action_kinds=["raise"], path_field_name="preflop_action_path")
+    with pytest.raises(ValueError, match="PREFLOP decision instead"):
         _derive(action_kinds=["raise"], path_field_name="preflop_action_path")
 
 
@@ -1703,6 +1710,35 @@ def test_advise_rejects_a_closed_multiway_flop_path(client):
     )
     assert response.status_code == 422
     assert "no flop decision left" in response.json()["detail"]
+
+
+def test_advise_explains_the_action_path_contract_when_it_is_violated(client):
+    """M90: the round-9 finding, and it caught me before it caught a user.
+
+    Playing a whole hand through /advise, my own harness got this wrong
+    twice. `flop_action_path` has OPPOSITE requirements depending on
+    which street is being asked about — asking about a later FLOP
+    decision it must NOT close the street; asking about the TURN it MUST.
+    Same field, same hand, contradictory rules. The old error said
+    "does not reach a terminal — action isn't capped yet", which states a
+    fact about the tree and teaches the caller nothing.
+
+    For a product other people integrate against, an error that does not
+    explain the rule it enforces is a defect in its own right.
+    """
+    body = _advise_body(
+        board="2h6d9c",
+        flop_action_path=["call_or_check"],  # does NOT close the flop
+        turn_card="Kd",                      # ...but asks about the turn
+    )
+    response = client.post("/advise", json=body)
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    # Names the actual problem...
+    assert "does not close the flop" in detail
+    # ...and both ways out, since the caller cannot be expected to guess
+    # which of the two questions they meant.
+    assert "turn_card" in detail and "FLOP decision" in detail
 
 
 def test_advise_gives_every_hero_advice_regardless_of_who_asked_first(client):
