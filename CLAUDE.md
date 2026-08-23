@@ -179,8 +179,20 @@ every street (preflop through river) and every supported table size
   jam is near-tied under this model, so regret matching oscillates
   wholesale and the average reflects whichever phase a run ended in.
   Linear averaging amplifies this (~0.09) but is not the cause and is
-  kept. Fixing it needs policy damping (averaging the policy, or an
-  optimistic-regret variant) — an algorithmic change, not a parameter.
+  kept. **M97 built M74's prescribed fix — policy damping, in both the
+  forms it named — and measured both WORSE than doing nothing.** At the
+  shipped 6-max budget, three seeds, fresh equity cache per run: plain
+  AA-jam mean 0.056 / spread 0.037, predictive regret matching 0.628 /
+  0.604, policy smoothing 0.348 / 0.591, all at the same cost. Prediction
+  is a full-information technique and under sampling just amplifies the
+  all-in's noise; damping is a lag filter on regret matching's OUTPUT
+  while the oscillation is in its INPUT, and enough damping to outlast
+  the cycle stops the policy learning (`smoothing=0.99`: AA jams 0.998,
+  T7s's fold collapses 0.94 -> 0.34). `optimism`/`smoothing` remain in
+  `mccfr_solve`, default 0.0, so the result is reproducible — **don't
+  re-try either.** Next attempt should look at the equity model and pool,
+  not the policy: damping narrows the 12k seed spread without moving the
+  level, which a phase-sampled cycle would not do.
 - **Validate solver changes at the SHIPPED operating point.** M71
   measured a real improvement at 3,000 iterations and left the budget at
   12,000, where the property does not hold — shipping a regression to
