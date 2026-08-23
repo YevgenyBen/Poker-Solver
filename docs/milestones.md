@@ -5659,3 +5659,43 @@ entry's own corrections before trusting its conclusions.
     probes refused 422 with specific reasons, honesty signals firing on
     the right cells, every warm response under 25ms.
   - **Verification:** 849 backend tests (up from 842), 154 frontend.
+
+- **M102 — audit round 2: input fuzzing, and a typo that became a
+  confident answer to a different question.** 29 malformed,
+  contradictory and boundary inputs at `/advise`, classified by whether
+  each failed cleanly. Write-up in `docs/audit-2026-08-23.md`.
+  - **F23 (high): unknown request fields were silently discarded.**
+    Pydantic's default. Measured on the real endpoint:
+    `{"hero_card": "AsAh"}` returned **200 with `hero: null`** — the hand
+    the user asked about, silently dropped — and `{"player": 6}` returned
+    **200 with `players: 2`**, answering a 6-max question with heads-up
+    advice. Both look exactly like correct responses. Every request model
+    now sets `extra="forbid"`, so an unknown field is a 422 naming it.
+    Safe for the frontend, which builds its body from a typed
+    `AdviseRequest`.
+  - **F24: CLAUDE.md described an input that does not exist.** Its "What
+    it does today" line said the product takes "your position".
+    `AdviseRequest` has no such field — the acting seat is derived from
+    the action path. The wording was wrong long enough that **every probe
+    written this session sent `position`, and so did six tests**, all of
+    it silently inert. Turning on `extra="forbid"` surfaced 22 suite
+    failures at once, every one a test sending a field that never
+    existed — the finding proving itself. (The older `/solve` and
+    `/solve_flop` endpoints *do* take and validate a `position` query
+    parameter, which is why the confusion was plausible.)
+  - **Deliberately not fixed:** `stack_bb: 1e9` is accepted and returns
+    `all_in:1000000000.00`. Measured as non-pathological — same solve
+    time as 100bb, structurally correct output. It is absurd, not
+    impossible; there is no principled cap; an invented one could refuse
+    a legitimate deep-stack query. Recording the reasoning beats adding a
+    magic number.
+  - **The fuzzer was confidently wrong twice, in opposite directions.**
+    First run: three 422s scored "unhelpful" because the classifier's
+    word list lacked "rank" and "suit" — the messages were fine. Second
+    run: a perfect **31/31 clean**, also false, because the fuzzer's own
+    base body still contained `position` and `extra="forbid"` had just
+    made it invalid, so every case failed for that reason instead of the
+    one under test. M101 recorded that a checker reporting a real defect
+    for the wrong reason is lucky, not right; **this is the mirror image,
+    and worse — nobody investigates a pass.**
+  - **Verification:** 855 backend tests (up from 849), 154 frontend.

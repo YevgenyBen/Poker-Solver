@@ -1,9 +1,33 @@
 """Pydantic request/response models for the solver API."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
-class AdviseRequest(BaseModel):
+class _StrictRequest(BaseModel):
+    """Every request model rejects fields it does not define (M102).
+
+    Pydantic ignores unknown fields by default, which turns a typo into a
+    confident answer to a question nobody asked. Measured against the real
+    endpoint before changing it:
+
+        {"hero_card": "AsAh", ...}   -> 200, hero: null
+        {"player": 6, ...}           -> 200, players: 2
+
+    The first silently drops the hand the user wanted advice for. The
+    second answers a 6-max question with heads-up advice. Neither says
+    anything is wrong, and both look exactly like a correct response —
+    which is the failure mode this whole codebase keeps hunting.
+
+    `extra="forbid"` turns both into a 422 naming the offending field.
+    Safe for the frontend, which builds its body from a TypeScript
+    `AdviseRequest` and sends no extras; the cost falls only on callers
+    who were already sending something that did nothing.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AdviseRequest(_StrictRequest):
     """M51's request body — ONE shape describing a whole real situation,
     replacing the need to pick among five street-specific endpoints.
 
@@ -237,7 +261,7 @@ class FlopQueryResponse(BaseModel):
     positions: list[str]
 
 
-class ActionPathRequest(BaseModel):
+class ActionPathRequest(_StrictRequest):
     """M24's request body — the first request (not just response) model
     in this API. Deliberately no numeric constraints here (e.g. on
     `iterations`) — every existing bound lives on a route's own
@@ -285,7 +309,7 @@ class FlopPathQueryResponse(BaseModel):
     players: int
 
 
-class MultiwayFlopPathRequest(BaseModel):
+class MultiwayFlopPathRequest(_StrictRequest):
     """M42's request body — the multiway analog of ActionPathRequest,
     for a genuine 3+ live-position postflop situation reached by a real
     action path (a 2-survivor path stays served by ActionPathRequest/
@@ -338,7 +362,7 @@ class FlopMultiwayPathQueryResponse(BaseModel):
     players: int
 
 
-class RiverPathRequest(BaseModel):
+class RiverPathRequest(_StrictRequest):
     """M46's request body — the river analog of TurnPathRequest, one
     street further: a real preflop path, a real flop board + flop action
     path, a real dealt turn card, a real TURN action path (new — the
@@ -398,7 +422,7 @@ class RiverPathQueryResponse(BaseModel):
     elapsed_seconds: float
 
 
-class PreflopWalkRequest(BaseModel):
+class PreflopWalkRequest(_StrictRequest):
     """M25's request body — board-independent, unlike ActionPathRequest:
     a "what's legal from here" query is a pure preflop-tree-state check,
     with no board/flop involved at all. Same no-numeric-constraints-here
@@ -439,7 +463,7 @@ class PreflopWalkResponse(BaseModel):
     legal_actions: list[LegalActionOption]
 
 
-class TurnPathRequest(BaseModel):
+class TurnPathRequest(_StrictRequest):
     """M26's request body — two action paths (preflop, then flop) plus
     a real dealt turn card. Two independent iteration fields, not one:
     `iterations` (the preflop leg) and `turn_iterations` (the
@@ -480,7 +504,7 @@ class TurnPathQueryResponse(BaseModel):
     elapsed_seconds: float
 
 
-class MultiwayTurnPathRequest(BaseModel):
+class MultiwayTurnPathRequest(_StrictRequest):
     """M44's request body — the multiway analog of TurnPathRequest, for
     a preflop path that leaves 3+ live positions at the flop (mirroring
     MultiwayFlopPathRequest's own M42 relationship to ActionPathRequest).
