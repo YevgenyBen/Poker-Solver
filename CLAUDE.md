@@ -107,6 +107,11 @@ every street (preflop through river) and every supported table size
   `test_six_max_demo_pool_degrades_with_more_iterations` and
   `test_six_max_converges_with_a_realistic_pool`, which now document a
   property of *any* premium-heavy pool rather than a live defect.
+- **EVERY decision is reachable now (M84-M89).** `flop_action_path`,
+  `turn_action_path` and `river_action_path` each select which decision
+  on that street is being asked about; absent means the street's first.
+  Works heads-up and multiway. Before this, `/advise` answered only each
+  street's opening decision — a player facing a bet could not ask.
 - **Multiway turn/river branches are SOLVED on demand (M75) — don't
   remove that.** MCCFR samples one next card per terminal, so the card a
   client actually asks about is almost never one the solve sampled.

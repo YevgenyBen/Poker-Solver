@@ -872,3 +872,56 @@ existing. Relabelling the action to the real stack would make the number
 honest while leaving the strategy behind it computed for a different
 depth — a worse kind of wrong. Documented in CLAUDE.md instead: the
 action **kind** is right, the size can overstate by up to one bucket.
+
+---
+
+# R15 part 2 (M89) — multiway turn and river depth
+
+M87 said the multiway turn and river could not extend the way the flop
+did: they read their node off a **sampled** chance branch, where the node
+a client asks about may never have been built. That was accurate when
+written, and had **already stopped being true**.
+
+**M75 trains the on-demand branch.** `ensure_mccfr_chance_branch` runs
+`mccfr_solve` over the branch's own subtree and merges the result into
+`result.node_data`, so every node inside it is solved for. The blocker
+M87 named had been removed two milestones earlier by work done for a
+different reason, and nobody went back to check. Enabling it needed no
+new machinery — only asking.
+
+Worth recording as a pattern: **a limitation documented as structural can
+quietly become false.** M87's note was careful, correct at the time, and
+wrong within two milestones. It was also the *reason* the capability
+wasn't attempted, so the stale note cost real coverage.
+
+Measured at production settings, 6-max with three live players (the
+shrunk probe config returned untrained uniforms — a probe artifact, and
+checking that distinction is M75's lesson running both ways):
+
+| node | range trained | hero | strategy |
+|---|---|---|---|
+| turn, first to act | 56/151 | yes | check 0.70, raise 0.29 |
+| turn, after a check | 51/151 | yes | raise 0.65, shove 0.34 |
+| **turn, facing a bet** | 51/151 | yes | **call 1.00** |
+| river, first to act | 56/151 | yes | raise 0.96 |
+| **river, facing a bet** | 51/151 | yes | **call 0.99** |
+
+Deeper decisions cost **0.0s** — they reuse the branch solve the first
+decision already paid for.
+
+## Coverage after M84-M89 — the arc is complete
+
+| street | heads-up | multiway |
+|---|---|---|
+| preflop | any decision | any decision |
+| flop | any decision | any decision |
+| turn | any decision | **any decision** |
+| river | any decision | **any decision** |
+
+**Every decision in a hand is now reachable, at every supported table
+size.** That is the "advice at any point" this project set out to build
+in its v3 vision, and it is true for the first time.
+
+A test that asserted multiway turn paths were *refused* now asserts they
+work — the refusal was the documented behaviour, and documenting it did
+not make it necessary.
