@@ -1438,6 +1438,76 @@ def test_advise_preflop_hero_is_keyed_by_hand_class_not_combo(client):
     assert sum(hero["strategy"].values()) == pytest.approx(1.0, abs=1e-6)
 
 
+def test_advise_answers_a_flop_decision_that_is_not_the_streets_first(client):
+    """M84: the round-8 diagnostic's headline gap.
+
+    /advise could only answer the OPENING decision of each street. A
+    player facing a bet on the flop — the most common and most
+    consequential decision in poker — got a 422 telling them
+    flop_action_path was not allowed. The product answered "what do I do
+    first on this street" when its purpose is "what do I do now".
+
+    Never a solver limitation: solve_flop_turn already solves the whole
+    flop subtree and _resolve_action_path already walks into it. The data
+    existed and nothing asked for it.
+    """
+    base = _advise_body(board="2h6d9c")
+
+    opening = client.post("/advise", json=base)
+    assert opening.status_code == 200
+    first_actor = opening.json()["position"]
+
+    # "all_in" rather than a sized raise, and deliberately NOT derived
+    # from the opening response's own action set. The two flop decisions
+    # are answered by different solvers with different trees (F12 in
+    # docs/diagnostic-2026-08-22.md): the opening one comes from the
+    # canonical library at solve_flop's defaults, this one from
+    # solve_flop_turn's narrower tree. all_in is the one aggressive action
+    # both always offer, so the test checks reachability rather than
+    # accidentally asserting that inconsistency away.
+    facing_a_bet = client.post("/advise", json={**base, "flop_action_path": ["all_in"]})
+    assert facing_a_bet.status_code == 200, facing_a_bet.json()
+    body = facing_a_bet.json()
+
+    # A different player is now to act, and they can fold — which is the
+    # tell that this is a real "facing a bet" node and not the opening one
+    # dressed up (the opening decision has no fold: checking is free).
+    assert body["position"] != first_actor
+    assert "fold" in next(iter(body["strategy"].values()))
+
+
+def test_advise_flop_decision_discriminates_by_hand_strength(client):
+    """The behavioural half of M84, and the reason the gap mattered.
+
+    Before it, every postflop scenario in the diagnostic returned
+    call_or_check as its top action for every hand — set, flush draw and
+    air alike. That looked like a degenerate solver and was not: the only
+    reachable node was BB first-to-act, where checking the whole range
+    genuinely IS correct. Once a facing-a-bet node became reachable, hand
+    strength separates the way poker says it must.
+    """
+    base = dict(_advise_body(board="2h6d9c"), flop_action_path=["all_in"])
+
+    strong = client.post("/advise", json={**base, "hero_cards": "9s9d"}).json()["hero"]
+    weak = client.post("/advise", json={**base, "hero_cards": "5c4d"}).json()["hero"]
+    assert strong["strategy"] and weak["strategy"]
+
+    # A set continues; air folds. Asserted as a comparison rather than
+    # against fixed numbers, so this survives solver retuning.
+    assert weak["strategy"].get("fold", 0.0) > strong["strategy"].get("fold", 0.0) + 0.5
+
+
+def test_advise_rejects_a_flop_path_whose_action_already_closed(client):
+    """A closed flop line has no flop decision left — the honest answer is
+    to say so and point at the turn, not to invent one."""
+    base = _advise_body(board="2h6d9c")
+    response = client.post(
+        "/advise", json={**base, "flop_action_path": ["call_or_check", "call_or_check"]}
+    )
+    assert response.status_code == 422
+    assert "no flop decision left" in response.json()["detail"]
+
+
 def test_advise_gives_every_hero_advice_regardless_of_who_asked_first(client):
     """M76: the severest bug the 2026-08-22 diagnostic found.
 
