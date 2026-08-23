@@ -5699,3 +5699,31 @@ entry's own corrections before trusting its conclusions.
     for the wrong reason is lucky, not right; **this is the mirror image,
     and worse — nobody investigates a pass.**
   - **Verification:** 855 backend tests (up from 849), 154 frontend.
+
+- **M103 — audit round 3: the five UI tabs nobody had ever driven.** M94
+  drove the Advisor in a browser; the other five tabs had never been
+  opened by anything but a human, and every frontend test stubs `fetch`,
+  so nothing had confirmed they reach the real API.
+  - **All five work.** Preflop Ranges (`GET /solve/100`, full grid),
+    Equity Calculator (**AA vs KK 82.0%/18.0%**, matching the known
+    ~82.4%), Flop Solver (0.18s), Cached Flop Solver, Multiway Flop
+    Solver (3-max, 0.27s). No console errors.
+  - **Canonical reuse confirmed in the UI for the first time.** `Jh7d2c`
+    solved live in **327.35ms**; suit-shuffled to `Js7h2d` it reported
+    **"Cache hit — 0.30ms"** against the same canonical `2c7dJh`. M20/
+    M21's central claim, demonstrated through the real product rather
+    than a fixture.
+  - **The honesty signals reach the demo tools.** Uniform 33/33/33
+    combos carry a "low data" label in both flop solvers — M82's lesson
+    holding where nobody had checked.
+  - **F25: nothing verified the app was served at all.** The sweep found
+    no defect in the tabs and one underneath them: the whole suite talks
+    to `/advise` and `/solve` directly and **never requests the page a
+    user opens**. If `frontend/dist` vanished, or the catch-all static
+    mount stopped being registered last and began swallowing API routes,
+    every tab would break at once with a green suite. Two tests now
+    cover it — the shell is served with a bundle reference, and
+    `/solve/100` still returns `application/json` rather than HTML. The
+    mount is registered last *on purpose*, which is exactly the kind of
+    ordering a later edit reshuffles silently.
+  - **Verification:** 857 backend tests (up from 855), 154 frontend.

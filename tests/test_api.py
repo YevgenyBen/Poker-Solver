@@ -3324,3 +3324,48 @@ def test_a_correct_request_is_unaffected_by_strictness(client):
     )
     assert response.status_code == 200
     assert (response.json().get("hero") or {}).get("cards") == "AsAh"
+
+
+# ---------------------------------------------------------------------------
+# M103 — the app itself is served, and the mount does not eat the API
+# ---------------------------------------------------------------------------
+
+
+def test_the_built_frontend_is_actually_served(client):
+    """Nothing covered this before M103's UI sweep, and it is the one
+    failure that would break every tab at once while leaving the suite
+    green: the whole test suite talks to `/advise` and `/solve` directly
+    and never asks for the page a user opens.
+
+    Skipped rather than failed when `frontend/dist` is absent — a fresh
+    clone has not run `npm run build`, and a test that punishes that
+    would just get marked xfail and stop meaning anything.
+    """
+    if not api_config.FRONTEND_DIST_DIR.is_dir():
+        pytest.skip("frontend/dist not built — nothing to serve")
+    response = client.get("/")
+    assert response.status_code == 200
+    body = response.text
+    assert "<div id=\"root\"" in body or "<div id=root" in body, (
+        "served something, but not the app shell — the mount may be pointing at "
+        "the wrong directory"
+    )
+    assert "/assets/" in body, "the shell references no bundle, so the page would render blank"
+
+
+def test_the_static_mount_does_not_shadow_the_api(client):
+    """The mount is registered at "/" with `html=True`, which makes it a
+    catch-all. Starlette matches routes in registration order, so it is
+    registered last on purpose — and "on purpose" is exactly the kind of
+    ordering that a later edit reshuffles without noticing.
+
+    If this fails, the API still exists but every endpoint returns the
+    HTML page instead of JSON, and the UI breaks in a way that looks like
+    a frontend bug.
+    """
+    response = client.get("/solve/100")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json"), (
+        "an API route is being served by the static mount — check that the mount "
+        "is still registered LAST in api/main.py"
+    )
