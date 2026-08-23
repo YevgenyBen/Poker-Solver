@@ -3020,7 +3020,6 @@ def test_advise_never_offers_a_bet_larger_than_the_stack(client, stack_bb, prefl
             preflop_action_path=preflop_action_path,
             hero_cards="AsKh",
             board="Kd7c2h",
-            position="BTN",
             players=2,
             stack_bb=stack_bb,
         ),
@@ -3047,7 +3046,7 @@ def test_multiway_preflop_advice_flags_its_sizing_as_unreliable(client):
     """
     response = client.post(
         "/advise",
-        json=_advise_body(preflop_action_path=[], hero_cards="AsAh", position="BTN", players=6),
+        json=_advise_body(preflop_action_path=[], hero_cards="AsAh", players=6),
     )
     assert response.status_code == 200
     body = response.json()
@@ -3080,7 +3079,7 @@ def test_heads_up_preflop_does_not_carry_the_sizing_caveat(client):
     """
     response = client.post(
         "/advise",
-        json=_advise_body(preflop_action_path=[], hero_cards="AsAh", position="BTN", players=2),
+        json=_advise_body(preflop_action_path=[], hero_cards="AsAh", players=2),
     )
     assert response.status_code == 200
     body = response.json()
@@ -3100,7 +3099,6 @@ def test_the_sizing_caveat_is_scoped_to_preflop(client):
             preflop_action_path=["raise", "call_or_check"],
             hero_cards="AsKh",
             board="Kd7c2h",
-            position="BTN",
             players=2,
         ),
     )
@@ -3117,7 +3115,7 @@ def test_nine_max_carries_both_warnings_without_either_masking_the_other(client)
     warning silently disappears behind the general one."""
     response = client.post(
         "/advise",
-        json=_advise_body(preflop_action_path=[], hero_cards="AsAh", position="BTN", players=9),
+        json=_advise_body(preflop_action_path=[], hero_cards="AsAh", players=9),
     )
     assert response.status_code == 200
     body = response.json()
@@ -3263,3 +3261,66 @@ def test_a_valid_multiway_request_still_reaches_the_solver(client):
     assert response.status_code == 200
     assert response.json()["street"] == "preflop"
     assert len(caches._multiway_cache.entries) > 0, "the real path no longer solves anything"
+
+
+# ---------------------------------------------------------------------------
+# M102 — a typo must not become a confident answer to a different question
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "label,body,offending",
+    [
+        (
+            "hero_cards misspelled",
+            dict(stack_bb=100.0, preflop_action_path=[], hero_card="AsAh", players=2),
+            "hero_card",
+        ),
+        (
+            "players misspelled",
+            dict(stack_bb=100.0, preflop_action_path=[], hero_cards="AsAh", player=6),
+            "player",
+        ),
+        (
+            "a field that never existed",
+            dict(stack_bb=100.0, preflop_action_path=[], hero_cards="AsAh",
+                 players=2, position="BTN"),
+            "position",
+        ),
+    ],
+)
+def test_an_unknown_request_field_is_rejected_by_name(client, label, body, offending):
+    """M102's audit measured what these used to do, and it was the worst
+    failure shape this project has:
+
+        {"hero_card": "AsAh", ...}  -> 200, hero: null
+        {"player": 6, ...}          -> 200, players: 2
+
+    The first silently drops the hand the user asked about and returns a
+    range chart. The second answers a 6-max question with heads-up
+    advice. Both look exactly like correct responses.
+
+    `position` is in here deliberately: it is not a field of
+    `AdviseRequest` (the acting seat is inferred from the action path),
+    yet CLAUDE.md described it as an input and every probe written during
+    this session sent it. It did nothing, silently, for the whole
+    session.
+    """
+    response = client.post("/advise", json=body)
+    assert response.status_code == 422, (
+        f"{label}: silently accepted — this is how a typo becomes wrong advice"
+    )
+    assert offending in str(response.json()["detail"]), (
+        f"{label}: rejected, but the message does not name `{offending}`, so a "
+        "caller cannot tell which field to fix"
+    )
+
+
+def test_a_correct_request_is_unaffected_by_strictness(client):
+    """The other half: rejecting extras must not reject the real thing."""
+    response = client.post(
+        "/advise",
+        json=_advise_body(preflop_action_path=[], hero_cards="AsAh", players=2, stack_bb=100.0),
+    )
+    assert response.status_code == 200
+    assert (response.json().get("hero") or {}).get("cards") == "AsAh"

@@ -7,10 +7,17 @@ engine is the product; the frontend is a tool for driving it.
 
 ### What it does today
 
-Given **your hole cards, the board, your position, and the action so
+Given **your hole cards, the board, the table size, and the action so
 far**, it returns GTO advice for the decision you actually face — at
 every street (preflop through river) and every supported table size
 (heads-up, 3/6/9-max). One endpoint does this: **`POST /advise`**.
+
+**Position is DERIVED, not supplied** (corrected M102). This line used to
+say "your position" and there is no such field: the acting seat follows
+from the action path, since whoever has not yet acted is the one being
+advised. The wording was wrong for long enough that every probe written
+against the API sent a `position` field, which silently did nothing —
+requests now reject unknown fields by name rather than ignoring them.
 
 ### Module map
 
@@ -196,6 +203,14 @@ every street (preflop through river) and every supported table size
   11.5s (flop) / 1.5s (turn). Treat multiway postflop advice as
   correspondingly thinner, and note those caps genuinely bind now, where
   pre-M67 they never did.
+- **Request models REJECT unknown fields — keep it that way (M102).**
+  Every model in `api/schemas.py` inherits `_StrictRequest`
+  (`extra="forbid"`). Pydantic's default of ignoring extras turned a typo
+  into a confident answer to a different question: `{"hero_card": ...}`
+  returned 200 with `hero: null`, and `{"player": 6}` returned 200 with
+  `players: 2` — heads-up advice for a 6-max question, with nothing
+  saying anything was wrong. Turning this on surfaced 22 suite failures,
+  all of them tests sending a `position` field that never existed.
 - **Affordability is checked against `max_affordable_bb`, NOT
   `effective_stack_bb` (M101).** The latter means three different things
   by node — preflop it is the stack net of blinds while preflop sizes are
