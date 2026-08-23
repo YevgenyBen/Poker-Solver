@@ -283,6 +283,75 @@ describe('AdviseSolver', () => {
     );
   });
 
+  it('sends a partial action path for the decision the player faces', async () => {
+    // M94: /advise has answered any decision on any street since M84-M89,
+    // and the UI could still only ask about each street's OPENING one —
+    // capability shipped in the API that no user could reach. The same
+    // pattern as M82's unrendered solver_confidence, repeated four
+    // milestones later, which is why this asserts the REQUEST rather than
+    // just that a control renders.
+    // Built on the file's own mockFetch so the walk fixtures (and so the
+    // button labels) match every other test here; only the /advise body
+    // is captured on top.
+    const sent: Record<string, unknown>[] = [];
+    const base = mockFetch(walkFor, () => adviceResponse({ street: 'flop' }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (url === '/advise') sent.push(JSON.parse(String(init?.body)));
+        return base(url, init);
+      }),
+    );
+
+    render(<AdviseSolver />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Raise to 2.5' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Raise to 2.5' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Call/ })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /^Call/ }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Flop' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Flop' }));
+
+    const spot = await screen.findByLabelText('Your spot');
+    fireEvent.change(spot, { target: { value: 'facing_bet' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Get advice' }));
+
+    await waitFor(() => expect(sent.length).toBeGreaterThan(0));
+    const body = sent[sent.length - 1];
+    // The partial path is what reaches the facing-a-bet node. It must NOT
+    // close the street, or there would be no decision left on it.
+    expect(body.flop_action_path).toEqual(['raise']);
+  });
+
+  it('omits the action path when the player is first to act', async () => {
+    // The other half: "first to act" must send NO path, because an absent
+    // path already means the street's opening decision. Sending an empty
+    // or partial one instead would be a different question.
+    // Built on the file's own mockFetch so the walk fixtures (and so the
+    // button labels) match every other test here; only the /advise body
+    // is captured on top.
+    const sent: Record<string, unknown>[] = [];
+    const base = mockFetch(walkFor, () => adviceResponse({ street: 'flop' }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (url === '/advise') sent.push(JSON.parse(String(init?.body)));
+        return base(url, init);
+      }),
+    );
+
+    render(<AdviseSolver />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Raise to 2.5' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Raise to 2.5' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Call/ })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /^Call/ }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Flop' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Flop' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Get advice' }));
+
+    await waitFor(() => expect(sent.length).toBeGreaterThan(0));
+    expect(sent[sent.length - 1].flop_action_path).toBeUndefined();
+  });
+
   it('warns loudly when the backend reports low solver confidence', async () => {
     // M82: the backend has been able to say "this table size does not
     // converge" since M76, but nothing in the UI read it — a 9-max user

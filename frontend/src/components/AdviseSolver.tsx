@@ -37,6 +37,27 @@ const STREETS: { id: Street; label: string }[] = [
  * M26) and would replace this. */
 type LineId = 'checked' | 'bet_called';
 
+/** M94: WHICH decision on the street being asked about.
+ *
+ * The LINES above close a street so the hand can advance to the next
+ * one. This is the other half, and it was missing: a PARTIAL line naming
+ * the decision you actually face. M84-M89 made every decision reachable
+ * through /advise — a player facing a bet on the flop, the turn or the
+ * river — and the UI had no way to express any of it, so it could only
+ * ever ask about each street's opening decision.
+ *
+ * Deliberately three fixed options rather than a free-form action
+ * builder: they cover what a player actually needs to describe ("it's on
+ * me", "they checked", "they bet"), stay legal at any live-position
+ * count, and need no legal-action walker. */
+type SpotId = 'first' | 'after_check' | 'facing_bet';
+
+const SPOTS: Record<SpotId, { label: string; build: () => string[] }> = {
+  first: { label: "I'm first to act", build: () => [] },
+  after_check: { label: 'They checked to me', build: () => ['call_or_check'] },
+  facing_bet: { label: "I'm facing a bet", build: () => ['raise'] },
+};
+
 const LINES: Record<LineId, { label: string; build: (liveCount: number) => string[] }> = {
   checked: {
     label: 'Checked through',
@@ -86,6 +107,8 @@ export function AdviseSolver() {
   const [stackBb, setStackBb] = useState(DEFAULT_STACK_BB);
   const [players, setPlayers] = useState(2);
   const [actionPath, setActionPath] = useState<string[]>([]);
+  // M94: which decision on the CURRENT street is being asked about.
+  const [spot, setSpot] = useState<SpotId>('first');
   const [street, setStreet] = useState<Street>('preflop');
   const [heroCards, setHeroCards] = useState('');
   const [board, setBoard] = useState(DEFAULT_BOARD);
@@ -127,6 +150,20 @@ export function AdviseSolver() {
           : {}),
         ...(street === 'river'
           ? { turn_action_path: LINES[turnLine].build(liveCount), river_card: riverCard }
+          : {}),
+        // M94: the partial line for the street being ASKED about — the
+        // decision the player actually faces. Earlier streets use the
+        // CLOSING lines above; this one must not close, or there would be
+        // no decision left on it. Omitted entirely for 'first', which is
+        // what an absent path already means.
+        ...(street === 'flop' && spot !== 'first'
+          ? { flop_action_path: SPOTS[spot].build() }
+          : {}),
+        ...(street === 'turn' && spot !== 'first'
+          ? { turn_action_path: SPOTS[spot].build() }
+          : {}),
+        ...(street === 'river' && spot !== 'first'
+          ? { river_action_path: SPOTS[spot].build() }
           : {}),
       };
       setResult(await fetchAdvice(request));
@@ -292,6 +329,26 @@ export function AdviseSolver() {
               placeholder="Jh7d2c"
               aria-label="Board"
             />
+          </label>
+          {/* M94: which decision on THIS street. Without it the UI could
+              only ever ask about the street's opening decision, even
+              though /advise has answered any of them since M84-M89. */}
+          <label>
+            Your spot
+            <select
+              value={spot}
+              onChange={(event) => {
+                setSpot(event.target.value as SpotId);
+                clearResult();
+              }}
+              aria-label="Your spot"
+            >
+              {Object.entries(SPOTS).map(([id, option]) => (
+                <option key={id} value={id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </label>
           {(street === 'turn' || street === 'river') && (
             <>
