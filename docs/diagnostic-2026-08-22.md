@@ -1224,3 +1224,91 @@ different node was reached.
 The tests assert the **request body**, not just that a control renders —
 a selector that looks right and sends the wrong path is exactly the
 failure this round found.
+
+---
+
+# Round 14 (M95) — F13 was not an edge case, and it was fixable
+
+R14 recorded F13 — the library canonicalizes stack depth into 5bb
+buckets, so a 97.5bb spot is solved at 100bb and can be told to shove
+100 — and closed it as **deliberately not fixed**: bucketing is the
+library's whole reason for existing, and relabelling the action to the
+real stack would leave a number that looked honest in front of a
+strategy computed for a different depth.
+
+Both halves of that were wrong.
+
+## It is the default case, not a 97.5bb curiosity
+
+Swept across stacks and preflop lines instead of the single spot R14
+happened to look at:
+
+| stack | preflop line | behind | offered |
+|---|---|---|---|
+| **100** | **limp, check** | **99.0** | **`all_in:100.00`** |
+| 100 | raise, 3bet, call | 92.5 | `all_in:90.00` |
+| **60** | **limp, check** | **59.0** | **`all_in:60.00`** |
+| 43 | raise, 3bet, call | 35.5 | `all_in:35.00` |
+
+The failing case is the **default stack size on the simplest preflop
+line there is**. Any round starting stack that pays a blind is one bb
+short of its own bucket. R14 found this at 97.5 and generalized in the
+wrong direction — toward "unusual depth" rather than toward "every pot
+that isn't raised."
+
+## The third option R14 didn't consider
+
+R14 weighed two: keep bucketing (unaffordable advice) or relabel the
+action (honest number, wrong strategy behind it). There is a third —
+**round the bucket down instead of to nearest**. Then `canonical <=
+real` is an invariant, and *every* size the tree derives is affordable
+by construction, the all-in and every raise alike. Nothing is
+relabelled; the number and the strategy still agree with each other.
+
+The cost is that worst-case depth error doubles, half a bucket to a
+full one. Measured, across every node of a real flop solve, as mean
+total-variation distance from a solve at the true depth:
+
+| SPR | truth vs floor | truth vs nearest |
+|---|---|---|
+| 9.9 | 0.0083 | 0.0011 |
+| 2.3 | 0.0000 | 0.0000 |
+| 1.3 | 0.0000 | 0.0000 |
+| 0.6 | 0.0014 | 0.0009 |
+
+Floor is the worse approximation — by under one percent of probability
+mass at its worst, and indistinguishable at three of four depths. That
+is well inside the noise the solve already carries from Monte Carlo
+equity and untrained combos. **Advice that cannot be followed is a
+different category of wrong from advice that is slightly off**, and R14
+priced the two as if they were the same category.
+
+Bucket *count* is unchanged, so library hit rate is unaffected.
+
+## The obvious repair reintroduced the bug
+
+A bare floor sends anything under one bucket to 0.0, which is not a
+game. Clamping up to one bucket instead — and the sweep test caught it
+immediately: an 8bb stack in a raise-3bet-call pot leaves **0.5bb**
+behind and was offered **`all_in:5.00`**. The exact bug, in the exact
+fix for it, one line later.
+
+Sub-bucket stacks are now used unbucketed. Reuse is lost for those
+depths and costs nothing — a player with under 5bb behind barely has a
+decision — and the invariant then holds with no exception at all.
+
+## Why the sweep, not an example
+
+The old rounding passed every hand-written example anyone had thought
+to write, including the ones in `test_canonicalize.py`. Both new tests
+sweep: 4,000 depths x 4 bucket sizes at the function, and 18
+stack-by-line combinations at the `/advise` boundary. Asserting at the
+response boundary matters as much as at the rounding function — that is
+where a user sees it, and a future change anywhere between the two would
+otherwise reintroduce it silently.
+
+**The pattern, which is R14's real lesson:** "inherent to the design,
+not a bug to fix casually" is a conclusion that has to be earned by
+enumerating the options, and R14 enumerated two of three. Writing the
+constraint down made it durable — it sat in CLAUDE.md as settled for
+long enough that later rounds read past it.

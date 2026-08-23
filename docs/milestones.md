@@ -5196,3 +5196,47 @@ entry's own corrections before trusting its conclusions.
     end-to-end check was introduced to close, now paying off a second
     time.
   - **Verification:** full backend suite green.
+
+- **M95 — advice could name a bet the player cannot make; the stack
+  bucket now rounds down.** R14 recorded this as F13 and closed it as
+  inherent to the library's design. It was neither an edge case nor
+  inherent.
+  - **Not an edge case.** Swept across stacks and preflop lines: a
+    **100bb stack in a limped pot** leaves 99bb behind and came back
+    `all_in:100.00`. Any round starting stack that pays a blind is one
+    bb short of its own bucket, so the failure case is the *default*
+    stack on the simplest line there is. R14 saw it at 97.5bb and
+    generalized toward "unusual depth" instead of "unraised pot".
+  - **The fix R14 didn't consider.** It weighed keeping the bucketing
+    (unaffordable advice) against relabelling the action to the real
+    stack (honest number, strategy solved for another depth). The third
+    option is to round the bucket **down**: `canonical <= real` becomes
+    an invariant, so every size the tree derives — all-in and every
+    raise — is affordable by construction, with nothing relabelled and
+    no disagreement between the number and the strategy behind it.
+  - **Measured price**, mean total-variation distance from a solve at the
+    true depth, across every node of a real flop solve:
+    | SPR | truth vs floor | truth vs nearest |
+    |---|---|---|
+    | 9.9 | 0.0083 | 0.0011 |
+    | 2.3 | 0.0000 | 0.0000 |
+    | 1.3 | 0.0000 | 0.0000 |
+    | 0.6 | 0.0014 | 0.0009 |
+    Floor is worse — by under 1% of probability mass at its worst,
+    indistinguishable at three of four depths, well inside the noise the
+    solve already carries. Bucket count is unchanged, so library hit rate
+    is unaffected.
+  - **The obvious repair reintroduced the bug.** A bare floor sends
+    anything under one bucket to 0.0, which is not a game; clamping up to
+    one bucket instead offered `all_in:5.00` to a player with **0.5bb**
+    behind (8bb stack, raise-3bet-call). Caught by the new sweep test
+    within a minute of writing it. Sub-bucket stacks are now used
+    unbucketed — reuse lost only where a player barely has a decision,
+    and the invariant then holds with no exception.
+  - **Both tests sweep rather than sample**, because the old rounding
+    passed every hand-written example including the ones already in
+    `test_canonicalize.py`: 4,000 depths x 4 bucket sizes at the
+    function, and 18 stack-by-line combinations at the `/advise`
+    boundary. The second matters as much as the first — the response is
+    where a user sees it.
+  - **Verification:** 817 backend tests (up from 797), 152 frontend.

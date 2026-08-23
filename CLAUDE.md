@@ -54,12 +54,18 @@ every street (preflop through river) and every supported table size
   instead of `solve_flop_turn`'s narrower one. Don't "optimize" it back
   onto the turn cache: that sharing is what made the raise sizes differ
   between two decisions on the same street.
-- **The library solves at a BUCKETED stack depth (F13).** 5bb buckets are
-  what make canonical reuse work, but a real 97.5bb spot is solved at
-  100bb — so the opening flop decision can offer `all_in:100.00` while
-  its own response reports `effective_stack_bb: 97.5`. The action KIND is
-  right; the size can overstate by up to a bucket. Inherent to the
-  bucketing, not a bug to fix casually.
+- **The library solves at a BUCKETED stack depth, and the bucket rounds
+  DOWN (F13, fixed M95).** 5bb buckets are what make canonical reuse
+  work. They used to round to *nearest*, which put the solved depth above
+  the real one and made the advice name bets the player could not make —
+  a 100bb limped pot leaves 99bb and came back `all_in:100.00`.
+  `canonical_stack_depth` now floors, so `canonical <= real` holds and
+  every size the tree derives is affordable by construction. The price is
+  a full bucket of depth error instead of half; measured across every
+  node of a real solve, that costs under 1% of probability mass at its
+  worst and nothing at all at three of four depths. **Do not "improve"
+  this back to round-to-nearest.** Sub-bucket stacks are used unbucketed
+  — clamping them up to one bucket was tried and reintroduced the bug.
 
 - **The sampled solver does NOT use CFR+'s regret clamp, and that is
   deliberate (M71).** `mccfr_solve(floor_regret=False)` is the default.

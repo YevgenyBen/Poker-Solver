@@ -160,14 +160,51 @@ def test_canonical_stack_depth_rounds_a_clear_non_halfway_value():
     assert canonical_stack_depth(102.0, bucket_bb=5.0) == pytest.approx(100.0)
 
 
-def test_canonical_stack_depth_documents_pythons_round_half_to_even_behavior():
-    # Python's built-in round() is round-half-to-even ("banker's
-    # rounding"), not round-half-up — these two exact-halfway values
-    # round in *opposite* directions at the default 5bb bucket (12.5/5
-    # = 2.5 -> 2; 17.5/5 = 3.5 -> 4), proving it's a real, documented
-    # behavior rather than an accident nobody checked.
+def test_canonical_stack_depth_never_exceeds_the_real_stack():
+    """The invariant the whole product rests on (M95).
+
+    Every action size in a solved tree is derived from the depth the tree
+    was built at, so a canonical depth ABOVE the player's real one makes
+    the solver offer a bet they cannot make. This used to happen at the
+    single most ordinary spot there is: a 100bb limped pot leaves 99bb,
+    99 rounded to 100, and the advice came back `all_in:100.00`.
+
+    Swept rather than spot-checked — the old to-nearest rounding passed
+    every hand-picked example anyone had thought to write.
+    """
+    value = 0.1
+    while value <= 400.0:
+        for bucket in (1.0, 2.5, 5.0, 10.0):
+            canonical = canonical_stack_depth(value, bucket_bb=bucket)
+            assert canonical <= value + 1e-9, (
+                f"{canonical} > {value} at bucket {bucket}: unaffordable advice"
+            )
+            assert canonical > 0.0, f"{value} at bucket {bucket} canonicalized to no game"
+        value = round(value + 0.1, 4)
+
+
+def test_canonical_stack_depth_rounds_down_rather_than_to_nearest():
+    # 99 is nearer to 100 than to 95; it must still land on 95, because
+    # a player holding 99bb cannot shove 100.
+    assert canonical_stack_depth(99.0) == pytest.approx(95.0)
     assert canonical_stack_depth(12.5) == pytest.approx(10.0)
-    assert canonical_stack_depth(17.5) == pytest.approx(20.0)
+    assert canonical_stack_depth(17.5) == pytest.approx(15.0)
+
+
+def test_canonical_stack_depth_leaves_a_sub_bucket_stack_exactly_as_it_is():
+    """A bare floor sends anything under one bucket to 0.0, which is not
+    a game — the tree would have no chips to bet. Clamping UP to one
+    bucket was the obvious repair and it reintroduced the exact bug this
+    function exists to prevent: 0.5bb behind, `all_in:5.00` offered.
+
+    So a sub-bucket stack is used as is. It gives up canonical reuse for
+    those depths, which costs almost nothing — a player with under 5bb
+    behind barely has a decision — and buys an invariant with no
+    exceptions.
+    """
+    assert canonical_stack_depth(3.0) == pytest.approx(3.0)
+    assert canonical_stack_depth(0.5) == pytest.approx(0.5)
+    assert canonical_stack_depth(3.0, bucket_bb=1.0) == pytest.approx(3.0)
 
 
 def test_canonical_stack_depth_uses_the_documented_default_bucket():
