@@ -5281,3 +5281,71 @@ entry's own corrections before trusting its conclusions.
     They cannot stay right and nothing depends on them; the command is
     the useful part.
   - **Verification:** 822 backend tests (up from 817), 152 frontend.
+
+- **M97 — M74's prescribed fix for the 6-max jam oscillation, built in
+  both forms it named, and both measured worse than doing nothing.**
+  M74 diagnosed the instability as bang-bang policy oscillation and
+  closed with "fixing it needs policy damping (averaging the policy, or
+  an optimistic-regret variant) — an algorithmic change, not a
+  parameter." This is that algorithmic change, and it is a negative
+  result. Precedent: M18 (card abstraction wasn't the lever) and M73
+  (two refuted hypotheses, no source change) — a closed-off search space
+  is a deliverable.
+  - **What was built.** `InfoSetTable.current_strategy` gained two
+    optional modifications, both default 0.0 = off: `optimism` (the
+    policy is matched against `regret_sum + optimism * last_regret` —
+    predictive regret matching) and `smoothing` (the policy is blended
+    with the one this node last played). Both thread through
+    `_mccfr_recurse` and `mccfr_solve`.
+  - **Measured at the SHIPPED operating point** (6-max, 3,000
+    iterations, three seeds, a fresh equity cache per run), against a
+    heads-up AA-jam reference of ~0.031:
+    | arm | AA jam | mean | spread | cost |
+    |---|---|---|---|---|
+    | plain | 0.036 / 0.073 / 0.058 | **0.056** | **0.037** | 262s |
+    | optimism=1.0 | 0.562 / 0.963 / 0.359 | 0.628 | 0.604 | 258s |
+    | smoothing=0.9 | 0.141 / 0.172 / 0.732 | 0.348 | 0.591 | 275s |
+    Plain wins on level and stability at equal cost.
+  - **Why each fails, which is the reusable part.** Prediction is a
+    *full-information* technique; under external sampling the last
+    instantaneous regret is dominated by the all-in — the noisiest action
+    in the tree, the same one M71 identified — so it amplifies sampling
+    noise instead of damping a cycle. Damping is a lag filter on regret
+    matching's OUTPUT while the oscillation lives in `regret_sum`, its
+    INPUT; a delayed oscillation is still an oscillation. Damping also
+    has a hard ceiling: enough of it to outlast a cycle thousands of
+    iterations long also stops the policy learning — at
+    `smoothing=0.99`, AA jams 0.998 with a seed spread of **0.000**
+    while T7s's fold *collapses* from ~0.94 to ~0.34.
+  - **A refinement of M74's diagnosis.** At 12,000 iterations every arm
+    sits at 0.40-0.61 mean; damping narrows the seed spread without
+    moving the level. If that answer were purely a cycle sampled at a
+    random phase, damping should pull the mean toward the cycle's
+    average. It does not — which points at the question being asked (the
+    equity model, the pool) rather than the policy dynamics. That is
+    where the next attempt should look, and it is a better-directed
+    hand-off than M74 left.
+  - **Two-seed readings evaporated again.** Smoothing's first two seeds
+    (0.141, 0.172) looked like a tight distribution; the third was
+    0.732. Third time in this codebase (M73's exploration floor, M80's
+    bias scare, this) — recorded in the docstring as a standing warning.
+  - **A methodology error caught and correctly scoped.** The first two
+    scripts shared one `MultiwayEquityCache` across arms, meaning to give
+    none of them a colder start; instead cache warmth ended up aligned
+    with arm order (a 3,000-iteration run went 283s -> 1.4s over a
+    session). Results were re-run with a fresh cache per run — and came
+    back **bit-identical**, because `MultiwayEquityCache` seeds each
+    entry from `(seed, opponent hands)` via `_stable_seed` rather than a
+    shared advancing RNG, a property its own docstring states. So the
+    confound was real but affected **timings only**: the interim
+    readings that predictive was faster and smoothing 2x slower were
+    artifacts, and under equal conditions all three arms are within 7%.
+  - **The knobs stay, the memory does not.** Both parameters remain
+    (like `discount` after DCFR measured worse) so the result is
+    reproducible. But `last_regret`/`last_strategy` are stored ONLY when
+    the flag that reads them is on: they are two more (num_hands,
+    num_actions) arrays beside `regret_sum`/`strategy_sum`, which exactly
+    **doubles** `node_data` — 8,500-9,300 tables on a 6-max solve, the
+    largest structure any solve produces and the one M93 had just
+    finished bounding. A default-off feature pays nothing.
+  - **Verification:** 831 backend tests (up from 822), 152 frontend.

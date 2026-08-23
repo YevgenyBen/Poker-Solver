@@ -1360,3 +1360,184 @@ def test_mccfr_solve_real_3max_flop_chains_into_turn_and_produces_well_formed_st
 
     assert len(chance_data) > 0  # dispatch actually fired at least once
     assert any(isinstance(branch.root, DecisionNode) for branch in chance_data.values())  # a real turn decision
+
+
+# --- M97: predictive regret matching, for M74's bang-bang oscillation ---
+
+
+def test_optimism_defaults_to_off_and_leaves_the_policy_untouched():
+    """The default must be exactly the pre-M97 rule. `last_regret` is now
+    stored on every update whether or not anyone reads it, so the flag has
+    to be what changes behaviour — not the presence of the field."""
+    table = InfoSetTable.zeros(2, 3)
+    table.regret_sum = np.array([[3.0, 1.0, 0.0], [0.0, 0.0, 0.0]])
+    table.last_regret = np.array([[-3.0, 9.0, 0.0], [5.0, 0.0, 0.0]])
+
+    plain = table.current_strategy()
+    assert np.allclose(plain[0], [0.75, 0.25, 0.0])
+    # Row 1 has no positive regret at all, so it falls back to uniform —
+    # and must NOT be rescued by last_regret while optimism is off.
+    assert np.allclose(plain[1], [1 / 3, 1 / 3, 1 / 3])
+    assert np.array_equal(plain, table.current_strategy(0.0))
+
+
+def test_optimism_adds_one_more_copy_of_the_last_instantaneous_regret():
+    """The rule itself: match against `regret_sum + optimism *
+    last_regret`. Asserted against hand-computed numbers rather than
+    against the implementation, so a sign slip or a double-count fails."""
+    table = InfoSetTable.zeros(1, 2)
+    table.regret_sum = np.array([[4.0, 6.0]])
+    table.last_regret = np.array([[6.0, -2.0]])
+
+    # regret_sum + 1.0 * last_regret = [10, 4] -> [0.714..., 0.285...]
+    assert np.allclose(table.current_strategy(1.0), [[10 / 14, 4 / 14]])
+    # Half a step: [7, 5] -> [0.583..., 0.416...]
+    assert np.allclose(table.current_strategy(0.5), [[7 / 12, 5 / 12]])
+    # And the un-predicted policy is a different answer, so the test is
+    # not passing on a coincidence.
+    assert not np.allclose(table.current_strategy(0.0), table.current_strategy(1.0))
+
+
+def test_optimism_reacts_before_plain_regret_matching_does():
+    """Why the parameter exists, as a property rather than a number.
+
+    An action that has just started losing badly is still the leader by
+    accumulated regret for a while, so plain regret matching keeps playing
+    it. Prediction lets the policy move on the evidence it already has —
+    which is the damping M74 said the oscillation needs.
+    """
+    table = InfoSetTable.zeros(1, 2)
+    table.regret_sum = np.array([[10.0, 8.0]])   # action 0 still ahead
+    table.last_regret = np.array([[-6.0, 6.0]])  # but it just collapsed
+
+    plain = table.current_strategy(0.0)[0]
+    predicted = table.current_strategy(1.0)[0]
+    assert plain[0] > plain[1], "fixture is wrong: action 0 should still lead on the sum"
+    assert predicted[1] > predicted[0], "prediction did not react to the fresh regret"
+
+
+def test_optimism_never_produces_an_invalid_distribution():
+    """A prediction can drive every action's score negative, where the sum
+    is zero and the naive normalization is 0/0. That path must fall back to
+    uniform exactly as the un-predicted one does."""
+    table = InfoSetTable.zeros(1, 3)
+    table.regret_sum = np.array([[1.0, 2.0, 3.0]])
+    table.last_regret = np.array([[-50.0, -50.0, -50.0]])
+    strategy = table.current_strategy(1.0)
+    assert np.allclose(strategy, 1 / 3)
+    assert not np.any(np.isnan(strategy))
+
+
+def _optimism_toy(equity, optimism, seed=11, iterations=60):
+    config = StreetConfig(positions=("BTN", "BB"), pot=10.0, stack_bb=20.0,
+                          raise_sizes=(), max_raises=1)
+    root = build_street_tree(config)
+    data = mccfr_solve(root, _TOY_COMBOS, ("BTN", "BB"),
+                       _StubEquityCache(equity, num_hands=2), iterations=iterations,
+                       seed=seed, initial_reach={"BTN": np.ones(2), "BB": np.ones(2)},
+                       optimism=optimism)
+    return [table.average_strategy() for table in data.values()]
+
+
+def test_mccfr_solve_threads_optimism_all_the_way_down():
+    """End to end: the parameter must reach the policy inside the
+    traversal, not merely sit on the signature.
+
+    The fixture has to be NEAR-TIED (equity 0.4) and that is the whole
+    point. At equity 0.9 the two arms are bit-identical — one action's
+    regret is deeply negative every iteration, so adding another copy of
+    it cannot change which side of zero it lands on, and the policy is
+    (0, 1) either way. A dominated fixture makes this parameter a
+    provable no-op, so a test written on one would pass whether or not
+    the plumbing worked at all. Optimism only does anything where the
+    actions genuinely compete — exactly M74's regime.
+    """
+    assert any(
+        not np.allclose(a, b)
+        for a, b in zip(_optimism_toy(0.4, 0.0), _optimism_toy(0.4, 1.0))
+    ), "optimism reached nothing — the parameter is not threaded through"
+    # Deterministic given a seed, in both modes.
+    assert all(
+        np.array_equal(a, b)
+        for a, b in zip(_optimism_toy(0.4, 1.0), _optimism_toy(0.4, 1.0))
+    )
+    # And still a valid strategy, not just a different one.
+    for average in _optimism_toy(0.4, 1.0):
+        assert np.allclose(average.sum(axis=1), 1.0)
+        assert not np.any(np.isnan(average))
+
+
+def test_optimism_is_a_no_op_where_one_action_dominates():
+    """The flip side, asserted rather than left as folklore: where a
+    strictly worse action is losing by a wide margin, prediction cannot
+    resurrect it, and the two arms agree bit for bit. Recorded so nobody
+    writes an optimism test on a lopsided fixture and concludes the
+    feature is broken."""
+    assert all(
+        np.array_equal(a, b)
+        for a, b in zip(_optimism_toy(0.9, 0.0), _optimism_toy(0.9, 1.0))
+    )
+
+
+def _solve_for_history(optimism=0.0, smoothing=0.0):
+    config = StreetConfig(positions=("BTN", "BB"), pot=10.0, stack_bb=20.0,
+                          raise_sizes=(), max_raises=1)
+    root = build_street_tree(config)
+    return mccfr_solve(root, _TOY_COMBOS, ("BTN", "BB"), _StubEquityCache(0.4, num_hands=2),
+                       iterations=20, seed=5,
+                       initial_reach={"BTN": np.ones(2), "BB": np.ones(2)},
+                       optimism=optimism, smoothing=smoothing)
+
+
+def test_the_extra_history_arrays_cost_nothing_when_nobody_reads_them():
+    """The default solve must not pay for M97 at all.
+
+    `last_regret` and `last_strategy` are two more (num_hands,
+    num_actions) arrays beside `regret_sum` and `strategy_sum` — storing
+    them always would exactly DOUBLE `node_data`, the largest structure
+    any solve produces and the one M93 had just finished bounding. Since
+    both modes measured out as not worth enabling, the default path keeps
+    neither.
+    """
+    data = _solve_for_history()
+    assert data, "fixture solved nothing"
+    assert all(t.last_regret is None for t in data.values())
+    assert all(t.last_strategy is None for t in data.values())
+
+
+def test_each_history_array_is_recorded_when_its_own_mode_is_on():
+    """...and is really there when asked for, with the right shape —
+    otherwise the modes above would silently degrade to plain regret
+    matching and their measurements would mean nothing."""
+    with_optimism = _solve_for_history(optimism=1.0)
+    recorded = [t for t in with_optimism.values() if t.last_regret is not None]
+    assert recorded, "optimism is on but no table recorded last_regret"
+    assert all(t.last_regret.shape == t.regret_sum.shape for t in recorded)
+    # Each mode stores only its own array, not the other's.
+    assert all(t.last_strategy is None for t in with_optimism.values())
+
+    with_smoothing = _solve_for_history(smoothing=0.9)
+    played = [t for t in with_smoothing.values() if t.last_strategy is not None]
+    assert played, "smoothing is on but no table recorded last_strategy"
+    assert all(t.last_strategy.shape == t.regret_sum.shape for t in played)
+    assert all(t.last_regret is None for t in with_smoothing.values())
+
+
+def test_smoothing_moves_the_policy_in_steps_rather_than_wholesale():
+    """The damping property itself, at the table level: a policy blended
+    with the one just played cannot jump the whole way to the fresh
+    regret-matching answer in a single step. That is the entire mechanism
+    M74 asked for."""
+    table = InfoSetTable.zeros(1, 2)
+    table.regret_sum = np.array([[0.0, 5.0]])       # fresh answer: (0, 1)
+    table.last_strategy = np.array([[1.0, 0.0]])    # but it just played (1, 0)
+
+    fresh = table.current_strategy()
+    assert np.allclose(fresh, [[0.0, 1.0]]), "fixture is wrong: fresh answer should be pure"
+
+    damped = table.current_strategy(smoothing=0.9)
+    assert np.allclose(damped, [[0.9, 0.1]])
+    assert np.allclose(damped.sum(axis=1), 1.0)
+    # Heavier smoothing must move less, not more.
+    lighter = table.current_strategy(smoothing=0.5)
+    assert lighter[0, 1] > damped[0, 1]

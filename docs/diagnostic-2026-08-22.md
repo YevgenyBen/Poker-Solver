@@ -1386,3 +1386,89 @@ the file.
 817 and 152 by the time anyone looked. They cannot be right for long and
 nothing depends on them — the *command* is the useful part. Same for
 "58 entries" describing a milestone log that has 69.
+
+---
+
+# Round 16 (M97) — building M74's prescribed fix, and refuting it
+
+M74 closed by naming what the 6-max jam oscillation needs: "policy
+damping (averaging the policy, or an optimistic-regret variant) — an
+algorithmic change, not a parameter." Every round since has quoted that
+as the way forward. This round built it, in both forms, and measured
+both **worse than doing nothing**.
+
+## The result
+
+6-max, 3,000 iterations (the shipped budget), three seeds, a fresh
+equity cache per run. Heads-up AA-jam reference ~0.031:
+
+| arm | AA jam | mean | spread | cost |
+|---|---|---|---|---|
+| **plain** | 0.036 / 0.073 / 0.058 | **0.056** | **0.037** | 262s |
+| predictive | 0.562 / 0.963 / 0.359 | 0.628 | 0.604 | 258s |
+| smoothing 0.9 | 0.141 / 0.172 / 0.732 | 0.348 | 0.591 | 275s |
+
+Plain wins on level and on stability, at the same cost.
+
+## Why — the part worth keeping
+
+**Prediction is a full-information technique.** Under external sampling
+the last instantaneous regret is dominated by the all-in: the noisiest
+action in the tree, because its payoff swings a whole stack. That is the
+same action M71 identified when it removed the CFR+ clamp. Adding
+another copy of it amplifies sampling noise; it does not damp a cycle.
+
+**Damping filters the wrong signal.** It lags regret matching's
+*output*, while the oscillation lives in `regret_sum`, its *input*. A
+delayed oscillation is still an oscillation and `strategy_sum`
+accumulates it either way. The mechanism also has a hard ceiling —
+enough damping to outlast a cycle thousands of iterations long also
+stops the policy learning. Visible directly at `smoothing=0.99`: AA jams
+**0.998 with a seed spread of 0.000** while T7s's fold *collapses* from
+~0.94 to ~0.34. A perfectly stable wrong answer.
+
+## A refinement of M74's diagnosis
+
+At 12,000 iterations every arm sits at 0.40-0.61 mean, and damping
+narrows the seed spread **without moving the level**. If that answer
+were a cycle sampled at a random phase, damping should pull the mean
+toward the cycle's average. It doesn't.
+
+So the 12k answer is not "the right number, sampled at the wrong
+moment" — the solver is converging somewhere genuinely wrong, and phase
+is secondary. That redirects the next attempt from the policy dynamics
+to **the question being asked**: the equity model's blocker-ignoring
+pairwise approximation, and the pool. Which is precisely the shape of
+M66/M67, where a "solver divergence" turned out to be a distorted
+question the solver was answering correctly.
+
+## Two methodology notes
+
+**A confound found, checked, and correctly scoped.** The first two
+scripts shared one `MultiwayEquityCache` across arms — intended to stop
+any arm getting a colder start, but it aligned cache warmth with arm
+order instead (a 3,000-iteration run went 283s to 1.4s across a
+session). Re-running with a fresh cache per run returned **bit-identical
+strategies**, because `MultiwayEquityCache` seeds each entry from
+`(seed, opponent hands)` rather than a shared advancing RNG — a property
+its own docstring states. The confound was real but **timing-only**. The
+interim readings that predictive was faster and smoothing 2x slower were
+artifacts; under equal conditions the three arms are within 7%.
+
+**Two seeds is not a distribution, for the third time.** Smoothing's
+first two seeds were 0.141 and 0.172 and looked tight; the third was
+0.732 — and this write-up nearly reported "tight spread" off those two.
+M73's exploration floor and M80's bias scare died the same way. It is
+now a standing warning in `current_strategy`'s docstring rather than a
+lesson each round relearns.
+
+## What shipped
+
+Both knobs stay, default off, like `discount` after DCFR measured worse
+— a refuted approach that is still reproducible is worth more than one
+that is only remembered. But `last_regret` and `last_strategy` are
+stored **only when the flag that reads them is on**: they are two more
+`(num_hands, num_actions)` arrays beside `regret_sum`/`strategy_sum`,
+exactly **doubling** `node_data` — 8,500-9,300 tables on a 6-max solve,
+the largest structure any solve produces, and the one M93 had just
+finished bounding. A default-off feature pays nothing.

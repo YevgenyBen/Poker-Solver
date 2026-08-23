@@ -209,6 +209,13 @@ class InfoSetTable:
 
     regret_sum: np.ndarray
     strategy_sum: np.ndarray
+    # M97: the most recent iteration's instantaneous regret at this node,
+    # used as the one-step prediction by predictive regret matching. None
+    # until the first update; `optimism=0.0` never reads it.
+    last_regret: np.ndarray | None = None
+    # M97: the policy this node last played, for `smoothing`. None until
+    # the first visit; `smoothing=0.0` never reads it.
+    last_strategy: np.ndarray | None = None
 
     @classmethod
     def zeros(cls, num_hands: int, num_actions: int) -> "InfoSetTable":
@@ -217,15 +224,65 @@ class InfoSetTable:
             strategy_sum=np.zeros((num_hands, num_actions)),
         )
 
-    def current_strategy(self) -> np.ndarray:
-        """Regret-matching+ strategy: shape (num_hands, num_actions)."""
-        positive = np.maximum(self.regret_sum, 0.0)
+    def current_strategy(self, optimism: float = 0.0, smoothing: float = 0.0) -> np.ndarray:
+        """Regret-matching+ strategy: shape (num_hands, num_actions).
+
+        Two optional modifications, **both off by default and both
+        measured worse than off** (M97). They are kept so the result is
+        reproducible rather than folklore — see `mccfr_solve`'s docstring
+        for the numbers, and do not enable either without re-measuring.
+
+        - `smoothing` **damps**: the policy is blended with the one this
+          node last played, `smoothing * last + (1 - smoothing) * fresh`,
+          so a policy that swings wholesale between two near-tied actions
+          moves in steps instead.
+        - `optimism` **anticipates**: the policy is matched against
+          `regret_sum + optimism * last_regret` — accumulated regret plus
+          one more copy of the most recent instantaneous regret, as a
+          guess at what the next iteration will add. This is predictive
+          regret matching.
+
+        Both were built for the oscillation M74 diagnosed: when two
+        actions are near-tied, plain regret matching swings the policy
+        wholesale between them (AA's jam comes out ~0.000 or ~1.000
+        depending on the run), and the time-average then reports whichever
+        phase the run ended in. M74 prescribed policy damping as the fix.
+
+        Neither works, and the reasons differ:
+
+        - Prediction is a **full-information** technique. Under external
+          sampling the last instantaneous regret is dominated by the
+          all-in — the noisiest action in the tree, since its payoff
+          swings a whole stack, which is the same thing M71 found when it
+          removed the CFR+ clamp. Adding another copy of it amplifies
+          sampling noise rather than damping a cycle.
+        - Damping is a **lag filter on the output** of regret matching,
+          while the oscillation lives in `regret_sum`, its input. A
+          delayed oscillation is still an oscillation, and `strategy_sum`
+          accumulates it either way. The mechanism also has a hard
+          ceiling: enough damping to outlast a cycle thousands of
+          iterations long also stops the policy learning at all —
+          measured, at `smoothing=0.99`, as AA jamming 0.998 with a seed
+          spread of 0.000 while T7s's fold *collapsed* from ~0.94 to
+          ~0.34.
+
+        At 0.0 each is skipped entirely, and the arrays they read
+        (`last_regret`, `last_strategy`) are not even stored — see the
+        record sites in `_mccfr_recurse` for why that matters.
+        """
+        regrets = self.regret_sum
+        if optimism and self.last_regret is not None:
+            regrets = regrets + optimism * self.last_regret
+        positive = np.maximum(regrets, 0.0)
         totals = positive.sum(axis=1, keepdims=True)
-        num_actions = self.regret_sum.shape[1]
-        uniform = np.full_like(self.regret_sum, 1.0 / num_actions)
+        num_actions = regrets.shape[1]
+        uniform = np.full_like(regrets, 1.0 / num_actions)
         with np.errstate(invalid="ignore", divide="ignore"):
             normalized = positive / totals
-        return np.where(totals > 0, normalized, uniform)
+        strategy = np.where(totals > 0, normalized, uniform)
+        if smoothing and self.last_strategy is not None:
+            strategy = smoothing * self.last_strategy + (1.0 - smoothing) * strategy
+        return strategy
 
     def average_strategy(self) -> np.ndarray:
         """The actual CFR output: the time-averaged strategy."""
@@ -615,6 +672,8 @@ def _mccfr_recurse(
     chance_data: Optional[dict] = None,
     strategy_weight: float = 1.0,
     floor_regret: bool = True,
+    optimism: float = 0.0,
+    smoothing: float = 0.0,
 ) -> np.ndarray:
     """Returns the traverser's payoff vector (length num_hands) from this
     node onward, given the fixed `opponent_hands` for this iteration.
@@ -690,13 +749,18 @@ def _mccfr_recurse(
                 branch.root, traverser, opponent_hands, reach, node_data, num_hands, hand_index,
                 branch.equity_cache, rng,
                 board=branch.board, chance_fn=branch.chance_fn, chance_data=chance_data,
-                strategy_weight=strategy_weight, floor_regret=floor_regret,
+                strategy_weight=strategy_weight, floor_regret=floor_regret, optimism=optimism,
+                smoothing=smoothing,
             )
         return _mccfr_terminal_value(node, traverser, opponent_hands, num_hands, equity_cache)
 
     actions = node.legal_actions
     table = node_data.setdefault(id(node), InfoSetTable.zeros(num_hands, len(actions)))
-    strategy = table.current_strategy()
+    strategy = table.current_strategy(optimism, smoothing)
+    if smoothing:
+        # What this node actually played, for the next visit's blend.
+        # Conditional for the same memory reason as `last_regret` below.
+        table.last_strategy = strategy
 
     if node.player_to_act == traverser:
         # Own decision: explore every action exhaustively, vectorized
@@ -717,6 +781,8 @@ def _mccfr_recurse(
                 chance_data=chance_data,
                 strategy_weight=strategy_weight,
                 floor_regret=floor_regret,
+                optimism=optimism,
+                smoothing=smoothing,
             )
             for a_idx, action in enumerate(actions)
         ]
@@ -766,6 +832,20 @@ def _mccfr_recurse(
             np.maximum(table.regret_sum + regret, 0.0) if floor_regret
             else table.regret_sum + regret
         )
+        # M97: predictive regret matching's one-step prediction, kept ONLY
+        # when something is going to read it.
+        #
+        # The tidier design stores it always, so a table's history doesn't
+        # depend on the flags. It costs too much to justify for a feature
+        # that is off by default: `last_regret` and `last_strategy`
+        # together are two more (num_hands, num_actions) arrays on top of
+        # `regret_sum` and `strategy_sum`, which exactly DOUBLES
+        # `node_data` — the largest structure any solve produces, and the
+        # one M93 had just finished putting a ceiling on. Paying 2x memory
+        # on every solve to keep a field consistent for a mode nobody
+        # enables is the wrong trade.
+        if optimism:
+            table.last_regret = regret
         # M69: `strategy_weight` scales this iteration's contribution to
         # the time-average. At 1.0 every iteration counts equally — which
         # lets iteration 1's untrained, exactly-uniform current_strategy()
@@ -827,6 +907,8 @@ def _mccfr_recurse(
         chance_data=chance_data,
         strategy_weight=strategy_weight,
         floor_regret=floor_regret,
+        optimism=optimism,
+        smoothing=smoothing,
     )
 
 
@@ -916,6 +998,8 @@ def mccfr_solve(
     linear_averaging: bool = True,
     floor_regret: bool = False,
     discount: tuple | None = None,
+    optimism: float = 0.0,
+    smoothing: float = 0.0,
 ) -> dict:
     """Run `iterations` of External-Sampling MCCFR over `root`.
 
@@ -955,6 +1039,34 @@ def mccfr_solve(
     here: DCFR(1.5, 0) gave AA jam 0.139 and DCFR(1.5, 0.5) gave 0.103,
     against plain CFR's 0.034, at roughly twice the cost. `discount=
     (alpha, beta)` remains available but is not used by default.
+
+    `optimism` and `smoothing` (M97, both default 0.0 = off) are the two
+    shapes of policy damping M74 prescribed for the 6-max jam
+    oscillation. **Both measured worse than doing nothing**, so both stay
+    off; see `InfoSetTable.current_strategy` for the mechanisms and for
+    why each fails. Measured at the SHIPPED operating point (6-max, 3,000
+    iterations, three seeds, a FRESH equity cache per run), against a
+    heads-up AA-jam reference of ~0.031:
+
+        arm                  AA jam                  mean   spread  cost
+        plain                0.036 / 0.073 / 0.058   0.056   0.037  262s
+        optimism=1.0         0.562 / 0.963 / 0.359   0.628   0.604  258s
+        smoothing=0.9        0.141 / 0.172 / 0.732   0.348   0.591  275s
+
+    Plain wins on level and on stability, at the same cost. Note the
+    third smoothed seed: the first two (0.141, 0.172) looked like a tight
+    distribution and the third was 0.732. **Do not read a trend off two
+    seeds here** — that mistake has now been made three times in this
+    codebase (M73's exploration floor, M80's bias scare, this).
+
+    Raising the budget does not rescue either: at 12,000 iterations every
+    arm sits at 0.40-0.61 mean, an order of magnitude above the
+    reference, and damping narrows the seed spread without moving the
+    level. That is itself informative — if the 12,000-iteration answer
+    were purely a cycle sampled at a random phase, damping should pull
+    the mean toward the cycle's average. It does not, which points at the
+    question being asked (the equity model, the pool) rather than at the
+    policy dynamics, and is where the next attempt should look.
 
     `linear_averaging` (M69, default True) weights iteration t's
     contribution to the time-averaged strategy by t, rather than counting
@@ -1093,6 +1205,8 @@ def mccfr_solve(
             board=board, chance_fn=chance_fn, chance_data=chance_data,
             strategy_weight=float(iteration + 1) if linear_averaging else 1.0,
             floor_regret=floor_regret,
+            optimism=optimism,
+            smoothing=smoothing,
         )
         if discount is not None:
             # Discounted CFR: shrink accumulated regret toward zero each
