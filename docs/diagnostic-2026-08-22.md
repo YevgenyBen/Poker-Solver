@@ -1170,3 +1170,57 @@ purpose — reentrancy there would silently defeat the gate.
 
 Pinned by a regression test, because the failure mode is a **hang** with
 no error and no indication of where to look.
+
+---
+
+# Round 13 — running the actual app in a browser
+
+Every frontend test stubs `fetch`. **Nobody had ever run the real UI
+against the real API.** For a product, that is the gap that matters most.
+
+Built the frontend, started the API (which serves `dist/` at `/`), and
+drove it in a browser.
+
+## What works
+
+- The app loads and answers. Heads-up preflop returned real advice for
+  AsAh in 3.6s. **No console errors.**
+- **M82's low-confidence warning renders correctly.** A 9-max user sees
+  AA shoving 81% — wrong advice — with the warning right beside it:
+  *"Low confidence. 9-max preflop does not converge at any affordable
+  budget... Treat this as a hint, not GTO."* The honesty chain works end
+  to end for the first time: solver → API → UI → user.
+
+## F18 — every mid-street decision was unreachable from the UI
+
+With a board entered, the Advisor offered **no flop action controls at
+all**. The only options were "Get advice" (the street's opening decision)
+or advancing to the next street. The UI could ask *"what do I do first on
+this street"* and nothing else.
+
+That is precisely the limitation M84-M89 removed from the API — **and I
+introduced it**, by shipping four milestones of capability without ever
+checking whether a user could reach it. It is the same pattern as M82's
+unrendered `solver_confidence`, which I had already written up *as a
+pattern*, and then repeated.
+
+**M94 adds a "Your spot" selector** — *I'm first to act* / *They checked
+to me* / *I'm facing a bet* — sending a **partial** action path for the
+street being asked about. Deliberately three fixed options rather than a
+free-form action builder: they cover what a player needs to describe,
+stay legal at any live-position count, and need no legal-action walker.
+
+Verified in the browser, with the discriminator that matters — the same
+hand at two spots produces structurally different action sets:
+
+| spot | air (5c4d) |
+|---|---|
+| I'm first to act | check 100% (no fold exists — checking is free) |
+| **I'm facing a bet** | **fold 73%**, call 22%, shove 5% |
+
+Fold only exists at the second, which is what proves a genuinely
+different node was reached.
+
+The tests assert the **request body**, not just that a control renders —
+a selector that looks right and sends the wrong path is exactly the
+failure this round found.
