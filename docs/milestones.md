@@ -5376,11 +5376,16 @@ entry's own corrections before trusting its conclusions.
     more samples converge ONTO the jam rather than away from it. The
     long-standing note that the sizing split was "not converged at this
     budget" implied more budget would fix it; it will not.
-  - **Heads-up escapes by cancellation, not soundness.** A jam there
-    usually just wins the 1.5bb blinds, which is worth less than a
-    called raise even at the underpriced +2.2bb — so raising still wins
-    and AA jams ~3%. Two errors nearly cancel at N=2, which is why this
-    never looked like a structural problem.
+  - **Why heads-up is unaffected: NOT established.** [Corrected in M99.]
+    This entry originally claimed heads-up "escapes by cancellation" —
+    that a jam there just wins the 1.5bb blinds, worth less than a
+    called raise even underpriced. That was a hypothesis stated as a
+    finding, and its arithmetic does not survive scrutiny: a jam's value
+    depends on villain's calling frequency against the WHOLE shoving
+    range, not on AA in isolation, and the equilibrium jam frequency is
+    a property of the range's incentives rather than one hand's. What is
+    measured is the pricing rule and the 6-max convergence onto jamming.
+    Why N=2 escapes remains open.
   - **Equity noise explains the INSTABILITY, not the level.** Measured
     directly: a 50-sample multiway equity estimate has error sd 0.091 —
     **+/-55bb of EV in a six-way 100bb pot**, worst observed 141bb, with

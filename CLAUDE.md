@@ -97,7 +97,13 @@ every street (preflop through river) and every supported table size
   hand ended immediately — discarding the postflop game that is most of
   a raise's value. The error grows with opponent count, since more
   opponents means more chance the correctly-priced all-in gets called.
-  Heads-up escapes by cancellation, not soundness. **Don't try to fix
+  **Why heads-up looks fine is NOT established** — M98 asserted a
+  cancellation argument it never measured, and the arithmetic behind it
+  does not survive contact with how the solver actually works (a jam's
+  value depends on villain's calling frequency against the whole shoving
+  range, not on AA alone). Measured: the pricing rule, and that more
+  samples/iterations converge onto jamming at 6-max. Inferred, still
+  open: why N=2 is unaffected. **Don't try to fix
   this with iterations, samples, or the policy rule** — it needs
   postflop continuation value at preflop terminals. Users are told via
   `sizing_confidence` (M98); the fold-vs-play call is unaffected and

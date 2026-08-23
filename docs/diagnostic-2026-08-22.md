@@ -1504,11 +1504,21 @@ the postflop value that is most of a raise's worth. The bias grows with
 opponent count, because more opponents means more chance the
 accurately-priced all-in gets called at all.
 
-Heads-up escapes by **cancellation, not soundness**: a jam there usually
-just wins the 1.5bb blinds, which is less than a called raise is worth
-even at the underpriced +2.2bb — so raising still wins and AA jams ~3%.
-Two errors nearly cancel at N=2, which is exactly why nobody saw a
-structural problem for ninety milestones.
+Heads-up does not show this, and **why is an open question.**
+
+> **Corrected in round 18.** This paragraph originally claimed heads-up
+> "escapes by cancellation, not soundness" — that a jam there just wins
+> the 1.5bb blinds, worth less than a called raise even at the
+> underpriced +2.2bb. That was a hypothesis written as a finding, and it
+> does not survive scrutiny: a jam's value depends on villain's calling
+> frequency **against the whole shoving range**, not on AA in isolation,
+> and the equilibrium jam frequency is a property of the range's
+> incentives rather than one hand's arithmetic.
+>
+> What this round actually measured is the pricing rule (read from
+> `_mccfr_terminal_value`) and the 6-max convergence onto jamming. Why
+> N=2 is unaffected is inferred, not shown — and a plausible causal story
+> told confidently is the specific failure this document exists to catch.
 
 ## It is not a budget problem
 

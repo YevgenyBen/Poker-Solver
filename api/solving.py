@@ -2095,12 +2095,17 @@ def _advise(request, street: str, iterations: int, solve_iterations: int, hero_c
         seen[card] = field
 
     if street == "flop" and not multiway and request.flop_action_path:
-        # M84: a flop decision that isn't the street's first. Goes through
-        # solve_flop_turn (which solves the whole flop subtree) rather
-        # than the canonical library, because the library persists only a
-        # flattened ROOT strategy and structurally cannot answer about a
-        # deeper node. Shares the turn cell's cache, so asking about a
-        # flop decision and then the turn costs one solve.
+        # M84: a flop decision that isn't the street's first. Does not go
+        # through the canonical library, because the library persists only
+        # a flattened ROOT strategy and structurally cannot answer about a
+        # deeper node.
+        #
+        # [Comment corrected in M99. It used to say this goes through
+        # `solve_flop_turn` and shares the turn cell's cache — true when
+        # M84 wrote it, false since M88 (F12), which moved this onto
+        # `solve_flop` at the canonical library's own tree so that both
+        # decisions on this street model the same game. It now has its own
+        # cache (`_flop_node_cache`) and does NOT share the turn's.]
         raw = _query_flop_node_from_path(
             request.preflop_action_path, request.flop_action_path, request.stack_bb,
             board_cards, iterations, solve_iterations, request.players,

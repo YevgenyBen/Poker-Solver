@@ -195,9 +195,11 @@ MULTIWAY_PREFLOP_SAMPLES = 50
 # the hand ended immediately, discarding the postflop game that is most
 # of a raise's value. The error grows with opponent count, because more
 # opponents means more chance the accurately-priced all-in gets called.
-# Heads-up escapes it by cancellation, not by soundness: a jam there
-# usually just wins the 1.5bb blinds, which is less than a called raise
-# is worth even when underpriced.
+# Heads-up does NOT show this, and why is an open question — M98 offered
+# a cancellation argument ("a jam there just wins the blinds") that it
+# never measured and that does not hold up: a jam's value depends on
+# villain's calling frequency against the whole shoving range, not on one
+# hand's. Corrected in M99 rather than left as a plausible story.
 #
 # What sample count DOES control is the INSTABILITY: a 50-sample equity
 # estimate carries an error of +/-55bb of EV in a six-way 100bb pot,
@@ -728,10 +730,28 @@ LOW_CONFIDENCE_TABLE_SIZES = {
 # decision at 3-max and 6-max is the part that IS converged and is what
 # most players are actually asking.
 #
-# Scoped to preflop: postflop trees are solved per-request against a real
-# derived range, and carry their own `trained`/`range_confidence`
-# signals. Every multiway table size is listed — the defect is a property
-# of the sampled preflop solve, not of any one seat count. Measured: at
+# Scoped to preflop — and that scoping is NOT fully justified yet, which
+# is stated here rather than left to read as settled.
+#
+# The defect M98 found is in TERMINAL PRICING
+# (`cfr._mccfr_terminal_value` awards the pot by raw equity), so it
+# applies wherever a tree scores a called bet as an immediate showdown,
+# not only preflop. Severity should scale with how many streets of
+# betting go unmodelled: preflop three, a flop-only tree two, a turn tree
+# one, and a river tree none — on the river `equity * pot` is exact. That
+# predicts multiway FLOP sizing carries a weaker version of the same
+# problem.
+#
+# It is not flagged there because it has not been measured there, and
+# this project does not ship caveats on hunches any more than it ships
+# advice on them. The preflop case is measured (AA 0.649 / KK 0.709 at
+# the most converged setting tested); the postflop case is an open
+# question for whoever picks this up. Postflop responses do carry
+# `trained`/`range_confidence`, but those describe the RANGE, not the
+# terminal pricing, so they do not cover this.
+#
+# Every multiway table size is listed — the defect is a property of the
+# sampled solve, not of any one seat count. Measured: at
 # 6-max AA's all-in frequency swings 0.03-0.92 across seeds and iteration
 # budgets where a converged solve puts it near 0.03 (M72-M74, M97), and
 # the equity estimates the choice rests on carry an error of +/-55bb of
