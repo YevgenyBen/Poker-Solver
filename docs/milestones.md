@@ -5603,3 +5603,59 @@ entry's own corrections before trusting its conclusions.
     reasoning is sound and is still not a measurement, and the comment
     says which is which.
   - **Verification:** 842 backend tests (up from 835), 154 frontend.
+
+- **M101 — third full audit, and its findings acted on.** A fresh pass
+  over the whole product: static checks, a live-play simulation against
+  the real API, and cold-vs-warm benchmarks. Full write-up in
+  `docs/audit-2026-08-23.md`; four findings, all resolved here.
+  - **F19 (high): a malformed request cost 76 seconds to reject.** A
+    cold 6-max request whose preflop path leaves four players still to
+    act took **76.2s to return a 422** (0.002s warm). Two causes, one
+    shape of reasoning: the live-player count fetched the SOLVE in order
+    to walk a tree, and the path-shape check sat behind the solve rather
+    than in front of it. The first carried a comment justifying itself —
+    *"the preflop solve is already cached, so this is a tree walk, not a
+    second solve"* — which is true for the second caller and wrong for
+    the first, who is the only one waiting. Both now build a throwaway
+    tree (`game_tree` builds children lazily, so walking one path
+    materialises only that path): **76.2s -> 0.1s, 760x.** Pinned by a
+    test that counts SOLVES rather than seconds, because a wall-clock
+    bound would flake on a machine that drifts ~1.7x between sessions.
+  - **F20 (medium): the affordability guarantee was only checkable at
+    opening decisions.** M95 promised no advice names a bet the player
+    cannot make and swept every street to prove it — but only each
+    street's *opening* decision, which is the one place
+    `effective_stack_bb` means "money behind". Elsewhere it means
+    something else: preflop it is the stack net of blinds while preflop
+    sizes are TOTAL commitment; one decision into a street it is the
+    shortest remaining stack after someone bets. So a real flop node
+    reports `effective_stack_bb: 85.0` beside `all_in:97.50` — both
+    correct, not comparable, and a caller cannot answer "can I afford
+    this?" from the response. Fixed with a separate `max_affordable_bb`
+    (the largest total commitment the acting player can make on this
+    street), swept at mid-street nodes, plus a test asserting the two
+    fields genuinely DIFFER at the node that motivated it so the new one
+    cannot decay into a copy of the old.
+  - **F21: a stale-comment detector, and why the obvious one fails.**
+    Shipped as `tests/test_comment_drift.py`. The obvious version — a
+    regex for `M\d+ .* (now|currently|as of)` — flagged 8 lines, all
+    accurate, and missed M99's real defect entirely, which contains none
+    of those words. Matching comment BLOCKS not lines (a disclaimer sits
+    a line above the claim it disclaims), exempting contrast wording, and
+    guarded by a test that reconstructs the original defect and requires
+    a hit.
+  - **F22: two constants with no measured justification** now say so
+    explicitly instead of leaving the gap silent.
+  - **An audit check that was wrong, recorded as such.** The harness
+    flagged `hero_in_range: false` as "no advice"; it is a designed
+    signal (hero's combo was force-included at the range minimum after
+    failing to survive the cap). And it flagged every preflop all-in as
+    unaffordable — which is *how* F20 was found, but on a false premise
+    that the fields share a baseline. **A checker that reports a real
+    defect for the wrong reason is lucky, not right.**
+  - **Confirmed healthy:** layering clean (`config <- caches <- solving
+    <- main`, zero violations), no TODO markers, no untested module, no
+    uncalled public solver entry point, all four impossible-request
+    probes refused 422 with specific reasons, honesty signals firing on
+    the right cells, every warm response under 25ms.
+  - **Verification:** 849 backend tests (up from 842), 154 frontend.

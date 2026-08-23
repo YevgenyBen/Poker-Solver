@@ -196,6 +196,27 @@ every street (preflop through river) and every supported table size
   11.5s (flop) / 1.5s (turn). Treat multiway postflop advice as
   correspondingly thinner, and note those caps genuinely bind now, where
   pre-M67 they never did.
+- **Affordability is checked against `max_affordable_bb`, NOT
+  `effective_stack_bb` (M101).** The latter means three different things
+  by node — preflop it is the stack net of blinds while preflop sizes are
+  TOTAL commitment; at a street's opening decision it is money behind
+  entering the street; one decision later it is the shortest remaining
+  stack after someone bets. All defensible, none sharing a baseline with
+  action sizes, so a real flop node reports `effective_stack_bb: 85.0`
+  beside `all_in:97.50`. M95's "no advice names an unaffordable bet"
+  guarantee was therefore only verifiable at OPENING decisions, which is
+  exactly what its sweep tested. `max_affordable_bb` restores it
+  everywhere: **every size in `strategy` <= `max_affordable_bb`**, swept
+  at mid-street nodes too.
+- **Cheap validation runs BEFORE expensive solves — keep it that way
+  (M101).** A cold 6-max request with a preflop path that leaves players
+  still to act used to take **76.2s to return a 422**, because the
+  live-player count fetched the solve to walk a tree and the path check
+  sat behind the solve. Both now build a throwaway tree: **76.2s ->
+  0.1s**. The comment that justified the old version said "the preflop
+  solve is already cached, so this is a tree walk" — true for the second
+  caller, wrong for the first, who is the one waiting. Pinned by a test
+  that counts SOLVES, not seconds.
 - **`trained` / `range_confidence` / `source` exist because output can
   look confident and be fabricated.** Don't strip them for tidiness.
 - **`hero_cards` is part of the path-query cache keys — do not remove it
@@ -309,7 +330,10 @@ deliberately not checked.
 - **`docs/milestones.md`** — the full milestone log (M8-present): what
   was built, every measured number, and the corrections later
   milestones made to earlier claims.
-- **`docs/project-audit-2026-08-21.md`** — whole-project audit:
+- **`docs/audit-2026-08-23.md`** — the latest whole-project audit
+  (M101): static checks, live-play simulation against the real API, and
+  cold-vs-warm benchmarks. Four findings, all acted on.
+- **`docs/project-audit-2026-08-21.md`** — earlier whole-project audit:
   redundancy findings, endpoint benchmarks, prioritized recommendations
   (all 7 resolved, M58-M65).
 - **`docs/full-table-diagnostic-2026-08.md`** — the earlier engine

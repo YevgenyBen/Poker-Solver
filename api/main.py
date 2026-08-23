@@ -1166,6 +1166,12 @@ async def advise_endpoint(request: AdviseRequest):
             "is_terminal": raw.get("is_terminal", False),
             "pot": raw["pot"],
             "effective_stack_bb": raw["effective_stack_bb"],
+            # M101. Falls back to effective_stack_bb rather than raising
+            # if some cell has not supplied it: a missing bound would be
+            # a worse failure than a conservative one, and the fallback
+            # is exactly right at a street's opening decision, which is
+            # where the two agree.
+            "max_affordable_bb": raw.get("max_affordable_bb", raw["effective_stack_bb"]),
             "strategy": raw["strategy"],
             "trained": raw.get("trained"),
             "hero": hero,

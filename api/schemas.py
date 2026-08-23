@@ -118,6 +118,27 @@ class AdviseResponse(BaseModel):
     is_terminal: bool
     pot: float
     effective_stack_bb: float
+    # M101: the largest TOTAL commitment the acting player can make on
+    # this street — the field that makes M95's affordability guarantee
+    # checkable, and the reason it needs its own name.
+    #
+    # `effective_stack_bb` cannot do this job. The audit found it means
+    # different things at different nodes: at a street's opening decision
+    # it is the money behind entering the street, one decision later it
+    # is the SHORTEST remaining stack once someone has bet, and preflop
+    # it is the stack net of blinds while preflop sizes are quoted as
+    # total commitment. Each reading is defensible; none shares a
+    # baseline with the action sizes. So a mid-street flop node can
+    # legitimately report `effective_stack_bb: 85.0` next to
+    # `all_in:97.50` — both correct, and not comparable.
+    #
+    # M95 promised no advice ever names a bet the player cannot make.
+    # That promise was only verifiable at opening decisions, which is
+    # exactly the case its own sweep tested. The invariant now holds
+    # everywhere and is asserted at every street:
+    #
+    #     every size in `strategy` <= `max_affordable_bb`
+    max_affordable_bb: float
     strategy: dict[str, dict[str, float]]
     trained: dict[str, bool] | None
     hero: HeroAdvice | None

@@ -31,6 +31,7 @@ from poker_solver.game_tree import (
     DecisionNode,
     GameConfig,
     TerminalNode,
+    build_game_tree,
     postflop_action_order,
     resolve_action,
 )
@@ -500,6 +501,47 @@ def _get_or_solve_preflop_raw(stack_bb: float, iterations: int, players: int = 2
     return result
 
 
+def _preflop_config(stack_bb: float, players: int) -> GameConfig:
+    """The GameConfig a preflop solve for these inputs would use.
+
+    Single source of truth so the throwaway tree in
+    `_validate_preflop_path_shape` cannot describe a different game from
+    the one actually solved.
+    """
+    if players == 2:
+        return GameConfig(stack_bb=stack_bb)
+    if players not in cfg.MULTIWAY_TABLE_CONFIGS:
+        valid = ", ".join(str(p) for p in [2, *cfg.MULTIWAY_TABLE_CONFIGS])
+        raise ValueError(f"players must be one of {valid}")
+    return GameConfig(positions=cfg.MULTIWAY_TABLE_CONFIGS[players]["positions"], stack_bb=stack_bb)
+
+
+def _validate_preflop_path_shape(
+    action_kinds: list, stack_bb: float, players: int, path_field_name: str
+) -> None:
+    """Reject an action path that cannot reach a board, WITHOUT solving.
+
+    M101. A cold 6-max request whose path left four players still to act
+    took 76.2 seconds to come back 422. Everything that rejection needed
+    is in the tree's shape; none of it is in the solved strategies. So it
+    is checked here, before `_get_or_solve_preflop_raw`.
+
+    Deliberately duplicates the terminal check further down rather than
+    replacing it. That one guards `derive_ranges_from_path`'s own output
+    and stays the authority; this is a fast pre-filter in front of an
+    expensive call. If they ever disagree the slow one still wins, which
+    is the safe direction for a duplicated check to fail in.
+    """
+    root = build_game_tree(_preflop_config(stack_bb, players))
+    _actions, node = _resolve_action_path(root, action_kinds)
+    if not isinstance(node, TerminalNode):
+        raise ValueError(
+            f"{path_field_name} does not close the preflop betting, so no board can be dealt "
+            "yet. To ask about a postflop decision, the preflop action has to run to the end; "
+            "to ask about a PREFLOP decision instead, send the partial path with no board."
+        )
+
+
 def _resolve_action_path(root: DecisionNode, action_kinds: list) -> tuple:
     """Turns a client-supplied list of bare action *kind* strings (e.g.
     ["raise", "call_or_check"]) into the real Action objects derive_
@@ -762,6 +804,24 @@ def _derive_path_situation(
     if (max_classes_per_position is None) == (max_combos_per_position is None):
         raise RuntimeError("exactly one of max_classes_per_position/max_combos_per_position must be set")
 
+    # M101: validate the action path against a THROWAWAY tree before
+    # paying for the solve.
+    #
+    # The audit measured a cold 6-max request with an action path that
+    # does not close the preflop round: **76.2 seconds, then a 422.** The
+    # message was right and the wait was not — the check below depends
+    # only on the tree's shape, never on the solved strategies, so it can
+    # be answered before the expensive part rather than after it. (Warm
+    # it was 3ms, which is exactly why this never showed up: the cost
+    # lands on the first person to ask, and only them.)
+    #
+    # Building a second tree is cheap — `game_tree` builds children
+    # lazily, so walking one path materialises only that path — and it
+    # cannot drift from the real one: the same GameConfig is constructed
+    # from the same inputs, and if it ever did drift the solve below
+    # would raise on the same path a moment later.
+    _validate_preflop_path_shape(action_kinds, stack_bb, players, path_field_name)
+
     preflop_result = _get_or_solve_preflop_raw(stack_bb, iterations, players=players)
     actions, _node = _resolve_action_path(preflop_result.root, action_kinds)
     path_scenario = derive_ranges_from_path(preflop_result, actions)
@@ -957,6 +1017,7 @@ def _query_flop_from_path(
         "action_path": list(action_kinds),
         "stack_bb": stack_bb,
         "effective_stack_bb": effective_stack_bb,
+        "max_affordable_bb": effective_stack_bb,
         "canonical_stack_bb": canonical_stack_bb,
         "pot": path_scenario.pot,
         "hit": result.hit,
@@ -1038,6 +1099,27 @@ def _query_flop_multiway_from_path(
         "action_path": list(action_kinds),
         "stack_bb": stack_bb,
         "effective_stack_bb": effective_stack_bb,
+        # M101: the largest TOTAL commitment the acting player can make on
+        # this street, and the field that makes M95's affordability
+        # guarantee checkable.
+        #
+        # `effective_stack_bb` cannot serve that purpose, and the audit
+        # found out why: it means different things at different nodes.
+        # At a street's opening decision it is the money behind entering
+        # the street; one decision later it is `entry - max(invested)`,
+        # i.e. the SHORTEST remaining stack once someone has bet. Both
+        # readings are defensible poker, and neither shares a baseline
+        # with the action sizes, which are total commitment within this
+        # street's tree. So a mid-street node can legitimately report
+        # `effective_stack_bb: 85.0` beside `all_in:97.50` — not a wrong
+        # number, but a pair a caller cannot compare.
+        #
+        # M95 promised every offered size is affordable. That promise was
+        # only ever verifiable at opening decisions, which is exactly the
+        # case its own sweep covered. This field restores it everywhere:
+        # every size in `strategy` is <= `max_affordable_bb`, at every
+        # node, on every street.
+        "max_affordable_bb": effective_stack_bb,
         "pot": path_scenario.pot,
         "flop_iterations": formatted["iterations"],
         "elapsed_seconds": formatted["elapsed_seconds"],
@@ -1076,6 +1158,12 @@ def _query_flop_multiway_from_path(
         "player_to_act": flop_node.player_to_act,
         "pot": flop_node.pot,
         "effective_stack_bb": effective_stack_bb - max(flop_node.invested.values()),
+        # M101: the bound stays the STREET-ENTRY stack. `effective_stack_bb`
+        # above drops to the shortest remaining stack once someone has bet,
+        # which is a different quantity from the one action sizes are
+        # quoted against — carrying it over here is what made M95's
+        # guarantee unverifiable at exactly this node.
+        "max_affordable_bb": effective_stack_bb,
     }
 
 
@@ -1182,6 +1270,12 @@ def _query_flop_node_from_path(
         "flop_action_path": list(flop_action_kinds),
         "stack_bb": stack_bb,
         "effective_stack_bb": effective_stack_bb - max(flop_node.invested.values()),
+        # M101: the bound stays the STREET-ENTRY stack. `effective_stack_bb`
+        # above drops to the shortest remaining stack once someone has bet,
+        # which is a different quantity from the one action sizes are
+        # quoted against — carrying it over here is what made M95's
+        # guarantee unverifiable at exactly this node.
+        "max_affordable_bb": effective_stack_bb,
         "pot": flop_node.pot,
         "strategy": result.strategy_at(flop_node),
         "trained": result.trained_hands(flop_node),
@@ -1311,6 +1405,10 @@ def _query_turn_from_path(
             "trained": {},
             "pot": flop_node.pot,
             "effective_stack_bb": effective_stack_bb,
+            # M101: see the base flop response for why this exists —
+            # `effective_stack_bb` changes meaning at a mid-street node,
+            # so it cannot be compared against action sizes. This can.
+            "max_affordable_bb": effective_stack_bb,
         }
 
     chance_node = result.chance_data[id(flop_node)]
@@ -1497,6 +1595,10 @@ def _query_turn_multiway_from_path(
             "trained": {},
             "pot": flop_node.pot,
             "effective_stack_bb": effective_stack_bb,
+            # M101: see the base flop response for why this exists —
+            # `effective_stack_bb` changes meaning at a mid-street node,
+            # so it cannot be compared against action sizes. This can.
+            "max_affordable_bb": effective_stack_bb,
         }
 
     ensure_kwargs = {
@@ -1776,6 +1878,10 @@ def _query_river_from_path(
             "trained": {},
             "pot": flop_node.pot,
             "effective_stack_bb": effective_stack_bb,
+            # M101: see the base flop response for why this exists —
+            # `effective_stack_bb` changes meaning at a mid-street node,
+            # so it cannot be compared against action sizes. This can.
+            "max_affordable_bb": effective_stack_bb,
         }
 
     turn_chance_node = result.chance_data[id(flop_node)]
@@ -1976,13 +2082,24 @@ def _live_position_count(request, iterations: int) -> int:
     Counts from the resolved node's own `folded` set rather than calling
     derive_ranges_from_path: the reach-multiplication that function does
     is real work this question doesn't need, and it raises on a
-    fold-out-to-one path that the orchestrators themselves report far
-    more clearly. The preflop solve is already cached, so this is a tree
-    walk, not a second solve.
+    fold-out-to-one path that the reach-multiplication does, and it
+    raises on a fold-out-to-one path that the orchestrators themselves
+    report far more clearly.
+
+    **Builds the tree instead of fetching the solve (M101).** This used
+    to call `_get_or_solve_preflop_raw`, justified as "the preflop solve
+    is already cached, so this is a tree walk, not a second solve". True
+    on a warm cache and exactly wrong on the first request, which is the
+    one a user waits for: the audit measured a cold 6-max request with a
+    malformed action path taking **76.2 seconds to return a 422**, nearly
+    all of it spent here, solving a game whose answer the routing
+    question never reads. Which positions have folded is a property of
+    the tree's shape alone.
     """
-    preflop_result = _get_or_solve_preflop_raw(request.stack_bb, iterations, players=request.players)
-    _actions, node = _resolve_action_path(preflop_result.root, request.preflop_action_path)
-    return sum(1 for p in preflop_result.config.positions if p not in node.folded)
+    root = build_game_tree(_preflop_config(request.stack_bb, request.players))
+    _actions, node = _resolve_action_path(root, request.preflop_action_path)
+    return sum(1 for p in _preflop_config(request.stack_bb, request.players).positions
+               if p not in node.folded)
 
 
 def _advise_preflop(request, iterations: int, hero_combo=None) -> dict:
@@ -2017,6 +2134,11 @@ def _advise_preflop(request, iterations: int, hero_combo=None) -> dict:
         "is_terminal": False,
         "pot": node.pot,
         "effective_stack_bb": preflop_result.config.stack_bb - max(node.invested.values()),
+        # M101: preflop action sizes are TOTAL commitment (an `all_in` of
+        # 100 means the whole 100bb stack, part of which is already
+        # posted as a blind), so the full stack is what bounds them —
+        # not the money behind, which is what effective_stack_bb reports.
+        "max_affordable_bb": preflop_result.config.stack_bb,
         "strategy": strategy,
         "trained": trained,
         "source": "preflop",
