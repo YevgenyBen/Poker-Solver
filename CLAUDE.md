@@ -102,7 +102,10 @@ every street (preflop through river) and every supported table size
   dominated, real gain was zero — the M47 trap).
   **What did work:** sharing board runouts across candidates
   (`equity._simulate_equity_shared_board`, M68) — the opponents' hands
-  were being re-ranked once per candidate. 1.95x.
+  were being re-ranked once per candidate. **6.06x at the equity layer**,
+  from M70's interleaved A/B. (M68 itself published 1.95x from a
+  cross-session before/after and M70 withdrew it — see "Measuring
+  performance" below.)
 - **The old "6-max diverges with more iterations" constraint is RETIRED
   (M66 diagnosed, M67 fixed).** It was never a solver bug — the old
   8-class pool was 48.6% premium, so folding AKs under the gun really
@@ -130,10 +133,11 @@ every street (preflop through river) and every supported table size
 - **Multiway POSTFLOP still answers an easier question than heads-up.**
   M67 fixed the preflop leg (all 169 classes now), but postflop path
   queries cap derived ranges per position
-  (`MAX_MULTIWAY_*_CLASSES_PER_POSITION = 6`) — measured 11.5s (flop) /
-  1.5s (turn). Treat multiway postflop advice as correspondingly
-  thinner, and note those caps genuinely bind now, where pre-M67 they
-  never did.
+  (`MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION = 8`,
+  `MAX_MULTIWAY_TURN_PATH_QUERY_CLASSES_PER_POSITION = 8`) — measured
+  11.5s (flop) / 1.5s (turn). Treat multiway postflop advice as
+  correspondingly thinner, and note those caps genuinely bind now, where
+  pre-M67 they never did.
 - **`trained` / `range_confidence` / `source` exist because output can
   look confident and be fabricated.** Don't strip them for tidiness.
 - **`hero_cards` is part of the path-query cache keys — do not remove it
@@ -151,8 +155,7 @@ every street (preflop through river) and every supported table size
   present it as GTO.
 - **The canonical-library path reports real `trained` flags (M76).** It
   used to return null, documented as structural; it was not — the
-  dataclass just didn't carry them. That is a real limitation, surfaced
-  as an explicit null rather than hidden.
+  dataclass just didn't carry them. `LibraryEntry.trained` does now.
 - **Five `*_from_path` routes are deprecated** (superseded by
   `/advise`), still functional. New callers should use `/advise`.
 
@@ -219,9 +222,15 @@ across sessions:
 
 ### Verification
 
-    python -m pytest tests/ -v     # 750 backend tests
-    cd frontend && npm test        # 145 frontend tests
+    python -m pytest tests/ -v
+    cd frontend && npm test
     cd frontend && npm run lint && npx tsc --noEmit
+
+`tests/test_docs.py` checks this file against the code: every
+`api/config.py` constant named here with a value must still have that
+value. It exists because three of the four such claims had gone stale
+(M96). Historical values are written as "N at the time" and are
+deliberately not checked.
 
 ### Further reading
 
@@ -256,7 +265,7 @@ later without a rewrite.
 ## v2 progress
 
 The per-milestone log that used to live here is now
-**`docs/milestones.md`** (M65) — 58 entries, M8 to the present. The
+**`docs/milestones.md`** (M65) — one entry per milestone, M8 onward. The
 narrative threads below explain the *shape* of the work; that file has
 the detail, the measurements, and the corrections.
 
@@ -307,10 +316,12 @@ action baked in), and confirms the real-time-speed thread's own
 real turn/river strategies all along — reading one out live cost
 nothing new (~0.04ms, after a solve that was already being paid for).
 A real, caught-before-shipping finding along the way: the derived-range
-cap that works for the flop (`MAX_PATH_QUERY_CLASSES_PER_SIDE=6`) does
+cap that works for the flop (`MAX_PATH_QUERY_CLASSES_PER_SIDE`, 6 at the
+time — see `api/config.py` for what it is now) does
 *not* carry over to the turn — `solve_flop_turn`'s steeper cost curve
 turned the same cap into a 454s real request; a separately-measured,
-smaller cap (`MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE=2`) brought it back
+smaller cap (`MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE`, 2 at the time)
+brought it back
 to ~46s, in the same bracket `/solve_flop_to_river` was already
 accepted in. What remains, deliberately: river-level advice one street
 further (already de-risked cost-wise by this milestone's own

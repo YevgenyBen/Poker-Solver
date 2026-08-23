@@ -5240,3 +5240,44 @@ entry's own corrections before trusting its conclusions.
     boundary. The second matters as much as the first — the response is
     where a user sees it.
   - **Verification:** 817 backend tests (up from 797), 152 frontend.
+
+- **M96 — CLAUDE.md, the one file loaded into every session as current
+  state, was the one file nothing verified.** M95's lesson was that a
+  constraint written down as settled gets read past; the obvious next
+  question is what else is written down as settled.
+  - **Three of its four `api/config.py` claims had drifted:**
+    `MAX_MULTIWAY_*_CLASSES_PER_POSITION` said 6 (is 8),
+    `MAX_PATH_QUERY_CLASSES_PER_SIDE` said 6 (is 10),
+    `MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE` said 2 (is 4). Only
+    `MULTIWAY_BRANCH_TRAIN_ITERATIONS = 100` was right. These are the
+    numbers a reader reasons about cost and range width from. The two
+    `_PER_SIDE` ones were true when M24/M26 wrote them, so they are now
+    rewritten as "6 at the time" rather than corrected.
+  - **The file contradicted itself twice.** It credited
+    `_simulate_equity_shared_board` with **1.95x** while its own
+    "Measuring performance" section, twenty lines below, records that
+    number as **withdrawn in M70** — the file citing its own retraction
+    and keeping the retracted figure. And the `trained`-flags entry
+    describes M76's fix and then closes with the pre-M76 sentence
+    asserting the opposite. Both are edit residue: a line updated, the
+    sentence after it left alone.
+  - **The fix is `tests/test_docs.py`, not a proofread.** Proofreading
+    fixes today's copy; this file drifted under active maintenance the
+    whole time. The test scans CLAUDE.md for `NAME = value` claims, keeps
+    those naming a real `api/config.py` constant, and asserts each
+    matches — parametrized, so a failure names the line and both values.
+    Three deliberate limits: only mechanically checkable claims (prose
+    would fail on rewording); unknown names ignored rather than failed (a
+    test policing vocabulary gets deleted); and a guard on the guard,
+    since a regex that stops matching makes every parametrized case pass
+    vacuously with nobody noticing.
+  - **Verified by mutation**, because a doc test never seen to fail is
+    not known to work: changing a value yields `CLAUDE.md:128 says
+    MULTIWAY_BRANCH_TRAIN_ITERATIONS = 400, but api/config.py has 100`.
+    The withdrawn 1.95x gets its own named test — a retracted measurement
+    reappearing is exactly what happens when someone summarises a file.
+  - **Removed rather than corrected:** the "750 backend / 145 frontend"
+    test counts (really 817/152) and "58 entries" for a 69-entry log.
+    They cannot stay right and nothing depends on them; the command is
+    the useful part.
+  - **Verification:** 822 backend tests (up from 817), 152 frontend.

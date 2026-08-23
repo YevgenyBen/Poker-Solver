@@ -1312,3 +1312,77 @@ not a bug to fix casually" is a conclusion that has to be earned by
 enumerating the options, and R14 enumerated two of three. Writing the
 constraint down made it durable — it sat in CLAUDE.md as settled for
 long enough that later rounds read past it.
+
+---
+
+# Round 15 (M96) — the file every session reads was wrong
+
+M95's lesson was that a constraint written down as settled gets read
+past. The obvious next question is what *else* is written down as
+settled. So: audit CLAUDE.md itself — the one document loaded into every
+session as **current state**, and the only one nothing verified.
+
+## Three of four config claims had drifted
+
+| CLAUDE.md said | `api/config.py` has |
+|---|---|
+| `MAX_MULTIWAY_*_CLASSES_PER_POSITION = 6` | **8** |
+| `MAX_PATH_QUERY_CLASSES_PER_SIDE = 6` | **10** |
+| `MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE = 2` | **4** |
+| `MULTIWAY_BRANCH_TRAIN_ITERATIONS = 100` | 100 ✓ |
+
+These are not decoration — they are the numbers a reader reasons about
+cost and range width from. The two `_PER_SIDE` ones sit in narrative
+about what M24 and M26 shipped, where they were true *at the time*; they
+now read as current to anyone who wasn't there. Rewritten as "6 at the
+time".
+
+## The file contradicted itself, twice
+
+- The constraints list credited `_simulate_equity_shared_board` with
+  **1.95x**. Twenty lines later, "Measuring performance" says that exact
+  number was **withdrawn in M70** as an invalid cross-session comparison.
+  The file cites its own retraction and keeps the retracted figure.
+  Now quotes M70's interleaved **6.06x**.
+- The `trained`-flags entry says M76 fixed the null *and then* closes
+  with the pre-M76 sentence: "That is a real limitation, surfaced as an
+  explicit null rather than hidden." Leftover text asserting the opposite
+  of the paragraph it ends.
+
+Both are edit residue — a line updated, the sentence after it left
+alone. Nothing catches that.
+
+## The fix is a test, not a proofread
+
+Proofreading fixes today's copy and nothing else; this file has drifted
+under active maintenance the whole time. `tests/test_docs.py` scans
+CLAUDE.md for `NAME = value` claims, keeps the ones naming a real
+`api/config.py` constant, and asserts each matches — parametrized, so a
+failure names the line and both values.
+
+Three deliberate limits:
+
+- **Only mechanically checkable claims.** Prose cannot be verified, and a
+  test that tried would fail on rewording.
+- **Unknown names are ignored, not failed.** The file also discusses
+  engine names, response fields and pseudocode; policing vocabulary would
+  be a nuisance and would get deleted.
+- **A guard on the guard.** If the regex or the layout ever stops
+  matching anything, every parametrized case passes vacuously and nobody
+  notices — so one test asserts the scan finds *something*.
+
+Verified by mutation: changing a value in CLAUDE.md produces
+`CLAUDE.md:128 says MULTIWAY_BRANCH_TRAIN_ITERATIONS = 400, but
+api/config.py has 100`. A doc test that has never been seen to fail is
+not known to work.
+
+The withdrawn-1.95x case gets its own named test, because a retracted
+measurement reappearing is exactly what happens when someone summarises
+the file.
+
+## Also removed: the test counts
+
+"750 backend tests / 145 frontend tests" in the verification block were
+817 and 152 by the time anyone looked. They cannot be right for long and
+nothing depends on them — the *command* is the useful part. Same for
+"58 entries" describing a milestone log that has 69.
