@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from api import caches
 from api import config as api_config
 from api import main as api_main
 from api import solving as api_solving
@@ -3125,3 +3126,140 @@ def test_nine_max_carries_both_warnings_without_either_masking_the_other(client)
     assert body["sizing_confidence"] == "low"
     assert body["sizing_confidence_reason"]
     assert body["solver_confidence_reason"] != body["sizing_confidence_reason"]
+
+
+# ---------------------------------------------------------------------------
+# M101 — the affordability guarantee, restored at every node
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "label,body",
+    [
+        ("preflop open", dict(preflop_action_path=[], hero_cards="AsKh", players=2)),
+        ("preflop facing 3bet", dict(preflop_action_path=["raise", "raise"],
+                                     hero_cards="QsQd", players=2)),
+        ("flop opening", dict(preflop_action_path=["raise", "call_or_check"],
+                              hero_cards="5c4d", board="Kd7c2h", players=2)),
+        ("flop facing a bet", dict(preflop_action_path=["raise", "call_or_check"],
+                                   flop_action_path=["raise"],
+                                   hero_cards="5c4d", board="Kd7c2h", players=2)),
+        ("flop after a check", dict(preflop_action_path=["raise", "call_or_check"],
+                                    flop_action_path=["call_or_check"],
+                                    hero_cards="5c4d", board="Kd7c2h", players=2)),
+        ("limped flop", dict(preflop_action_path=["call_or_check", "call_or_check"],
+                             hero_cards="AsKh", board="Kd7c2h", players=2)),
+    ],
+)
+def test_no_advice_names_a_bet_larger_than_max_affordable(client, label, body):
+    """M95's guarantee — no advice names a bet the player cannot make —
+    asserted where it was previously unverifiable.
+
+    M95 swept only each street's OPENING decision, and there
+    `effective_stack_bb` happens to mean "money behind", so comparing
+    sizes against it worked. M101's audit found that one decision later
+    the same field means the SHORTEST remaining stack once someone has
+    bet, and that preflop it is the stack net of blinds while preflop
+    sizes are total commitment. A real flop node reports
+    `effective_stack_bb: 85.0` beside `all_in:97.50` — both correct, not
+    comparable, and enough to make the guarantee unverifiable exactly
+    where a player is most likely to be looking.
+
+    `max_affordable_bb` is the one bound every size can be checked
+    against, so this sweeps mid-street nodes too.
+    """
+    response = client.post("/advise", json=_advise_body(stack_bb=100.0, **body))
+    assert response.status_code == 200, response.json()
+    payload = response.json()
+    if payload["is_terminal"]:
+        return
+    bound = payload["max_affordable_bb"]
+    assert bound > 0, f"{label}: no affordability bound reported"
+
+    rows = list(payload["strategy"].values())
+    hero = payload.get("hero") or {}
+    if hero.get("strategy"):
+        rows.append(hero["strategy"])
+    oversized = sorted(
+        {
+            action
+            for row in rows
+            for action in row
+            if ":" in action and float(action.split(":", 1)[1]) > bound + 1e-9
+        }
+    )
+    assert not oversized, (
+        f"{label}: advice names bets above the {bound}bb the player can commit: {oversized}"
+    )
+
+
+def test_max_affordable_is_not_silently_equal_to_effective_stack(client):
+    """The field has to earn its existence.
+
+    If it merely mirrored `effective_stack_bb` everywhere it would be
+    noise, and the bug it exists to expose would still be invisible. So
+    pin the case that motivated it: a mid-street node where the two
+    genuinely differ, and where comparing sizes against the WRONG one
+    reports a violation that is not real.
+    """
+    response = client.post(
+        "/advise",
+        json=_advise_body(
+            preflop_action_path=["raise", "call_or_check"],
+            flop_action_path=["raise"],
+            hero_cards="5c4d", board="Kd7c2h", players=2, stack_bb=100.0,
+        ),
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["max_affordable_bb"] > payload["effective_stack_bb"], (
+        "this node is supposed to be one where the two fields diverge — if they now "
+        "agree, either the tree changed or the divergence was fixed at the source, "
+        "and this test should be revisited rather than deleted"
+    )
+
+
+def test_a_malformed_action_path_is_rejected_without_paying_for_a_solve(client):
+    """M101. A cold 6-max request whose preflop path leaves four players
+    still to act took **76.2 seconds to return a 422** — nearly all of it
+    solving a game the rejection never reads.
+
+    Two causes, both "the cache makes this free" reasoning that holds
+    only after someone has already paid: the live-player count used to
+    fetch the solve to walk a tree, and the path-shape check sat behind
+    the solve rather than in front of it. Both now use a throwaway tree.
+
+    Asserted as a BUDGET, not a wall-clock threshold — this machine
+    drifts ~1.7x between sessions, so a seconds-based bound would either
+    flake or be set so loose it proves nothing. Counting solves is exact:
+    a rejected request must not populate the expensive preflop cache at
+    all.
+    """
+    caches._SolveCache.clear_all()
+    response = client.post(
+        "/advise",
+        json=_advise_body(
+            preflop_action_path=["raise", "call_or_check"],  # leaves 4 still to act
+            hero_cards="AsAh", board="Kd7c2h", players=6, stack_bb=100.0,
+        ),
+    )
+    assert response.status_code == 422
+    assert "does not close the preflop betting" in response.json()["detail"]
+    assert len(caches._multiway_cache.entries) == 0, (
+        "a rejected request solved the 6-max preflop tree anyway — the validation "
+        "is back behind the expensive call"
+    )
+
+
+def test_a_valid_multiway_request_still_reaches_the_solver(client):
+    """The other half: making rejection cheap must not make acceptance
+    broken. A path that DOES close the round still routes through and
+    gets real advice."""
+    caches._SolveCache.clear_all()
+    response = client.post(
+        "/advise",
+        json=_advise_body(preflop_action_path=[], hero_cards="AsAh", players=6, stack_bb=100.0),
+    )
+    assert response.status_code == 200
+    assert response.json()["street"] == "preflop"
+    assert len(caches._multiway_cache.entries) > 0, "the real path no longer solves anything"
