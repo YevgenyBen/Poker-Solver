@@ -31,6 +31,7 @@ own key shape is known from building it.
 """
 
 import itertools
+import math
 
 from .cards import SUITS, Card
 from .combos import HandCombo
@@ -118,14 +119,46 @@ def canonicalize_board(board: tuple) -> tuple:
 
 
 def canonical_stack_depth(effective_stack_bb: float, bucket_bb: float = DEFAULT_STACK_BUCKET_BB) -> float:
-    """Rounds to the nearest multiple of bucket_bb.
+    """Rounds DOWN to a multiple of bucket_bb, never below one bucket.
 
-    Uses Python's built-in round(), which is round-half-to-even
-    ("banker's rounding"), not round-half-up — an exact-halfway stack
-    depth can round either up or down depending on whether the nearest
-    multiple's *index* is even or odd (e.g. at the default 5bb bucket:
-    12.5 -> 10.0 since 2.5 rounds to 2, but 17.5 -> 20.0 since 3.5
-    rounds to 4). Documented here rather than silently relied on, and
-    pinned by a test.
+    Rounding down rather than to-nearest is the load-bearing choice here,
+    and it is about advice being *actionable*, not about numerical
+    accuracy (M95).
+
+    Every action size in a solved tree is derived from the stack depth
+    the tree was built at. Round to nearest and that depth can EXCEED the
+    player's real one, so the strategy offers a bet they cannot make: a
+    real 100bb limped pot leaves 99bb behind, 99 rounds to 100, and the
+    advice came back `all_in:100.00`. Rounding down makes
+    `canonical <= real` an invariant, and every size the tree derives is
+    then affordable by construction — the all-in and every raise alike.
+
+    The price is that the worst-case depth error doubles, from half a
+    bucket to a full one. Measured on a real flop solve across every
+    node in the tree, mean total-variation distance from a solve at the
+    true depth:
+
+        SPR   truth vs floor   truth vs nearest
+        9.9       0.0083            0.0011
+        2.3       0.0000            0.0000
+        1.3       0.0000            0.0000
+        0.6       0.0014            0.0009
+
+    So floor is the worse approximation, by under one percent of
+    probability mass at its worst and indistinguishable at three of four
+    depths — far inside the noise the solve already carries from Monte
+    Carlo equity sampling and untrained combos. Advice that cannot be
+    followed is a different category of wrong from advice that is
+    slightly off, so the trade is taken deliberately.
+
+    Below one bucket a bare floor lands on 0.0, which is not a game — so
+    a stack that shallow is used AS IS, unbucketed. Clamping up to one
+    bucket instead was tried first and reintroduced the very bug this
+    function exists to prevent: an 8bb stack in a raised-and-3bet pot
+    leaves 0.5bb behind, and the clamp offered `all_in:5.00`. Giving up
+    canonical reuse in the sub-bucket regime costs almost nothing, since
+    a player with under 5bb behind has a nearly degenerate decision
+    anyway — and the invariant then holds with no exception at all.
     """
-    return round(effective_stack_bb / bucket_bb) * bucket_bb
+    bucketed = math.floor(effective_stack_bb / bucket_bb) * bucket_bb
+    return bucketed if bucketed > 0 else effective_stack_bb

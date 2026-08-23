@@ -2963,3 +2963,70 @@ def test_solve_turn_multiway_from_path_builds_and_trains_an_unsampled_but_legal_
             for combo in trained_combos
         ]
         assert max(spreads) > 1e-9, "every trained combo is still exactly uniform"
+
+
+# ---------------------------------------------------------------------------
+# M95 — no advice may name a bet the player cannot make
+# ---------------------------------------------------------------------------
+
+
+def _oversized_actions(body):
+    """Every action in a response whose size exceeds the money behind."""
+    stack = body.get("effective_stack_bb")
+    if stack is None:
+        return []
+    rows = list(body.get("strategy", {}).values())
+    hero = body.get("hero")
+    if hero and hero.get("strategy"):
+        rows.append(hero["strategy"])
+    return sorted(
+        {
+            action
+            for row in rows
+            for action in row
+            if ":" in action and float(action.split(":", 1)[1]) > stack + 1e-9
+        }
+    )
+
+
+@pytest.mark.parametrize("stack_bb", [100.0, 97.5, 60.0, 43.0, 22.0, 8.0])
+@pytest.mark.parametrize(
+    "preflop_action_path",
+    [
+        ["call_or_check", "call_or_check"],
+        ["raise", "call_or_check"],
+        ["raise", "raise", "call_or_check"],
+    ],
+)
+def test_advise_never_offers_a_bet_larger_than_the_stack(client, stack_bb, preflop_action_path):
+    """The product-level statement of M95's invariant.
+
+    The library canonicalizes stack depth into buckets, and every action
+    size in a solved tree comes from the depth the tree was built at. When
+    that rounded UP, ordinary spots produced impossible advice — a 100bb
+    limped pot leaves 99bb behind and came back `all_in:100.00`.
+
+    Swept across stacks and lines rather than spot-checked, because the
+    failing case was not exotic: it was the default stack on the simplest
+    preflop line there is, and it survived every hand-written example.
+    Asserted here at the response boundary, where a user would see it,
+    rather than only on the rounding function — a future change anywhere
+    between the two would otherwise reintroduce it silently.
+    """
+    response = client.post(
+        "/advise",
+        json=_advise_body(
+            preflop_action_path=preflop_action_path,
+            hero_cards="AsKh",
+            board="Kd7c2h",
+            position="BTN",
+            players=2,
+            stack_bb=stack_bb,
+        ),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert not _oversized_actions(body), (
+        f"advice names bets the player cannot make with "
+        f"{body['effective_stack_bb']}bb: {_oversized_actions(body)}"
+    )
