@@ -155,6 +155,23 @@ class AdviseResponse(BaseModel):
     # so a consumer does not have to look one up.
     solver_confidence_reason: str | None = None
 
+    # M98: confidence in the SIZING axis specifically — which of the
+    # non-fold actions to take — as opposed to `solver_confidence`, which
+    # is about the answer as a whole.
+    #
+    # They are separate because a multiway preflop solve is genuinely
+    # good at one of its two jobs and genuinely bad at the other, and one
+    # number cannot say that. `api/config.py` has recorded the split
+    # since M67 and no response ever carried it, so a 6-max player asking
+    # "raise or shove?" was answered with the same confidence as one
+    # asking "play or fold?".
+    #
+    #   "high"  — trust the action sizes
+    #   "low"   — the fold-vs-play call is sound, but the split among the
+    #             non-fold actions moves with the random seed
+    sizing_confidence: str = "high"
+    sizing_confidence_reason: str | None = None
+
 
 class SolveResponse(BaseModel):
     stack_bb: float

@@ -379,6 +379,59 @@ describe('AdviseSolver', () => {
     expect(warning).toHaveTextContent(/does not converge/);
   });
 
+  it('warns that sizes are unreliable while still trusting the fold-vs-play call', async () => {
+    // M98: multiway preflop answers two questions and is only good at
+    // one. Marking the whole response low would be its own kind of wrong
+    // — the fold-vs-play call at 6-max IS converged and is what most
+    // players are asking — so the sizing caveat is separate, and has to
+    // render even when solver_confidence is "high".
+    vi.stubGlobal(
+      'fetch',
+      mockFetch(walkFor, () =>
+        adviceResponse({
+          players: 6,
+          solver_confidence: 'high',
+          sizing_confidence: 'low',
+          sizing_confidence_reason:
+            "Multiway preflop is converged for whether to play this hand, but NOT for which sizing to use.",
+        }),
+      ),
+    );
+    render(<AdviseSolver />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Get advice' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Get advice' }));
+
+    const warning = await screen.findByRole('alert');
+    expect(warning).toHaveTextContent('Sizes are unreliable here');
+    expect(warning).toHaveTextContent(/NOT for which sizing/);
+  });
+
+  it('shows both warnings at 9-max without one hiding the other', async () => {
+    // The general warning must not swallow the specific one. A user who
+    // sees only "low confidence" does not learn that the sizes are the
+    // worst part of it.
+    vi.stubGlobal(
+      'fetch',
+      mockFetch(walkFor, () =>
+        adviceResponse({
+          players: 9,
+          solver_confidence: 'low',
+          solver_confidence_reason: '9-max preflop does not converge at any affordable budget.',
+          sizing_confidence: 'low',
+          sizing_confidence_reason: 'The split among the non-fold actions moves with the random seed.',
+        }),
+      ),
+    );
+    render(<AdviseSolver />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Get advice' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Get advice' }));
+
+    const warnings = await screen.findAllByRole('alert');
+    expect(warnings).toHaveLength(2);
+    expect(warnings.map((w) => w.textContent).join(' ')).toMatch(/does not converge/);
+    expect(warnings.map((w) => w.textContent).join(' ')).toMatch(/Sizes are unreliable/);
+  });
+
   it('shows no confidence warning when the solver is trusted', async () => {
     // The other half: the warning must not be permanent furniture, or
     // users learn to ignore it.

@@ -498,6 +498,14 @@ export function AdviseSolver() {
             </p>
           )}
 
+          {result.sizing_confidence === 'low' && (
+            <p className="solver-warning" role="alert">
+              <strong>Sizes are unreliable here.</strong>{' '}
+              {result.sizing_confidence_reason ??
+                'The fold-vs-play call is sound, but the split among the non-fold actions moves with the random seed.'}
+            </p>
+          )}
+
           {result.range_confidence && (
             <p className="depth-hint">
               Range confidence:{' '}

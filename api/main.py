@@ -1184,6 +1184,24 @@ async def advise_endpoint(request: AdviseRequest):
                 "low" if request.players in cfg.LOW_CONFIDENCE_TABLE_SIZES else "high"
             ),
             "solver_confidence_reason": cfg.LOW_CONFIDENCE_TABLE_SIZES.get(request.players),
+            # M98: scoped to the sizing axis, and only preflop. A
+            # multiway preflop solve answers "play or fold" reliably and
+            # "which size" unreliably; reporting one number for both hid
+            # the second. Keyed off the ORIGIN table size for the same
+            # reason solver_confidence is — the preflop solve happened
+            # before anyone folded. See cfg.SIZING_CAVEAT_TABLE_SIZES.
+            "sizing_confidence": (
+                "low"
+                if raw.get("street") == "preflop"
+                and request.players in cfg.SIZING_CAVEAT_TABLE_SIZES
+                else "high"
+            ),
+            "sizing_confidence_reason": (
+                cfg.SIZING_CAVEAT_REASON
+                if raw.get("street") == "preflop"
+                and request.players in cfg.SIZING_CAVEAT_TABLE_SIZES
+                else None
+            ),
         }
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

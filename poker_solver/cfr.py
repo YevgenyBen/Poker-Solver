@@ -1044,9 +1044,15 @@ def mccfr_solve(
     shapes of policy damping M74 prescribed for the 6-max jam
     oscillation. **Both measured worse than doing nothing**, so both stay
     off; see `InfoSetTable.current_strategy` for the mechanisms and for
-    why each fails. Measured at the SHIPPED operating point (6-max, 3,000
-    iterations, three seeds, a FRESH equity cache per run), against a
-    heads-up AA-jam reference of ~0.031:
+    why each fails. Measured at 6-max, 3,000 iterations, three seeds, a
+    FRESH equity cache per run, against a heads-up AA-jam reference of
+    ~0.031. **Correction (M98): this is NOT the shipped operating point,
+    as M97 originally claimed.** Every arm constructed
+    `MultiwayEquityCache(hands=...)` without `samples`, so all three ran
+    at the engine default of 200 where the API ships
+    `MULTIWAY_PREFLOP_SAMPLES = 50`. The arms are still comparable to
+    each other — the mistake was identical across them — but the label
+    was wrong:
 
         arm                  AA jam                  mean   spread  cost
         plain                0.036 / 0.073 / 0.058   0.056   0.037  262s

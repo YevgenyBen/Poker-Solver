@@ -254,6 +254,11 @@ export interface AdviseResponse {
    * computed right", and only the second one can be no. */
   solver_confidence?: string;
   solver_confidence_reason?: string | null;
+  // M98: confidence in WHICH SIZE to use, separate from confidence in
+  // the answer as a whole — multiway preflop is reliable for fold-vs-play
+  // and not for the split among the non-fold actions.
+  sizing_confidence?: string;
+  sizing_confidence_reason?: string | null;
 }
 
 // The request shape /advise takes — street depth is INFERRED from which

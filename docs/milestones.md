@@ -5297,9 +5297,15 @@ entry's own corrections before trusting its conclusions.
     predictive regret matching) and `smoothing` (the policy is blended
     with the one this node last played). Both thread through
     `_mccfr_recurse` and `mccfr_solve`.
-  - **Measured at the SHIPPED operating point** (6-max, 3,000
-    iterations, three seeds, a fresh equity cache per run), against a
-    heads-up AA-jam reference of ~0.031:
+  - **Measured** at 6-max, 3,000 iterations, three seeds, a fresh equity
+    cache per run, against a heads-up AA-jam reference of ~0.031.
+    **[Corrected by M98: this entry originally said "at the SHIPPED
+    operating point" and that was wrong.** Every arm built
+    `MultiwayEquityCache(hands=...)` without `samples`, taking the engine
+    default of 200, where the API ships 50. The arms remain comparable —
+    the mistake was identical across all three — but the operating-point
+    claim was false, and it was false in the very milestone that quotes
+    CLAUDE.md's rule about validating at the shipped point.]**
     | arm | AA jam | mean | spread | cost |
     |---|---|---|---|---|
     | plain | 0.036 / 0.073 / 0.058 | **0.056** | **0.037** | 262s |
@@ -5349,3 +5355,69 @@ entry's own corrections before trusting its conclusions.
     largest structure any solve produces and the one M93 had just
     finished bounding. A default-off feature pays nothing.
   - **Verification:** 831 backend tests (up from 822), 152 frontend.
+
+- **M98 — the multiway sizing defect is structural, not a budget
+  problem; and the product now says so.** M97 ended by pointing at "the
+  question being asked" rather than the policy dynamics. This is that
+  investigation. It found a root cause, corrected M97's own operating
+  point, and shipped the honesty signal the finding implies.
+  - **Root cause.** Every showdown terminal is priced `equity * pot -
+    invested` (`cfr._mccfr_terminal_value`). An all-in is therefore
+    priced CORRECTLY — it really does end at showdown — while every
+    smaller bet is scored as if the hand ended immediately, discarding
+    the postflop game that is most of a raise's value. AA raising 2.5bb
+    into a caller is worth `0.85 * 5.5 - 2.5 = +2.2bb` to this model;
+    jamming into a caller is worth `+70bb`. The error grows with
+    opponent count, because more opponents means more chance the
+    accurately-priced all-in gets called at all.
+  - **Not a budget problem, measured.** At 12,000 iterations and 400
+    equity samples — the most converged, least noisy configuration
+    tested — AA jams **0.649** and KK **0.709**. More iterations and
+    more samples converge ONTO the jam rather than away from it. The
+    long-standing note that the sizing split was "not converged at this
+    budget" implied more budget would fix it; it will not.
+  - **Heads-up escapes by cancellation, not soundness.** A jam there
+    usually just wins the 1.5bb blinds, which is worth less than a
+    called raise even at the underpriced +2.2bb — so raising still wins
+    and AA jams ~3%. Two errors nearly cancel at N=2, which is why this
+    never looked like a structural problem.
+  - **Equity noise explains the INSTABILITY, not the level.** Measured
+    directly: a 50-sample multiway equity estimate has error sd 0.091 —
+    **+/-55bb of EV in a six-way 100bb pot**, worst observed 141bb, with
+    one opponent tuple's estimate ranging 0.216-0.583 against a truth of
+    0.348. The cache freezes each estimate per key, so CFR optimizes
+    against its own noise instead of averaging it away. That is the seed
+    dependence; it is not the jam-heavy level.
+  - **The warning was already written down.** `equity.py`'s
+    `MULTIWAY_DEFAULT_SAMPLES = 200` comment says, since M8, that at 50
+    samples equity noise gets "amplified by the all-in pot size into a
+    large enough value error to visibly distort MCCFR's learned
+    strategy". `api/config.py` overrode it to 50 on a comparison that
+    varied sample count and iteration count TOGETHER and reported only
+    fold rates. Every tuning decision on this constant was measured on
+    the fold axis; the sizing axis was written off rather than measured.
+  - **A correction to M97.** M97 claimed its arms were measured "at the
+    SHIPPED operating point". They were not: every script built
+    `MultiwayEquityCache(hands=...)` without `samples`, taking the
+    engine default of 200 where the API ships 50. The arm-vs-arm
+    conclusion stands (all three made the identical mistake) but the
+    label was false — in the very milestone that quotes CLAUDE.md's rule
+    about validating at the shipped point. Corrected in `cfr.py`,
+    `milestones.md`, the diagnostic and CLAUDE.md.
+  - **What shipped: `sizing_confidence`.** A multiway preflop solve
+    answers two questions and is only good at one, and one confidence
+    number could not say that — so a 6-max player asking "raise or
+    shove?" got the same `solver_confidence: "high"` as one asking "play
+    or fold?". `sizing_confidence` / `sizing_confidence_reason` are
+    separate from `solver_confidence` deliberately: marking the whole
+    response low would understate the fold-vs-play call, which is the
+    converged part and what most players are asking. Scoped to preflop
+    and rendered in `AdviseSolver`, with tests asserting it fires at
+    3/6/9-max, does NOT fire heads-up or postflop, and coexists with
+    9-max's existing warning without either hiding the other.
+  - **Deliberately not attempted:** postflop continuation value at
+    preflop terminals, which is what an actual fix requires. That is an
+    architectural change to how terminals are priced, and it deserves
+    its own milestone rather than being bolted onto a diagnosis.
+  - **Verification:** 835 backend tests (up from 831), 154 frontend (up
+    from 152), tsc and lint clean.
