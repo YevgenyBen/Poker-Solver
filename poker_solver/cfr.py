@@ -563,6 +563,8 @@ def _mccfr_terminal_value(
     opponent_hands: dict,
     num_hands: int,
     equity_cache,
+    continuation: float = 0.0,
+    stack_bb: float | None = None,
 ) -> np.ndarray:
     """The traverser's net payoff for each of their `num_hands` possible
     hands (length-`num_hands` vector), given the fixed `opponent_hands`
@@ -620,7 +622,71 @@ def _mccfr_terminal_value(
     # this milestone's entry in docs/milestones.md for why 0.5 was not
     # safe to keep once the same code path started serving the preflop
     # multiway solver's much higher fabrication rate.
-    return equity_vector * node.pot - node.invested[traverser]
+    value = equity_vector * node.pot - node.invested[traverser]
+
+    # M100: an optional continuation value for showdown terminals that
+    # still have money behind. Default 0.0 — off, byte-identical to M99.
+    #
+    # M98 found the defect this exists to test: `equity * pot - invested`
+    # prices an ALL-IN correctly, because an all-in really does end at
+    # showdown, while every smaller bet is scored as if the hand stopped
+    # there — discarding the postflop game that is most of a raise's
+    # value. So the tree's only correctly-priced action is the all-in,
+    # and it over-prefers it by exactly that gap.
+    #
+    # The term below is a deliberately crude stand-in for the missing
+    # game: a hand with above-break-even equity also captures a share of
+    # the chips still behind, proportional to its edge.
+    #
+    #     value += continuation * (equity - 1/n_live) * chips_behind
+    #
+    # It is NOT a solve and is not claimed to be one. It exists to answer
+    # whether restoring *any* continuation value removes the jam bias —
+    # i.e. whether M98's diagnosis is sufficient, not just consistent.
+    # Real continuation values mean chaining a flop, which is the
+    # architectural work this is meant to justify or rule out first.
+    #
+    # **M100's answer: it does NOT validate the approach.** Swept at
+    # c = 0 / 0.25 / 0.5 / 1.0, three seeds each, AA's all-in frequency:
+    #
+    #     budget    c=0     c=0.25   c=0.5    c=1.0
+    #     12,000    0.615   0.208    0.417    0.374
+    #      3,000    0.061   0.112    0.287    0.010
+    #
+    # Non-monotone at BOTH budgets. A term capturing a real mechanism
+    # should move the number in one direction as it is turned up; this
+    # goes down, up, down. The `c=1.0 @ 3,000` cell is the trap: 0.010
+    # +/- 0.005, an order of magnitude tighter than any other arm, and it
+    # is easy to read as the fix. It is not — a large bonus for keeping
+    # chips behind simply makes the all-in DOMINATED, so the policy goes
+    # purely "never jam" and reports a stable near-zero, below the ~0.031
+    # reference. That is hitting the target by making the action
+    # unattractive, not by modelling what follows it.
+    #
+    # A PAIRED 9-seed test settles it (both arms on the same seed, so the
+    # per-seed difference cancels seed variance): c=0 vs c=0.25 at 12,000
+    # iterations gives a paired delta of **-0.060 +/- 0.137, falling in
+    # 5 of 9** — a coin flip. The term does not reduce the jam.
+    #
+    # The lesson worth keeping: **this knob can produce any number, so
+    # matching the reference does not validate it.** Do not tune `c` to
+    # make output look right. If continuation value is ever done
+    # properly, it has to come from solved flop values, not a linear
+    # edge-times-stack stand-in.
+    #
+    # Two properties that make it a fair test rather than a thumb on the
+    # scale. It applies ONLY where chips remain, so an all-in terminal is
+    # untouched — that asymmetry IS the defect, so the correction has to
+    # be asymmetric in the same place. And it is zero-sum by construction
+    # whenever stacks are equal (equities sum to 1 across n live players,
+    # so the per-player terms sum to `(1 - n * 1/n) * behind == 0`),
+    # which is exactly the preflop case; it does not quietly inject or
+    # destroy chips.
+    if continuation and stack_bb is not None:
+        chips_behind = stack_bb - node.invested[traverser]
+        if chips_behind > 0:
+            value = value + continuation * (equity_vector - 1.0 / len(live)) * chips_behind
+    return value
 
 
 def _sample_chance_card(board: tuple, opponent_live_hands: tuple, rng) -> Card:
@@ -674,6 +740,8 @@ def _mccfr_recurse(
     floor_regret: bool = True,
     optimism: float = 0.0,
     smoothing: float = 0.0,
+    continuation: float = 0.0,
+    stack_bb: float | None = None,
 ) -> np.ndarray:
     """Returns the traverser's payoff vector (length num_hands) from this
     node onward, given the fixed `opponent_hands` for this iteration.
@@ -750,9 +818,10 @@ def _mccfr_recurse(
                 branch.equity_cache, rng,
                 board=branch.board, chance_fn=branch.chance_fn, chance_data=chance_data,
                 strategy_weight=strategy_weight, floor_regret=floor_regret, optimism=optimism,
-                smoothing=smoothing,
+                smoothing=smoothing, continuation=continuation, stack_bb=stack_bb,
             )
-        return _mccfr_terminal_value(node, traverser, opponent_hands, num_hands, equity_cache)
+        return _mccfr_terminal_value(node, traverser, opponent_hands, num_hands, equity_cache,
+                                    continuation=continuation, stack_bb=stack_bb)
 
     actions = node.legal_actions
     table = node_data.setdefault(id(node), InfoSetTable.zeros(num_hands, len(actions)))
@@ -783,6 +852,8 @@ def _mccfr_recurse(
                 floor_regret=floor_regret,
                 optimism=optimism,
                 smoothing=smoothing,
+                continuation=continuation,
+                stack_bb=stack_bb,
             )
             for a_idx, action in enumerate(actions)
         ]
@@ -909,6 +980,8 @@ def _mccfr_recurse(
         floor_regret=floor_regret,
         optimism=optimism,
         smoothing=smoothing,
+        continuation=continuation,
+        stack_bb=stack_bb,
     )
 
 
@@ -1000,6 +1073,8 @@ def mccfr_solve(
     discount: tuple | None = None,
     optimism: float = 0.0,
     smoothing: float = 0.0,
+    continuation: float = 0.0,
+    stack_bb: float | None = None,
 ) -> dict:
     """Run `iterations` of External-Sampling MCCFR over `root`.
 
@@ -1213,6 +1288,8 @@ def mccfr_solve(
             floor_regret=floor_regret,
             optimism=optimism,
             smoothing=smoothing,
+            continuation=continuation,
+            stack_bb=stack_bb,
         )
         if discount is not None:
             # Discounted CFR: shrink accumulated regret toward zero each

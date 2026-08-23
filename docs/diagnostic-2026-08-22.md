@@ -1688,3 +1688,73 @@ It is deliberately **not** surfaced as a caveat at the flop: 5.5pp is an
 order of magnitude below the preflop distortion, and a warning on every
 postflop response would devalue the preflop one that marks a genuinely
 unusable axis.
+
+---
+
+# Round 19 (M100) — testing the architectural fix cheaply, and not
+# validating it
+
+R17 named postflop continuation value at preflop terminals as the real
+fix for the sizing defect. That is expensive architecture — chaining a
+flop off every preflop terminal — so this round asked the cheap question
+first: is the diagnosis **sufficient**, or merely consistent?
+
+`_mccfr_terminal_value` gained a `continuation` coefficient. Where chips
+remain behind, a hand's payoff gains `c * (equity - 1/n_live) *
+chips_behind` — a crude stand-in for the game the tree cannot see. Two
+properties keep it honest, both pinned by tests: it touches only
+terminals with money behind, so an all-in is untouched (that asymmetry
+**is** the defect), and it is exactly zero-sum at equal stacks, so it
+cannot fake an improvement by paying everyone.
+
+## Three designs, one answer
+
+**Sweep (4 coefficients x 3 seeds).** AA's all-in frequency:
+
+| budget | c=0 | c=0.25 | c=0.5 | c=1.0 |
+|---|---|---|---|---|
+| 12,000 | 0.615 | 0.208 | 0.417 | 0.374 |
+| 3,000 | 0.061 | 0.112 | 0.287 | 0.010 |
+
+Non-monotone at both budgets. A term capturing a real mechanism moves the
+number one way as it is turned up; this goes down, up, down.
+
+**Paired (2 arms x 9 seeds).** Both arms on the same seed, so the
+per-seed difference cancels seed variance rather than averaging it away:
+
+| | AA jam ± SE | range |
+|---|---|---|
+| c=0 | 0.494 ± 0.068 | 0.258–0.856 |
+| c=0.25 | 0.434 ± 0.090 | 0.065–0.820 |
+
+**Paired delta −0.060 ± 0.137, fell in 5 of 9.** A coin flip.
+
+## The two traps
+
+**`c=1.0 @ 3,000` looks like the fix and is not.** It gives 0.010 ±
+0.005, an order of magnitude tighter than any other arm. But a large
+bonus for keeping chips behind makes the all-in *dominated*, so the
+policy goes purely "never jam" and lands **below** the ~0.031 reference.
+That is hitting the target by making the action unattractive, not by
+modelling what follows it. **The knob can produce any number, so matching
+the reference does not validate it.**
+
+**A paired design's interim is no safer than any other interim.** At 4
+pairs this read 4/4 falling, mean −0.31, and looked real. Seeds 5–9
+erased it. Pairing removes seed *variance*, not the need for the full
+sample. Three times in this one round a partial result pointed the wrong
+way: a single seed read as an arm, a 3-seed cell read as a fix, and 4/4
+read as a trend.
+
+## What this does and does not settle
+
+It does **not** refute R17. The pricing asymmetry is read straight from
+the code, and R18 confirmed it postflop with a monotone 10.2pp effect.
+What it settles is that a *linear edge-times-stack stand-in* is not a
+valid substitute for solved continuation values — so the architectural
+work cannot be justified, costed, or designed on this evidence, and still
+needs its own milestone.
+
+`continuation` stays, default 0.0, like `optimism`/`smoothing` after R16:
+a refuted approach that stays reproducible beats one that is only
+remembered. Unlike those it costs no memory — arithmetic, not an array.

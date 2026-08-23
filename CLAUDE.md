@@ -108,6 +108,23 @@ every street (preflop through river) and every supported table size
   postflop continuation value at preflop terminals. Users are told via
   `sizing_confidence` (M98); the fold-vs-play call is unaffected and
   remains sound at 3/6-max.
+- **A crude continuation term does NOT fix the sizing defect — don't
+  tune it (M100).** `mccfr_solve(continuation=c, stack_bb=...)` adds
+  `c * (equity - 1/n_live) * chips_behind` at terminals with money
+  behind, as a cheap stand-in for the postflop game M98 showed the tree
+  cannot see. Swept c = 0/0.25/0.5/1.0: AA's jam goes 0.615/0.208/0.417/
+  0.374 at 12k and 0.061/0.112/0.287/0.010 at 3k — **non-monotone at both
+  budgets**, so it is not capturing the mechanism. `c=1.0 @ 3,000` looks
+  like a fix (0.010 +/- 0.005, tightest arm by 10x) and is not: a big
+  bonus for keeping chips behind makes the all-in *dominated*, so the
+  policy goes purely "never jam" and lands BELOW the ~0.031 reference.
+  **The knob can produce any number, so matching the reference does not
+  validate it.** A paired 9-seed test (same seed both arms, cancelling
+  seed variance) gives c=0 vs c=0.25 a delta of **-0.060 +/- 0.137,
+  falling in 5/9** — a coin flip. Kept default 0.0 for reproducibility;
+  costs no memory.
+  A real fix needs SOLVED flop continuation values, and that milestone
+  cannot be justified or costed on this evidence.
 - **The pricing flaw reaches the FLOP too, but ~10x smaller (M99).**
   `solve_flop` is flop-only (two unmodelled streets) and serves heads-up
   flop advice. Same board/ranges/pot/stack/sizes, varying only how much

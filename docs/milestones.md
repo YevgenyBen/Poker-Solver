@@ -5513,3 +5513,93 @@ entry's own corrections before trusting its conclusions.
     fixture. Note what the low SPR costs: a 2.5x-pot raise exceeds the
     stack there and collapses into the all-in, so this measures weight
     moving between all-in and CHECK, not all-in and raise.
+
+- **M100 — the architectural fix M98 pointed at, tested cheaply first,
+  and NOT validated.** M98 found that `equity * pot - invested` prices
+  an all-in correctly and every smaller bet as if the hand ended there,
+  and named postflop continuation value at preflop terminals as the real
+  fix. That is expensive architecture (chaining a flop off every preflop
+  terminal), so this milestone asked the cheap question first: is the
+  diagnosis SUFFICIENT — does restoring *any* continuation value remove
+  the jam bias — or merely consistent with it?
+  - **The probe.** `_mccfr_terminal_value` gained `continuation` /
+    `stack_bb` (default 0.0, off, byte-identical to M99). Where chips
+    remain behind, a hand's payoff gains
+    `continuation * (equity - 1/n_live) * chips_behind` — a crude stand-in
+    for the postflop game the tree cannot see. Two properties make it a
+    fair test rather than a thumb on the scale, both pinned by tests: it
+    applies ONLY where chips remain, so an all-in terminal is untouched
+    (that asymmetry IS the defect), and it is exactly zero-sum at equal
+    stacks, so it cannot inject chips and fake an improvement.
+  - **The result: an incoherent dose-response.** AA's all-in frequency,
+    three seeds per cell:
+    | budget | c=0 | c=0.25 | c=0.5 | c=1.0 |
+    |---|---|---|---|---|
+    | 12,000 | 0.615 | 0.208 | 0.417 | 0.374 |
+    | 3,000 | 0.061 | 0.112 | 0.287 | 0.010 |
+    Non-monotone at both budgets. A term capturing a real mechanism
+    should move the number one way as it is turned up; this goes down,
+    up, down.
+  - **The trap, and the lesson.** `c=1.0 @ 3,000` gives **0.010 +/-
+    0.005** — an order of magnitude tighter than any other arm, and very
+    easy to report as the fix. It is not one. A large bonus for keeping
+    chips behind makes the all-in *dominated*, so the policy goes purely
+    "never jam" and returns a stable near-zero — BELOW the ~0.031
+    reference. That is hitting the target by making the action
+    unattractive, not by modelling what follows it. **This knob can
+    produce any number, so matching the reference does not validate it.**
+  - **What it does NOT show.** It does not refute M98's diagnosis — the
+    pricing asymmetry is read straight from the code and M99 confirmed
+    it postflop with a monotone 10.2pp effect. It shows that a *linear
+    edge-times-stack stand-in* is not a valid substitute for solved
+    continuation values, so the architectural work cannot be justified
+    (or costed) on this evidence and still needs its own milestone.
+  - **The paired 9-seed test settles it: a NULL.** The sweep used 4
+    coefficients x 3 seeds; within-arm spread (0.065 to 0.487 at c=0.25)
+    matched the between-arm gaps, so nothing separated. Replaced with a
+    **paired** design — both arms share a seed, so the per-seed
+    difference cancels seed variance entirely rather than averaging it
+    away — plus a sign test over the nine pairs. Result, c=0 vs c=0.25 at
+    12,000 iterations:
+    | | AA jam +/- SE | range |
+    |---|---|---|
+    | c=0 | 0.494 +/- 0.068 | 0.258-0.856 |
+    | c=0.25 | 0.434 +/- 0.090 | 0.065-0.820 |
+    **Paired delta -0.060 +/- 0.137, fell in 5/9.** Five of nine is a coin
+    flip. The continuation term does not reduce the jam.
+  - **The interim of a paired design is no safer than any other
+    interim.** At 4 pairs this read 4/4 falling, mean -0.31, and looked
+    like a real effect; seeds 5-9 erased it. Pairing removes seed
+    VARIANCE, not the need for the full sample. Three separate times this
+    milestone a partial result pointed the wrong way — `0.0431` read as
+    an arm at c=1.0, `c=0.25 @ 12k` read as a fix in the 3-seed sweep,
+    and 4/4 read as a trend here.
+  - **Also learned:** at 12,000 iterations the jam is seed-determined in
+    EVERY arm including the uncorrected one (individual seeds span
+    ~0.04-0.86). 12,000 is where the defect is largest and also where
+    measurement is least reliable — the shipped 3,000 is four times
+    tighter (SE 0.032 vs 0.120).
+  - **`continuation` stays, default 0.0**, like `optimism`/`smoothing`
+    after M97: a refuted approach that stays reproducible is worth more
+    than one that is only remembered. Unlike those, it costs no memory —
+    it is arithmetic, not a stored array.
+  - **Also shipped, from M101's audit:** `tests/test_comment_drift.py`,
+    which flags a comment claiming its code "goes through / calls / uses"
+    a function the enclosing function never calls — the exact shape of
+    the stale `_advise` comment M99 found by accident. Contrast wording
+    ("unlike X", "used to go through X") is exempt, because those are the
+    most valuable comments here. Matched on comment BLOCKS not lines,
+    since a disclaimer usually sits a line above the claim it disclaims —
+    the line-based first version false-positived on M99's own correction
+    note. A guard test reconstructs M99's defect and requires a hit, so
+    the checker cannot rot into one that never fires. The audit's first
+    attempt (regex for `M\d+ .* now|currently|as of`) flagged 8 lines,
+    all accurate, and missed the real one — a detector that fires on
+    comments which merely SOUND like claims trains you to skim it.
+  - **And:** the only two constants in `api/config.py` without a measured
+    justification (`DEFAULT/MAX_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS`)
+    now say so explicitly rather than being silently unexplained. They
+    inherited their values by analogy with the flop sibling; that
+    reasoning is sound and is still not a measurement, and the comment
+    says which is which.
+  - **Verification:** 842 backend tests (up from 835), 154 frontend.

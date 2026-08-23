@@ -1541,3 +1541,90 @@ def test_smoothing_moves_the_policy_in_steps_rather_than_wholesale():
     # Heavier smoothing must move less, not more.
     lighter = table.current_strategy(smoothing=0.5)
     assert lighter[0, 1] > damped[0, 1]
+
+
+# --- M100: continuation value at terminals that still have chips behind ---
+
+
+def _terminal_with_chips_behind(pot, invested, folded=frozenset()):
+    return TerminalNode(pot=pot, invested=invested, folded=folded)
+
+
+class _FixedEquity:
+    """Equity cache stub returning a fixed vector, so the terminal payoff
+    is a pure function of the arithmetic under test."""
+
+    def __init__(self, values):
+        self.values = np.asarray(values, dtype=float)
+
+    def traverser_equity_vector(self, opponent_hands):
+        return self.values
+
+
+def test_continuation_defaults_to_off_and_changes_nothing():
+    """The default must be byte-identical to the pre-M100 payoff, or every
+    measurement taken before this milestone silently stops applying."""
+    node = _terminal_with_chips_behind(20.0, {"BTN": 10.0, "BB": 10.0})
+    cache = _FixedEquity([0.9, 0.1])
+    plain = _mccfr_terminal_value(node, "BTN", {"BB": "x"}, 2, cache)
+    assert np.allclose(plain, [0.9 * 20 - 10, 0.1 * 20 - 10])
+    # Passing a stack but no coefficient must also be a no-op.
+    assert np.allclose(
+        _mccfr_terminal_value(node, "BTN", {"BB": "x"}, 2, cache, continuation=0.0, stack_bb=100.0),
+        plain,
+    )
+
+
+def test_continuation_rewards_an_edge_only_where_chips_remain():
+    """The asymmetry that IS the defect (M98): an all-in terminal has
+    nothing behind and is already priced correctly, so it must be left
+    alone, while a small bet gets the postflop value it was never given.
+
+    If the correction applied to both, it would shift every line equally
+    and could not remove a bias that exists only between them.
+    """
+    cache = _FixedEquity([0.9, 0.1])
+    opponents = {"BB": "x"}
+
+    # A small bet: 10 invested of a 100bb stack, so 90 behind.
+    small = _terminal_with_chips_behind(20.0, {"BTN": 10.0, "BB": 10.0})
+    corrected = _mccfr_terminal_value(small, "BTN", opponents, 2, cache,
+                                      continuation=1.0, stack_bb=100.0)
+    plain = _mccfr_terminal_value(small, "BTN", opponents, 2, cache)
+    # +1.0 * (0.9 - 0.5) * 90 for the strong hand, and the mirror for the weak one.
+    assert np.allclose(corrected, plain + np.array([0.4 * 90, -0.4 * 90]))
+
+    # An all-in: the whole stack is in, nothing behind, nothing added.
+    allin = _terminal_with_chips_behind(200.0, {"BTN": 100.0, "BB": 100.0})
+    assert np.allclose(
+        _mccfr_terminal_value(allin, "BTN", opponents, 2, cache, continuation=1.0, stack_bb=100.0),
+        _mccfr_terminal_value(allin, "BTN", opponents, 2, cache),
+    )
+
+
+def test_continuation_is_zero_sum_at_equal_stacks():
+    """It must not quietly create or destroy chips — otherwise a shift in
+    the jam frequency could just be the correction paying everyone, which
+    would look like a fix and be an artifact.
+
+    Zero-sum holds by construction when stacks are equal: equities sum to
+    1 across the live players, so the per-player terms sum to
+    `(1 - n * 1/n) * behind == 0`. Asserted rather than argued.
+    """
+    node = _terminal_with_chips_behind(20.0, {"BTN": 10.0, "BB": 10.0})
+    # One hand each; BTN holds the 0.7 side, BB the complementary 0.3.
+    btn = _mccfr_terminal_value(node, "BTN", {"BB": "x"}, 1, _FixedEquity([0.7]),
+                                continuation=0.5, stack_bb=100.0)
+    bb = _mccfr_terminal_value(node, "BB", {"BTN": "x"}, 1, _FixedEquity([0.3]),
+                               continuation=0.5, stack_bb=100.0)
+    assert btn + bb == pytest.approx(0.0)
+
+
+def test_continuation_leaves_a_folded_player_untouched():
+    """A player who folded has no equity and no future — their payoff is
+    exactly what they put in, correction or not."""
+    node = _terminal_with_chips_behind(20.0, {"BTN": 10.0, "BB": 10.0},
+                                       folded=frozenset({"BTN"}))
+    value = _mccfr_terminal_value(node, "BTN", {"BB": "x"}, 2, _FixedEquity([0.9, 0.1]),
+                                  continuation=1.0, stack_bb=100.0)
+    assert np.allclose(value, [-10.0, -10.0])

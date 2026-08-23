@@ -802,5 +802,25 @@ SIZING_CAVEAT_REASON = (
     "0.03. Trust the fold-vs-play call; treat the choice between raise sizes "
     "and the all-in as unreliable."
 )
+# The flop-leg budget for /solve_turn_multiway_from_path — the multiway
+# TURN sibling of DEFAULT/MAX_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS above.
+# A turn query solves the flop first and then chains a sampled chance
+# branch onto it, so this governs the first of those two legs.
+#
+# **These are the only two constants in this file with no measurement of
+# their own, and that is a real gap, not a style nit (found by M101's
+# audit).** Every other constant here carries the numbers that chose it;
+# these were added alongside the route and inherited their values by
+# analogy: the default from `solve_flop_turn_multiway`'s own default, and
+# the cap set to 200 rather than the flop sibling's 500 on the reasoning
+# that a turn query pays for a chance branch on top of the flop solve, so
+# it cannot afford the same flop budget.
+#
+# That reasoning is sound and it is still not a measurement. What IS
+# measured is the endpoint as a whole (~1.5s at the shipped caps, see
+# MAX_MULTIWAY_TURN_PATH_QUERY_CLASSES_PER_POSITION), which bounds the
+# total but says nothing about where the cap should sit. Anyone raising
+# this should measure the flop leg directly first, the way the flop
+# sibling's comment does.
 DEFAULT_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS = DEFAULT_FLOP_TURN_MULTIWAY_ITERATIONS
 MAX_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS = 200
