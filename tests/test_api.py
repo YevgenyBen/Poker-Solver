@@ -1580,6 +1580,68 @@ def test_advise_says_plainly_that_multiway_turn_paths_are_not_supported(client):
     assert "multiway" in response.json()["detail"]
 
 
+def _advise_river_body(**overrides):
+    """An /advise body reaching a real river decision. Deliberately NOT
+    named _river_body — that name is already taken further down by the
+    deprecated /solve_river_from_path helper, which has a different
+    signature."""
+    body = _advise_body(
+        board="2h6d9c",
+        flop_action_path=["call_or_check", "call_or_check"],
+        turn_card="Kd",
+        turn_action_path=["call_or_check", "call_or_check"],
+        river_card="4s",
+    )
+    body.update(overrides)
+    return body
+
+
+def test_advise_answers_a_river_decision_that_is_not_the_streets_first(client):
+    """M86 completes the arc M84 (flop) and M85 (turn) began: the river's
+    later decisions were the last unreachable ones in the heads-up tree,
+    and facing a river bet is the largest single decision in a hand."""
+    opening = client.post("/advise", json=_advise_river_body())
+    assert opening.status_code == 200
+    first_actor = opening.json()["position"]
+
+    facing_a_bet = client.post("/advise", json=_advise_river_body(river_action_path=["all_in"]))
+    assert facing_a_bet.status_code == 200, facing_a_bet.json()
+    body = facing_a_bet.json()
+    assert body["street"] == "river"
+    assert body["position"] != first_actor
+    assert "fold" in next(iter(body["strategy"].values()))
+
+
+def test_advise_river_decision_discriminates_by_hand_strength(client):
+    base = _advise_river_body(river_action_path=["all_in"])
+    strong = client.post("/advise", json={**base, "hero_cards": "9s9d"}).json()["hero"]
+    weak = client.post("/advise", json={**base, "hero_cards": "5c4d"}).json()["hero"]
+    assert strong["strategy"] and weak["strategy"]
+    assert weak["strategy"].get("fold", 0.0) > strong["strategy"].get("fold", 0.0) + 0.5
+
+
+def test_advise_rejects_a_river_path_that_ends_the_hand(client):
+    response = client.post(
+        "/advise", json=_advise_river_body(river_action_path=["call_or_check", "call_or_check"])
+    )
+    assert response.status_code == 422
+    assert "no river decision left" in response.json()["detail"]
+
+
+def test_advise_rejects_a_river_action_path_without_a_river_card(client):
+    """The new field needs the same contradiction guards its siblings
+    have, or it is silently ignored — the quietest kind of wrong."""
+    body = _advise_body(
+        board="2h6d9c",
+        flop_action_path=["call_or_check", "call_or_check"],
+        turn_card="Kd",
+        river_action_path=["all_in"],
+    )
+    response = client.post("/advise", json=body)
+    assert response.status_code == 422
+    assert "river_action_path" in response.json()["detail"]
+
+
 def test_advise_gives_every_hero_advice_regardless_of_who_asked_first(client):
     """M76: the severest bug the 2026-08-22 diagnostic found.
 

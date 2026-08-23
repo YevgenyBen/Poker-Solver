@@ -1572,6 +1572,7 @@ def _query_river_from_path(
     river_iterations: int,
     players: int = 2,
     hero_combo=None,
+    river_action_kinds: list | None = None,
 ) -> dict:
     """Orchestrates POST /solve_river_from_path end to end — one street
     further than _query_turn_from_path, whose structure this mirrors
@@ -1745,14 +1746,27 @@ def _query_river_from_path(
             "effective_stack_bb": remaining_stack_after_turn,
         }
 
-    # A real river decision — the deepest node this endpoint (or any
-    # endpoint in this app) exposes.
+    # M86: a river decision deeper than the street's first. Completes the
+    # arc M84 (flop) and M85 (turn) began — the river's later decisions
+    # were the last unreachable ones in the heads-up tree, and facing a
+    # river bet is the largest single decision in a hand.
+    if river_action_kinds:
+        _river_actions, river_node = _resolve_action_path(river_node, river_action_kinds)
+        if isinstance(river_node, TerminalNode):
+            raise ValueError(
+                "river_action_path reaches a terminal — the hand is over, so there is no river "
+                "decision left to advise."
+            )
+        remaining_stack_after_turn = remaining_stack_after_turn - max(river_node.invested.values())
+
     strategy = result.strategy_at(river_node)
     trained = result.trained_hands(river_node)
     return {
         **response,
+        "river_action_path": list(river_action_kinds or []),
         "is_terminal": False,
         "player_to_act": river_node.player_to_act,
+        "position": river_node.player_to_act,
         "strategy": strategy,
         "trained": trained,
         "pot": river_node.pot,
@@ -1806,13 +1820,15 @@ def _infer_street(request) -> str:
     second source of truth that can disagree with them.
     """
     if request.board is None:
-        for field in ("flop_action_path", "turn_card", "turn_action_path", "river_card"):
+        for field in (
+            "flop_action_path", "turn_card", "turn_action_path", "river_card", "river_action_path",
+        ):
             if getattr(request, field) is not None:
                 raise ValueError(f"{field} was supplied without a board — a preflop query takes neither")
         return "preflop"
 
     if request.turn_card is None:
-        for field in ("turn_action_path", "river_card"):
+        for field in ("turn_action_path", "river_card", "river_action_path"):
             if getattr(request, field) is not None:
                 raise ValueError(f"{field} was supplied without a turn_card")
         # M84: a flop query MAY now carry a flop_action_path. It used to
@@ -1828,7 +1844,10 @@ def _infer_street(request) -> str:
     if request.river_card is None:
         # M85: a turn query MAY now carry a turn_action_path, for the same
         # reason M84 allowed one on the flop — otherwise only the street's
-        # opening decision is reachable.
+        # opening decision is reachable. A river_action_path without a
+        # river card is still a contradiction, though.
+        if request.river_action_path is not None:
+            raise ValueError("river_action_path was supplied without a river_card")
         return "turn"
 
     if request.turn_action_path is None:
@@ -2025,10 +2044,17 @@ def _advise(request, street: str, iterations: int, solve_iterations: int, hero_c
         )
         return {**raw, "source": "mccfr", "solve_iterations": raw["flop_iterations"],
                 "street": street, "hero_key": hero_key}
+    # M86: river_action_path reaches a river decision deeper than the
+    # street's first, completing what M84 (flop) and M85 (turn) began.
+    if multiway and request.river_action_path:
+        raise ValueError(
+            "river_action_path isn't supported at multiway tables yet — only the river's first "
+            "decision is reachable there. Heads-up supports any river decision."
+        )
     raw = _query_river_from_path(
         request.preflop_action_path, request.flop_action_path, turn_cards[0], request.turn_action_path,
         river_cards[0], request.stack_bb, board_cards, iterations, solve_iterations, request.players,
-        hero_combo=hero_combo,
+        hero_combo=hero_combo, river_action_kinds=request.river_action_path,
     )
     return {**raw, "source": "exact", "solve_iterations": raw["river_iterations"], "street": street,
             "hero_key": hero_key}
