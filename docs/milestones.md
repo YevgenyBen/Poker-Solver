@@ -5376,11 +5376,16 @@ entry's own corrections before trusting its conclusions.
     more samples converge ONTO the jam rather than away from it. The
     long-standing note that the sizing split was "not converged at this
     budget" implied more budget would fix it; it will not.
-  - **Heads-up escapes by cancellation, not soundness.** A jam there
-    usually just wins the 1.5bb blinds, which is worth less than a
-    called raise even at the underpriced +2.2bb — so raising still wins
-    and AA jams ~3%. Two errors nearly cancel at N=2, which is why this
-    never looked like a structural problem.
+  - **Why heads-up is unaffected: NOT established.** [Corrected in M99.]
+    This entry originally claimed heads-up "escapes by cancellation" —
+    that a jam there just wins the 1.5bb blinds, worth less than a
+    called raise even underpriced. That was a hypothesis stated as a
+    finding, and its arithmetic does not survive scrutiny: a jam's value
+    depends on villain's calling frequency against the WHOLE shoving
+    range, not on AA in isolation, and the equilibrium jam frequency is
+    a property of the range's incentives rather than one hand's. What is
+    measured is the pricing rule and the 6-max convergence onto jamming.
+    Why N=2 escapes remains open.
   - **Equity noise explains the INSTABILITY, not the level.** Measured
     directly: a 50-sample multiway equity estimate has error sd 0.091 —
     **+/-55bb of EV in a six-way 100bb pot**, worst observed 141bb, with
@@ -5421,3 +5426,90 @@ entry's own corrections before trusting its conclusions.
     its own milestone rather than being bolted onto a diagnosis.
   - **Verification:** 835 backend tests (up from 831), 154 frontend (up
     from 152), tsc and lint clean.
+
+- **M99 — the shipped sample count is right, its justification was not;
+  plus four corrections to what M98 claimed versus what it showed.**
+  M98 found the multiway sizing defect and implicated
+  `MULTIWAY_PREFLOP_SAMPLES = 50` in it. This re-measured that constant
+  properly, expecting to change it, and found it should stay.
+  - **The re-measurement.** The constant's original evidence compared
+    `200 samples @ 300 iters` (~170s) against `50 @ 3,000` (325s) — two
+    variables at once, two different costs, one diluted metric. M99 held
+    wall clock roughly fixed, 9 seeds per arm, reading T7s's
+    under-the-gun fold (a MARGINAL hand; trash like J4o/95o folds ~0.999
+    in every arm and cannot discriminate):
+    | arm | T7s fold +/- SE | worst | below 0.8 | AA jam | cost |
+    |---|---|---|---|---|---|
+    | **50 x 3,000** | **0.866 +/- 0.051** | 0.486 | **2/9** | 0.116 | **98s** |
+    | 200 x 750 | 0.485 +/- 0.099 | 0.061 | 8/9 | 0.832 | 144s |
+    | 400 x 375 | 0.419 +/- 0.111 | **0.000** | 7/9 | 0.991 | 149s |
+    Iterations dominate, and not marginally — starve them and one seed
+    in nine folds T7s **0%** of the time under the gun while jamming AA
+    99%. The shipped arm wins on every measure and is also cheapest.
+    Note the arms are NOT equal-cost despite holding `samples x
+    iterations` constant: per-iteration tree/NumPy work does not scale
+    with samples, so the 200- and 400-sample arms cost ~47% more.
+  - **A separate 9-seed sweep at fixed iterations** (3,000) showed what
+    samples DO buy: stability. AA-jam SE falls 0.066 -> 0.098 -> 0.021
+    and its range narrows 0.013-0.635 -> 0.015-0.204 going 50 -> 200 ->
+    400, while T7s's fold rises 0.866 -> 0.924 -> 0.942. But at fixed
+    COST that stability is not worth the iterations it costs.
+  - **What none of it fixes:** at the shipped setting 2 seeds in 9 still
+    fold T7s below 0.80, one at 0.486. That is what M98's +/-55bb frozen
+    equity error buys, and no retuning removes it.
+  - **A metric that hid the defect it was built to find.** The
+    equal-cost script averaged three hands that should fold. J4o and 95o
+    fold ~0.999 everywhere, so the mean reported **0.955, worst 0.829,
+    0/9 below 0.80** for the very same nine solves where T7s alone shows
+    **0.866, worst 0.486, 2/9**. Same runs, two metrics, opposite
+    verdicts. Diluting a metric with cases that cannot discriminate does
+    not merely lose power — it conceals the defect.
+  - **Four corrections to M98, separating measured from inferred:**
+    1. M98's claim that heads-up "escapes by cancellation" was a
+       hypothesis written as a finding, and its arithmetic does not hold
+       (a jam's value depends on villain's calling frequency against the
+       WHOLE shoving range, not one hand's). Why N=2 is unaffected is
+       **open**. Corrected in four files.
+    2. M98 scoped `sizing_confidence` to preflop on the grounds that
+       postflop "carries its own trained/range_confidence signals" —
+       which describes the RANGE and says nothing about terminal
+       pricing. Flagged as an open question in `api/config.py`.
+    3. `test_heads_up_preflop_does_not_carry_the_sizing_caveat` argued
+       heads-up is "solved exactly" so the caveat would be decoration.
+       Exact SOLVING does not repair a PRICING defect; heads-up preflop
+       has the same three unmodelled streets. The test now pins current
+       behaviour and says the soundness is unmeasured — and unmeasurable
+       in-repo, since no deeper preflop tree exists to compare against.
+    4. A stale comment in `_advise` still described M84's routing through
+       `solve_flop_turn` with a shared turn cache; M88 replaced that with
+       `solve_flop` and `_flop_node_cache` eleven milestones earlier.
+  - **ANSWERED: the pricing flaw DOES reach the flop.** `solve_flop` is
+    flop-only (two unmodelled streets) and serves heads-up flop advice,
+    so the prediction was concrete. Measured on identical board, ranges,
+    pot, stack, sizes and cap — the ONLY variable is how much future
+    betting the tree can see:
+    | tree | all-in | check | mixedness | nodes |
+    |---|---|---|---|---|
+    | flop only | **0.5652** | 0.4348 | 0.687 | 4 |
+    | + real turn | **0.5099** | 0.4901 | 0.601 | 200 |
+    | + turn and river | **0.4635** | 0.5365 | 0.592 | 9,608 |
+    Each street of future betting the tree gains moves ~5 percentage
+    points off the all-in — **10.2pp monotone** from flop-only to fully
+    chained, in the predicted direction. All three use the exact
+    two-player solver and are deterministic, so this is a genuine
+    difference, not sampling noise. The monotonicity is the part that
+    matters: it is what the mechanism predicts and what a coincidence
+    would not produce. Magnitude is still modest next to preflop's, which
+    fits the severity ordering (preflop three unmodelled streets, flop
+    two, turn one, river zero).
+  - **The first fixture had to be thrown away, and that is the lesson.**
+    It used the 2-class demo ranges at SPR 9.5, where the solution is
+    0.9999 pure and adding a turn moved the root strategy by 2.9e-04 — a
+    degenerate fixture cannot detect an effect whether or not it exists,
+    and reading its null as a finding would have wrongly closed the
+    question. The replacement widened both ranges (value/marginal/draw/air)
+    and dropped SPR to 1.5 so the all-in genuinely competes, and reports a
+    **mixedness number** so a real null can be told apart from another dead
+    fixture. Note what the low SPR costs: a 2.5x-pot raise exceeds the
+    stack there and collapses into the all-in, so this measures weight
+    moving between all-in and CHECK, not all-in and raise.

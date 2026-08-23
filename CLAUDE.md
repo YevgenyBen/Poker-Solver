@@ -97,11 +97,27 @@ every street (preflop through river) and every supported table size
   hand ended immediately — discarding the postflop game that is most of
   a raise's value. The error grows with opponent count, since more
   opponents means more chance the correctly-priced all-in gets called.
-  Heads-up escapes by cancellation, not soundness. **Don't try to fix
+  **Why heads-up looks fine is NOT established** — M98 asserted a
+  cancellation argument it never measured, and the arithmetic behind it
+  does not survive contact with how the solver actually works (a jam's
+  value depends on villain's calling frequency against the whole shoving
+  range, not on AA alone). Measured: the pricing rule, and that more
+  samples/iterations converge onto jamming at 6-max. Inferred, still
+  open: why N=2 is unaffected. **Don't try to fix
   this with iterations, samples, or the policy rule** — it needs
   postflop continuation value at preflop terminals. Users are told via
   `sizing_confidence` (M98); the fold-vs-play call is unaffected and
   remains sound at 3/6-max.
+- **The pricing flaw reaches the FLOP too, but ~10x smaller (M99).**
+  `solve_flop` is flop-only (two unmodelled streets) and serves heads-up
+  flop advice. Same board/ranges/pot/stack/sizes, varying only how much
+  future betting the tree sees: all-in share **0.5652 (flop only) ->
+  0.5099 (+turn) -> 0.4635 (+turn+river)** — ~5pp per street, 10.2pp
+  monotone, exact solver so deterministic, not noise. Deliberately NOT surfaced as a caveat:
+  5.5pp is an order of magnitude below the preflop distortion, it is one
+  spot at SPR 1.5, and flagging every postflop response would devalue the
+  preflop warning that marks a genuinely unusable axis. Revisit if
+  measured wider and larger.
 - **Equity noise explains the sizing INSTABILITY, not its level (M98).**
   A 50-sample multiway equity estimate has error sd 0.091 — **+/-55bb of
   EV in a six-way 100bb pot**, worst measured 141bb — and the cache

@@ -3059,8 +3059,24 @@ def test_multiway_preflop_advice_flags_its_sizing_as_unreliable(client):
 
 
 def test_heads_up_preflop_does_not_carry_the_sizing_caveat(client):
-    """The caveat has to discriminate. Heads-up preflop is solved exactly,
-    so if this returned "low" too the field would be decoration."""
+    """The caveat has to discriminate — a field that fires everywhere
+    tells a user nothing about which answers to distrust.
+
+    **What this pins is current behaviour, not a proof that heads-up
+    sizing is sound (M99).** The original version of this test argued
+    "heads-up preflop is solved exactly, so a low verdict would be
+    decoration". Exact SOLVING does not repair the defect M98 found,
+    which is in terminal PRICING: heads-up preflop has the same three
+    unmodelled streets, and a called 2.5bb raise is scored `equity * 5.5`
+    as though the hand ended there.
+
+    Heads-up sizing looks right (AA jams ~3%, matching poker intuition)
+    and that is the entire basis for trusting it — which is exactly the
+    kind of evidence this project keeps having to retract. It is also not
+    measurable in-repo: there is no deeper preflop tree to compare
+    against, so no reference exists. Recorded as an open question rather
+    than asserted in either direction.
+    """
     response = client.post(
         "/advise",
         json=_advise_body(preflop_action_path=[], hero_cards="AsAh", position="BTN", players=2),
