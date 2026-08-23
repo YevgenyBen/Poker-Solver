@@ -1741,6 +1741,48 @@ def test_advise_explains_the_action_path_contract_when_it_is_violated(client):
     assert "turn_card" in detail and "FLOP decision" in detail
 
 
+@pytest.mark.parametrize(
+    "board",
+    ["2h2h9c", "AsAsAs", "2h6d2h"],
+    ids=["adjacent-duplicate", "all-three-same", "separated-duplicate"],
+)
+def test_advise_rejects_a_board_that_repeats_a_card(client, board):
+    """M91: found by round 10's input-robustness probe.
+
+    A board naming the same card twice cannot exist, and the product
+    answered anyway — "AsAsAs" returned a confident `call 1.00`. Hero's
+    own two cards had always been checked ("HandCombo needs two distinct
+    cards") and a turn card colliding with the board was caught
+    downstream, so the gap was specifically the flop's cards against each
+    other. Per-field validation is exactly how that pairing got missed.
+
+    A real answer to an impossible question is the failure mode this
+    whole diagnostic arc keeps turning up, and the least detectable one:
+    nothing looks wrong in the response.
+    """
+    body = _advise_body(board=board, hero_cards="KsQd")
+    response = client.post("/advise", json=body)
+    assert response.status_code == 422
+    assert "appears twice in the same field" in response.json()["detail"]
+
+
+def test_advise_rejects_a_card_repeated_across_fields(client):
+    """The same check, across fields rather than within one — every
+    pairing among board / turn / river / hero is equally impossible."""
+    body = _advise_body(board="2h6d9c", hero_cards="9c2h")
+    response = client.post("/advise", json=body)
+    assert response.status_code == 422
+    assert "in both board and hero_cards" in response.json()["detail"]
+
+
+def test_advise_still_answers_a_legitimate_board(client):
+    """The guard must not be so eager it rejects real hands — a check
+    that fires on everything is as useless as one that never fires."""
+    response = client.post("/advise", json=_advise_body(board="2h6d9c", hero_cards="KsQd"))
+    assert response.status_code == 200
+    assert response.json()["strategy"]
+
+
 def test_advise_gives_every_hero_advice_regardless_of_who_asked_first(client):
     """M76: the severest bug the 2026-08-22 diagnostic found.
 
@@ -1882,9 +1924,16 @@ def test_advise_force_includes_hero_outside_the_cap_and_says_so(client):
 
 
 def test_advise_rejects_hero_cards_that_share_a_card_with_the_board(client):
+    # M91 moved this rejection earlier, into the unified duplicate-card
+    # check that covers board / turn / river / hero together, so the
+    # wording changed from "shares a card with the board" to one that
+    # names both fields. The behaviour under test is unchanged: a card
+    # cannot be in two places, and the caller is told which two.
     response = client.post("/advise", json=_advise_body(board="2h6d9c", hero_cards="2hKs"))
     assert response.status_code == 422
-    assert "shares a card with the board" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert "2h" in detail
+    assert "board" in detail and "hero_cards" in detail
 
 
 def test_advise_rejects_malformed_hero_cards(client):

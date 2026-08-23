@@ -2078,6 +2078,36 @@ def _advise(request, street: str, iterations: int, solve_iterations: int, hero_c
     if len(board_cards) != 3:
         raise ValueError(f"board must have exactly 3 cards for a flop, got {len(board_cards)}")
 
+    # M91: every card the request names, checked for duplicates in ONE
+    # place. Hero's own two cards were already validated
+    # ("HandCombo needs two distinct cards"), and a turn card colliding
+    # with the board was caught downstream — but the FLOP's own cards
+    # were not checked against each other at all. A board of "AsAsAs"
+    # returned a confident strategy (call 1.00) for a board that cannot
+    # exist. That is the failure mode this project's whole diagnostic
+    # arc keeps finding: a real answer to an impossible question.
+    #
+    # Done across board + turn + river + hero together rather than
+    # per-field, because every pairing among them is equally impossible
+    # and per-field checks are exactly how the flop's own pairing got
+    # missed.
+    named: list = [(card, "board") for card in board_cards]
+    if request.turn_card:
+        named += [(card, "turn_card") for card in parse_cards(request.turn_card)]
+    if request.river_card:
+        named += [(card, "river_card") for card in parse_cards(request.river_card)]
+    if hero_combo is not None:
+        named += [(card, "hero_cards") for card in hero_combo.cards]
+    seen: dict = {}
+    for card, field in named:
+        if card in seen:
+            where = "twice in the same field" if seen[card] == field else f"in both {seen[card]} and {field}"
+            raise ValueError(
+                f"{card} appears {where} — a card can only be in one place. "
+                "Check the board, turn/river cards and hero_cards for a repeat."
+            )
+        seen[card] = field
+
     if street == "flop" and not multiway and request.flop_action_path:
         # M84: a flop decision that isn't the street's first. Goes through
         # solve_flop_turn (which solves the whole flop subtree) rather
