@@ -11,6 +11,7 @@ across call sites genuinely differ and that difference is load-bearing.
 """
 
 import threading
+from collections import OrderedDict
 
 # M58: there is exactly ONE preflop solve cache, _preflop_raw_cache
 # below. A second, formatted-response cache (`_cache`) used to sit here
@@ -50,10 +51,28 @@ class _SolveCache:
 
     _registry: list["_SolveCache"] = []
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, maxsize: int | None = None):
         self.name = name
-        self.entries: dict = {}
-        self.lock = threading.Lock()
+        self.maxsize = maxsize
+        # M93: an OrderedDict so `store` can evict least-recently-used.
+        # Still a plain mapping to every reader, so the many call sites
+        # that read `.entries` directly are unaffected.
+        self.entries: OrderedDict = OrderedDict()
+        # M93: a REENTRANT lock, deliberately. Many call sites hold this
+        # lock across a whole read-check-write block and now call `store`
+        # / `get` / `setdefault` from inside it — those take the lock
+        # themselves, and a plain Lock would self-deadlock. That is not
+        # hypothetical: converting the 11 direct `.entries[...] = ...`
+        # writes to `store()` hung the entire test suite until this line
+        # changed. Reentrancy makes the class safe to call from either
+        # side of the lock rather than requiring every caller to know
+        # which side it is on.
+        #
+        # The per-key locks in `_key_locks` stay NON-reentrant on
+        # purpose: they gate single-flight, are held across a solve, and
+        # are never re-acquired by the thread already holding one.
+        # Reentrancy there would silently defeat the gate.
+        self.lock = threading.RLock()
         # M92: per-key locks for get_or_compute's single-flight path.
         # Entries are removed once their solve lands, so this never grows
         # to one lock per key ever seen.
@@ -67,6 +86,71 @@ class _SolveCache:
         with self.lock:
             self.entries.clear()
             self._key_locks.clear()
+
+    def store(self, key, value):
+        """Write an entry, evicting the least-recently-used one if this
+        cache has a `maxsize` (M93).
+
+        Why a bound exists at all: **nothing here evicted anything**, so
+        every entry lived for the life of the process. Measured in round
+        12 — heap grew steadily under varied traffic (0.4 MB -> 1.6 MB
+        over 25 requests, ~0.065 MB each) with no ceiling. A server
+        answering real traffic accumulates a distinct entry per (spot,
+        stack, hero class, action path); at that rate 100k requests is
+        several GB. A long-running process was going to run out of
+        memory, which is the one failure mode a cache is not allowed to
+        have.
+
+        Bounded rather than TTL'd because the value here is
+        recency-shaped, not age-shaped: a spot being asked about again is
+        exactly what makes it worth keeping, and a solve does not go
+        stale — the same inputs give the same answer tomorrow.
+        """
+        with self.lock:
+            self._store_locked(key, value)
+
+    def _store_locked(self, key, value):
+        """`store`'s body, for callers already holding `self.lock`."""
+        if key in self.entries:
+            self.entries.move_to_end(key)
+        self.entries[key] = value
+        if self.maxsize is not None:
+            while len(self.entries) > self.maxsize:
+                evicted, _ = self.entries.popitem(last=False)
+                self._key_locks.pop(evicted, None)
+
+    def get(self, key, default=None):
+        """Read an entry AND mark it most-recently-used (M93).
+
+        Reading through `.entries.get(...)` directly does not register a
+        hit, so an entry in constant use but never re-stored would age
+        out of an LRU as if it were cold — the exact opposite of what the
+        policy is for. Call sites that read go through here.
+        """
+        with self.lock:
+            if key not in self.entries:
+                return default
+            self.entries.move_to_end(key)
+            return self.entries[key]
+
+    def setdefault(self, key, default):
+        """`dict.setdefault` that participates in the LRU order. Used by
+        the path-query libraries, which read-or-create in one step."""
+        with self.lock:
+            if key in self.entries:
+                self.entries.move_to_end(key)
+                return self.entries[key]
+            self._store_locked(key, default)
+            return default
+
+    def touch(self, key):
+        """Mark `key` as most-recently-used. Call sites that read
+        `.entries` directly (there are several, deliberately — see the
+        class docstring) would otherwise never register a hit, so a hot
+        entry could be evicted while in constant use."""
+        with self.lock:
+            if key in self.entries:
+                self.entries.move_to_end(key)
 
     def get_or_compute(self, key, factory):
         """Return `self.entries[key]`, computing it via `factory()` at
@@ -97,16 +181,18 @@ class _SolveCache:
         """
         with self.lock:
             if key in self.entries:
+                self.entries.move_to_end(key)
                 return self.entries[key]
             key_lock = self._key_locks.setdefault(key, threading.Lock())
 
         with key_lock:
             with self.lock:
                 if key in self.entries:
+                    self.entries.move_to_end(key)
                     return self.entries[key]
             value = factory()
             with self.lock:
-                self.entries[key] = value
+                self._store_locked(key, value)
                 # The per-key lock has done its job; keeping it would
                 # leak one lock object per distinct key forever.
                 self._key_locks.pop(key, None)
@@ -124,26 +210,31 @@ class _SolveCache:
         return list(cls._registry)
 
 
+# Deliberately UNBOUNDED, unlike every solve cache below. Its key is
+# (rounded stack, players) — at most a few dozen entries ever exist, they
+# cost 75-140s each to rebuild, and the startup pre-warm fills them on
+# purpose. Evicting one would throw away work the server did specifically
+# so a user would not have to wait for it.
 _multiway_cache = _SolveCache("multiway")
-_flop_cache = _SolveCache("flop")
+_flop_cache = _SolveCache("flop", maxsize=256)
 # Deliberately separate from _flop_cache and from each other, not one
 # shared dict — the cache key (board, pot, stack_bb, iterations) omits
 # max_raises/raise_sizes/the demo pool because those are fixed constants
 # per endpoint, not request-varying, which is only safe *because* each
 # endpoint has its own dict. A shared dict would let an identical key
 # collide between two endpoints with different max_raises.
-_flop_turn_cache = _SolveCache("flop_turn")
-_flop_to_river_cache = _SolveCache("flop_to_river")
+_flop_turn_cache = _SolveCache("flop_turn", maxsize=128)
+_flop_to_river_cache = _SolveCache("flop_to_river", maxsize=128)
 # /solve_flop_multiway's and /solve_flop_turn_multiway's own dicts (M37)
 # — same "each endpoint gets its own" reasoning as the pair above; a
 # shared dict would let an identical (board, pot, stack_bb, iterations)
 # key collide between the two endpoints despite their different
 # max_raises/chance-dispatch behavior.
-_flop_multiway_cache = _SolveCache("flop_multiway")
-_flop_turn_multiway_cache = _SolveCache("flop_turn_multiway")
+_flop_multiway_cache = _SolveCache("flop_multiway", maxsize=128)
+_flop_turn_multiway_cache = _SolveCache("flop_turn_multiway", maxsize=128)
 # /solve_flop_to_river_multiway's own dict (M40) — same "each endpoint
 # gets its own" reasoning as every dict above.
-_flop_to_river_multiway_cache = _SolveCache("flop_to_river_multiway")
+_flop_to_river_multiway_cache = _SolveCache("flop_to_river_multiway", maxsize=128)
 # Not "_flop_query_cache" — this dict IS query_strategy's own `library`
 # parameter (poker_solver/library.py), held at module scope across
 # requests, a different granularity than the four dicts above (which
@@ -161,7 +252,7 @@ _flop_to_river_multiway_cache = _SolveCache("flop_to_river_multiway")
 # coupling that made this distinction easy to miss in the first place —
 # it surfaced here as a real AttributeError during this milestone, not as
 # a design review note.
-_flop_query_library = _SolveCache("flop_query_library")
+_flop_query_library = _SolveCache("flop_query_library", maxsize=2048)
 
 # /solve_flop_multiway_from_path's (M42) own plain dict cache —
 # deliberately not a partitioned "one library dict per situation" the
@@ -174,7 +265,7 @@ _flop_query_library = _SolveCache("flop_query_library")
 # preflop-leg iterations, and flop_iterations — two different requests
 # that happen to derive an identical range/pot/stack still get correctly
 # separate cache entries if either iteration count differs.
-_flop_multiway_path_cache = _SolveCache("flop_multiway_path")
+_flop_multiway_path_cache = _SolveCache("flop_multiway_path", maxsize=256)
 
 # /solve_turn_multiway_from_path's (M44) own plain dict cache — same
 # "no canonical library, keyed on everything the solve depends on"
@@ -188,7 +279,7 @@ _flop_multiway_path_cache = _SolveCache("flop_multiway_path")
 # _query_turn_multiway_from_path below) — that call mutates a cached
 # StrategyResult's own chance_data dict in place, so it needs the same
 # protection the cache dict's own reads/writes already get.
-_turn_multiway_path_cache = _SolveCache("turn_multiway_path")
+_turn_multiway_path_cache = _SolveCache("turn_multiway_path", maxsize=128)
 
 # M67: MultiwayEquityCache instances, shared across every multiway solve
 # that uses the same hand pool — keyed by the pool, NOT by (stack,
@@ -219,8 +310,10 @@ _multiway_equity_caches = _SolveCache("multiway_equity")
 # tree, so both flop decisions model one game (F12) — and separate from
 # _flop_query_library because that one stores flattened root strategies
 # with no tree to resolve a path into.
-_flop_node_cache = _SolveCache("flop_node")
+_flop_node_cache = _SolveCache("flop_node", maxsize=256)
 
+# Also deliberately unbounded, for the same reason: keyed by (rounded
+# stack, iterations, players), pre-warmed at startup, and cheap to hold.
 _preflop_raw_cache = _SolveCache("preflop_raw")
 # Deliberately NOT one shared dict like _flop_query_library above — see
 # the module docstring's Finding 2. This endpoint's range/pot are
@@ -229,7 +322,7 @@ _preflop_raw_cache = _SolveCache("preflop_raw")
 # stack) key could silently serve one real situation's answer to an
 # unrelated one. One private library per distinct (action_path,
 # stack_bb, iterations) instead.
-_path_query_libraries = _SolveCache("path_query_libraries")
+_path_query_libraries = _SolveCache("path_query_libraries", maxsize=256)
 
 # M26's own plain-dict cache for solve_flop_turn results, deliberately
 # separate from every dict above. Keyed narrowly — only what solve_
@@ -243,7 +336,7 @@ _path_query_libraries = _SolveCache("path_query_libraries")
 # turn's own looser discipline (around the dict access only, not the
 # whole solve) — not query_strategy's atomic whole-call lock, since
 # this isn't going through that primitive.
-_turn_path_cache = _SolveCache("turn_path")
+_turn_path_cache = _SolveCache("turn_path", maxsize=128)
 
 # M46's own plain-dict cache for solve_flop_to_river results — same
 # shape/reasoning as _turn_path_cache above (keyed on what the solve
@@ -251,4 +344,4 @@ _turn_path_cache = _SolveCache("turn_path")
 # board, river_iterations; deliberately NOT flop_action_path/turn_card/
 # turn_action_path/river_card, resolved by walking the already-solved
 # tree afterward instead of re-solving).
-_river_path_cache = _SolveCache("river_path")
+_river_path_cache = _SolveCache("river_path", maxsize=128)

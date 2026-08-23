@@ -1107,3 +1107,66 @@ it — which is precisely how this cost went unmeasured. Six tests, including
 that different keys do **not** serialize (trading one performance bug for
 another), that per-key locks do not leak, and that a failing solve leaves
 the key retryable rather than poisoned.
+
+---
+
+# Round 12 — the long-running process
+
+Every audit so far measured a fresh process. A real server runs for
+weeks, and **no cache evicted anything**: every entry lived for the life
+of the process.
+
+## F17 — memory grows without bound, and entry count hides it
+
+Measured with `tracemalloc` over varied traffic:
+
+```
+requests  entries   heap MB
+       5        5       0.4
+      10        5       0.7
+      15        5       1.0
+      20        5       1.3
+      25        5       1.6
+```
+
+The instructive part is that **entry count stayed flat at 5 while the
+heap kept growing**. Counting entries — the obvious metric, and the one
+`__len__` exposes — would have shown a perfectly stable cache. The growth
+is *inside* the entries: `_path_query_libraries` maps a partition key to
+a **library dict that itself accumulates** canonical spots forever. Two
+unbounded dimensions, one of them invisible to the metric you would
+naturally reach for.
+
+At ~0.065 MB per request, 100k requests is several GB. A long-running
+server was going to exhaust memory — the one failure mode a cache is not
+allowed to have.
+
+**M93 gives `_SolveCache` a `maxsize` with LRU eviction**, applied to all
+13 solve caches. `_multiway_cache` and `_preflop_raw_cache` stay
+unbounded **on purpose**: a few dozen entries, 75-140s each to rebuild,
+filled by the startup pre-warm — evicting one throws away work the server
+did specifically so a user would not wait for it.
+
+LRU rather than FIFO or TTL, because the value here is recency-shaped:
+a spot asked about again is exactly what makes it worth keeping, and a
+solve never goes stale (same inputs, same answer tomorrow). Reads go
+through `get`, which marks recency — reading `.entries` directly would
+not, and a hot entry would age out as if cold.
+
+## A deadlock I introduced, and what it says about the API
+
+Converting the 11 direct `.entries[key] = value` writes to `store()`
+**hung the entire test suite**. Every one of those writes sat inside an
+existing `with cache.lock:` block, and `store()` takes the lock itself —
+`threading.Lock` is not reentrant.
+
+The fix is one line (`RLock`), but the lesson is about the class: it
+deliberately exposes `.entries` and `.lock` so call sites can choose
+their own locking discipline, and that flexibility is what made it
+possible to call a locking method from inside a lock. Reentrancy makes it
+safe from either side rather than requiring every caller to know which
+side it is on. The per-key single-flight locks stay non-reentrant on
+purpose — reentrancy there would silently defeat the gate.
+
+Pinned by a regression test, because the failure mode is a **hang** with
+no error and no indication of where to look.

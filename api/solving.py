@@ -143,14 +143,12 @@ def _get_multiway_equity_cache(hands) -> MultiwayEquityCache:
     than being a single module-level instance.
     """
     key = (tuple(str(hand) for hand in hands), cfg.MULTIWAY_PREFLOP_SAMPLES)
-    with _multiway_equity_caches.lock:
-        cache = _multiway_equity_caches.entries.get(key)
-        if cache is None:
-            cache = MultiwayEquityCache(
-                hands=list(hands), samples=cfg.MULTIWAY_PREFLOP_SAMPLES, seed=1
-            )
-            _multiway_equity_caches.entries[key] = cache
-    return cache
+    return _multiway_equity_caches.get_or_compute(
+        key,
+        lambda: MultiwayEquityCache(
+            hands=list(hands), samples=cfg.MULTIWAY_PREFLOP_SAMPLES, seed=1
+        ),
+    )
 
 
 def _get_or_solve_multiway(stack_bb: float, players: int) -> StrategyResult:
@@ -194,8 +192,7 @@ def _get_or_solve_flop(board_cards: tuple, pot: float, stack_bb: float, iteratio
     iterations) request — cached the same way multiway solves are, so
     switching `position` in the API/UI never triggers a re-solve."""
     key = (board_cards, round(pot, 2), round(stack_bb), iterations)
-    with _flop_cache.lock:
-        cached = _flop_cache.entries.get(key)
+    cached = _flop_cache.get(key)
     if cached is not None:
         return cached
 
@@ -218,7 +215,7 @@ def _get_or_solve_flop(board_cards: tuple, pot: float, stack_bb: float, iteratio
     )
 
     with _flop_cache.lock:
-        _flop_cache.entries[key] = result
+        _flop_cache.store(key, result)
     return result
 
 
@@ -228,8 +225,7 @@ def _get_or_solve_flop_turn(board_cards: tuple, pot: float, stack_bb: float, ite
     shape as _get_or_solve_flop, own cache dict (see its module-level
     comment for why a shared one would be unsafe)."""
     key = (board_cards, round(pot, 2), round(stack_bb), iterations)
-    with _flop_turn_cache.lock:
-        cached = _flop_turn_cache.entries.get(key)
+    cached = _flop_turn_cache.get(key)
     if cached is not None:
         return cached
 
@@ -251,7 +247,7 @@ def _get_or_solve_flop_turn(board_cards: tuple, pot: float, stack_bb: float, ite
     )
 
     with _flop_turn_cache.lock:
-        _flop_turn_cache.entries[key] = result
+        _flop_turn_cache.store(key, result)
     return result
 
 
@@ -259,8 +255,7 @@ def _get_or_solve_flop_to_river(board_cards: tuple, pot: float, stack_bb: float,
     """Same idea as _get_or_solve_flop_turn, via solve_flop_to_river and
     its own (much tighter — see cfg.MAX_FLOP_TO_RIVER_ITERATIONS) cache."""
     key = (board_cards, round(pot, 2), round(stack_bb), iterations)
-    with _flop_to_river_cache.lock:
-        cached = _flop_to_river_cache.entries.get(key)
+    cached = _flop_to_river_cache.get(key)
     if cached is not None:
         return cached
 
@@ -282,7 +277,7 @@ def _get_or_solve_flop_to_river(board_cards: tuple, pot: float, stack_bb: float,
     )
 
     with _flop_to_river_cache.lock:
-        _flop_to_river_cache.entries[key] = result
+        _flop_to_river_cache.store(key, result)
     return result
 
 
@@ -298,8 +293,7 @@ def _get_or_solve_flop_multiway(board_cards: tuple, pot: float, stack_bb: float,
     via the same range_from_class_frequencies call the two-position
     helpers already use, just looped."""
     key = (board_cards, round(pot, 2), round(stack_bb), iterations)
-    with _flop_multiway_cache.lock:
-        cached = _flop_multiway_cache.entries.get(key)
+    cached = _flop_multiway_cache.get(key)
     if cached is not None:
         return cached
 
@@ -323,7 +317,7 @@ def _get_or_solve_flop_multiway(board_cards: tuple, pot: float, stack_bb: float,
     )
 
     with _flop_multiway_cache.lock:
-        _flop_multiway_cache.entries[key] = result
+        _flop_multiway_cache.store(key, result)
     return result
 
 
@@ -332,8 +326,7 @@ def _get_or_solve_flop_turn_multiway(board_cards: tuple, pot: float, stack_bb: f
     multiway (M36) and its own (more conservative — see MAX_FLOP_TURN_
     MULTIWAY_ITERATIONS) cache."""
     key = (board_cards, round(pot, 2), round(stack_bb), iterations)
-    with _flop_turn_multiway_cache.lock:
-        cached = _flop_turn_multiway_cache.entries.get(key)
+    cached = _flop_turn_multiway_cache.get(key)
     if cached is not None:
         return cached
 
@@ -357,7 +350,7 @@ def _get_or_solve_flop_turn_multiway(board_cards: tuple, pot: float, stack_bb: f
     )
 
     with _flop_turn_multiway_cache.lock:
-        _flop_turn_multiway_cache.entries[key] = result
+        _flop_turn_multiway_cache.store(key, result)
     return result
 
 
@@ -368,8 +361,7 @@ def _get_or_solve_flop_to_river_multiway(board_cards: tuple, pot: float, stack_b
     solve_flop_turn_multiway's rather than solve_flop_to_river's tiny
     2-position ones."""
     key = (board_cards, round(pot, 2), round(stack_bb), iterations)
-    with _flop_to_river_multiway_cache.lock:
-        cached = _flop_to_river_multiway_cache.entries.get(key)
+    cached = _flop_to_river_multiway_cache.get(key)
     if cached is not None:
         return cached
 
@@ -393,7 +385,7 @@ def _get_or_solve_flop_to_river_multiway(board_cards: tuple, pot: float, stack_b
     )
 
     with _flop_to_river_multiway_cache.lock:
-        _flop_to_river_multiway_cache.entries[key] = result
+        _flop_to_river_multiway_cache.store(key, result)
     return result
 
 
@@ -497,15 +489,14 @@ def _get_or_solve_preflop_raw(stack_bb: float, iterations: int, players: int = 2
         return _get_or_solve_multiway(stack_bb, players)
 
     key = _cache_key(stack_bb, iterations)
-    with _preflop_raw_cache.lock:
-        cached = _preflop_raw_cache.entries.get(key)
+    cached = _preflop_raw_cache.get(key)
     if cached is not None:
         return cached
 
     result = solve_preflop(stack_bb=stack_bb, iterations=iterations)
 
     with _preflop_raw_cache.lock:
-        _preflop_raw_cache.entries[key] = result
+        _preflop_raw_cache.store(key, result)
     return result
 
 
@@ -947,7 +938,7 @@ def _query_flop_from_path(
     partition_key = (tuple(action_kinds), round(stack_bb), iterations, players,
                      _hero_cache_component(hero_combo, situation.hero_in_range))
     with _path_query_libraries.lock:
-        library = _path_query_libraries.entries.setdefault(partition_key, {})
+        library = _path_query_libraries.setdefault(partition_key, {})
         result = query_strategy_from_path(
             library,
             situation.preflop_result,
@@ -1025,8 +1016,7 @@ def _query_flop_multiway_from_path(
 
     key = (tuple(action_kinds), players, round(stack_bb), iterations, board_cards,
            flop_iterations, _hero_cache_component(hero_combo, situation.hero_in_range))
-    with _flop_multiway_path_cache.lock:
-        cached = _flop_multiway_path_cache.entries.get(key)
+    cached = _flop_multiway_path_cache.get(key)
     if cached is None:
         result = solve_flop_multiway(
             board=board_cards,
@@ -1039,7 +1029,7 @@ def _query_flop_multiway_from_path(
             iterations=flop_iterations,
         )
         with _flop_multiway_path_cache.lock:
-            _flop_multiway_path_cache.entries[key] = result
+            _flop_multiway_path_cache.store(key, result)
         cached = result
 
     formatted = format_flop_response(cached, board="".join(str(c) for c in board_cards))
@@ -1448,8 +1438,7 @@ def _query_turn_multiway_from_path(
         to_river,
         _hero_cache_component(hero_combo, situation.hero_in_range),
     )
-    with _turn_multiway_path_cache.lock:
-        result = _turn_multiway_path_cache.entries.get(turn_solve_key)
+    result = _turn_multiway_path_cache.get(turn_solve_key)
     if result is None:
         result = solver(
             board=board_cards,
@@ -1462,7 +1451,7 @@ def _query_turn_multiway_from_path(
             iterations=flop_iterations,
         )
         with _turn_multiway_path_cache.lock:
-            _turn_multiway_path_cache.entries[turn_solve_key] = result
+            _turn_multiway_path_cache.store(turn_solve_key, result)
 
     _flop_actions, flop_node = _resolve_action_path(result.root, flop_action_kinds)
     if not isinstance(flop_node, TerminalNode):
@@ -1729,8 +1718,7 @@ def _query_river_from_path(
         players,
         _hero_cache_component(hero_combo, situation.hero_in_range),
     )
-    with _river_path_cache.lock:
-        result = _river_path_cache.entries.get(river_solve_key)
+    result = _river_path_cache.get(river_solve_key)
     if result is None:
         result = solve_flop_to_river(
             board=board_cards,
@@ -1744,7 +1732,7 @@ def _query_river_from_path(
             iterations=river_iterations,
         )
         with _river_path_cache.lock:
-            _river_path_cache.entries[river_solve_key] = result
+            _river_path_cache.store(river_solve_key, result)
 
     _flop_actions, flop_node = _resolve_action_path(result.root, flop_action_kinds)
     if not isinstance(flop_node, TerminalNode):
