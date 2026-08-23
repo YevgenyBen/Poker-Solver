@@ -92,16 +92,34 @@ MULTIWAY_PREFLOP_HANDS = all_starting_hands()
 # a real measured trade, not a cost cut for its own sake.
 #
 # With 169 classes the binding constraint is ITERATIONS, not sample
-# precision: at 300 iterations the strategy is badly unconverged whatever
-# the sample count (T7s folding 22.6% under the gun at 6-max, which is
-# simply wrong). samples=50 costs ~3.6x less per evaluation, which buys
-# ~6x the iterations for the same wall clock — and iterations are what
-# this needs. Measured at 6-max, 169 classes:
-#     samples=200, 300 iters  (~170s): T7s fold 22.6%, 72o fold 94.4%
-#     samples=50,  3,000 iters (325s): T7s fold 69.8%, 72o fold 98.3%
-#     samples=50, 10,000 iters (712s): T7s fold 86.9%, 72o fold 98.7%
-# The cheaper-but-more-iterated setting is not a worse answer; it is a
-# much better one.
+# precision. **Re-measured properly in M99** — the original evidence for
+# this was weak and reached the right answer by luck. It compared
+# `samples=200 @ 300 iters` (~170s) against `samples=50 @ 3,000 iters`
+# (325s): two variables at once, two very different costs, and only fold
+# rates reported. M98 then found that the constant it justified was also
+# implicated in a real defect, which is what prompted the re-measurement.
+#
+# M99 held wall clock roughly fixed instead, 9 seeds per arm, reading
+# T7s's under-the-gun fold rate (a marginal hand that should fold ~always
+# — trash like J4o/95o folds ~0.999 in every arm and cannot discriminate):
+#
+#     arm              T7s fold +/- SE   worst   below 0.8   AA jam   cost
+#     50  x 3,000      0.866 +/- 0.051   0.486       2/9      0.116    98s
+#     200 x   750      0.485 +/- 0.099   0.061       8/9      0.832   144s
+#     400 x   375      0.419 +/- 0.111   0.000       7/9      0.991   149s
+#
+# Iterations dominate, and not marginally: starve them and one seed in
+# nine folds T7s **0% of the time** under the gun while jamming AA 99%.
+# The shipped arm is best on every measure AND the cheapest — note the
+# arms are NOT equal-cost despite holding samples*iterations constant,
+# because per-iteration tree/NumPy work does not scale with samples.
+#
+# **What this does NOT fix, stated plainly:** even at the shipped setting
+# 2 seeds in 9 fold T7s below 0.80, one at 0.486. That instability is
+# real, it is what the +/-55bb frozen equity error (M98) buys you, and
+# neither knob removes it at this budget — more samples at fixed cost
+# makes it much worse. It needs more total budget or structural work, not
+# retuning.
 MULTIWAY_PREFLOP_SAMPLES = 50
 
 # One entry per supported multiway table size. `iterations` shrinks as
@@ -742,13 +760,28 @@ LOW_CONFIDENCE_TABLE_SIZES = {
 # predicts multiway FLOP sizing carries a weaker version of the same
 # problem.
 #
-# It is not flagged there because it has not been measured there, and
-# this project does not ship caveats on hunches any more than it ships
-# advice on them. The preflop case is measured (AA 0.649 / KK 0.709 at
-# the most converged setting tested); the postflop case is an open
-# question for whoever picks this up. Postflop responses do carry
-# `trained`/`range_confidence`, but those describe the RANGE, not the
-# terminal pricing, so they do not cover this.
+# **M99 measured it, and the prediction holds.** Identical board, ranges,
+# pot, stack, sizes and cap; the only variable is how much future betting
+# the tree can see:
+#
+#     tree              all-in   check   mixedness   nodes
+#     flop only         0.5652   0.4348    0.687        4
+#     + real turn       0.5099   0.4901    0.601      200
+#     + turn and river  0.4635   0.5365    0.592    9,608
+#
+# Each street the tree gains moves ~5 percentage points off the all-in -
+# 10.2pp monotone end to end. All three use the exact two-player solver
+# and are deterministic, so that is a real difference, not sampling
+# noise, and the monotonicity is what a coincidence would not produce.
+#
+# It is still NOT flagged at the flop, and that is a judgement call worth
+# stating: 5.5pp is an order of magnitude smaller than the preflop
+# distortion (AA 0.649 vs a ~0.03 reference), it was measured on ONE spot
+# at SPR 1.5, and a caveat attached to every postflop response would
+# devalue the preflop one that marks a genuinely unusable axis. Revisit
+# if it is measured across more spots and turns out larger. Postflop
+# responses do carry `trained`/`range_confidence`, but those describe the
+# RANGE, not the terminal pricing, so they do not cover this.
 #
 # Every multiway table size is listed — the defect is a property of the
 # sampled solve, not of any one seat count. Measured: at

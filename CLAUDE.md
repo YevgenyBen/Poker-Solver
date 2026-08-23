@@ -108,6 +108,16 @@ every street (preflop through river) and every supported table size
   postflop continuation value at preflop terminals. Users are told via
   `sizing_confidence` (M98); the fold-vs-play call is unaffected and
   remains sound at 3/6-max.
+- **The pricing flaw reaches the FLOP too, but ~10x smaller (M99).**
+  `solve_flop` is flop-only (two unmodelled streets) and serves heads-up
+  flop advice. Same board/ranges/pot/stack/sizes, varying only how much
+  future betting the tree sees: all-in share **0.5652 (flop only) ->
+  0.5099 (+turn) -> 0.4635 (+turn+river)** — ~5pp per street, 10.2pp
+  monotone, exact solver so deterministic, not noise. Deliberately NOT surfaced as a caveat:
+  5.5pp is an order of magnitude below the preflop distortion, it is one
+  spot at SPR 1.5, and flagging every postflop response would devalue the
+  preflop warning that marks a genuinely unusable axis. Revisit if
+  measured wider and larger.
 - **Equity noise explains the sizing INSTABILITY, not its level (M98).**
   A 50-sample multiway equity estimate has error sd 0.091 — **+/-55bb of
   EV in a six-way 100bb pot**, worst measured 141bb — and the cache

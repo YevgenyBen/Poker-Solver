@@ -1581,3 +1581,110 @@ existing warning.
 which is what a real fix needs. That is an architectural change to
 terminal pricing and deserves its own milestone, not a bolt-on to a
 diagnosis.
+
+---
+
+# Round 18 (M99) — the constant was right; the reasoning wasn't
+
+R17 found the multiway sizing defect and implicated
+`MULTIWAY_PREFLOP_SAMPLES = 50` in it. This round set out to change that
+constant and found it should stay.
+
+## Iterations dominate, decisively
+
+The constant's original evidence compared `200 samples @ 300 iters`
+(~170s) against `50 @ 3,000` (325s) — two variables at once, two
+different costs, one metric. This held wall clock roughly fixed, 9 seeds
+per arm, reading T7s's under-the-gun fold rate:
+
+| arm | T7s fold ± SE | worst | below 0.80 | AA jam | cost |
+|---|---|---|---|---|---|
+| **50 × 3,000** | **0.866 ± 0.051** | 0.486 | **2/9** | 0.116 | **98s** |
+| 200 × 750 | 0.485 ± 0.099 | 0.061 | 8/9 | 0.832 | 144s |
+| 400 × 375 | 0.419 ± 0.111 | **0.000** | 7/9 | 0.991 | 149s |
+
+Starve the iterations and one seed in nine folds T7s **0% of the time**
+under the gun while jamming AA 99%. The shipped arm wins on every
+measure and is also the cheapest.
+
+Note the arms are **not** equal-cost despite holding `samples ×
+iterations` constant — per-iteration tree and NumPy work doesn't scale
+with samples, so the richer-sample arms cost ~47% more. Holding the
+product constant is not holding cost constant.
+
+A separate sweep at fixed iterations shows what samples *do* buy:
+stability. Going 50 → 200 → 400 at 3,000 iterations, AA-jam SE falls
+0.066 → 0.098 → 0.021 and its range narrows 0.013–0.635 → 0.015–0.204,
+while T7s's fold rises 0.866 → 0.924 → 0.942. At fixed **cost**, that
+stability is not worth the iterations it costs.
+
+**What none of it fixes:** at the shipped setting, 2 seeds in 9 still
+fold T7s below 0.80, one at 0.486. That is what R17's ±55bb frozen
+equity error buys, and no retuning removes it.
+
+## A metric that hid the defect it was built to find
+
+The equal-cost script averaged three hands that should fold. J4o and 95o
+fold ~0.999 in every arm, so for the **same nine solves** the mean
+reported **0.955, worst 0.829, 0/9 below 0.80** while T7s alone showed
+**0.866, worst 0.486, 2/9**.
+
+Same runs. Two metrics. Opposite verdicts. Diluting a metric with cases
+that cannot discriminate doesn't merely lose power — it conceals. I
+added the extra hands specifically to make the metric more robust.
+
+## Four corrections to R17
+
+Separating what was measured from what was inferred:
+
+1. **"Heads-up escapes by cancellation" is retracted.** It was a
+   hypothesis written as a finding, and the arithmetic doesn't hold — a
+   jam's value depends on villain's calling frequency against the
+   **whole** shoving range, not one hand's. Why N=2 is unaffected is
+   open.
+2. **The preflop scoping of `sizing_confidence` is flagged.** R17
+   justified it with "postflop carries its own trained/range_confidence
+   signals" — which describes the *range* and says nothing about
+   terminal pricing.
+3. **A test claimed exact solving repairs a pricing defect.** Heads-up
+   preflop has the same three unmodelled streets; it now pins behaviour
+   and states the soundness is unmeasured — and unmeasurable in-repo,
+   since no deeper preflop tree exists to compare against.
+4. **A stale comment** in `_advise` still described M84 routing through
+   `solve_flop_turn` with a shared cache; M88 replaced that eleven
+   milestones earlier.
+
+## The flop question, and a fixture rejected
+
+Does the pricing flaw reach the flop? `solve_flop` **is** flop-only, so
+the prediction is concrete. The first attempt could not answer it: with
+the 2-class demo ranges at SPR 9.5 the solution is 0.9999 pure, and
+adding a real turn moved the root strategy by 2.9e-04. A degenerate
+fixture cannot detect an effect whether or not it exists — the same
+mistake shape as the diluted metric above, twice in one round.
+
+The replacement widened both ranges (value / marginal / draw / air) and
+dropped SPR to 1.5 so the all-in genuinely competes, and reported a
+mixedness number so a real null could be told apart from another dead
+fixture. It answered cleanly:
+
+| tree | all-in | check | mixedness | nodes | time |
+|---|---|---|---|---|---|
+| flop only | **0.5652** | 0.4348 | 0.687 | 4 | 3.1s |
+| + real turn | **0.5099** | 0.4901 | 0.601 | 200 | 26.5s |
+| + turn and river | **0.4635** | 0.5365 | 0.592 | 9,608 | 665.8s |
+
+**The flaw reaches the flop.** Each street of future betting the tree
+gains moves ~5 percentage points off the all-in — 10.2pp monotone from
+flop-only to fully chained. The exact two-player solver is deterministic,
+so this is a real difference rather than noise, and the *monotonicity* is
+what a coincidence would not produce.
+
+Two honest limits. The low SPR means a 2.5x-pot raise exceeds the stack
+and collapses into the all-in, so this measures weight moving between
+all-in and CHECK, not all-in and raise. And it is one spot.
+
+It is deliberately **not** surfaced as a caveat at the flop: 5.5pp is an
+order of magnitude below the preflop distortion, and a warning on every
+postflop response would devalue the preflop one that marks a genuinely
+unusable axis.
