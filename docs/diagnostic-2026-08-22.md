@@ -738,3 +738,49 @@ F2 and F10 both taught.
 "Advice at any point" is now true for the whole heads-up tree except the
 river's later decisions, and for the opening decision of every multiway
 street.
+
+---
+
+# R14 implementation (M86) — heads-up coverage is complete
+
+The river's later decisions were the last unreachable nodes in the
+heads-up tree, and facing a river bet is the largest single decision in a
+hand. `AdviseRequest` gains `river_action_path`, resolved into the
+already-solved river subtree exactly as M84 and M85 do for their streets.
+
+River behaviour on 2h6d9c + Kd + 4s, previously unreachable:
+
+| node | set of nines | air (5c4d) |
+|---|---|---|
+| first to act (BB) | **shove 0.91** | check 0.85, **bluff 0.15** |
+| after a check (BTN) | **shove 0.94** | check 0.90 |
+| facing a bet (BTN) | **call 0.95** | **fold 1.00** |
+
+Value, bluff and give-up all separate — the structure a real river solve
+produces, and none of it was previously visible.
+
+The new field gets the same contradiction guards its siblings have
+(rejected without a `river_card`, and without a board). A field that is
+silently ignored is the quietest kind of wrong.
+
+## Coverage after M84-M86
+
+| street | first decision | later decisions |
+|---|---|---|
+| preflop | yes | yes |
+| flop, heads-up | yes | **yes (M84)** |
+| turn, heads-up | yes | **yes (M85)** |
+| river, heads-up | yes | **yes (M86)** |
+| flop/turn/river, multiway | yes | no — refused with a clear 422 |
+
+**Every heads-up decision in a hand is now reachable.** That is the
+"advice at any point" the project set out to build, true for the first
+time on the two-player tree. Multiway still answers only each street's
+opening decision, and says so rather than answering the wrong node.
+
+## Remaining open
+
+- **R12** — the two flop trees still differ (F12).
+- **R15** — extend M84-M86 to multiway. Those cells read their nodes off
+  *sampled* chance branches rather than an exhaustively-solved tree, so
+  it is a different problem, not a copy of the same fix.

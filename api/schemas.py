@@ -39,6 +39,12 @@ class AdviseRequest(BaseModel):
     turn_card: str | None = None
     turn_action_path: list[str] | None = None
     river_card: str | None = None
+    # M86: which river decision is being asked about. Absent or empty
+    # means the street's first, exactly as flop_action_path (M84) and
+    # turn_action_path (M85) mean for theirs. Without it only the opening
+    # river decision was reachable, so a player facing a river bet — the
+    # single largest decision in a hand — could not ask.
+    river_action_path: list[str] | None = None
     hero_cards: str | None = None
     iterations: int | None = None
     solve_iterations: int | None = None
