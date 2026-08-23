@@ -86,6 +86,31 @@ every street (preflop through river) and every supported table size
   had this too and it was not harmless — a toy AA-vs-72o game averaged
   0.656 at 500 iterations against a ~0.97 equilibrium. **Any "trusted
   heads-up reference" number predating M71 is suspect for this reason.**
+- **Multiway preflop SIZING is structurally wrong, and no budget fixes
+  it (M98).** The split among non-fold actions was long filed as "not
+  converged at this budget". It is not a budget problem: at 12,000
+  iterations and 400 equity samples — the most converged, least noisy
+  setting measured — AA jams 0.649 and KK 0.709. More iterations and
+  more samples converge ONTO the jam. Cause: every showdown terminal is
+  priced `equity * pot - invested` (`cfr._mccfr_terminal_value`), so an
+  all-in is priced correctly while every smaller bet is scored as if the
+  hand ended immediately — discarding the postflop game that is most of
+  a raise's value. The error grows with opponent count, since more
+  opponents means more chance the correctly-priced all-in gets called.
+  Heads-up escapes by cancellation, not soundness. **Don't try to fix
+  this with iterations, samples, or the policy rule** — it needs
+  postflop continuation value at preflop terminals. Users are told via
+  `sizing_confidence` (M98); the fold-vs-play call is unaffected and
+  remains sound at 3/6-max.
+- **Equity noise explains the sizing INSTABILITY, not its level (M98).**
+  A 50-sample multiway equity estimate has error sd 0.091 — **+/-55bb of
+  EV in a six-way 100bb pot**, worst measured 141bb — and the cache
+  freezes it per key, so CFR optimizes against its own noise rather than
+  averaging it out. That is why the jam frequency swings with the seed.
+  `equity.py`'s own `MULTIWAY_DEFAULT_SAMPLES = 200` comment warned in
+  M8 that 50 samples distorts MCCFR *via the all-in*; `api/config.py`
+  overrode it to 50 on fold-rate measurements and the warning was never
+  reconciled.
 - **9-max preflop output is NOT reliable (M68, measured).** T7s folds
   only 12.5% under the gun at 9 handed, where it should be near 100%
   and 6-max reaches 87.4%. Eight opponents make the sampled variance
@@ -181,7 +206,9 @@ every street (preflop through river) and every supported table size
   Linear averaging amplifies this (~0.09) but is not the cause and is
   kept. **M97 built M74's prescribed fix — policy damping, in both the
   forms it named — and measured both WORSE than doing nothing.** At the
-  shipped 6-max budget, three seeds, fresh equity cache per run: plain
+  6-max iteration budget (but at 200 equity samples, not the shipped 50 —
+  M97 mislabelled this and M98 corrected it; the arms stay comparable
+  since all three did the same), three seeds, fresh equity cache: plain
   AA-jam mean 0.056 / spread 0.037, predictive regret matching 0.628 /
   0.604, policy smoothing 0.348 / 0.591, all at the same cost. Prediction
   is a full-information technique and under sampling just amplifies the

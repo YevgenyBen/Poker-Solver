@@ -182,7 +182,29 @@ MULTIWAY_PREFLOP_SAMPLES = 50
 # the NON-fold actions (limp / raise 2.5 / jam) is still not converged at
 # this budget. AA jams ~22% here where a converged solve puts it near 0.
 # So treat multiway preflop output as trustworthy for "is this hand
-# playable from this seat" and NOT for "which sizing". Heads-up has no
+# playable from this seat" and NOT for "which sizing".
+#
+# **M98 found the cause, and it is NOT the budget.** "Not converged at
+# this budget" implied a bigger budget would fix it. It does not: at
+# 12,000 iterations and 400 equity samples — the most converged, least
+# noisy setting measured — AA jams 0.649 and KK 0.709. More of both
+# converges ONTO the jam, because jamming is what this model actually
+# prefers. Every showdown terminal is priced `equity * pot - invested`
+# (`cfr._mccfr_terminal_value`), so an all-in is priced correctly (it
+# really does end at showdown) while every smaller bet is priced as if
+# the hand ended immediately, discarding the postflop game that is most
+# of a raise's value. The error grows with opponent count, because more
+# opponents means more chance the accurately-priced all-in gets called.
+# Heads-up escapes it by cancellation, not by soundness: a jam there
+# usually just wins the 1.5bb blinds, which is less than a called raise
+# is worth even when underpriced.
+#
+# What sample count DOES control is the INSTABILITY: a 50-sample equity
+# estimate carries an error of +/-55bb of EV in a six-way 100bb pot,
+# frozen per cache key, which is why the jam frequency swings with the
+# seed. Fixing sizing needs postflop continuation value at preflop
+# terminals — see SIZING_CAVEAT_REASON, which is what users are told
+# meanwhile. Heads-up has no
 # such caveat — it solves exactly (CFR+) against a precomputed 169x169
 # equity table. Closing this properly is an ARCHITECTURAL fix, not a
 # budget one: multiway equity is Monte-Carlo-simulated per opponent
@@ -692,5 +714,40 @@ LOW_CONFIDENCE_TABLE_SIZES = {
         "iterations where 6-max reaches 0.94. Treat this as a hint, not GTO."
     ),
 }
+
+# M98. Multiway preflop answers TWO questions at once and they are not
+# equally reliable — this module has said so since M67 in the
+# MULTIWAY_TABLE_CONFIGS comment ("trustworthy for 'is this hand playable
+# from this seat' and NOT for 'which sizing'"), and nothing ever told a
+# user. `solver_confidence` covers only 9-max, so a 6-max player asking
+# whether to raise or shove got a confident answer the project's own
+# config documents as unconverged.
+#
+# Kept separate from `solver_confidence` deliberately: marking the whole
+# response low would be its own kind of wrong, because the fold-vs-play
+# decision at 3-max and 6-max is the part that IS converged and is what
+# most players are actually asking.
+#
+# Scoped to preflop: postflop trees are solved per-request against a real
+# derived range, and carry their own `trained`/`range_confidence`
+# signals. Every multiway table size is listed — the defect is a property
+# of the sampled preflop solve, not of any one seat count. Measured: at
+# 6-max AA's all-in frequency swings 0.03-0.92 across seeds and iteration
+# budgets where a converged solve puts it near 0.03 (M72-M74, M97), and
+# the equity estimates the choice rests on carry an error of +/-55bb of
+# EV in a six-way 100bb pot (M98).
+SIZING_CAVEAT_TABLE_SIZES = {
+    3: True,
+    6: True,
+    9: True,
+}
+SIZING_CAVEAT_REASON = (
+    "Multiway preflop is converged for whether to play this hand, but NOT for "
+    "which sizing to use. The split among the non-fold actions (limp / raise / "
+    "all-in) moves with the random seed — at 6-max, AA's all-in frequency has "
+    "measured anywhere from 0.03 to 0.92 where a converged solve puts it near "
+    "0.03. Trust the fold-vs-play call; treat the choice between raise sizes "
+    "and the all-in as unreliable."
+)
 DEFAULT_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS = DEFAULT_FLOP_TURN_MULTIWAY_ITERATIONS
 MAX_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS = 200

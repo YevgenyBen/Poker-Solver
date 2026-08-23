@@ -3030,3 +3030,82 @@ def test_advise_never_offers_a_bet_larger_than_the_stack(client, stack_bb, prefl
         f"advice names bets the player cannot make with "
         f"{body['effective_stack_bb']}bb: {_oversized_actions(body)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# M98 — the sizing axis is unreliable multiway, and now says so
+# ---------------------------------------------------------------------------
+
+
+def test_multiway_preflop_advice_flags_its_sizing_as_unreliable(client):
+    """`api/config.py` has recorded since M67 that multiway preflop is
+    "trustworthy for 'is this hand playable from this seat' and NOT for
+    'which sizing'". No response ever carried that, so a 6-max player
+    asking whether to raise or shove was answered with exactly the same
+    confidence as one asking whether to play at all.
+    """
+    response = client.post(
+        "/advise",
+        json=_advise_body(preflop_action_path=[], hero_cards="AsAh", position="BTN", players=6),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["street"] == "preflop"
+    assert body["sizing_confidence"] == "low"
+    assert body["sizing_confidence_reason"]
+    # The fold-vs-play half is the part that IS converged at 6-max, so the
+    # overall verdict must NOT be dragged down with it.
+    assert body["solver_confidence"] == "high"
+
+
+def test_heads_up_preflop_does_not_carry_the_sizing_caveat(client):
+    """The caveat has to discriminate. Heads-up preflop is solved exactly,
+    so if this returned "low" too the field would be decoration."""
+    response = client.post(
+        "/advise",
+        json=_advise_body(preflop_action_path=[], hero_cards="AsAh", position="BTN", players=2),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sizing_confidence"] == "high"
+    assert body["sizing_confidence_reason"] is None
+
+
+def test_the_sizing_caveat_is_scoped_to_preflop(client):
+    """Postflop multiway is solved per request against a real derived
+    range and carries its own `trained`/`range_confidence` signals; the
+    unconverged sizing split is a property of the sampled PREFLOP solve.
+    A caveat that fired on every multiway response would tell a user
+    nothing about which answers to distrust."""
+    response = client.post(
+        "/advise",
+        json=_advise_body(
+            preflop_action_path=["raise", "call_or_check"],
+            hero_cards="AsKh",
+            board="Kd7c2h",
+            position="BTN",
+            players=2,
+        ),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["street"] == "flop"
+    assert body["sizing_confidence"] == "high"
+
+
+def test_nine_max_carries_both_warnings_without_either_masking_the_other(client):
+    """9-max is low-confidence overall AND has the sizing problem. The two
+    fields are independent, so a consumer rendering only one still shows
+    something true — but both must be present, or the more specific
+    warning silently disappears behind the general one."""
+    response = client.post(
+        "/advise",
+        json=_advise_body(preflop_action_path=[], hero_cards="AsAh", position="BTN", players=9),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["solver_confidence"] == "low"
+    assert body["solver_confidence_reason"]
+    assert body["sizing_confidence"] == "low"
+    assert body["sizing_confidence_reason"]
+    assert body["solver_confidence_reason"] != body["sizing_confidence_reason"]
