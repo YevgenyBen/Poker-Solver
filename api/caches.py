@@ -54,6 +54,10 @@ class _SolveCache:
         self.name = name
         self.entries: dict = {}
         self.lock = threading.Lock()
+        # M92: per-key locks for get_or_compute's single-flight path.
+        # Entries are removed once their solve lands, so this never grows
+        # to one lock per key ever seen.
+        self._key_locks: dict = {}
         _SolveCache._registry.append(self)
 
     def __len__(self) -> int:
@@ -62,6 +66,51 @@ class _SolveCache:
     def clear(self) -> None:
         with self.lock:
             self.entries.clear()
+            self._key_locks.clear()
+
+    def get_or_compute(self, key, factory):
+        """Return `self.entries[key]`, computing it via `factory()` at
+        most once even when many threads miss simultaneously (M92).
+
+        The "single-flight" pattern, added because the alternative was
+        measured and it is expensive. Every helper here used to check the
+        cache under the lock, compute UNLOCKED, then write under the lock
+        — safe, and documented as an accepted tradeoff on the grounds
+        that these solves are deterministic so either racer's result is
+        correct. That reasoning is about CORRECTNESS and it is right. It
+        quietly accepted an N-times COST that nobody had measured.
+
+        Measured in M92: **8 concurrent requests sharing one solve key ran
+        8 full solves, 223s.** The same 8 sequentially ran 0 (all cache
+        hits after the first). A cold spot hit by N simultaneous users
+        did N times the work — a thundering herd, and exactly the
+        multi-user failure shape M76's cache-key bug also had.
+
+        The lock discipline matters and is easy to get wrong:
+          * `self.lock` guards only dict access and the per-key lock
+            registry — never a solve, or concurrent misses on DIFFERENT
+            keys would serialize against each other for no reason.
+          * The per-key lock is held across the solve, so late arrivals
+            wait for the winner instead of duplicating it.
+          * The cache is re-checked after acquiring the per-key lock,
+            since the winner may have finished while we waited.
+        """
+        with self.lock:
+            if key in self.entries:
+                return self.entries[key]
+            key_lock = self._key_locks.setdefault(key, threading.Lock())
+
+        with key_lock:
+            with self.lock:
+                if key in self.entries:
+                    return self.entries[key]
+            value = factory()
+            with self.lock:
+                self.entries[key] = value
+                # The per-key lock has done its job; keeping it would
+                # leak one lock object per distinct key forever.
+                self._key_locks.pop(key, None)
+            return value
 
     @classmethod
     def clear_all(cls) -> None:

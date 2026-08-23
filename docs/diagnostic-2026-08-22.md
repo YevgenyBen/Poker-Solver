@@ -1046,3 +1046,64 @@ and the least detectable one: **a real answer to an impossible
 question**, where nothing in the response looks wrong. Four tests pin it,
 including one that a legitimate board still answers — a guard that fires
 on everything is as useless as one that never fires.
+
+---
+
+# Round 11 — concurrency
+
+Never audited, and overdue: the worst bug this whole diagnostic found
+(M76's cache key) was a **multi-user** failure, and M75 made on-demand
+branch training *mutate* a cached `StrategyResult` in place.
+
+## Correctness under concurrency: clean
+
+22 concurrent requests — 12 on one spot across three hero hands, 10
+across different turn cards that mutate shared cached results. **Zero
+errors, zero 500s, and every repeated question got a consistent answer.**
+The locking disciplines hold, including M75's in-place mutation.
+
+## F16 — a thundering herd on every cold spot
+
+Part B took 277s for 10 requests that share **one** underlying solve (the
+turn card is not in the cache key — one `solve_flop_turn` covers every
+turn card via `chance_data`). That is not what a shared solve should
+cost, so it was measured directly:
+
+```
+8 CONCURRENT requests, same solve key:  223.3s   solve_flop_turn calls = 8
+8 SEQUENTIAL requests, same key:          0.0s   solve_flop_turn calls = 0
+```
+
+**Eight full solves for a question that needed one.** Every cache helper
+checked the cache, computed *unlocked*, then wrote — and `caches.py`
+documented that race as an accepted tradeoff on the grounds that these
+solves are deterministic, so whichever racer wins is correct.
+
+That reasoning is sound **about correctness** and it is exactly right.
+What it never addressed is **cost**, and nobody had measured it. N
+simultaneous users on a cold spot did N times the work — the same
+multi-user shape as M76's bug, hiding behind a comment that had already
+considered the correctness question and stopped there.
+
+**M92 adds `_SolveCache.get_or_compute`** — the single-flight pattern —
+and routes the expensive solves through it. The lock discipline is the
+part worth getting right: `self.lock` guards only the dict and the
+per-key lock registry, never a solve, or concurrent misses on *different*
+keys would serialize for no reason. Per-key locks are dropped once their
+solve lands, so a long-running server does not accumulate one per key
+ever seen.
+
+```
+8 CONCURRENT requests, same solve key:   31.7s   solve_flop_turn calls = 1
+```
+
+**223.3s → 31.7s, 8 solves → 1.** Applied to the heads-up turn cell, the
+mid-flop cell, and the multiway preflop solve — the last being the worst
+possible herd at 75-140s per redundant copy.
+
+`api/caches.py` also gains its own test module, which it never had. Its
+behaviour was only ever covered incidentally through the endpoints using
+it — which is precisely how this cost went unmeasured. Six tests, including
+that different keys do **not** serialize (trading one performance bug for
+another), that per-key locks do not leak, and that a failing solve leaves
+the key retryable rather than poisoned.

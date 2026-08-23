@@ -167,26 +167,25 @@ def _get_or_solve_multiway(stack_bb: float, players: int) -> StrategyResult:
     every table size on startup. See cfg.MULTIWAY_PREFLOP_HANDS for the
     measurements and for why the previous 8-class pool was replaced."""
     key = (round(stack_bb), players)
-    with _multiway_cache.lock:
-        cached = _multiway_cache.entries.get(key)
-    if cached is not None:
-        return cached
-
     table = cfg.MULTIWAY_TABLE_CONFIGS[players]
-    config = GameConfig(positions=table["positions"], stack_bb=stack_bb)
-    equity_cache = _get_multiway_equity_cache(cfg.MULTIWAY_PREFLOP_HANDS)
-    result = solve_preflop(
-        config=config,
-        hands=cfg.MULTIWAY_PREFLOP_HANDS,
-        equity_cache=equity_cache,
-        iterations=table["iterations"],
-        seed=1,
-        floor_regret=table.get("floor_regret"),
-    )
 
-    with _multiway_cache.lock:
-        _multiway_cache.entries[key] = result
-    return result
+    def _solve():
+        config = GameConfig(positions=table["positions"], stack_bb=stack_bb)
+        equity_cache = _get_multiway_equity_cache(cfg.MULTIWAY_PREFLOP_HANDS)
+        return solve_preflop(
+            config=config,
+            hands=cfg.MULTIWAY_PREFLOP_HANDS,
+            equity_cache=equity_cache,
+            iterations=table["iterations"],
+            seed=1,
+            floor_regret=table.get("floor_regret"),
+        )
+
+    # M92: single-flight. This is the most expensive solve in the product
+    # (75-140s at 6-max/9-max), so it is the worst possible thundering
+    # herd: N users opening the same table size cold would each have run
+    # the whole thing. See _SolveCache.get_or_compute.
+    return _multiway_cache.get_or_compute(key, _solve)
 
 
 def _get_or_solve_flop(board_cards: tuple, pot: float, stack_bb: float, iterations: int) -> StrategyResult:
@@ -1167,10 +1166,9 @@ def _query_flop_node_from_path(
         players,
         _hero_cache_component(hero_combo, situation.hero_in_range),
     )
-    with _flop_node_cache.lock:
-        result = _flop_node_cache.entries.get(flop_solve_key)
-    if result is None:
-        result = solve_flop(
+    result = _flop_node_cache.get_or_compute(
+        flop_solve_key,
+        lambda: solve_flop(
             board=board_cards,
             hero_range=situation.position_ranges[oop_position],
             villain_range=situation.position_ranges[ip_position],
@@ -1178,9 +1176,8 @@ def _query_flop_node_from_path(
             effective_stack_bb=effective_stack_bb,
             positions=(oop_position, ip_position),
             iterations=cfg.PATH_QUERY_ITERATIONS,
-        )
-        with _flop_node_cache.lock:
-            _flop_node_cache.entries[flop_solve_key] = result
+        ),
+    )
 
     _actions, flop_node = _resolve_action_path(result.root, flop_action_kinds)
     if isinstance(flop_node, TerminalNode):
@@ -1266,10 +1263,12 @@ def _query_turn_from_path(
         players,
         _hero_cache_component(hero_combo, situation.hero_in_range),
     )
-    with _turn_path_cache.lock:
-        result = _turn_path_cache.entries.get(turn_solve_key)
-    if result is None:
-        result = solve_flop_turn(
+    # M92: single-flight. This exact call was measured running 8 full
+    # solves for 8 concurrent requests that shared one key (223s); the
+    # same 8 sequentially ran 0. See _SolveCache.get_or_compute.
+    result = _turn_path_cache.get_or_compute(
+        turn_solve_key,
+        lambda: solve_flop_turn(
             board=board_cards,
             hero_range=hero_range,
             villain_range=villain_range,
@@ -1279,9 +1278,8 @@ def _query_turn_from_path(
             raise_sizes=cfg.FLOP_TURN_RAISE_SIZES,
             max_raises=cfg.FLOP_TURN_MAX_RAISES,
             iterations=turn_iterations,
-        )
-        with _turn_path_cache.lock:
-            _turn_path_cache.entries[turn_solve_key] = result
+        ),
+    )
 
     _flop_actions, flop_node = _resolve_action_path(result.root, flop_action_kinds)
     if not isinstance(flop_node, TerminalNode):

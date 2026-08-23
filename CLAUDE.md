@@ -179,6 +179,14 @@ every street (preflop through river) and every supported table size
   pools and budgets for speed. Run an end-to-end `/advise` check at
   production settings after any solver change.
 
+- **Expensive solves go through `_SolveCache.get_or_compute`, not
+  check-then-compute (M92).** The old pattern let N concurrent misses on
+  one key each run the full solve — measured at **8 concurrent requests
+  doing 8 solves (223s) where 1 was needed (31.7s)**. It was documented
+  as an accepted tradeoff because the solves are deterministic, which is
+  true about correctness and says nothing about cost. `self.lock` guards
+  only the dict; the per-key lock is held across the solve.
+
 ### Measuring performance — read before trusting any timing
 
 **This machine drifts.** M70 observed identical workloads running ~1.7x
