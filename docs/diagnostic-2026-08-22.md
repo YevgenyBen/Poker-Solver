@@ -925,3 +925,60 @@ in its v3 vision, and it is true for the first time.
 A test that asserted multiway turn paths were *refused* now asserts they
 work — the refusal was the documented behaviour, and documenting it did
 not make it necessary.
+
+---
+
+# Round 9 — playing a whole hand
+
+Every previous round asked isolated questions. With M84-M89 making every
+decision reachable, round 9 ran the test a player actually performs: walk
+a full hand, asking for advice at each decision until it ends.
+
+**A complete heads-up hand now plays through — seven decisions, every one
+trained**, holding a set of nines:
+
+| decision | position | advice |
+|---|---|---|
+| preflop | BB | 3-bet to 7.50 |
+| flop, 1st | BB | check 0.99 |
+| flop, 2nd | BTN | raise 12.50 |
+| turn, 1st | BB | check 0.79 |
+| turn, 2nd | BTN | shove 0.83 |
+| river, 1st | BB | shove 0.91 |
+| river, 2nd | BTN | shove 0.94 |
+
+That is the product working end to end for the first time. Deeper
+decisions on a street cost **0.0s** — they reuse the solve the street's
+first decision paid for.
+
+## F14 — the action-path contract is contradictory, and the error didn't say so
+
+The first attempt at this walkthrough failed at five of nine steps, and
+**every failure was my own harness's fault** — which is exactly the
+finding. `flop_action_path` has *opposite* requirements depending on
+which street is being asked about:
+
+- asking about a later **FLOP** decision → it must **not** close the street
+- asking about the **TURN** → it **must** close the street
+
+Same field, same hand, contradictory rules. The old error read *"does not
+reach a terminal — action isn't capped yet"*: a true statement about the
+tree that teaches the caller nothing about either rule, using a word
+("capped") that appears nowhere in the request.
+
+If the contract can catch the person who *wrote* the endpoints, it will
+catch every integrator. For a product other people build against, an
+error that doesn't explain the rule it enforces is a defect in its own
+right — not a documentation gap.
+
+**M90 rewrites all six of these messages** to name the real problem and
+both ways out:
+
+> flop_action_path does not close the flop's betting, so no turn card can
+> be dealt yet. Two different things are being asked for here and it is
+> easy to mix them up: to ask about a TURN decision, flop_action_path
+> must run to the end of the flop's action; to ask about a later FLOP
+> decision instead, send the same partial path WITHOUT a turn_card.
+
+A test pinning the old wording now pins the new, keeping its actual
+intent (the error names the *client's* field, not an internal one).
