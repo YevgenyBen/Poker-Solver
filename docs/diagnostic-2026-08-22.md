@@ -982,3 +982,67 @@ both ways out:
 
 A test pinning the old wording now pins the new, keeping its actual
 intent (the error names the *client's* field, not an internal one).
+
+---
+
+# Round 10 — full hands at multiway and short stacks, plus input robustness
+
+## Full-hand walkthroughs
+
+Round 9 walked one heads-up hand at 100bb. Round 10 walked three more,
+across the dimensions that were untested: multiway, and stack depths
+where the game changes character. **All three played through completely
+— 21 decisions, every one trained, no failures.**
+
+| hand | notable |
+|---|---|
+| 6-max, 3 live, 100bb, set of nines | value line: check → raise 22.5 → raise → shove 0.71 |
+| heads-up, 30bb, top pair | middling line, river shove 0.52 |
+| heads-up, **15bb**, AK | **preflop shove 1.00** — correct push/fold play |
+
+The engine adapts to depth rather than replaying one strategy: 100bb
+plays small pots, 15bb shoves. Deeper decisions on a street cost 0.0s,
+reusing the street's first solve.
+
+## Input robustness — never audited before
+
+A live-table advisor is integrated against by clients that send
+malformed, impossible and hostile input. 18 such requests, none of which
+should produce a 500 or a silently wrong answer.
+
+**16 of 18 gave a clear 422 with an explanatory message.** No crashes, no
+500s. Rejected correctly: duplicate hero cards, nonsense card text,
+negative/zero stacks, unsupported player counts, illegal action names, a
+500-step action path, a turn card already on the board, a river without a
+turn, out-of-range iteration counts.
+
+## F15 — an impossible board was answered confidently
+
+Two cases returned 200. One is defensible (a 1e9 stack is absurd but not
+impossible). The other is a real bug:
+
+```
+board "2h2h9c"  -> 200 OK, 143 combos
+board "AsAsAs"  -> 200 OK, hero advice: call 1.00
+board "2h6d2h"  -> 200 OK, raise 0.58
+```
+
+**A board naming the same card twice cannot exist, and the product
+answered anyway** — three aces of spades produced a confident `call
+1.00`. Hero's own two cards had always been validated ("HandCombo needs
+two distinct cards") and a turn card colliding with the board was caught
+downstream. The gap was specifically the flop's cards *against each
+other* — and per-field validation is exactly how that pairing got missed.
+
+**M91 checks every card the request names in one place** — board, turn,
+river and hero together — because every pairing among them is equally
+impossible:
+
+> `As appears twice in the same field — a card can only be in one place.`
+> `9c appears in both board and hero_cards — a card can only be in one place.`
+
+This is the same failure mode the whole diagnostic arc keeps turning up,
+and the least detectable one: **a real answer to an impossible
+question**, where nothing in the response looks wrong. Four tests pin it,
+including one that a legitimate board still answers — a guard that fires
+on everything is as useless as one that never fires.
