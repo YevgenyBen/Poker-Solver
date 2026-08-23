@@ -1642,6 +1642,41 @@ def test_advise_rejects_a_river_action_path_without_a_river_card(client):
     assert "river_action_path" in response.json()["detail"]
 
 
+def test_advise_answers_a_multiway_flop_decision_that_is_not_the_first(client):
+    """M87: the flop half of R15.
+
+    M84-M86 made every heads-up decision reachable; multiway still
+    answered only each street's opening one. The FLOP extends cleanly
+    because `solve_flop_multiway` returns a StrategyResult over the whole
+    flop tree — flop-only, no chance dispatch — so a deeper decision is
+    already solved for and needs no new solve. The turn and river do NOT
+    extend this way: they read their node off a sampled chance branch,
+    where the node a client asks about may never have been built. That
+    difference is why this test exists for the flop alone.
+    """
+    base = _advise_body(preflop_action_path=_THREE_LIVE_PATH, board="2h6d9c", players=3)
+
+    opening = client.post("/advise", json=base)
+    assert opening.status_code == 200
+    first_actor = opening.json()["position"]
+
+    facing_a_bet = client.post("/advise", json={**base, "flop_action_path": ["all_in"]})
+    assert facing_a_bet.status_code == 200, facing_a_bet.json()
+    body = facing_a_bet.json()
+    assert body["players"] == 3
+    assert body["position"] != first_actor
+    assert "fold" in next(iter(body["strategy"].values()))
+
+
+def test_advise_rejects_a_closed_multiway_flop_path(client):
+    base = _advise_body(preflop_action_path=_THREE_LIVE_PATH, board="2h6d9c", players=3)
+    response = client.post(
+        "/advise", json={**base, "flop_action_path": ["call_or_check"] * 3}
+    )
+    assert response.status_code == 422
+    assert "no flop decision left" in response.json()["detail"]
+
+
 def test_advise_gives_every_hero_advice_regardless_of_who_asked_first(client):
     """M76: the severest bug the 2026-08-22 diagnostic found.
 

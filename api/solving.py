@@ -981,7 +981,7 @@ def _query_flop_from_path(
 
 def _query_flop_multiway_from_path(
     action_kinds: list, stack_bb: float, board_cards: tuple, iterations: int, flop_iterations: int,
-    players: int = 3, hero_combo=None,
+    players: int = 3, hero_combo=None, flop_action_kinds: list | None = None,
 ) -> dict:
     """Orchestrates POST /solve_flop_multiway_from_path end to end: a
     real (cached, raw) preflop solve -> resolve the client's bare action
@@ -1039,7 +1039,7 @@ def _query_flop_multiway_from_path(
         cached = result
 
     formatted = format_flop_response(cached, board="".join(str(c) for c in board_cards))
-    return {
+    response = {
         "board": formatted["board"],
         "action_path": list(action_kinds),
         "stack_bb": stack_bb,
@@ -1055,6 +1055,33 @@ def _query_flop_multiway_from_path(
         "hero_in_range": situation.hero_in_range,
         "range_confidence": situation.range_confidence,
         "hero_range_trained": situation.hero_range_trained,
+    }
+    if not flop_action_kinds:
+        return response
+
+    # M87: a multiway flop decision that isn't the street's first, the
+    # same gap M84 closed heads-up. This cell needed no new solve to do
+    # it: `solve_flop_multiway` returns a StrategyResult over the whole
+    # flop tree (flop-only — no chance dispatch), so the node is already
+    # there. That is why the FLOP extends to multiway cleanly while the
+    # turn and river do not: those read their node off a SAMPLED chance
+    # branch, where the node a client asks about may never have been
+    # built. See _advise's own refusal for those two.
+    _actions, flop_node = _resolve_action_path(cached.root, flop_action_kinds)
+    if isinstance(flop_node, TerminalNode):
+        raise ValueError(
+            "flop_action_path reaches a terminal — the flop's action has closed, so there is no "
+            "flop decision left to advise. Supply a turn_card for turn advice."
+        )
+    return {
+        **response,
+        "flop_action_path": list(flop_action_kinds),
+        "strategy": cached.strategy_at(flop_node),
+        "trained": cached.trained_hands(flop_node),
+        "position": flop_node.player_to_act,
+        "player_to_act": flop_node.player_to_act,
+        "pot": flop_node.pot,
+        "effective_stack_bb": effective_stack_bb - max(flop_node.invested.values()),
     }
 
 
@@ -1992,9 +2019,13 @@ def _advise(request, street: str, iterations: int, solve_iterations: int, hero_c
                 "street": street, "hero_key": hero_key}
 
     if street == "flop":
+        # M87: flop_action_path works at multiway too. Unlike the turn and
+        # river cells below, solve_flop_multiway hands back the whole flop
+        # tree, so a deeper decision is already solved for.
         raw = _query_flop_multiway_from_path(
             request.preflop_action_path, request.stack_bb, board_cards, iterations, solve_iterations,
             request.players, hero_combo=hero_combo,
+            flop_action_kinds=request.flop_action_path,
         )
         return {**raw, "source": "mccfr", "solve_iterations": raw["flop_iterations"],
                 "is_terminal": False, "player_to_act": raw["position"], "street": street,

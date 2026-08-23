@@ -784,3 +784,45 @@ opening decision, and says so rather than answering the wrong node.
 - **R15** — extend M84-M86 to multiway. Those cells read their nodes off
   *sampled* chance branches rather than an exhaustively-solved tree, so
   it is a different problem, not a copy of the same fix.
+
+---
+
+# R15, part 1 (M87) — multiway flop decisions
+
+M84-M86 made every heads-up decision reachable. Multiway still answered
+only each street's opening one. The **flop** extends cleanly and needed
+no new solve: `solve_flop_multiway` already returns a `StrategyResult`
+over the whole flop tree (flop-only — no chance dispatch), so a deeper
+decision is already solved for. Resolving into it is a lookup.
+
+6-max, three live players, on 2h6d9c with a set of nines:
+
+| node | position | strategy |
+|---|---|---|
+| first to act | UTG | check 0.58, raise 0.42 |
+| after a check | MP | check 0.57, raise 0.35, shove 0.08 |
+| **facing a bet** | MP | **call 0.99**, fold 0.01 |
+
+**The turn and river deliberately do NOT extend this way**, and the
+reason is structural rather than effort: those cells read their node off
+a *sampled* chance branch, so the node a client asks about may never have
+been built. M75 already had to solve on-demand branches there just to
+make the street's first decision real. Reaching a deeper one means
+building and training a subtree that MCCFR never sampled — a different
+problem, and one that should be measured on its own rather than assumed
+to be a copy of this fix. They keep refusing with a clear 422.
+
+## Coverage after M84-M87
+
+| street | heads-up | multiway |
+|---|---|---|
+| preflop | any decision | any decision |
+| flop | **any decision** | **any decision (M87)** |
+| turn | **any decision** | first only — refused clearly |
+| river | **any decision** | first only — refused clearly |
+
+## Remaining open
+
+- **R12** — the two flop trees still differ (F12).
+- **R15 part 2** — multiway turn/river later decisions, needing the
+  on-demand-branch work described above.
