@@ -6434,3 +6434,35 @@ entry's own corrections before trusting its conclusions.
   - **Mutation-tested**: dealing from the full deck (4 failures) and
     letting impossible rows keep a real number instead of 0.5 (1
     failure) are both caught.
+
+- **M122 — audit round 14: response shaping. No numeric defect; one
+  stale claim that argued for removing a safety signal.**
+  `strategy_format.py` is the seam between a solved `StrategyResult` and
+  what a caller reads.
+  - **Clean**: swept live across `/solve` at 2/3/6 players and
+    `/solve_flop_cached` — **532 strategy rows, zero violations**. Every
+    hand's frequencies sum to 1.0, every value inside [0, 1], and
+    `trained` covers exactly the hands `strategy` does.
+  - **F31 (fixed): `format_flop_response`'s docstring had gone stale in
+    the one place it matters.** It said every postflop solve was
+    heads-up and exact, "so this is currently always all-`True` in
+    practice", and named multiway postflop as a still-unscoped future
+    gap. **M35 closed that gap**: `solve_flop_multiway` is sampled
+    MCCFR, and a three-position flop solve formatted through this exact
+    function returns `trained` containing both `False` and `True`
+    (measured). A reader trusting the old text would conclude the field
+    was decorative here and could be dropped for tidiness — precisely
+    what CLAUDE.md forbids, since `trained` exists because output can
+    look confident and be fabricated. The comment was quietly arguing
+    for removing a safety signal on the one path where it had become
+    load-bearing.
+  - **M96's drift detector structurally could not catch it.**
+    `test_no_comment_claims_a_call_its_function_does_not_make` checks
+    that a comment naming a CALL is not lying about the code beneath it.
+    F31 is a claim about BEHAVIOUR — the code it describes never
+    changed; a different module did. Widening the detector to
+    behavioural claims would mean executing what each comment describes,
+    which is what tests are, so the durable answer is the new test, not
+    a smarter parser.
+  - **Mutation-tested**: forcing `trained_for_position` to return
+    all-`True` fails the new guard with `got [True]`.
