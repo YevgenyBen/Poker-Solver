@@ -5768,3 +5768,37 @@ entry's own corrections before trusting its conclusions.
     never correctness), and every previously-bounded cache stayed within
     its ceiling.
   - **Verification:** 860 backend tests (up from 857), 154 frontend.
+
+- **M105 — audit round 5: the hand evaluator, verified exhaustively. No
+  defect.** Every equity number is a count of how often one hand outranks
+  another and every strategy derives from those counts, so a ranking bug
+  makes spots quietly wrong rather than failing loudly. The 22 existing
+  tests were example-based. Write-up in `docs/audit-2026-08-23.md`.
+  - **All four checks clean:** a category census over **all 2,598,960**
+    five-card hands matching the nine published frequencies exactly; the
+    vectorized and scalar evaluators agreeing on ordering AND ties across
+    all 2,598,960; `best_hand_rank` matching brute force over every
+    C(7,5) subset on 40,000 seven-card hands; and the vectorized 7-card
+    path agreeing with brute force. **The foundation is sound**, which
+    also means M98's sizing defect and M98's ±55bb equity noise cannot be
+    blamed on hand evaluation.
+  - **The census is now permanent, at 2.7s for 2.6M hands**, because it
+    runs the vectorized path — the one every equity computation uses. It
+    asserts against PUBLISHED frequencies, not against anything this
+    codebase produced; an evaluator cannot be validated by its own output.
+  - **Verified by mutation, both ways.** Removing the wheel-straight rule
+    makes the census fail. A tiebreak-only corruption does not (categories
+    are unchanged) and is caught by the ordering tests instead — so each
+    guard was checked against a mutation the other cannot see.
+  - **Two corrections to my own work.** The first mutation attempt wrote
+    the wheel as `{14, 2, 3, 4, 5}`; this codebase represents an ace as
+    **12**, with the wheel handled by adding `-1`. The mutation was inert,
+    tests passed, and I briefly read that as the census being blind — **a
+    mutation check that does not mutate proves nothing**, the same shape
+    as M102's fuzzer scoring a meaningless 31/31. And the stratified
+    sampling I added in response was aimed at a gap that did not exist;
+    it is kept because forcing every category is better sampling design
+    and costs 0.13s, but it **overlaps four pre-existing tests** rather
+    than covering anything new. The exhaustive census is the real
+    addition.
+  - **Verification:** 863 backend tests (up from 860), 154 frontend.
