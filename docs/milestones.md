@@ -5912,3 +5912,29 @@ entry's own corrections before trusting its conclusions.
     test now asserts the injected failure actually fired and says so in
     its message.
   - **Verification:** 881 backend tests (up from 876), 154 frontend.
+
+- **M109 — audit round 9: cache key completeness. No defect.** M76 found
+  `hero_cards` changed the solved pool but was missing from the
+  path-query cache keys, so on a shared server the first asker fixed the
+  answer and everyone after got advice for someone else's hand. Nothing
+  had checked whether another field did the same, and it is structurally
+  invisible to the suite — whose fixture clears caches, making every test
+  the first caller. Write-up in `docs/audit-2026-08-23.md`.
+  - **All six fields reach the key** (`stack_bb`, `board`, `hero_cards`,
+    `preflop_action_path`, `flop_action_path`, `players`): each changes
+    the answer on a cold cache, and each gives the same answer warm.
+  - **The method separates "missing from the key" from "has no
+    effect"**, which a naive comparison cannot: run the variant warm
+    (after a baseline populated the cache) and cold (alone). Identical
+    means the key carries it; differing means the warm request was served
+    a previous caller's solve.
+  - **Verified against the original bug.** Making `_hero_cache_component`
+    return `None` — M76's exact defect — makes the probe report `KEY
+    INCOMPLETE` on `hero_cards` and no other field, and the shipped test
+    fails on that case alone. After three inert instruments this session,
+    a clean result is only worth reporting once the probe has been shown
+    to detect what it exists for.
+  - The parametrisation carries its own guard: a field with no effect
+    would make warm and cold agree for the wrong reason, so a separate
+    test asserts that changing the board really does change the answer.
+  - **Verification:** 887 backend tests (up from 881), 154 frontend.
