@@ -6360,3 +6360,36 @@ entry's own corrections before trusting its conclusions.
     trash (`2d2c`, `3c2c`). That was my probe imposing `str(combo)` as a
     tie-break, not the code — the real stable sort keeps AA first.
     Caught before it became a finding.
+
+- **M120 — validating F30 at the shipped operating point.** CLAUDE.md
+  requires an end-to-end `/advise` check at production settings after
+  any solver change, and M119 changed what every postflop solve is
+  handed.
+  - **The property F30 was argued from is real.** Its justification was
+    that dividing a class's frequency cancelled card removal exactly, so
+    a class's share of a range must now fall as the board takes its
+    cards: AA's share goes **0.400 (no aces) -> 0.200 (one ace) ->
+    0.077 (two aces)**, where the old weighting held it CONSTANT at
+    every board. A fix that moved numbers without producing the
+    behaviour it was argued from would not be a fix.
+  - **Postflop advice still classifies hands correctly**: 15 random
+    flops at production settings, hero facing a real flop bet, top set
+    vs air — **zero violations**, top set folds 0.0 on every board, air
+    folds 0.70-0.9999 on most. Two boards show air folding less (0.178
+    on AcJs4d, 0.703 on 6c4hJc), consistent with the documented M98/M99
+    terminal-pricing flaw that underprices playing; not a new defect.
+  - **Two versions of this sweep measured nothing, and neither could
+    have failed.** Version 1 asked about the flop's OPENING decision,
+    where there is no bet to fold to — so "continue mass" was pinned at
+    exactly 1.0 for every hand and the assertion was incapable of
+    failing; it reported 25 clean trials of nothing. Version 2 used "any
+    hand pairing the board" as the strong hand, which with the deuce
+    kicker the generator picked is usually BOTTOM pair — a hand that
+    correctly folds to a big bet, so the comparison was never
+    strong-vs-weak. An earlier draft skipped all 25 trials outright and
+    still printed `violations: 0`; it was caught only because the skip
+    count was printed beside the trial count.
+  - **Sixth inert check this audit has met** (M105, M108, M117 x2,
+    M119's probe artifact, now these). Stated as a rule: *a clean result
+    is not evidence until the check has been shown capable of returning
+    a dirty one*, and printing the denominator is the cheapest proof.
