@@ -117,6 +117,23 @@ requests now reject unknown fields by name rather than ignoring them.
   this note was wrong — corrected M110**, which measured the implied
   opening range per seat and found its own positional defect; see the
   next entry.
+- **SOLVED continuation values don't fix it either (M113-M115) — the
+  next attempt needs RANGE STRENGTH in the key.** M112 costed the
+  architectural fix and found it affordable (15,254 preflop terminals
+  collapse to **27 canonical spots** keyed on log2 SPR + live-seat
+  count). M113 built the EV primitive, M114 the precompute, M115 wired it
+  into `_mccfr_terminal_value` (`continuation_table=`, default `None`).
+  Paired across 5 seeds at 6-max/12k: **AA jam delta +0.019 +/- 0.201,
+  fell in 2/5; fold spread delta +1.23pp +/- 1.91pp**. Both null. A
+  single seed looked like success (jam 0.4955 -> 0.3078, first monotone
+  positional gradient ever seen) and was noise — 12k jam varies 0.37-0.92
+  by seed (M110). **M98's diagnosis of the cause still stands**; this
+  correction is what failed. Likeliest reason, documented in advance by
+  M114: `continuation_key` carries SPR and live count but NOT range
+  strength, so a 3-bet pot and a limped pot at the same SPR get the same
+  value. **Try a range-strength dimension next — not more boards, not
+  more iterations.** Table cost is 1,110s for 27 spots x 3 boards at a
+  12-class range, dominated by `build_board_equity_table`.
 - **A crude continuation term does NOT fix the sizing defect — don't
   tune it (M100).** `mccfr_solve(continuation=c, stack_bb=...)` adds
   `c * (equity - 1/n_live) * chips_behind` at terminals with money

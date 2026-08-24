@@ -557,6 +557,19 @@ def solve(
 # ---------------------------------------------------------------------------
 
 
+def _continuation_key(pot: float, chips_behind: float, live_seats: int) -> tuple:
+    """Local mirror of `continuation.continuation_key`.
+
+    Imported lazily rather than at module scope because `continuation.py`
+    imports from this module — a top-level import here would be a cycle.
+    Kept as a one-line delegation so the definition lives in exactly one
+    place.
+    """
+    from .continuation import continuation_key
+
+    return continuation_key(pot, chips_behind, live_seats)
+
+
 def _mccfr_terminal_value(
     node: TerminalNode,
     traverser: str,
@@ -565,6 +578,7 @@ def _mccfr_terminal_value(
     equity_cache,
     continuation: float = 0.0,
     stack_bb: float | None = None,
+    continuation_table: dict | None = None,
 ) -> np.ndarray:
     """The traverser's net payoff for each of their `num_hands` possible
     hands (length-`num_hands` vector), given the fixed `opponent_hands`
@@ -623,6 +637,62 @@ def _mccfr_terminal_value(
     # safe to keep once the same code path started serving the preflop
     # multiway solver's much higher fabrication rate.
     value = equity_vector * node.pot - node.invested[traverser]
+
+    # M115: replace raw showdown equity with a SOLVED continuation value
+    # wherever one exists for this spot.
+    #
+    # This is the fix M98 identified and M100 failed to achieve with a
+    # heuristic. The pricing above is exactly right for an all-in — the
+    # hand really does end at showdown — and wrong for every smaller bet,
+    # which is why the tree over-prefers the all-in (M98) and why the
+    # fold/play boundary cannot move with position (M111). One cause, two
+    # symptoms.
+    #
+    # Applied ONLY where chips remain behind, for the same reason: an
+    # all-in terminal is already correct, and "correcting" it would move
+    # the very baseline the defect is measured against.
+    #
+    # Falls back to equity pricing per-hand when the table has no entry —
+    # a missing spot must not become a fabricated number, which is the
+    # failure this codebase's `trained` flags exist to expose.
+    #
+    # **M115's verdict: this does NOT fix the defect. Default is None.**
+    # Paired across 5 seeds (same seed both arms, so seed variance
+    # cancels), 6-max at 12,000 iterations:
+    #
+    #     AA jam delta      +0.019 +/- 0.201   fell in 2/5
+    #     fold spread delta +1.23pp +/- 1.91pp  widened in 4/5
+    #
+    # Both null. A single seed had shown AA's jam falling 0.4955 ->
+    # 0.3078 with a monotone positional gradient, which looked like the
+    # fix working; M110 had already measured 12k jam varying 0.37-0.92
+    # across seeds, so that difference was inside known noise.
+    #
+    # M98's diagnosis of the CAUSE still stands — it is read from this
+    # very expression, and M99 confirmed the mechanism postflop with a
+    # monotone 10.2pp effect. What fails is this particular correction.
+    # The likeliest reason is the approximation `continuation_key` makes
+    # and documents: it carries SPR and live-seat count but NOT range
+    # strength, so a three-bet pot and a limped pot at the same SPR get
+    # the same continuation value, and their ranges are nothing alike.
+    # M114 named adding a range-strength dimension as the first thing to
+    # try if validation failed. It failed; that is the next thing to try,
+    # not more boards and not more iterations.
+    if continuation_table is not None and stack_bb is not None:
+        chips_behind = stack_bb - max(node.invested.values())
+        if chips_behind > 0:
+            key = _continuation_key(node.pot, chips_behind, len(live))
+            spot = continuation_table.get(key)
+            if spot:
+                labels = getattr(equity_cache, "hands", None)
+                if labels is not None and len(labels) == num_hands:
+                    solved = np.array(
+                        [spot.get(str(hand), np.nan) for hand in labels], dtype=float
+                    )
+                    replace = np.isfinite(solved)
+                    value = np.where(
+                        replace, solved * node.pot - node.invested[traverser], value
+                    )
 
     # M100: an optional continuation value for showdown terminals that
     # still have money behind. Default 0.0 — off, byte-identical to M99.
@@ -742,6 +812,7 @@ def _mccfr_recurse(
     smoothing: float = 0.0,
     continuation: float = 0.0,
     stack_bb: float | None = None,
+    continuation_table: dict | None = None,
 ) -> np.ndarray:
     """Returns the traverser's payoff vector (length num_hands) from this
     node onward, given the fixed `opponent_hands` for this iteration.
@@ -819,9 +890,11 @@ def _mccfr_recurse(
                 board=branch.board, chance_fn=branch.chance_fn, chance_data=chance_data,
                 strategy_weight=strategy_weight, floor_regret=floor_regret, optimism=optimism,
                 smoothing=smoothing, continuation=continuation, stack_bb=stack_bb,
+                continuation_table=continuation_table,
             )
         return _mccfr_terminal_value(node, traverser, opponent_hands, num_hands, equity_cache,
-                                    continuation=continuation, stack_bb=stack_bb)
+                                    continuation=continuation, stack_bb=stack_bb,
+                                    continuation_table=continuation_table)
 
     actions = node.legal_actions
     table = node_data.setdefault(id(node), InfoSetTable.zeros(num_hands, len(actions)))
@@ -854,6 +927,7 @@ def _mccfr_recurse(
                 smoothing=smoothing,
                 continuation=continuation,
                 stack_bb=stack_bb,
+                continuation_table=continuation_table,
             )
             for a_idx, action in enumerate(actions)
         ]
@@ -982,6 +1056,7 @@ def _mccfr_recurse(
         smoothing=smoothing,
         continuation=continuation,
         stack_bb=stack_bb,
+        continuation_table=continuation_table,
     )
 
 
@@ -1075,6 +1150,7 @@ def mccfr_solve(
     smoothing: float = 0.0,
     continuation: float = 0.0,
     stack_bb: float | None = None,
+    continuation_table: dict | None = None,
 ) -> dict:
     """Run `iterations` of External-Sampling MCCFR over `root`.
 
@@ -1290,6 +1366,7 @@ def mccfr_solve(
             smoothing=smoothing,
             continuation=continuation,
             stack_bb=stack_bb,
+            continuation_table=continuation_table,
         )
         if discount is not None:
             # Discounted CFR: shrink accumulated regret toward zero each
