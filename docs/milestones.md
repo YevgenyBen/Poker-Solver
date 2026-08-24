@@ -6393,3 +6393,44 @@ entry's own corrections before trusting its conclusions.
     M119's probe artifact, now these). Stated as a rule: *a clean result
     is not evidence until the check has been shown capable of returning
     a dirty one*, and printing the denominator is the cheapest proof.
+
+- **M121 — audit round 13: chance nodes. No defect, and an
+  approximation that had been asserted since M12 is finally measured.**
+  Chance nodes are how turn and river cards enter the tree, and the area
+  has form: M75 found multiway turn/river returning 0 of 132 combos
+  trained, every strategy exactly uniform, since the feature shipped.
+  - **Structural: 24 chance nodes across four boards x two stack depths,
+    zero violations.** The branch set is exactly `remaining_deck(board)`,
+    no board card is ever dealt, every branch is filed under its own
+    card, every equity table has the pool's shape. Branch probability is
+    implicit — `cfr._solve_recurse` averages
+    `sum(branch_values) / len(branch_values)` — so uniformity follows
+    from the branch SET being right, which is why the set is what gets
+    pinned.
+  - **The M12 approximation, measured.** `remaining_deck` excludes only
+    the board, so some branches deal a card a combo physically holds and
+    that combo's equity there becomes 0.5. M12 called this "~4.3% of
+    branches per combo" that "nets toward neutral rather than a wrong
+    extreme", with no number on the second claim. Measured: **exactly 2
+    of 49** branches per combo (4.08%); every combo's biased equity
+    stays on the same side of 0.5 and moves strictly closer to it;
+    **mean |bias| 0.0053, max 0.0131 equity, signed mean ~1e-05**. It is
+    a compression, not a directional error — the pool's strongest hand
+    (0.822) is dragged down 0.0131 and weak hands pushed up.
+  - **The deferred per-branch-masking fix stays deferred, now for a
+    stated reason.** A 1.3pp ceiling is an order of magnitude below the
+    ~5pp-per-street flop terminal-pricing distortion M99 measured and
+    deliberately chose not to surface. The threshold is written into the
+    test, so a materially higher bound would re-open it.
+  - **A wrong finding, caught before write-up.** The first probe
+    reported "0 impossible rows marked NaN, 16 not" and looked like
+    proof the documented mitigation was absent. It was reading the table
+    AFTER `nan_to_num` — the conversion the note itself describes; a
+    direct `build_board_equity_table` call returns NaN exactly as
+    documented. Seventh inert-or-wrong check this audit has produced and
+    the first that would have been a FALSE POSITIVE rather than a false
+    clean. Same remedy: check what the number measures before believing
+    it.
+  - **Mutation-tested**: dealing from the full deck (4 failures) and
+    letting impossible rows keep a real number instead of 0.5 (1
+    failure) are both caught.

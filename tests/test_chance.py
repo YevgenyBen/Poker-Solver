@@ -533,3 +533,115 @@ def test_chance_node_equity_tables_are_identical_with_and_without_the_cache():
         assert np.array_equal(
             uncached.branches[card].equity_table, cached.branches[card].equity_table
         )
+
+
+@pytest.mark.parametrize("board_text,stack", [
+    ("2h 6d 9c", 20.0), ("As Ks Qs", 20.0), ("7h 7d 2c", 5.0), ("Td 9d 8c", 5.0),
+])
+def test_a_chance_node_deals_exactly_the_undealt_deck(board_text, stack):
+    """M121 (audit round 13). The structural contract of a chance node,
+    checked at every showdown terminal of whole street trees.
+
+    A branch's probability is implicit — `cfr._solve_recurse` averages
+    `sum(branch_values) / len(branch_values)` — so uniformity follows
+    from the branch SET being right, which makes that set the thing
+    worth pinning. 24 chance nodes across four boards and two stack
+    depths, zero violations.
+    """
+    from poker_solver.cards import remaining_deck
+    from poker_solver.game_tree import StreetConfig, build_street_tree
+
+    board = tuple(Card.from_str(token) for token in board_text.split())
+    deck = [Card.from_str(r + s) for r in "23456789TJQKA" for s in "cdhs"]
+    rest = [card for card in deck if card not in set(board)]
+    combos = [HandCombo(rest[i], rest[i + 1]) for i in range(0, 12, 2)]
+
+    config = StreetConfig(positions=_POSITIONS, pot=6.0, stack_bb=stack,
+                          raise_sizes=(), max_raises=1)
+    checked = 0
+    for node in walk(build_street_tree(config)):
+        if not isinstance(node, TerminalNode) or not node.is_showdown:
+            continue
+        chance = build_chance_node(node, board, combos, _POSITIONS,
+                                   effective_stack_bb=stack, raise_sizes=(), max_raises=1)
+        if chance is None:
+            continue
+        checked += 1
+        assert set(chance.branches) == set(remaining_deck(board))
+        assert not (set(chance.branches) & set(board)), "dealt a card already on the board"
+        for card, branch in chance.branches.items():
+            assert branch.card == card, "a branch is filed under a different card"
+            assert np.asarray(branch.equity_table).shape == (len(combos), len(combos))
+    assert checked, "this board/stack produced no chance nodes to check"
+
+
+def test_the_impossible_branch_bias_is_bounded_and_always_toward_neutral():
+    """M121. This module's docstring documents an approximation from
+    M12: `remaining_deck` excludes only the board, so for any combo
+    exactly 2 branches deal a card that combo physically holds, and that
+    combo's equity there becomes 0.5 rather than being masked out.
+
+    The note asserted the bias "nets toward neutral rather than a wrong
+    extreme" and gave no number. Both halves are measured here:
+
+      * exactly **2 of 49** branches per combo are impossible (4.08%);
+      * every combo's biased equity stays on the same side of 0.5 as the
+        masked one and moves strictly closer to it — a compression, not
+        a directional error;
+      * mean |bias| 0.0053, **max 0.0131** equity, signed mean ~1e-05
+        across the pool.
+
+    That ceiling is why the deferred fix (per-branch reach masking) is
+    still deferred: it is an order of magnitude below the flop-level
+    terminal-pricing distortion M99 measured at ~5pp per street and
+    deliberately chose not to surface. If this bound is ever measured
+    materially higher, that reasoning no longer holds.
+    """
+    import random
+
+    from poker_solver.cards import remaining_deck
+    from poker_solver.game_tree import StreetConfig, build_street_tree
+
+    board = (Card("2", "h"), Card("6", "d"), Card("9", "c"))
+    rng = random.Random(7)
+    deck = [Card.from_str(r + s) for r in "23456789TJQKA" for s in "cdhs"]
+    rest = [card for card in deck if card not in set(board)]
+    combos, used = [], set()
+    while len(combos) < 12:
+        a, b = rng.sample(rest, 2)
+        if a in used or b in used:
+            continue
+        combos.append(HandCombo(a, b))
+        used |= {a, b}
+
+    config = StreetConfig(positions=_POSITIONS, pot=6.0, stack_bb=20.0,
+                          raise_sizes=(), max_raises=1)
+    terminal = next(node for node in walk(build_street_tree(config))
+                    if isinstance(node, TerminalNode) and node.is_showdown)
+    chance = build_chance_node(terminal, board, combos, _POSITIONS,
+                               effective_stack_bb=20.0, raise_sizes=(), max_raises=1)
+    legal = list(remaining_deck(board))
+    assert len(legal) == 49
+
+    biases = []
+    for index, combo in enumerate(combos):
+        held = {combo.card_a, combo.card_b}
+        assert sum(1 for card in legal if card in held) == 2
+
+        per_branch = np.array([np.nanmean(np.asarray(chance.branches[card].equity_table)[index])
+                               for card in legal])
+        keep = np.array([card not in held for card in legal])
+        as_solved = float(np.mean(per_branch))
+        masked = float(np.mean(per_branch[keep]))
+
+        assert (as_solved - 0.5) * (masked - 0.5) >= 0, (
+            f"{combo}: the bias flipped which side of neutral the hand is on"
+        )
+        assert abs(as_solved - 0.5) <= abs(masked - 0.5) + 1e-9, (
+            f"{combo}: the bias pushed AWAY from neutral"
+        )
+        biases.append(as_solved - masked)
+
+    assert max(abs(b) for b in biases) < 0.02, (
+        f"the documented approximation is larger than recorded: {max(abs(b) for b in biases):.4f}"
+    )
