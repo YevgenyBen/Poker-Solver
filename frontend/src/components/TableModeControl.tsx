@@ -7,16 +7,26 @@ interface TableModeControlProps {
   onPositionChange: (position: string) => void;
 }
 
+// M125 (E3): these read "3-max (demo)" / "6-max (demo)" / "9-max
+// (demo)". Two problems. The pools stopped being demos in M67, which
+// replaced the 8-class curated set with all 169 classes. And a uniform
+// "(demo)" label flattened a distinction the engine draws sharply:
+// 3-max and 6-max are "in much better shape", while 9-max is the one
+// that must not be presented as authoritative. The per-table-size
+// caveat now arrives from the API (solver_confidence), which says it
+// accurately and only where it applies, so the label says the table
+// size and nothing more.
 const TABLE_SIZE_LABELS: Record<MultiwayTableSize, string> = {
-  3: '3-max (demo)',
-  6: '6-max (demo)',
-  9: '9-max (demo)',
+  3: '3-max',
+  6: '6-max',
+  9: '9-max',
 };
 
-/** Lets the user switch between the heads-up solver (full 169-hand,
- * exact CFR+) and a multiway demo (3/6/9-max, small curated hand
- * subset, MCCFR — see api/main.py's module docstring for why), and pick
- * which position's strategy to view once in a multiway mode. */
+/** Lets the user switch between the heads-up solver (all 169 hand
+ * classes, exact CFR+) and a multiway one (3/6/9-max, all 169 hand
+ * classes, sampled MCCFR), and pick which position's strategy to view
+ * once in a multiway mode. Reliability differs sharply by table size
+ * and is reported per response by the API rather than asserted here. */
 export function TableModeControl({
   players,
   position,

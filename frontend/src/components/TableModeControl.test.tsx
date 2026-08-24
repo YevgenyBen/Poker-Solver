@@ -8,9 +8,14 @@ describe('TableModeControl', () => {
       <TableModeControl players={2} position="BTN" onPlayersChange={() => {}} onPositionChange={() => {}} />,
     );
     expect(screen.getByRole('button', { name: 'Heads-up' })).toHaveClass('active');
-    expect(screen.getByRole('button', { name: '3-max (demo)' })).not.toHaveClass('active');
-    expect(screen.getByRole('button', { name: '6-max (demo)' })).not.toHaveClass('active');
-    expect(screen.getByRole('button', { name: '9-max (demo)' })).not.toHaveClass('active');
+    // M125 (E3): these labels lost their "(demo)" suffix. The multiway
+    // preflop pools stopped being demos in M67 (all 169 classes), and a
+    // uniform suffix flattened the real distinction — 3-max and 6-max
+    // are in much better shape than 9-max, which the API now reports
+    // per response via solver_confidence.
+    expect(screen.getByRole('button', { name: '3-max' })).not.toHaveClass('active');
+    expect(screen.getByRole('button', { name: '6-max' })).not.toHaveClass('active');
+    expect(screen.getByRole('button', { name: '9-max' })).not.toHaveClass('active');
   });
 
   it('does not render a position selector in heads-up mode', () => {
@@ -52,9 +57,9 @@ describe('TableModeControl', () => {
   });
 
   it.each([
-    ['3-max (demo)', 3],
-    ['6-max (demo)', 6],
-    ['9-max (demo)', 9],
+    ['3-max', 3],
+    ['6-max', 6],
+    ['9-max', 9],
   ] as const)('clicking %s calls onPlayersChange(%d)', (label, expected) => {
     const onPlayersChange = vi.fn();
     render(

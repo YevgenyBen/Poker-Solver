@@ -126,7 +126,7 @@ describe('PreflopRangesPage', () => {
     render(<PreflopRangesPage />);
 
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/solved/i));
-    await user.click(screen.getByRole('button', { name: '3-max (demo)' }));
+    await user.click(screen.getByRole('button', { name: '3-max' }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenLastCalledWith('/solve/100?players=3&position=BTN', expect.anything()),
@@ -144,7 +144,7 @@ describe('PreflopRangesPage', () => {
     render(<PreflopRangesPage />);
 
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/solved/i));
-    await user.click(screen.getByRole('button', { name: '3-max (demo)' }));
+    await user.click(screen.getByRole('button', { name: '3-max' }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenLastCalledWith('/solve/100?players=3&position=BTN', expect.anything()),
     );
@@ -157,8 +157,8 @@ describe('PreflopRangesPage', () => {
   });
 
   it.each([
-    ['6-max (demo)', 6, ['UTG', 'MP', 'CO', 'BTN', 'SB', 'BB']],
-    ['9-max (demo)', 9, ['UTG', 'UTG1', 'MP1', 'MP2', 'MP3', 'CO', 'BTN', 'SB', 'BB']],
+    ['6-max', 6, ['UTG', 'MP', 'CO', 'BTN', 'SB', 'BB']],
+    ['9-max', 9, ['UTG', 'UTG1', 'MP1', 'MP2', 'MP3', 'CO', 'BTN', 'SB', 'BB']],
   ] as const)('switching to %s re-solves with players=%d and shows every position', async (label, players, positions) => {
     const fetchMock = vi.fn().mockResolvedValue(mockMultiwayResponseFor(positions[0], [...positions]));
     vi.stubGlobal('fetch', fetchMock);

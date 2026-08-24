@@ -201,3 +201,67 @@ with the route named and the fix stated.
 
 Backend **948 passed** (up from 942). Frontend **156 passed** (up
 from 154).
+
+---
+
+# E3, continued (M126) — the same stale claim in a third file
+
+Verifying E2/E3 in the browser surfaced the claim a third time.
+`TableModeControl.tsx` labelled the buttons `3-max (demo)` /
+`6-max (demo)` / `9-max (demo)`, with a docstring describing "a multiway
+demo (3/6/9-max, small curated hand subset, MCCFR)".
+
+Two problems, the same two as E3:
+
+* **The pools stopped being demos in M67**, which replaced the 8-class
+  curated set with all 169 classes. Verified rather than assumed:
+  `MULTIWAY_PREFLOP_HANDS` is 169, while the flop demos really are
+  curated — `DEMO_FLOP_HERO_CLASSES` 3, `DEMO_FLOP_VILLAIN_CLASSES` 4,
+  `DEMO_MULTIWAY_FLOP_CLASSES` 3. **The flop solvers' "(demo)" labels
+  are accurate and were left alone.** Only the preflop path had
+  outgrown the word.
+* **A uniform suffix flattened a distinction the engine draws sharply.**
+  3-max and 6-max are "in much better shape"; 9-max is the one that must
+  not be presented as authoritative. One label for all three said the
+  opposite of that.
+
+The labels are now just the table size, and the reliability claim
+arrives per response from the API, which measured it. Eight tests
+asserted the old labels and were pinning the inaccuracy; updated.
+
+## Verified in the browser
+
+The 9-max range chart, which before this work carried nothing at all:
+
+> 9-max preflop solver
+> UTG's strategy, action folded to them — 9-max, all 169 hand classes, sampled (MCCFR)
+> Solved in 109.62s (3000 iterations)
+>
+> **Low confidence.** 9-max preflop does not converge at any affordable
+> budget — iterations divide among nine seats, so each gets a third of
+> what 6-max gives. Measured: T7s's under-the-gun fold rate reaches only
+> 0.30 at 9,000 iterations where 6-max reaches 0.94. Treat this as a
+> hint, not GTO.
+>
+> **Sizes are unreliable here.** […] the opening range does not widen
+> with position at all […]
+
+Three files carried the same withdrawn or outdated claim —
+`api/config.py` (fixed M123), `PreflopRangesPage.tsx` and
+`AdviseSolver.tsx` (fixed M125), `TableModeControl.tsx` (fixed here).
+Each was found only by looking at the next surface out.
+
+## A probe that did not finish, reported rather than dropped
+
+The concurrency/memory probe was stopped before completing. Its design
+was wrong for the question: it varied `stack_bb` across 40 distinct
+values, so every request was a **cold solve** and it measured cold-solve
+cost rather than steady-state memory under repeated load. It was also
+saturating the machine and starving the browser verification above.
+
+The concurrency half is already covered by existing guards
+(`test_multiway_depths_in_one_bucket_share_a_single_solve`, M124's
+single-flight tests), and eviction by
+`test_the_expensive_caches_keep_a_generous_ceiling`. **The sustained-load
+memory question is genuinely still open** — nothing has measured it
+since M93, and M93's number predates every cache becoming bounded.

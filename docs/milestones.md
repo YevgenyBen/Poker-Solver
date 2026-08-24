@@ -6605,3 +6605,37 @@ entry's own corrections before trusting its conclusions.
     now reads both the route table and `vite.config.ts`;
     mutation-checked by adding an uncovered route.
   - Backend 948 passed, frontend 156 passed.
+
+- **M126 — the same stale claim, in a third file.** Verifying M125's E2/E3
+  fixes in a browser surfaced the claim once more.
+  `TableModeControl.tsx` labelled its buttons `3-max (demo)` /
+  `6-max (demo)` / `9-max (demo)`, with a docstring describing "a
+  multiway demo (3/6/9-max, small curated hand subset, MCCFR)".
+  - **Same two problems as E3.** The pools stopped being demos in M67
+    (all 169 classes), and a uniform suffix flattened a distinction the
+    engine draws sharply — 3-max and 6-max are "in much better shape",
+    9-max is the one that must not be presented as authoritative.
+  - **Verified rather than assumed, and deliberately scoped**:
+    `MULTIWAY_PREFLOP_HANDS` is 169, while the FLOP demos really are
+    curated (`DEMO_FLOP_HERO_CLASSES` 3, `DEMO_FLOP_VILLAIN_CLASSES` 4,
+    `DEMO_MULTIWAY_FLOP_CLASSES` 3). **The flop solvers' "(demo)" labels
+    are accurate and were left alone** — only the preflop path had
+    outgrown the word. Eight tests asserted the old labels and were
+    pinning the inaccuracy; updated.
+  - **Four files carried the same withdrawn or outdated claim**:
+    `api/config.py` (M123), `PreflopRangesPage.tsx` and
+    `AdviseSolver.tsx` (M125), `TableModeControl.tsx` (here). Each was
+    found only by looking at the next surface out.
+  - **Verified in the browser.** The 9-max chart, which carried nothing
+    at all before this work, now leads with "Low confidence. 9-max
+    preflop does not converge at any affordable budget…" followed by the
+    sizing caveat.
+  - **A probe that did not finish, reported rather than dropped.** The
+    concurrency/memory probe was stopped: its design was wrong for the
+    question (40 distinct stack depths made every request a COLD solve,
+    measuring cold-solve cost rather than steady-state memory) and it was
+    saturating the machine. Concurrency is already covered by existing
+    guards; **sustained-load memory is genuinely still unmeasured** —
+    nothing has touched it since M93, whose number predates every cache
+    becoming bounded.
+  - Backend 948 passed, frontend 156 passed.
