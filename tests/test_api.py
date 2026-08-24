@@ -184,11 +184,14 @@ def test_solve_rejects_nonpositive_stack(client):
     assert response.status_code == 422
 
 
-def test_solve_rejects_stack_at_or_below_small_blind(client):
-    # Default small_blind is 0.5bb; GameConfig itself rejects stack_bb
-    # that small, surfaced here as a 422 rather than a 500.
-    response = client.get(f"/solve/0.3?iterations={FAST_ITERATIONS}")
-    assert response.status_code == 422
+def test_solve_rejects_a_stack_shorter_than_the_big_blind(client):
+    # M117 raised this bound from the small blind to the big one: 0.6bb
+    # used to return a confident 200 whose pots counted 67% chips nobody
+    # had, because the BB posts 1bb unconditionally. Surfaced as a 422
+    # rather than a 500.
+    for stack in ("0.3", "0.6", "0.99"):
+        response = client.get(f"/solve/{stack}?iterations={FAST_ITERATIONS}")
+        assert response.status_code == 422, stack
 
 
 def test_solve_rejects_nonpositive_iterations(client):
@@ -2184,11 +2187,11 @@ def test_preflop_walk_rejects_a_too_long_action_path(client):
     assert response.status_code == 422
 
 
-def test_preflop_walk_rejects_stack_at_or_below_small_blind(client):
-    # Mirrors test_solve_rejects_stack_at_or_below_small_blind — default
-    # small_blind is 0.5bb, GameConfig itself rejects a stack that small.
-    response = client.post("/preflop_walk", json=_walk_body([], stack_bb=0.3))
-    assert response.status_code == 422
+def test_preflop_walk_rejects_a_stack_shorter_than_the_big_blind(client):
+    # Mirrors test_solve_rejects_a_stack_shorter_than_the_big_blind (M117).
+    for stack in (0.3, 0.6, 0.99):
+        response = client.post("/preflop_walk", json=_walk_body([], stack_bb=stack))
+        assert response.status_code == 422, stack
 
 
 def test_preflop_walk_shares_the_raw_preflop_cache_with_solve_flop_from_path(client):

@@ -49,14 +49,39 @@ def test_config_rejects_max_raises_below_one():
         GameConfig(max_raises=0, raise_sizes=())
 
 
-def test_config_rejects_stack_not_greater_than_small_blind():
-    with pytest.raises(ValueError):
-        GameConfig(stack_bb=0.5, small_blind=0.5, raise_sizes=())
+def test_config_rejects_a_stack_shorter_than_the_big_blind():
+    """M117. The bound used to be the SMALL blind, which let a stack
+    between the two blinds through — and the big blind is posted
+    unconditionally, so the tree started with invested["BB"] > stack_bb
+    and every pot below it counted chips nobody had. Measured over whole
+    trees the overstatement is exactly 2 * (big_blind - stack_bb): 96%
+    of the real pot at 0.51bb, 67% at 0.6bb. /advise answered a 0.6bb
+    request with a confident 200 and a full strategy.
+    """
+    for stack in (0.5, 0.51, 0.6, 0.9, 0.99):
+        with pytest.raises(ValueError, match="big_blind"):
+            GameConfig(stack_bb=stack, small_blind=0.5, big_blind=1.0,
+                       raise_sizes=(), max_raises=1)
+    # exactly one big blind is the boundary, and it is legal: the BB is
+    # all-in for their whole stack, which is a real (if trivial) spot.
+    config = GameConfig(stack_bb=1.0, small_blind=0.5, big_blind=1.0,
+                        raise_sizes=(), max_raises=1)
+    root = build_game_tree(config)
+    assert all(v <= config.stack_bb for v in root.invested.values())
+    # ...and the BB, all-in from the blind, is never asked to decide
+    # anything. Raising the bound alone left this broken.
+    assert all(node.player_to_act != BB for node in walk(root)
+               if isinstance(node, DecisionNode))
 
 
 def test_config_rejects_nonpositive_blinds():
-    with pytest.raises(ValueError):
-        GameConfig(small_blind=0, raise_sizes=())
+    # M117: `raise_sizes=()` without `max_raises=1` is itself invalid, so
+    # this used to pass on the raise_sizes guard and never reach the one
+    # it names. Both blinds are checked now, and the match= pins which
+    # guard actually fired.
+    for kwargs in ({"small_blind": 0}, {"big_blind": 0}, {"small_blind": -1}):
+        with pytest.raises(ValueError, match="positive"):
+            GameConfig(raise_sizes=(), max_raises=1, **kwargs)
 
 
 def test_config_rejects_fewer_than_two_positions():
@@ -852,3 +877,118 @@ def test_street_tree_reopens_action_after_a_raise_multiway():
     after_ip_calls = after_mid_raises.children[ip_call]
     assert after_ip_calls.player_to_act == "OOP"
     assert FOLD in {action.kind for action in after_ip_calls.legal_actions}
+
+
+def test_no_raise_is_offered_once_anyone_is_all_in():
+    """M117. The property that makes `_reopened_order`'s all-in
+    exclusion unreachable, pinned so the reasoning in its docstring
+    stays true.
+
+    Under equal stacks, an all-in sets `current_bet` to `stack_bb`, so
+    every remaining player's `to_call` equals their `remaining_stack`
+    exactly — and `_build` offers a raise only when `remaining_stack >
+    to_call`, strictly. So no raise can follow an all-in anywhere in the
+    tree. If equal stacks ever stop holding, this test is the one that
+    should fail first.
+    """
+    for n in (2, 3, 4):
+        for depth in (5.0, 25.0, 100.0):
+            config = GameConfig(positions=tuple("P%d" % i for i in range(n)),
+                                stack_bb=depth, raise_sizes=(2.5, 3.0, 2.2), max_raises=4)
+            for node in walk(build_game_tree(config)):
+                if isinstance(node, TerminalNode):
+                    continue
+                someone_all_in = any(v >= config.stack_bb - 1e-9
+                                     for p, v in node.invested.items()
+                                     if p not in node.folded)
+                if someone_all_in:
+                    kinds = {action.kind for action in node.children.keys()}
+                    assert kinds <= {FOLD, CALL_OR_CHECK}, (
+                        f"a raise is offered after an all-in at {node.invested}: {kinds}"
+                    )
+
+
+@pytest.mark.parametrize("config,builder", [
+    (GameConfig(positions=("P0", "P1"), stack_bb=100.0,
+                raise_sizes=(2.5, 3.0, 2.2), max_raises=4), build_game_tree),
+    (GameConfig(positions=("P0", "P1", "P2"), stack_bb=100.0,
+                raise_sizes=(2.5, 3.0, 2.2), max_raises=4), build_game_tree),
+    (GameConfig(positions=("BTN", "SB", "BB"), stack_bb=8.0,
+                raise_sizes=(2.5, 3.0), max_raises=3), build_game_tree),
+    # M117's boundary: at exactly one big blind the BB is all-in from
+    # posting, so it must never appear as a player_to_act. Raising the
+    # bound alone did not achieve that — `_build`'s opening `to_act` had
+    # to stop including players who are already all-in.
+    (GameConfig(positions=("BTN", "BB"), stack_bb=1.0,
+                raise_sizes=(2.5, 3.0, 2.2), max_raises=4), build_game_tree),
+    (GameConfig(positions=("BTN", "SB", "BB"), stack_bb=1.0,
+                raise_sizes=(2.5, 3.0, 2.2), max_raises=4), build_game_tree),
+    (GameConfig(positions=("P0", "P1", "P2", "P3"), stack_bb=100.0,
+                raise_sizes=(2.5, 3.0), max_raises=3), build_game_tree),
+    (StreetConfig(positions=("P0", "P1"), pot=6.0, stack_bb=97.0,
+                  raise_sizes=(0.75, 2.5, 2.2), max_raises=4), build_street_tree),
+    (StreetConfig(positions=("P0", "P1", "P2"), pot=6.0, stack_bb=97.0,
+                  raise_sizes=(0.75, 2.5), max_raises=3), build_street_tree),
+    (StreetConfig(positions=("SB", "BB"), pot=10.0, stack_bb=2.0,
+                  raise_sizes=(0.75, 2.5), max_raises=3), build_street_tree),
+])
+def test_every_tree_obeys_the_rules_of_poker(config, builder):
+    """M117 (audit round 10). Eight legality invariants checked over
+    every node of whole trees — the layer nine earlier audit rounds
+    verified other things while assuming.
+
+    The load-bearing one is NO SIDE POTS: at every showdown terminal
+    each live player has committed exactly the same amount. M23 proved
+    that from construction and built `query_strategy_from_path` on it;
+    nothing had ever checked it. It holds over 26,354 nodes and 11,784
+    showdowns across 38 configs, of which this parametrization is a
+    representative, fast subset.
+
+    Three of four injected mutations were caught by these checks (a
+    short call, a re-acting raiser, a dropped entering pot). The fourth
+    — deleting `_reopened_order`'s all-in exclusion — was not, because
+    that clause is unreachable; see
+    `test_no_raise_is_offered_once_anyone_is_all_in`.
+    """
+    eps = 1e-9
+    stack, offset = config.stack_bb, config.pot_offset
+
+    def check(node, acted):
+        assert abs(node.pot - (offset + sum(node.invested.values()))) < eps, "pot not conserved"
+        assert all(-eps <= v <= stack + eps for v in node.invested.values()), "invested out of range"
+        live = [p for p in config.positions if p not in node.folded]
+        assert live, "every terminal has a live player"
+        if isinstance(node, TerminalNode):
+            if len(live) >= 2:
+                committed = {round(node.invested[p], 9) for p in live}
+                assert len(committed) == 1, f"side pot at showdown: {node.invested}"
+            return
+        actor = node.player_to_act
+        assert actor not in node.folded, "a folded player was asked to act"
+        assert node.invested[actor] < stack - eps, "an all-in player was asked to act"
+        current_bet = max(node.invested[p] for p in live)
+        to_call = current_bet - node.invested[actor]
+        actions = list(node.children.keys())
+        assert (to_call > eps) == any(a.kind == FOLD for a in actions), "fold offered iff facing a bet"
+        assert any(a.kind == CALL_OR_CHECK for a in actions), "call/check is always available"
+        assert not (actor in acted and to_call <= eps), "the betting round should have closed"
+        for action in actions:
+            child = node.children[action]
+            for p in config.positions:
+                delta = child.invested[p] - node.invested[p]
+                assert delta > -eps, "money came back out of the pot"
+                assert p == actor or abs(delta) < eps, "a non-actor's money moved"
+            if action.kind == CALL_OR_CHECK:
+                assert abs(child.invested[actor] - current_bet) < eps, "call did not match the bet"
+            elif action.kind == RAISE:
+                assert abs(child.invested[actor] - action.size) < eps, "raise label != money"
+                assert child.invested[actor] > current_bet + eps, "raise did not raise"
+                assert child.invested[actor] < stack - eps, "a raise that is secretly an all-in"
+            elif action.kind == ALL_IN:
+                assert abs(child.invested[actor] - stack) < eps, "all-in is not the whole stack"
+                assert child.invested[actor] > current_bet + eps, "all-in did not raise"
+            assert node.folded <= child.folded, "a folded player un-folded"
+            reopens = action.kind in (RAISE, ALL_IN)
+            check(child, frozenset([actor]) if reopens else frozenset(acted) | {actor})
+
+    check(builder(config), frozenset())

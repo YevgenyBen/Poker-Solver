@@ -96,8 +96,20 @@ class GameConfig:
                 "raise_sizes must have exactly max_raises - 1 "
                 f"({self.max_raises - 1}) entries, got {len(self.raise_sizes)}"
             )
-        if self.stack_bb <= self.small_blind:
-            raise ValueError("stack_bb must be greater than small_blind")
+        if self.stack_bb < self.big_blind:
+            # M117. This used to compare against small_blind, which let a
+            # stack shorter than the BIG blind through — and the big blind
+            # is posted unconditionally, so the tree then started with
+            # invested["BB"] > stack_bb and every pot below it counted
+            # chips nobody had. Measured across whole trees, the overstatement
+            # is exactly 2 * (big_blind - stack_bb): 96% of the real pot at
+            # 0.51bb, 67% at 0.6bb, 0 at and above 1bb. A stack under one
+            # big blind is a forced all-in with no decision in it, so
+            # refusing is both correct and the only honest answer.
+            raise ValueError(
+                f"stack_bb ({self.stack_bb}) must be at least big_blind "
+                f"({self.big_blind}) — a shorter stack cannot post the blind"
+            )
         if self.small_blind <= 0 or self.big_blind <= 0:
             raise ValueError("small_blind and big_blind must be positive")
 
@@ -434,7 +446,22 @@ def _raise_total_size(raise_number: int, open_size_reference: float, previous_be
 def _reopened_order(config: GameConfig, raiser: str, invested: dict, folded: frozenset) -> list:
     """Table order starting right after `raiser`, excluding `raiser`
     itself and anyone folded or already all-in (they have no decision
-    left to make)."""
+    left to make).
+
+    The all-in half of that exclusion is UNREACHABLE under this tree's
+    equal-stacks model, and M117 confirmed it: instrumented over 1,880
+    calls across twelve configs it never once excluded anybody. The
+    reason is worth keeping, because it is not obvious. Once any player
+    is all-in, `current_bet` equals `stack_bb`, so for every remaining
+    player `to_call` and `remaining_stack` are the same number — and
+    `_build` offers a raise only when `remaining_stack > to_call`,
+    strictly. So no raise can follow an all-in, and `_reopened_order` is
+    only ever called from a raise. **Do not delete the clause as dead
+    code**: it is the guard that would matter the moment stacks stopped
+    being equal, which is exactly the assumption M23's no-side-pots
+    proof rests on. `test_no_raise_is_offered_once_anyone_is_all_in`
+    pins the property that makes it dead.
+    """
     idx = config.positions.index(raiser)
     order_after = config.positions[idx + 1 :] + config.positions[:idx]
     return [p for p in order_after if p not in folded and invested[p] < config.stack_bb]
@@ -533,7 +560,16 @@ def build_game_tree(config: GameConfig) -> DecisionNode:
     invested = {position: 0.0 for position in config.positions}
     invested[config.positions[-2]] = config.small_blind
     invested[config.positions[-1]] = config.big_blind
-    return _build(config, invested, frozenset(), 0, config.open_size_reference, list(config.positions))
+    # M117: a player who is already all-in from posting a blind has no
+    # decision to make, so they must not open the round in `to_act`.
+    # This only ever bites at exactly `stack_bb == big_blind` (shorter is
+    # refused above), and it did: the big blind was handed a decision node
+    # whose one action was a call it had no chips left to make. The
+    # analogous filter for all-in-by-action lives in `_reopened_order`,
+    # which is reached only from a raise — and no raise can follow an
+    # all-in, so it could never cover this case.
+    to_act = [p for p in config.positions if invested[p] < config.stack_bb]
+    return _build(config, invested, frozenset(), 0, config.open_size_reference, to_act)
 
 
 def build_street_tree(config: StreetConfig) -> DecisionNode:

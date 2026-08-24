@@ -266,6 +266,21 @@ requests now reject unknown fields by name rather than ignoring them.
   11.5s (flop) / 1.5s (turn). Treat multiway postflop advice as
   correspondingly thinner, and note those caps genuinely bind now, where
   pre-M67 they never did.
+- **The betting tree obeys the rules of poker, verified exhaustively
+  (M117).** Eight legality invariants at every node of whole trees, 38
+  configs: 26,354 nodes, 11,784 showdowns, zero violations. The
+  load-bearing one is **no side pots at showdown** — M23 proved it from
+  construction and built `query_strategy_from_path` on it; M117 is the
+  first thing to check it. Two things worth knowing before touching
+  `game_tree.py`: **`GameConfig` requires `stack_bb >= big_blind`**, not
+  the small blind it used to (a stack between the blinds built pots
+  counting chips nobody had — 96% of the pot at 0.51bb, and `/advise`
+  answered 0.6bb with a confident 200); and **`_reopened_order`'s
+  all-in exclusion is unreachable and kept on purpose** — no raise can
+  follow an all-in under equal stacks, so it never fires, but it is the
+  guard that would matter the moment stacks stopped being equal. Don't
+  delete it as dead code.
+
 - **Request models REJECT unknown fields — keep it that way (M102).**
   Every model in `api/schemas.py` inherits `_StrictRequest`
   (`extra="forbid"`). Pydantic's default of ignoring extras turned a typo
