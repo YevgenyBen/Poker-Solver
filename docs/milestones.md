@@ -6212,3 +6212,58 @@ entry's own corrections before trusting its conclusions.
   - Pinned by a test asserting both the magnitude (>0.10 of pot) and the
     direction (every hand worth less against a tighter range), so the
     sensitivity cannot be "optimized" away by sharing one table.
+
+- **M117 — audit round 10: the betting tree, exhaustively.** Nine
+  earlier rounds verified other layers while assuming this one. Eight
+  legality invariants at every node of whole trees, 38 configs (2-6
+  players, raise caps 1-4, 2bb-100bb, postflop SPR 0.2-16): **26,354
+  nodes, 11,784 showdowns, zero violations**. The load-bearing one is
+  **no side pots at showdown** — M23 proved it from construction and
+  built `query_strategy_from_path` on it, and nothing had ever checked
+  it. It holds.
+  - **F29 (fixed): a stack shorter than the big blind was accepted.**
+    `GameConfig` required `stack_bb > small_blind`, but the big blind is
+    posted unconditionally, so a stack between the two blinds built a
+    root with `invested["BB"] > stack_bb` and every pot below it counted
+    chips nobody had — exactly `2 * (big_blind - stack_bb)`, which is
+    **96% of the real pot at 0.51bb** and 67% at 0.6bb. `POST /advise
+    {"stack_bb": 0.6}` returned **200 with a full 169-class strategy**.
+    `api/schemas.py` deliberately carries no bound, relying on
+    `GameConfig.__post_init__` — true, and the wrong bound. Now
+    `stack_bb >= big_blind`; 0.6bb is a 422. Nobody plays 0.6bb; the
+    shape is what matters, and it is F23's shape — a confident 200
+    answering a question nobody asked. **Raising the bound was not the
+    whole fix**: at exactly `stack_bb == big_blind` the BB is all-in from
+    posting, and `_build`'s opening `to_act` listed every position
+    unconditionally, so the BB got a decision node whose one action was a
+    call it had no chips for. The all-in filter lived only in
+    `_reopened_order` — reachable only from a raise, and no raise can
+    follow an all-in (F28), so it could never have covered this.
+    `build_game_tree` filters the opening `to_act` now; verified clean at
+    2/3/4/6 players from 1.0bb to 100bb.
+  - **F28 (documented, not fixed): `_reopened_order`'s all-in exclusion
+    cannot fire.** 1,880 instrumented calls, zero exclusions. Once
+    anyone is all-in, `current_bet == stack_bb`, so `to_call` and
+    `remaining_stack` are equal for everyone left and `_build` requires
+    `remaining_stack > to_call` strictly — no raise can follow an
+    all-in, and `_reopened_order` is only called from a raise. **Kept
+    deliberately**: it is the guard that would matter the moment stacks
+    stopped being equal, which is the assumption the no-side-pots proof
+    rests on. `test_no_raise_is_offered_once_anyone_is_all_in` pins the
+    property that makes it dead.
+  - **Two config guards had never been exercised.** The F29 fix failed
+    its own new test, which is how this surfaced:
+    `test_config_rejects_stack_not_greater_than_small_blind` passed
+    `raise_sizes=()` with the default `max_raises=4` — itself invalid,
+    and checked first — so it asserted a bare `ValueError` it got from
+    the wrong guard. Same for `test_config_rejects_nonpositive_blinds`.
+    Both now pass `max_raises=1` and `match=` the guard they mean. Swept
+    the other ~70 `raise_sizes=()` uses in the suite: every one correctly
+    paired with `max_raises=1`; these two were the only inert ones. Third
+    time this audit has found a check that could not fail (M105, M108,
+    now this), and the third time it surfaced only by making something
+    fail on purpose.
+  - **Mutation-tested**: a 1%-short call, a raiser re-acting against
+    their own raise, and a dropped entering pot were each caught by
+    thousands of violations. The fourth mutation — deleting F28's
+    exclusion — was not caught, which *is* F28.
