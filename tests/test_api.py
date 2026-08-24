@@ -4120,3 +4120,63 @@ def test_advise_and_the_range_chart_agree_on_confidence(client):
             preflop_action_path=[], players=players)).json()
         assert chart["solver_confidence"] == advice["solver_confidence"], players
         assert chart["sizing_confidence"] == advice["sizing_confidence"], players
+
+
+@pytest.mark.parametrize("path,fields,street,expected", [
+    # a preflop path that still leaves a preflop decision to make
+    ([], {}, "preflop", "high"),
+    (["raise"], {}, "preflop", "high"),
+    # ...and paths that close preflop, so a board can be dealt
+    (["raise", "call_or_check"], {"board": "2h6d9c"}, "flop", "low"),
+    (["raise", "call_or_check"],
+     {"board": "2h6d9c", "flop_action_path": ["call_or_check", "call_or_check"],
+      "turn_card": "Kd"}, "turn", "low"),
+])
+def test_postflop_advice_carries_the_aggression_caveat(client, path, fields, street, expected):
+    """M128. The postflop counterpart to the preflop sizing caveat, and
+    it exists for a measured reason.
+
+    The range a postflop solve models is capped to
+    `MAX_PATH_QUERY_CLASSES_PER_SIDE` — a pure COST control the user
+    never sees. Sweeping it 10 -> 26 on one flop spot moves a value
+    hand's aggression NON-MONOTONICALLY across a 250x range:
+
+        cap        10    12    14    16    18    20    22    24    26
+        9s9d set  .003  .004  .019  .025  .771  .071  .122  .393  .402
+        QdQh      .007  .006  .006  .031  .533  .018  .023  .023  .032
+
+    Not noise — solving twice at the same cap gives a delta of exactly
+    0.0. And widening is no escape: cap 26 takes one flop decision from
+    10.8s to 52.1s.
+
+    Scoped to the AGGRESSION axis deliberately. The fold-versus-play call
+    held up across 275 advised decisions in M127's play session, so it is
+    not implicated; saying otherwise would devalue the caveat.
+    """
+    response = client.post("/advise", json=_advise_body(
+        preflop_action_path=path, players=2, **fields))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["street"] == street
+    assert body["aggression_confidence"] == expected
+    assert bool(body["aggression_confidence_reason"]) is (expected == "low")
+
+
+def test_the_aggression_caveat_does_not_claim_the_fold_call_is_broken():
+    """M128. Scope discipline, pinned.
+
+    M127 first read two cap values as a systematic bias toward
+    slow-playing; nine values showed chaos instead. The correction
+    matters for what the user is told: this caveat covers HOW
+    aggressively to play, not WHETHER to continue, because only the
+    former was measured unstable. Over-claiming here would repeat
+    M110's error in the copy a person reads.
+    """
+    reason = api_config.POSTFLOP_AGGRESSION_CAVEAT_REASON.lower()
+    assert "how often" in reason or "how aggressively" in reason
+    assert "fold" in reason, "the caveat should say which axis IS usable"
+    for overclaim in ("do not trust", "unusable", "ignore this advice"):
+        assert overclaim not in reason, (
+            f"the caveat overclaims ({overclaim!r}); only the aggression axis was "
+            "measured unstable, and the fold/play call held across 275 decisions"
+        )

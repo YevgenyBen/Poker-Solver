@@ -28,6 +28,10 @@ export interface SolveResponse {
   solver_confidence_reason?: string | null;
   sizing_confidence?: string;
   sizing_confidence_reason?: string | null;
+  // M128: how often to bet or raise, postflop. Separate from
+  // sizing_confidence (preflop, which size among the non-fold actions).
+  aggression_confidence?: string;
+  aggression_confidence_reason?: string | null;
 }
 
 // Mirrors api/schemas.py's EquityResponse.
