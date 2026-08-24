@@ -3,6 +3,8 @@
 One test module per source module, per this project's convention.
 """
 
+import math
+
 import numpy as np
 import pytest
 
@@ -96,3 +98,73 @@ def test_an_empty_villain_range_is_refused():
     result = _solved(equity, 10.0, 50.0)
     with pytest.raises(ValueError, match="sums to zero"):
         expected_values_at_root(result, equity, "OOP", "IP", villain_reach=[0.0, 0.0])
+
+
+# --- M114: the canonical key and the precomputed table ---
+
+
+def test_the_key_collapses_terminals_that_share_a_following_game():
+    """M112's measurement is the reason this key exists: 6-max has 15,254
+    showdown terminals with money behind, and one flop solve each is 8.3
+    hours. They collapse to 27 because a continuation value depends on the
+    game that FOLLOWS — pot, money behind, live seats — not on the action
+    sequence that reached it.
+
+    So two terminals with the same SPR and the same live-seat count must
+    map to one key even when their pots and stacks differ in absolute
+    size, and different SPRs must not collide.
+    """
+    from poker_solver.continuation import continuation_key
+
+    # Same SPR (2.0), different absolute sizes -> one key.
+    assert continuation_key(10.0, 20.0, 2) == continuation_key(40.0, 80.0, 2)
+    # Same sizes, different live counts -> different keys.
+    assert continuation_key(10.0, 20.0, 2) != continuation_key(10.0, 20.0, 3)
+    # Order-of-magnitude apart in SPR -> different keys.
+    assert continuation_key(10.0, 20.0, 2) != continuation_key(10.0, 160.0, 2)
+
+
+def test_a_zero_pot_has_no_spr_and_is_refused():
+    """SPR is undefined without a pot, and a silent divide would produce
+    a key that silently merges unrelated spots."""
+    from poker_solver.continuation import continuation_key
+
+    with pytest.raises(ValueError, match="pot must be positive"):
+        continuation_key(0.0, 50.0, 2)
+
+
+def test_the_table_ranks_hands_and_responds_to_stack_depth():
+    """The built table has to carry real postflop structure, or it cannot
+    fix anything it is wired into.
+
+    Two properties, both consequences of solved play rather than anything
+    programmed in:
+      * a premium hand is worth more than trash;
+      * a premium hand is worth MORE at low SPR, because deep stacks give
+        opponents room to outplay it, while trash is worth LESS at low
+        SPR because it has less room to bluff.
+    """
+    from poker_solver.continuation import build_continuation_table, continuation_key
+    from poker_solver.starting_hands import StartingHand as Hand
+
+    hero = {Hand("A", "A"): 1.0, Hand("K", "Q", suited=True): 1.0,
+            Hand("7", "2", suited=False): 1.0, Hand("J", "T", suited=True): 1.0}
+    deep_key = continuation_key(10.0, 95.0, 2)
+    shallow_key = continuation_key(40.0, 60.0, 2)
+    table = build_continuation_table(
+        {deep_key: (10.0, 95.0), shallow_key: (40.0, 60.0)},
+        hero, dict(hero), boards=2, iterations=150, seed=3,
+    )
+
+    for key in (deep_key, shallow_key):
+        values = table[key]
+        assert values["AA"] > values["72o"], f"{key}: AA is not worth more than 72o"
+        assert all(math.isfinite(v) for v in values.values()), f"{key}: non-finite EV"
+
+    assert table[shallow_key]["AA"] > table[deep_key]["AA"], (
+        "AA should realize more of the pot at low SPR, where opponents have less "
+        "room to outplay it"
+    )
+    assert table[shallow_key]["72o"] < table[deep_key]["72o"], (
+        "trash should be worth less at low SPR, having less room to bluff"
+    )

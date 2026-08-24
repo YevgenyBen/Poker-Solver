@@ -141,3 +141,24 @@ def range_from_class_frequencies(class_freqs: dict, exclude: frozenset = frozens
         for combo in combos:
             range_[combo] = weight_per_combo
     return range_
+
+
+def combo_class(combo: "HandCombo") -> StartingHand:
+    """The StartingHand class a concrete HandCombo belongs to.
+
+    Moved here from `api/solving.py` in M114, which needed the same
+    mapping in the engine and must not import from `api/` (the package
+    boundary is enforced by tests/test_package_boundary.py). The API's
+    `_combo_to_class` now delegates here rather than keeping a second
+    copy.
+
+    Safe because HandCombo.__post_init__ (M10) normalizes card_a to the
+    higher (value, suit) pair, so card_a.rank is always the high rank. No
+    pair special-case is needed: two distinct cards of the same rank must
+    differ in suit, so `suited` is already False for every pair.
+    """
+    return StartingHand(
+        combo.card_a.rank,
+        combo.card_b.rank,
+        suited=combo.card_a.suit == combo.card_b.suit,
+    )
