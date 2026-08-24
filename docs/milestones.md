@@ -5802,3 +5802,40 @@ entry's own corrections before trusting its conclusions.
     than covering anything new. The exhaustive census is the real
     addition.
   - **Verification:** 863 backend tests (up from 860), 154 frontend.
+
+- **M106 — audit round 6: equity verified against enumeration, and an
+  audit whose reference data was wrong three times.** M105 verified hand
+  evaluation; equity is the layer above it, and the one M98 measured
+  carrying ±55bb of noise multiway. Write-up in
+  `docs/audit-2026-08-23.md`.
+  - **No defect in equity.** Checked against exact enumeration of all
+    C(48,5) = 1,712,304 boards, Monte Carlo tracks truth to within
+    **0.18pp** on every matchup tested. Two layers now verified clean.
+  - **The audit's own reference table had three errors, the worst by
+    21pp.** `77 vs 65s` was entered as 0.606 and is truly **0.8184** —
+    0.606 is the figure for a pair facing OVERCARDS, and 65s is entirely
+    below a seven. It looked exactly like a serious engine bug.
+    `AKs vs QJs` (0.634 vs true 0.6595) and `A5s vs KQo` (0.588 vs true
+    0.5995) were wrong the same way.
+  - **The symmetry "violation" was my threshold.** `equity(a,b) +
+    equity(b,a) = 0.9972` against a `> 1e-9` assertion — but the two
+    directions deal their own cards and sample independently, so the
+    deviation is inside one standard error. An exact assertion there
+    measures the RNG, not the property.
+  - **The lesson is M105's, one layer up.** Category frequencies are
+    exact combinatorial facts and safe to quote from memory. Matchup
+    equities are suit-configuration dependent and are not. **Ground truth
+    a repository can regenerate beats a number recalled from outside
+    it** — so the permanent tests freeze enumeration-derived values and
+    keep the enumerator beside them, plus a guard that re-derives one, in
+    case `deal_two_hands` ever assigns different concrete cards and the
+    frozen numbers silently stop describing what it returns.
+  - **Each guard checked by mutation.** Awarding ties to one player
+    instead of splitting is caught by the SYMMETRY test and not by the
+    absolute-value comparison (ties are too rare in these matchups to
+    move equity past the 1pp tolerance); an equity-shifting error is
+    caught by the absolute comparison. Complementary, and demonstrated
+    rather than assumed.
+  - Cost tuned 105s -> 54s; seeds are fixed, so the tests are
+    deterministic rather than merely unlikely to flake.
+  - **Verification:** 869 backend tests (up from 863), 154 frontend.
