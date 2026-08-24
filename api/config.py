@@ -52,6 +52,23 @@ PREWARM_STACK_DEPTHS = (20, 40, 50, 75, 100, 150, 200)
 # a daemon thread, while the server already serves everything else.
 # Depths outside this list still work; they just pay the solve.
 MULTIWAY_PREWARM_STACK_DEPTHS = (100.0, 50.0, 20.0)
+# The ceiling on a client-supplied `iterations` for the heads-up preflop
+# solve — the one endpoint that exposes the knob at all (multiway ignores
+# it outright, per MULTIWAY_TABLE_CONFIGS' fixed-menu discipline).
+#
+# M124 (D5) gave this its measurement; it was the only constant in this
+# file sitting with no justification of its own. Cost is close to linear
+# in iterations for a 169-class heads-up solve:
+#
+#     1,000 iters ->  2.8s
+#     5,000 iters -> 12.1s
+#    20,000 iters -> 50.0s
+#
+# So the ceiling is a ~50s worst case, which is the same "slow but
+# tolerable for a live request" bracket MAX_FLOP_TURN_ITERATIONS and
+# MAX_FLOP_MULTIWAY_ITERATIONS were both set against. It exists to stop a
+# client requesting an unbounded solve, not to mark a convergence limit —
+# heads-up CFR+ is converged long before this.
 MAX_ITERATIONS = 20_000
 
 # The multiway preflop pool: the full 169-class canonical set, i.e. the
@@ -858,3 +875,37 @@ SIZING_CAVEAT_REASON = (
 # sibling's comment does.
 DEFAULT_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS = DEFAULT_FLOP_TURN_MULTIWAY_ITERATIONS
 MAX_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS = 200
+
+
+# M124 (D1). The bucket width for the multiway preflop solve cache.
+#
+# That solve is the most expensive thing in the product — measured cold
+# at 66s (6-max) and 93s (9-max) — and was keyed on `round(stack_bb)`,
+# so a client walking depths paid it once per integer bb while the
+# startup pre-warm covered three depths of the ~200 plausible ones.
+#
+# 5bb matches canonicalize.DEFAULT_STACK_BUCKET_BB, and the same FLOOR
+# rule applies for the same reason (M95): the solve runs at the bucketed
+# depth, so `canonical <= real` must hold or the advice names bets the
+# player cannot afford.
+#
+# Justified by a control, not by analogy to the postflop library.
+# Preflop IS depth-sensitive where postflop board texture is not, so
+# adopting this needed evidence that the substitution error is small
+# **relative to the noise already present**. Measured at 3-max over all
+# 169 classes' fold frequency:
+#
+#     depth   same depth, seed 1 vs 2       5bb floor-bucket, same seed
+#     24bb    mean .050  max .778  8 flips  mean .051  max .894  8 flips
+#     99bb    mean .053  max .652  12 flips mean .046  max .453  10 flips
+#
+# Re-running the identical solve with a different seed moves the
+# strategy as much as bucketing 4bb away does — more, at 99bb. The
+# error is inside the solver's own run-to-run variance.
+#
+# Two things follow. Widening this bucket needs that control re-run, not
+# an argument. And the control says something uncomfortable in its own
+# right: 8-12 of 169 hands cross the fold/play line between two runs
+# that differ only in seed, which is the multiway instability M73/M74
+# and M111 already document, seen from a new angle.
+MULTIWAY_STACK_BUCKET_BB = 5.0

@@ -270,6 +270,19 @@ requests now reject unknown fields by name rather than ignoring them.
   11.5s (flop) / 1.5s (turn). Treat multiway postflop advice as
   correspondingly thinner, and note those caps genuinely bind now, where
   pre-M67 they never did.
+- **The multiway preflop solve cache buckets stack depth by 5bb, and
+  FLOORS (M124).** It is the most expensive solve in the product (66s at
+  6-max, 93s at 9-max cold) and used to be keyed on `round(stack_bb)`,
+  so walking depths paid it once per integer bb. `MULTIWAY_STACK_BUCKET_BB`
+  now bands it, and **the solve runs at the bucketed depth** — keying on
+  the bucket while solving at the real depth would hand a 99bb tree to a
+  95bb player, which is F13. Adopted on a measured control, not by
+  analogy to the postflop library: bucketing 4bb away moves the strategy
+  no more than re-running the same solve under a different seed does.
+  **Don't widen the bucket without re-running that control.** Its other
+  half is worth knowing: 8-12 of 169 hands cross the fold/play line
+  between two runs differing only in seed.
+
 - **A class's frequency belongs to EVERY one of its combos, not divided
   among them (M119).** `range_from_class_frequencies` gives each
   surviving combo its class's frequency, so a class's total mass scales

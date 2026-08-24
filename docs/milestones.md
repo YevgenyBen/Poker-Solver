@@ -6499,3 +6499,66 @@ entry's own corrections before trusting its conclusions.
     and must not assert any seat opens tighter/looser/wider than
     another — the form of claim that was retracted, not just its
     wording.
+
+- **M124 — maximal diagnostic, and all five recommendations acted on.**
+  A whole-project pass after audit rounds 1-15: static structure,
+  mechanically re-verified constraints, live behaviour at production
+  settings, latency normalized against a same-run reference, coverage,
+  and the product surface. Full report in
+  `docs/diagnostic-2026-08-24.md`.
+  - **Headline: the engine is in good shape; the product's worst problem
+    was latency, not correctness.** Every correctness probe came back
+    clean — 40 random deals answered with zero malformed responses, all
+    four documented defects still behaving as documented, 8 of 9
+    checkable CLAUDE.md constraints verified directly, **95% line
+    coverage** (2,785 statements, 131 missed), frontend lint/typecheck/
+    build clean with all 13 components tested.
+  - **D1 (fixed): the multiway preflop cache was keyed at 1bb
+    granularity** on the most expensive solve in the product — measured
+    cold at **66s (6-max) and 93s (9-max)** — while the pre-warm covered
+    three depths of ~200 plausible ones. Now a 5bb FLOOR bucket, with
+    the solve running at the bucketed depth (keying on the bucket while
+    solving at the real depth would serve a 99bb tree to a 95bb player:
+    F13 exactly). Through the real API: 97bb cold 28.3s, then **98bb and
+    99bb at 2.4-2.8ms**; affordability swept at six depths, zero
+    violations.
+  - **D1 was adopted on a CONTROL, and nearly became a wrong finding.**
+    Raw bucket-vs-truth numbers looked alarming (fold frequency moving
+    up to 0.89, eight hands flipping fold/play). The control —
+    re-running the SAME depth under a different seed — moves the
+    strategy just as much, and more at 99bb (12 flips vs 10). Without it
+    this reads as depth sensitivity and the fix dies; it is the same
+    over-read M110 made and M111 corrected.
+  - **The control surfaced something uncomfortable, recorded not
+    buried**: 8-12 of 169 hands cross the fold/play line between two
+    runs differing only in seed. Bucketing is free BECAUSE the solve is
+    already that noisy, not because strategy is depth-insensitive. The
+    66s a user waits buys an answer that would partly differ if re-run.
+    Consistent with M73/M74/M111's documented instability, seen from a
+    new angle.
+  - **D2 (fixed): the pre-warm was 0% covered and failed silently** —
+    the largest uncovered block in the project, seven duplicated
+    `except Exception: logger.exception(...)` blocks in a daemon thread
+    nobody joins, and it is the ONLY mitigation for D1. A config typo
+    would have looked like "the product is slow". Now one
+    `_prewarm_step` helper recording every outcome in `PREWARM_STATUS`,
+    with two mutation-checked tests. Same failure shape as F25 (M107).
+  - **D3 (fixed): the unbounded-cache exemption asserted its own
+    premise.** `test_no_solve_cache_is_unbounded` exempted
+    `multiway_equity` because its key is a config constant — true, and
+    unchecked. It now inspects every call site of
+    `_get_multiway_equity_cache` and fails unless each passes a `cfg.`
+    constant. Mutation-checked.
+  - **D4 (fixed): coverage measures execution, not assertion.**
+    `api/solving.py` sat at 94% line coverage with 20 of 31 functions
+    never named in a test — and `_cap_range_to_combos` ran on every
+    river request and still shipped M119's defect. Nine direct property
+    tests added for `_cap_range` and `_infer_street`. The remedy was
+    never "raise coverage".
+  - **D5 (fixed): `MAX_ITERATIONS` had no justification** — the only
+    such constant left. Measured: 1,000 iters 2.8s, 5,000 12.1s, 20,000
+    **50.0s**, the same bracket its sibling caps were set against.
+  - **One would-be finding discarded before reporting**: a first pass
+    flagged "25 of 48 config constants lack measurement", which was the
+    heuristic misreading shared comment blocks and `= DEFAULT_X`
+    aliases. Real number: one.

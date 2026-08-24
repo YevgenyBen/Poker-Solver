@@ -3812,3 +3812,228 @@ def test_every_honesty_signal_reaches_the_caller_with_a_reason(client, players, 
     )
     assert body["sizing_confidence"] == sizing
     assert bool(body["sizing_confidence_reason"]) is (sizing == "low")
+
+
+def test_the_prewarm_records_every_step_and_actually_fills_the_caches(monkeypatch):
+    """M124 (D2). The pre-warm is the only thing standing between a user
+    and a 66-93 second cold multiway preflop solve, and nothing tested it.
+
+    It was the largest uncovered block in the project: seven duplicated
+    `except Exception: logger.exception(...)` blocks, run in a daemon
+    thread nobody joins. A config typo or a renamed helper would not have
+    failed anything — it would have looked like "the product is slow",
+    with a stack trace in a log nobody reads. Same failure shape as F25
+    (M107), where nothing verified the app was served at all.
+
+    Shrunk to two cheap steps so this is a test rather than a benchmark;
+    what it pins is that a warm is ATTEMPTED for everything config names,
+    that success is recorded, and that the cache is genuinely populated
+    afterwards.
+    """
+    monkeypatch.setattr(api_config, "PREWARM_STACK_DEPTHS", (100,))
+    monkeypatch.setattr(api_config, "MULTIWAY_PREWARM_STACK_DEPTHS", ())
+    calls = []
+    for name in ("_get_or_solve_flop_turn", "_get_or_solve_flop_to_river",
+                 "_query_turn_from_path", "_query_river_from_path"):
+        monkeypatch.setattr(api_main, name,
+                            lambda *a, _n=name, **k: calls.append(_n))
+    monkeypatch.setattr(api_main, "DEFAULT_ITERATIONS", FAST_ITERATIONS)
+
+    api_main._prewarm_common_depths()
+    status = api_main.PREWARM_STATUS
+
+    assert status["started"] and status["finished"]
+    assert status["steps"], "the pre-warm recorded nothing at all"
+    failed = [s for s in status["steps"] if not s["ok"]]
+    assert not failed, f"pre-warm steps failed: {failed}"
+
+    names = [s["name"] for s in status["steps"]]
+    assert "preflop stack_bb=100" in names
+    assert len(calls) == 4, f"not every deep pre-warm ran: {calls}"
+    # the point of the whole exercise: the cache is warm afterwards
+    assert len(api_main._preflop_raw_cache) >= 1, "the pre-warm populated nothing"
+
+
+def test_a_failing_prewarm_step_is_recorded_rather_than_lost(monkeypatch):
+    """M124 (D2). The other half. A failure must still not stop the
+    remaining warms — one unavailable spot should not cost every other
+    one, which is why the original swallowed exceptions. The defect was
+    that it swallowed them WITHOUT TRACE.
+    """
+    monkeypatch.setattr(api_config, "PREWARM_STACK_DEPTHS", (100,))
+    monkeypatch.setattr(api_config, "MULTIWAY_PREWARM_STACK_DEPTHS", ())
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("solver unavailable")
+
+    monkeypatch.setattr(api_main, "_get_or_solve_preflop_raw", explode)
+    later = []
+    for name in ("_get_or_solve_flop_turn", "_get_or_solve_flop_to_river",
+                 "_query_turn_from_path", "_query_river_from_path"):
+        monkeypatch.setattr(api_main, name, lambda *a, _n=name, **k: later.append(_n))
+
+    api_main._prewarm_common_depths()
+    status = api_main.PREWARM_STATUS
+
+    assert status["finished"], "a failing step must not abandon the run"
+    failed = [s for s in status["steps"] if not s["ok"]]
+    assert len(failed) == 1, f"expected exactly one recorded failure, got {failed}"
+    assert failed[0]["name"] == "preflop stack_bb=100"
+    assert "solver unavailable" in failed[0]["error"], (
+        f"the failure was recorded without its cause: {failed[0]}"
+    )
+    assert len(later) == 4, "a failed step stopped the later warms from running"
+
+
+# ---------------------------------------------------------------------------
+# M124 (D4): direct property tests for the api/solving.py helpers that carry
+# real logic.
+#
+# These functions were already at ~94% LINE coverage before this section
+# existed — they run on essentially every request. Coverage was never the
+# gap. `_cap_range_to_combos` executed on every single river request and
+# still shipped the defect M119 found, collapsing a river range onto nine
+# ways to hold J3o, because an end-to-end HTTP assertion cannot see that a
+# range degenerated on the way through. Coverage proves a line ran; only an
+# assertion proves what it returned.
+# ---------------------------------------------------------------------------
+
+
+def test_cap_range_keeps_the_most_frequent_classes_and_nothing_else():
+    """`_cap_range` must select BY frequency, not by dict order — the
+    solved strategy has already ranked classes by relevance, and an
+    arbitrary slice would discard that ranking silently."""
+    from poker_solver.starting_hands import StartingHand
+    from api.solving import _cap_range
+
+    ranked = {
+        StartingHand("7", "2", suited=False): 0.10,
+        StartingHand("A", "A"): 0.99,
+        StartingHand("9", "4", suited=False): 0.05,
+        StartingHand("K", "K"): 0.90,
+        StartingHand("Q", "Q"): 0.80,
+    }
+    kept = _cap_range(ranked, 3)
+    assert len(kept) == 3
+    assert {str(h) for h in kept} == {"AA", "KK", "QQ"}, (
+        f"the cap did not keep the top three by frequency: {sorted(str(h) for h in kept)}"
+    )
+    # a range that already fits must come back untouched, same object contents
+    assert _cap_range(ranked, 99) == ranked
+
+
+def test_cap_range_is_stable_when_frequencies_tie():
+    """M119's lesson applied to the class-level cap: with ties, selection
+    falls to sort order, and a stable sort keeps the canonical order
+    (AA first) rather than an alphabetical one that would prefer 22."""
+    from poker_solver.starting_hands import all_starting_hands
+    from api.solving import _cap_range
+
+    tied = {hand: 0.5 for hand in all_starting_hands()}
+    kept = [str(h) for h in _cap_range(tied, 3)]
+    assert kept == ["AA", "KK", "QQ"], f"tied classes were not kept in canonical order: {kept}"
+
+
+@pytest.mark.parametrize("fields,expected", [
+    ({}, "preflop"),
+    ({"board": "2h6d9c"}, "flop"),
+    ({"board": "2h6d9c", "flop_action_path": ["call_or_check", "call_or_check"],
+      "turn_card": "Kd"}, "turn"),
+    ({"board": "2h6d9c", "flop_action_path": ["call_or_check", "call_or_check"],
+      "turn_card": "Kd", "turn_action_path": ["call_or_check", "call_or_check"],
+      "river_card": "4s"}, "river"),
+])
+def test_infer_street_reads_the_street_off_the_fields_present(fields, expected):
+    """Street depth is INFERRED from which fields are present rather than
+    named by the client, so that a client cannot state a street that
+    contradicts its own data. This pins the mapping directly."""
+    from api.schemas import AdviseRequest
+    from api.solving import _infer_street
+
+    request = AdviseRequest(stack_bb=100.0, preflop_action_path=["raise", "call_or_check"],
+                            **fields)
+    assert _infer_street(request) == expected
+
+
+@pytest.mark.parametrize("fields", [
+    {"turn_card": "Kd"},                                   # turn card, no board
+    {"board": "2h6d9c", "river_card": "4s"},               # river card, no turn
+    {"board": "2h6d9c", "turn_action_path": ["call_or_check"]},  # turn action, no turn card
+])
+def test_infer_street_refuses_a_skipped_street(fields):
+    """The contradiction guards. Without these a partial combination
+    would be answered as some other street — a confident answer to a
+    question nobody asked, which is F23's shape."""
+    from api.schemas import AdviseRequest
+    from api.solving import _infer_street
+
+    request = AdviseRequest(stack_bb=100.0, preflop_action_path=["raise", "call_or_check"],
+                            **fields)
+    with pytest.raises(ValueError):
+        _infer_street(request)
+
+
+def test_multiway_depths_in_one_bucket_share_a_single_solve(client, monkeypatch):
+    """M124 (D1). The multiway preflop solve is the most expensive thing
+    in the product — 66s at 6-max, 93s at 9-max, measured cold — and it
+    used to be keyed on `round(stack_bb)`, so a client walking depths
+    paid it once per integer bb while the pre-warm covered three depths
+    of the ~200 plausible ones.
+
+    Counts SOLVES, not seconds, for the same reason M101's own guard
+    does: the number is the invariant, the wall-clock is the symptom.
+    """
+    from api import solving as solving_module
+
+    solves = []
+    original = solving_module.solve_preflop
+
+    def counting(*args, **kwargs):
+        solves.append(kwargs.get("config"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(solving_module, "solve_preflop", counting)
+    solving_module._multiway_cache.clear()
+
+    for depth in (95.0, 96.0, 97.0, 98.0, 99.0):
+        assert solving_module._get_or_solve_multiway(depth, 3) is not None
+    assert len(solves) == 1, (
+        f"five depths inside one 5bb band caused {len(solves)} solves, not 1"
+    )
+
+    # ...and the solve ran at the FLOOR of the band, never above it, so
+    # every size it derives is affordable at the shallowest real stack in
+    # the band (M95's invariant, which bucketing must not break).
+    assert solves[0].stack_bb == 95.0, (
+        f"solved at {solves[0].stack_bb}, which is not the floor of the band"
+    )
+
+    # a depth in the next band down is genuinely a different solve
+    solving_module._get_or_solve_multiway(92.0, 3)
+    assert len(solves) == 2
+    assert solves[1].stack_bb == 90.0
+
+
+def test_a_bucketed_multiway_solve_never_names_an_unaffordable_bet(client):
+    """M124 (D1). The failure mode bucketing could have introduced, and
+    the reason the solve runs at the bucketed depth rather than the
+    requested one.
+
+    Keying on the bucket while solving at the real depth would serve the
+    first caller's deeper tree to everyone in the band — and a tree built
+    at 99bb offers bets a 95bb player cannot make. That is exactly F13,
+    which M95 fixed for the postflop library by flooring. Same guarantee,
+    checked here at the top and bottom of a band and at a sub-bucket
+    depth.
+    """
+    for stack in (99.0, 95.0, 24.0, 6.0):
+        response = client.post("/advise", json=_advise_body(
+            preflop_action_path=[], players=3, stack_bb=stack))
+        assert response.status_code == 200, (stack, response.json())
+        body = response.json()
+        for action in body["strategy"]:
+            if ":" in action:
+                size = float(action.split(":")[1])
+                assert size <= stack + 1e-9, (
+                    f"{stack}bb stack was advised {action}, which it cannot afford"
+                )

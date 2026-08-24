@@ -683,24 +683,59 @@ from .solving import (
 )
 
 
+# M124 (D2). The pre-warm is the only thing standing between a user and
+# a 66-93s cold multiway preflop solve, and until now it was invisible:
+# seven duplicated `except Exception: logger.exception(...)` blocks, a
+# daemon thread nobody joined, and zero test coverage — the largest
+# uncovered block in the project. A config typo or a renamed helper
+# would not have failed anything; it would have looked like "the product
+# is slow", with a stack trace in a log nobody reads.
+#
+# This record makes the outcome inspectable and, more to the point,
+# ASSERTABLE. Same failure shape as F25 (M107), where nothing verified
+# the app was served at all.
+PREWARM_STATUS: dict = {"started": False, "finished": False, "steps": []}
+
+
+def _prewarm_step(name: str, warm) -> bool:
+    """Run one pre-warm step, recording its outcome either way.
+
+    Still swallows the exception — one unavailable spot must not stop the
+    other warms, which is why the original wrote it this way. The change
+    is that the failure is now recorded rather than only logged.
+    """
+    logger.info("pre-warming %s", name)
+    try:
+        warm()
+    except Exception as exc:
+        logger.exception("pre-warm failed for %s", name)
+        PREWARM_STATUS["steps"].append({"name": name, "ok": False,
+                                        "error": f"{type(exc).__name__}: {exc}"})
+        return False
+    PREWARM_STATUS["steps"].append({"name": name, "ok": True, "error": None})
+    return True
+
+
 def _prewarm_common_depths() -> None:
+    PREWARM_STATUS["started"] = True
+    PREWARM_STATUS["finished"] = False
+    PREWARM_STATUS["steps"] = []
+
     for depth in cfg.PREWARM_STACK_DEPTHS:
-        try:
-            logger.info("pre-warming solve for stack_bb=%s", depth)
-            _get_or_solve_preflop_raw(depth, DEFAULT_ITERATIONS)
-        except Exception:
-            logger.exception("pre-warm failed for stack_bb=%s", depth)
+        _prewarm_step(
+            f"preflop stack_bb={depth}",
+            lambda d=depth: _get_or_solve_preflop_raw(d, DEFAULT_ITERATIONS),
+        )
 
     # M76: every (table size, depth) pair, not just stack_bb=100 — see
     # cfg.MULTIWAY_PREWARM_STACK_DEPTHS for why the depth list is
     # separate from the heads-up one and why these three depths.
     for players in cfg.MULTIWAY_TABLE_CONFIGS:
         for depth in cfg.MULTIWAY_PREWARM_STACK_DEPTHS:
-            try:
-                logger.info("pre-warming %s-max solve for stack_bb=%s", players, depth)
-                _get_or_solve_multiway(depth, players)
-            except Exception:
-                logger.exception("pre-warm failed for %s-max stack_bb=%s", players, depth)
+            _prewarm_step(
+                f"{players}-max stack_bb={depth}",
+                lambda p=players, d=depth: _get_or_solve_multiway(d, p),
+            )
 
     # solve_flop itself (~2.6s) isn't worth pre-warming — /solve_flop
     # was never given this treatment, since a couple seconds is a fine
@@ -711,19 +746,20 @@ def _prewarm_common_depths() -> None:
     # if either side's defaults ever change) so a user's very first,
     # overwhelmingly-likely-unmodified click is instant rather than
     # paying the full cost live.
-    try:
-        logger.info("pre-warming solve_flop_turn for the default board")
-        _get_or_solve_flop_turn(tuple(parse_cards(cfg.DEFAULT_CHAINED_FLOP_BOARD)), 10.0, 40.0, DEFAULT_FLOP_TURN_ITERATIONS)
-    except Exception:
-        logger.exception("pre-warm failed for solve_flop_turn")
-
-    try:
-        logger.info("pre-warming solve_flop_to_river for the default board")
-        _get_or_solve_flop_to_river(
-            tuple(parse_cards(cfg.DEFAULT_CHAINED_FLOP_BOARD)), 10.0, 40.0, DEFAULT_FLOP_TO_RIVER_ITERATIONS
-        )
-    except Exception:
-        logger.exception("pre-warm failed for solve_flop_to_river")
+    _prewarm_step(
+        "solve_flop_turn default board",
+        lambda: _get_or_solve_flop_turn(
+            tuple(parse_cards(cfg.DEFAULT_CHAINED_FLOP_BOARD)), 10.0, 40.0,
+            DEFAULT_FLOP_TURN_ITERATIONS,
+        ),
+    )
+    _prewarm_step(
+        "solve_flop_to_river default board",
+        lambda: _get_or_solve_flop_to_river(
+            tuple(parse_cards(cfg.DEFAULT_CHAINED_FLOP_BOARD)), 10.0, 40.0,
+            DEFAULT_FLOP_TO_RIVER_ITERATIONS,
+        ),
+    )
 
     # /solve_turn_from_path's own cost (~16-26s) is in the same
     # tax-worth-avoiding bracket the two pre-warms above were already
@@ -731,19 +767,15 @@ def _prewarm_common_depths() -> None:
     # flop presets and board — keep these in sync if either side's
     # defaults ever change (same "kept in sync manually" precedent
     # cfg.DEFAULT_CHAINED_FLOP_BOARD's own comment already accepts).
-    try:
-        logger.info("pre-warming solve_turn_from_path for the default line")
-        _query_turn_from_path(
-            ["raise", "call_or_check"],
-            ["raise", "call_or_check"],
-            parse_cards("2h")[0],
-            100.0,
+    _prewarm_step(
+        "solve_turn_from_path default line",
+        lambda: _query_turn_from_path(
+            ["raise", "call_or_check"], ["raise", "call_or_check"],
+            parse_cards("2h")[0], 100.0,
             tuple(parse_cards(cfg.DEFAULT_CHAINED_FLOP_BOARD)),
-            DEFAULT_ITERATIONS,
-            DEFAULT_FLOP_TURN_ITERATIONS,
-        )
-    except Exception:
-        logger.exception("pre-warm failed for solve_turn_from_path")
+            DEFAULT_ITERATIONS, DEFAULT_FLOP_TURN_ITERATIONS,
+        ),
+    )
 
     # /solve_river_from_path's own cost (~43s at its own default combo
     # cap) is well past the tax-worth-avoiding bracket the pre-warms
@@ -751,21 +783,23 @@ def _prewarm_common_depths() -> None:
     # than any of them. Default line: bet/call on the flop, check/check
     # on the turn (keeps both positions live, no all-in), a real turn
     # card and a real, distinct river card.
-    try:
-        logger.info("pre-warming solve_river_from_path for the default line")
-        _query_river_from_path(
-            ["raise", "call_or_check"],
-            ["raise", "call_or_check"],
-            parse_cards("2h")[0],
-            ["call_or_check", "call_or_check"],
-            parse_cards("9s")[0],
-            100.0,
+    _prewarm_step(
+        "solve_river_from_path default line",
+        lambda: _query_river_from_path(
+            ["raise", "call_or_check"], ["raise", "call_or_check"],
+            parse_cards("2h")[0], ["call_or_check", "call_or_check"],
+            parse_cards("9s")[0], 100.0,
             tuple(parse_cards(cfg.DEFAULT_CHAINED_FLOP_BOARD)),
-            DEFAULT_ITERATIONS,
-            cfg.DEFAULT_RIVER_PATH_QUERY_ITERATIONS,
-        )
-    except Exception:
-        logger.exception("pre-warm failed for solve_river_from_path")
+            DEFAULT_ITERATIONS, cfg.DEFAULT_RIVER_PATH_QUERY_ITERATIONS,
+        ),
+    )
+
+    PREWARM_STATUS["finished"] = True
+    failed = [step["name"] for step in PREWARM_STATUS["steps"] if not step["ok"]]
+    if failed:
+        logger.error("pre-warm finished with %d failed step(s): %s", len(failed), failed)
+    else:
+        logger.info("pre-warm finished: %d step(s), all ok", len(PREWARM_STATUS["steps"]))
 
 
 @asynccontextmanager
