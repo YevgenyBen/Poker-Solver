@@ -501,8 +501,13 @@ export function AdviseSolver() {
           {result.sizing_confidence === 'low' && (
             <p className="solver-warning" role="alert">
               <strong>Sizes are unreliable here.</strong>{' '}
+              {/* M125 (E3): this fallback used to say "The fold-vs-play
+                  call is sound". That is the claim M111 withdrew and
+                  M123 corrected in api/config.py — and it survived here,
+                  in the copy a user actually reads, for two more
+                  milestones. */}
               {result.sizing_confidence_reason ??
-                'The fold-vs-play call is sound, but the split among the non-fold actions moves with the random seed.'}
+                'The split among the non-fold actions moves with the random seed, and the opening range does not widen with position.'}
             </p>
           )}
 

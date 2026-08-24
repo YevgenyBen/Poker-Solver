@@ -47,10 +47,21 @@ export function PreflopRangesPage() {
     setSelectedHand(null);
   }
 
-  const title = isMultiway ? `${players}-max preflop solver (demo)` : 'Heads-up preflop solver';
+  const title = isMultiway ? `${players}-max preflop solver` : 'Heads-up preflop solver';
+  // M125 (E3). This used to read "a small curated hand subset (MCCFR),
+  // not the full 169-hand exact solve". M67 replaced that 8-class pool
+  // with all 169 classes, so it had been wrong for a long time — and
+  // wrong in the reassuring direction, blaming pool size when the real
+  // cause is sampling variance. It also lumped 3/6/9-max together as
+  // "demo", where 3-max and 6-max are in much better shape and 9-max is
+  // the one that must not be presented as authoritative.
+  //
+  // The caveats themselves now come from the API (solver_confidence /
+  // sizing_confidence), so this line states the method and leaves the
+  // reliability claims to the server that measured them.
   const subtitle = isMultiway
-    ? `${position}'s strategy, action folded to them — ${players}-max demo: a small curated hand subset (MCCFR), not the full 169-hand exact solve`
-    : 'BTN opening range (button vs. big blind, first action)';
+    ? `${position}'s strategy, action folded to them — ${players}-max, all 169 hand classes, sampled (MCCFR)`
+    : 'BTN opening range (button vs. big blind, first action) — all 169 hand classes, exact (CFR+)';
 
   return (
     <section className="preflop-ranges">
@@ -67,6 +78,21 @@ export function PreflopRangesPage() {
       <span className="status" role="status">
         {status}
       </span>
+
+      {data?.solver_confidence === 'low' && (
+        <p className="solver-warning" role="alert">
+          <strong>Low confidence.</strong>{' '}
+          {data.solver_confidence_reason ??
+            'This table size does not converge at any affordable iteration count.'}
+        </p>
+      )}
+      {data?.sizing_confidence === 'low' && (
+        <p className="solver-warning" role="alert">
+          <strong>Sizes are unreliable here.</strong>{' '}
+          {data.sizing_confidence_reason ??
+            'Multiway preflop is unreliable for which sizing to use.'}
+        </p>
+      )}
 
       <Legend />
 

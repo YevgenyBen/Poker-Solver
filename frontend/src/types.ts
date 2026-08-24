@@ -20,6 +20,14 @@ export interface SolveResponse {
   trained: TrainedMap;
   position: string;
   positions: string[];
+  // M125 (E2): these existed on AdviseResponse alone. This response
+  // serves the 9-max range chart, which the engine's own docs say must
+  // not be presented as authoritative — and it used to arrive with
+  // nothing saying so. Optional so an older backend still typechecks.
+  solver_confidence?: string;
+  solver_confidence_reason?: string | null;
+  sizing_confidence?: string;
+  sizing_confidence_reason?: string | null;
 }
 
 // Mirrors api/schemas.py's EquityResponse.

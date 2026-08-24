@@ -831,7 +831,20 @@ async def solve(
         # It previously was not: heads-up silently returned first-to-act
         # regardless of what the caller asked for.
         result = await run_in_threadpool(_get_or_solve_preflop_raw, stack_bb, iterations, players)
-        return format_solve_response(result, position=position)
+        body = format_solve_response(result, position=position)
+        # M125 (E2): the same confidence signals /advise carries, from
+        # the same constants. This endpoint serves the 9-max range chart,
+        # which CLAUDE.md says must not be presented as authoritative,
+        # and it used to say nothing at all. Preflop by definition here,
+        # so the sizing caveat applies whenever the table size does.
+        body["solver_confidence"] = (
+            "low" if players in cfg.LOW_CONFIDENCE_TABLE_SIZES else "high"
+        )
+        body["solver_confidence_reason"] = cfg.LOW_CONFIDENCE_TABLE_SIZES.get(players)
+        sizing_low = players in cfg.SIZING_CAVEAT_TABLE_SIZES
+        body["sizing_confidence"] = "low" if sizing_low else "high"
+        body["sizing_confidence_reason"] = cfg.SIZING_CAVEAT_REASON if sizing_low else None
+        return body
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
