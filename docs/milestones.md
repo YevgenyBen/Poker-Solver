@@ -6111,8 +6111,15 @@ entry's own corrections before trusting its conclusions.
     vs ~1.5: AA 0.775 -> **0.867** (worth MORE shallow, where opponents
     have less room to outplay it), 72o 0.281 -> **0.246** (worth LESS
     shallow, with less room to bluff), and AA > JTs > KQs > 72o at both
-    depths. Cost 2.0s for 2 spots x 2 boards, so ~40s for the full 27 —
-    better than M112's estimate.
+    depths. **[Cost claim corrected in M115.]** This entry said "~40s for
+    the full 27", extrapolated from a 2-spot smoke test using only FOUR
+    hand classes. At a realistic 12-class range the per-board
+    `build_board_equity_table` dominates, and the real figure is
+    **1,117.6s (18.6 min)** — 28x the estimate. M112's independent
+    estimate of 10.4 min was much closer, off by ~1.8x rather than 28x,
+    because it costed at 66 combos/side instead of extrapolating from a
+    toy pool. Extrapolating cost from a fixture small enough to be fast
+    is how you get a number that is wrong by an order of magnitude.
   - **The approximation is stated in the code, not buried.** The key
     carries SPR and live count and NOT range strength, so a three-bet pot
     and a limped pot at the same SPR are treated alike. That is a real
@@ -6129,3 +6136,45 @@ entry's own corrections before trusting its conclusions.
     neutral 0.5 stands in — using a differently-prepared table would
     price the EV against a different game than the one solved.
   - **Verification:** 897 backend tests (up from 894), 154 frontend.
+
+- **M115 — the continuation-value fix wired in, validated, and REFUTED.**
+  M113 built the primitive, M114 the precompute; this wires the table
+  into `_mccfr_terminal_value` and tests it against the targets M112
+  fixed **before any of it was built**. Both fail.
+  - **Paired across 5 seeds** (same seed both arms, so seed variance
+    cancels rather than being averaged away — M100's design):
+    | metric | paired mean | SEM | direction |
+    |---|---|---|---|
+    | AA jam delta | **+0.019** | 0.201 | fell in **2/5** |
+    | fold spread delta | **+1.23pp** | 1.91pp | widened in 4/5 |
+    Both null. The jam delta is indistinguishable from zero with two of
+    five seeds improving; the fold spread is inside its own error bar,
+    and even at face value 1.23pp against the ~30pp GTO spans is nothing.
+  - **A single seed had looked like success** — AA's jam 0.4955 ->
+    0.3078 and a monotone positional gradient, the first time the
+    baseline had ever produced one. M110 had already measured 12k jam
+    varying 0.37-0.92 across seeds, so that difference sat inside known
+    noise. Flagged as unreportable *before* running the paired test, not
+    after seeing it fail.
+  - **What still stands:** M98's diagnosis of the CAUSE. It is read
+    directly off the terminal expression, and M99 confirmed the mechanism
+    postflop with a monotone 10.2pp effect across three tree depths. What
+    is refuted is this particular *correction*.
+  - **The likeliest reason is the approximation M114 documented in
+    advance:** `continuation_key` carries SPR and live-seat count but NOT
+    range strength, so a three-bet pot and a limped pot at the same SPR
+    receive the same continuation value, and their ranges are nothing
+    alike. M114 named adding a range-strength dimension as the first
+    thing to try if validation failed. It failed; that is next — not more
+    boards, not more iterations.
+  - **Cost, measured twice independently:** 1,117.6s and 1,107.9s for 27
+    spots x 3 boards at a 12-class range, dominated by
+    `build_board_equity_table` per board. This also corrected M114's own
+    "~40s" claim, which extrapolated from a 2-spot smoke test using four
+    hand classes and was wrong by 28x.
+  - **`continuation_table` stays, default `None`** — like
+    `optimism`/`smoothing` after M97 and `continuation` after M100. A
+    refuted approach that remains reproducible is worth more than one
+    that is only remembered, and the machinery is the scaffolding a
+    range-keyed retry would need anyway.
+  - **Verification:** 897 backend tests, 154 frontend.

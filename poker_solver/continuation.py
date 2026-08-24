@@ -145,6 +145,13 @@ def build_continuation_table(
     Boards are SAMPLED, not enumerated: 1,755 canonical flops at ~2.3s
     each per spot is not affordable, and the value being estimated is an
     average over runouts anyway.
+
+    **Cost, measured rather than extrapolated (M115):** 27 spots x 3
+    boards at a 12-class range is **1,117.6s (18.6 min)**, dominated by
+    `build_board_equity_table` per board rather than by the flop solve.
+    An earlier estimate of ~40s came from a 2-spot smoke test with four
+    hand classes and was wrong by 28x — cost here scales with range
+    width, so a fixture small enough to be fast cannot predict it.
     """
     rng = random.Random(seed)
     deck = list(_ALL_CARDS)
