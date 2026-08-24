@@ -128,15 +128,52 @@ published frequencies are combo-weighted too.
 | 6max MP | 0.319 | 0.171 | ~0.19 |
 | 6max CO | 0.316 ✓ | 0.174 | ~0.26 |
 | 6max BTN | 0.384 ✓ | **0.159** | **~0.45** |
-| 6max SB | 0.498 | **0.806** | ~0.45 |
+| 6max SB | 0.498 | 0.806 | ~0.80-0.87 (see below) |
+
+**Correction to this table (M111).** The SB row originally carried a GTO
+reference of ~0.45 and was reported as "wildly loose". That was wrong,
+and wrong the same way M106's equity references were: when it folds to
+the small blind, SB is **heads-up against BB**, so the right comparison
+is the heads-up opening frequency (~0.80-0.87), not a generic 6-max SB
+number. 0.806 is close to correct, not a defect. The reference was
+remembered rather than derived, which is exactly the failure M106
+recorded.
 
 Heads-up is genuinely good. 6-max is not, in two ways:
 
 1. **At the shipped budget the gradient is compressed** — six points of
    widening across four seats, where GTO spans about thirty.
 2. **At 12,000 iterations the BUTTON OPENS TIGHTER THAN UNDER THE GUN**
-   (0.159 vs 0.176), on **both** seeds tested, while the small blind
-   opens 0.72-0.81 against a GTO ~0.45.
+   (0.159 vs 0.176), on **both** seeds tested.
+
+**Sharpened in M111, and point 2 above was over-read.** Breaking the
+strategy down by action mass at each seat (12,000 iterations, seed 1):
+
+| seat | live | trained | fold | raise | call | all-in |
+|---|---|---|---|---|---|---|
+| UTG | 6 | 1.0 | 0.824 | 0.100 | 0.064 | 0.012 |
+| MP | 5 | 1.0 | 0.829 | 0.040 | 0.099 | 0.032 |
+| CO | 4 | 1.0 | 0.826 | 0.078 | 0.069 | 0.027 |
+| BTN | 3 | 1.0 | 0.841 | 0.050 | 0.057 | 0.052 |
+| SB | 2 | 1.0 | 0.194 | 0.420 | 0.362 | 0.025 |
+
+`trained_share` is **1.0 at every seat**, so under-training is refuted —
+the button is not starved of visits. And the fold mass is **flat at
+0.82-0.84 across all four non-blind seats**.
+
+So "the button opens tighter" is the wrong description: the 1.7pp gap is
+smaller than the 2.8pp CO alone varies between seeds. The correct and
+stronger statement is that **position is not learned at all** among
+non-blind seats. SB differs only because it is heads-up against BB by
+then, and it behaves correctly there.
+
+This also connects the defect to a known cause rather than leaving it
+free-floating. M98 established that terminals are priced at raw showdown
+equity, so *playing* is uniformly underpriced; if the value of playing is
+understated equally at every seat, the fold/play boundary cannot move
+with position. **One root cause, two symptoms** — and it means this needs
+the same architectural fix (solved postflop continuation values), not a
+larger budget.
 
 The inversion is the strongest result here because it **needs no
 published chart to condemn**: later position must open wider. It is also
