@@ -296,17 +296,24 @@ requests now reject unknown fields by name rather than ignoring them.
   pools and budgets for speed. Run an end-to-end `/advise` check at
   production settings after any solver change.
 
-- **Solve caches are BOUNDED (M93) — `_SolveCache(name, maxsize=N)`
-  with LRU eviction.** Nothing evicted anything before, so a
-  long-running server accumulated an entry per (spot, stack, hero class,
-  action path) forever: heap grew ~0.065 MB per request with no ceiling.
-  `_multiway_cache` and `_preflop_raw_cache` stay unbounded on purpose —
-  a few dozen entries, 75-140s each, filled by the startup pre-warm.
+- **EVERY solve cache is BOUNDED (M93, completed M104) —
+  `_SolveCache(name, maxsize=N)` with LRU eviction.** Nothing evicted
+  anything before M93, so heap grew ~0.065 MB per request with no
+  ceiling. M93 left `_multiway_cache` and `_preflop_raw_cache` unbounded
+  "because the pre-warm fills them" — but both are keyed on
+  `round(stack_bb)`, which comes from the REQUEST, so a client walking
+  depths minted an entry each (0.152 MB of heap per depth). Now 64 and
+  128. `multiway_equity` is the one deliberate exception, keyed by a
+  config constant rather than request input. **Don't add an unbounded
+  cache** — `test_no_solve_cache_is_unbounded` asserts over every
+  module-level cache.
   **`_SolveCache.lock` is an RLock deliberately**: call sites hold it
   across read-check-write and call `store`/`get` from inside. A plain
   Lock self-deadlocks — it hung the whole suite once.
 - **Expensive solves go through `_SolveCache.get_or_compute`, not
-  check-then-compute (M92).** The old pattern let N concurrent misses on
+  check-then-compute (M92, and `_get_or_solve_preflop_raw` finally in
+  M104 — it was missed the first time, costing 8 real preflop solves for
+  8 concurrent cold requests where 1 was needed).** The old pattern let N concurrent misses on
   one key each run the full solve — measured at **8 concurrent requests
   doing 8 solves (223s) where 1 was needed (31.7s)**. It was documented
   as an accepted tradeoff because the solves are deterministic, which is

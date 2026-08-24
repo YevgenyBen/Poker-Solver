@@ -210,12 +210,29 @@ class _SolveCache:
         return list(cls._registry)
 
 
-# Deliberately UNBOUNDED, unlike every solve cache below. Its key is
-# (rounded stack, players) — at most a few dozen entries ever exist, they
-# cost 75-140s each to rebuild, and the startup pre-warm fills them on
-# purpose. Evicting one would throw away work the server did specifically
-# so a user would not have to wait for it.
-_multiway_cache = _SolveCache("multiway")
+# Bounded, but generously — these cost 75-140s each to rebuild and the
+# startup pre-warm fills them on purpose, so eviction throws away work
+# the server did specifically so a user would not have to wait.
+#
+# **It used to be unbounded, and that was wrong (M104).** The reasoning
+# was "at most a few dozen entries ever exist", which is true of the
+# entries the PRE-WARM creates and false of the key, which is
+# `(round(stack_bb), players)` — `stack_bb` comes from the request. A
+# client walking stack depths mints a new entry per integer depth,
+# forever. Measured at **0.152 MB of heap per distinct depth**.
+#
+# It composes with something judged harmless on its own: M102 measured
+# `stack_bb: 1e9` as absurd-but-valid and deliberately left it
+# uncapped, because the response is structurally correct and no
+# principled ceiling exists. Correct in isolation; combined with an
+# unbounded cache keyed on that value it becomes a memory-exhaustion
+# path. **Neither finding is a defect alone.**
+#
+# 64 rather than the 128-256 used below: entries here are far more
+# expensive to rebuild, so the ceiling should bind only under genuinely
+# adversarial variety, never under the handful of depths a real session
+# touches.
+_multiway_cache = _SolveCache("multiway", maxsize=64)
 _flop_cache = _SolveCache("flop", maxsize=256)
 # Deliberately separate from _flop_cache and from each other, not one
 # shared dict — the cache key (board, pot, stack_bb, iterations) omits
@@ -312,9 +329,13 @@ _multiway_equity_caches = _SolveCache("multiway_equity")
 # with no tree to resolve a path into.
 _flop_node_cache = _SolveCache("flop_node", maxsize=256)
 
-# Also deliberately unbounded, for the same reason: keyed by (rounded
-# stack, iterations, players), pre-warmed at startup, and cheap to hold.
-_preflop_raw_cache = _SolveCache("preflop_raw")
+# Bounded for the same reason as _multiway_cache above (M104): keyed by
+# `(round(stack_bb), iterations)`, BOTH of which come from the request,
+# so "pre-warmed at startup and cheap to hold" described the pre-warm's
+# own entries rather than the cache's real growth. 128 matches the solve
+# caches above; a heads-up preflop result is much cheaper to rebuild
+# than a multiway one.
+_preflop_raw_cache = _SolveCache("preflop_raw", maxsize=128)
 # Deliberately NOT one shared dict like _flop_query_library above — see
 # the module docstring's Finding 2. This endpoint's range/pot are
 # derived fresh per request from each client's own action_path, unlike

@@ -1,3 +1,5 @@
+import threading
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -3368,4 +3370,65 @@ def test_the_static_mount_does_not_shadow_the_api(client):
     assert response.headers["content-type"].startswith("application/json"), (
         "an API route is being served by the static mount — check that the mount "
         "is still registered LAST in api/main.py"
+    )
+
+
+# ---------------------------------------------------------------------------
+# M104 — the thundering herd M92 missed
+# ---------------------------------------------------------------------------
+
+
+def test_concurrent_cold_requests_solve_the_preflop_tree_once(client, monkeypatch):
+    """M92 replaced check-then-compute with single-flight everywhere it
+    found it, and missed `_get_or_solve_preflop_raw`.
+
+    Measured on the real endpoint before the fix: **8 concurrent cold
+    requests ran 8 real `solve_preflop` calls** where one was needed.
+    Every thread checked the cache, found it empty, and solved. This is
+    the heads-up preflop solve that every heads-up POSTFLOP request
+    depends on first, so a burst of traffic on a cold cache paid for it
+    N times over — exactly the scenario M92 exists to prevent.
+
+    Nothing caught it because the suite never issues two requests at
+    once, and duplicated work is invisible from a single caller: every
+    response is correct, just paid for repeatedly.
+
+    Counts SOLVES rather than timing, so it states the property directly
+    and cannot flake on a machine that drifts ~1.7x between sessions.
+    """
+    calls = []
+    calls_lock = threading.Lock()
+    real_solve = api_solving.solve_preflop
+
+    def counting_solve(*args, **kwargs):
+        with calls_lock:
+            calls.append(1)
+        return real_solve(*args, **kwargs)
+
+    monkeypatch.setattr(api_solving, "solve_preflop", counting_solve)
+    caches._SolveCache.clear_all()
+
+    # A FLOP request: the preflop path closes the round, and the flop
+    # advice then depends on the preflop solve — which is the shared,
+    # expensive thing the herd used to duplicate.
+    body = _advise_body(preflop_action_path=["raise", "call_or_check"],
+                        hero_cards="AsKh", board="Kd7c2h", players=2, stack_bb=100.0)
+    statuses = []
+    statuses_lock = threading.Lock()
+
+    def hammer():
+        response = client.post("/advise", json=body)
+        with statuses_lock:
+            statuses.append(response.status_code)
+
+    threads = [threading.Thread(target=hammer) for _ in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert statuses == [200] * 6, f"not every concurrent request succeeded: {statuses}"
+    assert len(calls) == 1, (
+        f"{len(calls)} preflop solves ran for 6 concurrent requests on one key — "
+        "single-flight is broken again; see _get_or_solve_preflop_raw"
     )

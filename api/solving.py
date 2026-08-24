@@ -489,16 +489,23 @@ def _get_or_solve_preflop_raw(stack_bb: float, iterations: int, players: int = 2
             raise ValueError(f"players must be one of {valid}")
         return _get_or_solve_multiway(stack_bb, players)
 
-    key = _cache_key(stack_bb, iterations)
-    cached = _preflop_raw_cache.get(key)
-    if cached is not None:
-        return cached
-
-    result = solve_preflop(stack_bb=stack_bb, iterations=iterations)
-
-    with _preflop_raw_cache.lock:
-        _preflop_raw_cache.store(key, result)
-    return result
+    # M104: single-flight, not check-then-compute.
+    #
+    # M92 replaced this pattern everywhere it found it, and missed here.
+    # Measured on the real endpoint: **8 concurrent cold requests ran 8
+    # real `solve_preflop` calls** where one was needed, because each
+    # thread checked the cache, found it empty, and solved. This is the
+    # heads-up preflop solve, which every heads-up POSTFLOP request
+    # depends on first, so the duplicated work is paid by any burst of
+    # traffic on a cold cache — the exact scenario M92 exists for.
+    #
+    # Nothing caught it because the suite never issues two requests at
+    # once, and a duplicated solve is invisible from a single caller:
+    # every response is correct, just paid for N times.
+    return _preflop_raw_cache.get_or_compute(
+        _cache_key(stack_bb, iterations),
+        lambda: solve_preflop(stack_bb=stack_bb, iterations=iterations),
+    )
 
 
 def _preflop_config(stack_bb: float, players: int) -> GameConfig:

@@ -5727,3 +5727,44 @@ entry's own corrections before trusting its conclusions.
     mount is registered last *on purpose*, which is exactly the kind of
     ordering a later edit reshuffles silently.
   - **Verification:** 857 backend tests (up from 855), 154 frontend.
+
+- **M104 — audit round 4: concurrency and memory, the two things a unit
+  suite cannot see.** It never issues two requests at once and it clears
+  caches between cases. Both properties had milestones behind them (M92,
+  M93) and neither had been rechecked. Write-up in
+  `docs/audit-2026-08-23.md`.
+  - **F26 (high): the thundering herd M92 missed.** Counting real
+    `solve_preflop` calls through the endpoint: **8 concurrent cold
+    requests ran 8 solves** (24.21s) where one was needed. After:
+    **1 solve, 10.44s.** `_get_or_solve_preflop_raw` still used
+    check-then-compute — every thread checked, found the cache empty,
+    and solved. M92 replaced that pattern everywhere it found it and
+    missed the heads-up preflop solve, which every heads-up POSTFLOP
+    request depends on first. It survived because the suite never issues
+    two requests at once, and because duplicated work is invisible from a
+    single caller: every response is correct, just paid for N times. The
+    test counts SOLVES, not seconds, and was verified by mutation —
+    restoring the old code makes it report "6 preflop solves ran for 6
+    concurrent requests".
+  - **F27: two unbounded caches keyed on request input.** M93 bounded
+    thirteen and left two alone, justified as "at most a few dozen
+    entries ever exist ... the startup pre-warm fills them on purpose".
+    True of the entries the pre-warm creates; false of the key, which is
+    `(round(stack_bb), ...)` on both. A client walking stack depths mints
+    an entry per integer depth forever — **0.152 MB of heap each**.
+    Bounded at 64 (multiway, 75-140s to rebuild) and 128 (preflop_raw);
+    verified that 500 distinct depths collapse to 64 and 128.
+  - **The composition is the real lesson.** M102 measured `stack_bb: 1e9`
+    as absurd-but-valid and deliberately left it uncapped — correct in
+    isolation, and still correct. Feeding an unbounded cache keyed on
+    that value, it becomes a memory-exhaustion path. **Neither finding is
+    a defect alone.** The invariant test therefore asserts over every
+    module-level cache rather than naming the two that were wrong, since
+    the next one added will be wrong the same way; `multiway_equity` is
+    exempted explicitly with its reason (keyed by a config constant, so
+    its key space is one entry) so that an allowlist entry stays a
+    decision rather than a shrug.
+  - **Healthy:** no errors under 8-way concurrency (the defect was cost,
+    never correctness), and every previously-bounded cache stayed within
+    its ceiling.
+  - **Verification:** 860 backend tests (up from 857), 154 frontend.
