@@ -68,13 +68,20 @@ def format_flop_response(result: StrategyResult, board: str, position: str | Non
 
     `trained` (M28), same field/meaning as format_solve_response's own —
     included here too for one uniform response shape across every
-    solving endpoint, even though every postflop solve today is
-    heads-up (the exact solver, exhaustive by construction), so this is
-    currently always all-`True` in practice. Real, not speculative,
-    forward-compatibility: multiway postflop solving is this project's
-    own named, still-unscoped next structural gap (see
-    docs/full-table-diagnostic-2026-08.md's SS4) — whenever it lands,
-    this field is already exactly where it needs to be.
+    solving endpoint.
+
+    **It is genuinely mixed today, and the forward-compatibility this
+    was originally written for has arrived (corrected M122).** The
+    docstring used to say every postflop solve was heads-up and exact,
+    "so this is currently always all-`True` in practice", with multiway
+    postflop named as a still-unscoped future gap. That gap closed in
+    M35 (`solve_flop_multiway`, sampled MCCFR): a three-position flop
+    solve formatted through this function returns `trained` containing
+    both `False` and `True`, because MCCFR only visits what a sampled
+    path actually reaches. A reader trusting the old text would conclude
+    the field was decorative here and could be dropped — the precise
+    mistake CLAUDE.md warns against, since `trained` exists because
+    output can look confident and be fabricated.
     """
     chosen_position = position or result.root.player_to_act
     return {

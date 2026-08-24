@@ -112,3 +112,73 @@ def test_format_flop_response_echoes_the_caller_supplied_board_string(flop_resul
     # whatever the caller passed, not silently normalize/reorder it.
     body = format_flop_response(flop_result, board="7h2d9c")
     assert body["board"] == "7h2d9c"
+
+
+def test_a_multiway_flop_response_carries_genuinely_mixed_trained_flags():
+    """M122 (audit round 14). Pins the behaviour whose docstring claim
+    had gone stale.
+
+    `format_flop_response` used to state that every postflop solve was
+    heads-up and exact, "so this is currently always all-`True` in
+    practice", naming multiway postflop as a still-unscoped future gap.
+    M35 closed that gap: `solve_flop_multiway` is sampled MCCFR, which
+    only visits what a traversal actually reaches, so the flag is real
+    here. A reader trusting the old text would have concluded `trained`
+    was decorative on this path and could be dropped — exactly what
+    CLAUDE.md warns against, since the field exists because output can
+    look confident and be fabricated.
+
+    M96's comment-drift detector could not have caught this: it checks
+    that no comment claims a CALL its function does not make, which is
+    structural. This was a claim about behaviour.
+    """
+    import random
+
+    from poker_solver.cards import Card
+    from poker_solver.combos import HandCombo
+    from poker_solver.solver import solve_flop_multiway
+
+    board = tuple(Card.from_str(t) for t in ("2h", "6d", "9c"))
+    deck = [Card.from_str(r + s) for r in "23456789TJQKA" for s in "cdhs"]
+    rest = [card for card in deck if card not in set(board)]
+    rng = random.Random(2)
+    positions = ("OOP", "MID", "IP")
+    ranges = {}
+    for position in positions:
+        cards = rng.sample(rest, 6)
+        ranges[position] = {HandCombo(cards[i], cards[i + 1]): 1.0 for i in range(0, 6, 2)}
+
+    result = solve_flop_multiway(board, ranges, pot=6.0, effective_stack_bb=20.0,
+                                 positions=positions, raise_sizes=(), max_raises=1,
+                                 iterations=30, equity_samples=20)
+    body = format_flop_response(result, "2h6d9c")
+
+    assert set(body["trained"].values()) == {False, True}, (
+        "a sampled multiway flop solve should report genuinely mixed trained flags; "
+        f"got {sorted(set(body['trained'].values()))}"
+    )
+    assert set(body["trained"]) == set(body["strategy"]), (
+        "trained must cover exactly the hands strategy does"
+    )
+
+
+def test_every_formatted_strategy_row_is_a_probability_distribution():
+    """M122. The invariant a caller reads straight off the response:
+    each hand's action frequencies sum to 1, every value is a
+    probability, and `trained` covers exactly the hands `strategy` does.
+
+    Swept live across /solve at 2/3/6 players and /solve_flop_cached:
+    532 rows, zero violations. Checked here at the formatting seam so it
+    holds without standing up the API.
+    """
+    from poker_solver.game_tree import GameConfig
+    from poker_solver.solver import solve_preflop
+
+    result = solve_preflop(config=GameConfig(raise_sizes=(), max_raises=1), iterations=60)
+    body = format_solve_response(result)
+
+    assert body["opening_range"], "an empty range would make this check vacuous"
+    for hand, row in body["opening_range"].items():
+        assert abs(sum(row.values()) - 1.0) < 1e-6, f"{hand} does not sum to 1: {row}"
+        assert all(-1e-12 <= value <= 1 + 1e-12 for value in row.values()), f"{hand}: {row}"
+    assert set(body["trained"]) == set(body["opening_range"])
