@@ -667,12 +667,53 @@ def _cap_range_to_combos(class_frequencies: dict, max_combos: int, exclude: froz
     combos by weight, rather than capping classes before expansion. See
     cfg.RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE's own comment for why: a
     class-level cap is too coarse a lever for solve_flop_to_river's own
-    cost curve (a single class can expand to up to 12 combos)."""
+    cost curve (a single class can expand to up to 12 combos).
+
+    Selection is ROUND-ROBIN across classes in frequency order, not a
+    flat top-N by weight (M119, audit round 12). Since M119 every combo
+    of a class carries that class's frequency — correctly, because the
+    prior over concrete combos is uniform — so a flat top-N breaks ties
+    by iteration order and the single most frequent class swallows the
+    whole budget. Measured on a real river spot at the shipped cap of 9:
+    a flat top-N returned nine combos of ONE offsuit class, mean hand
+    category 0.0. Nine combos spanning nine classes is a strictly better
+    model of a range than nine ways to hold J3o, and costs exactly the
+    same to solve.
+
+    The old weighting hid this: dividing a class's frequency across its
+    combos made suited classes outrank offsuit ones per combo, which
+    spread the pool across classes by accident. Correct weights removed
+    the accident and this restores the property on purpose."""
     expanded = range_from_class_frequencies(class_frequencies, exclude=exclude)
     if len(expanded) <= max_combos:
         return expanded
-    top_items = sorted(expanded.items(), key=lambda item: item[1], reverse=True)[:max_combos]
-    return dict(top_items)
+
+    by_class: dict = {}
+    for combo, weight in expanded.items():
+        by_class.setdefault(combo_class(combo), []).append((combo, weight))
+    # Sort on frequency ALONE, and rely on the sort being stable, so
+    # tied classes keep the canonical order they arrived in (AA first).
+    # Adding str(class) as a tie-break was tried and is worse: it orders
+    # ties alphabetically, which puts 22 and 32o ahead of AA.
+    ordered = sorted(by_class.items(),
+                     key=lambda item: -class_frequencies.get(item[0], 0.0))
+
+    kept: dict = {}
+    depth = 0
+    while len(kept) < max_combos:
+        added = False
+        for _, combos in ordered:
+            if depth >= len(combos):
+                continue
+            combo, weight = combos[depth]
+            kept[combo] = weight
+            added = True
+            if len(kept) >= max_combos:
+                break
+        if not added:
+            break
+        depth += 1
+    return kept
 
 
 def _range_confidence(path_scenario, position_ranges: dict) -> dict:

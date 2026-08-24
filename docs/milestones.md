@@ -6304,3 +6304,59 @@ entry's own corrections before trusting its conclusions.
     `lookup_strategy`'s translation for a raw `dict(entry.strategy)`
     fails on the first board, the solved one included — `Ac Kd 7h`
     canonicalizes to `7c Kd Ah`, so even it needs translating.
+
+- **M119 — audit round 12: the 169-class <-> 1,326-combo layer. A real
+  engine defect, the first this audit has found inside the solver
+  rather than in a seam around it.** Every derived range passes through
+  one function: a preflop solve speaks in 169 classes, every postflop
+  solve speaks in concrete combos. Eleven rounds had verified layers on
+  both sides of it.
+  - **Clean**: the partition is exact — 169 classes expand to 1,326
+    distinct combos, none claimed twice, none missed; counts 6/4/12 by
+    type; `combo_class` an exact inverse over all 1,326.
+  - **F30 (fixed): the conversion inverted card multiplicity.**
+    `range_from_class_frequencies` divided a class's frequency across
+    its combos, giving every class equal total mass regardless of size.
+    Two proofs, neither needing a solve:
+      * **The whole deck was not uniform.** With every class continuing
+        at 1.0 — nobody has folded, so the range IS the deck — 312
+        suited combos came back at 0.250, 78 pairs at 0.167 and 936
+        offsuit at 0.083. The model believed **AhKh was three times as
+        likely as AhKs**.
+      * **Blockers were cancelled exactly.** AA kept mass 1.0 whether 6,
+        3 or 1 combo survived; on a two-ace board one combo carried the
+        weight of six. Card removal is the stated reason postflop works
+        in combos at all.
+    The fix follows from the input: `derive_ranges_from_path` returns
+    CONDITIONAL frequencies (P(line | class), 1.0 for a position that
+    has not acted) against a uniform prior over combos, so a combo's
+    weight is just its class's frequency — nothing to divide. Measured
+    through the real pipeline (40bb, open-call, 9h8h2c): **18 of the top
+    24 combos change**; aggregate flop strategy moves all-in
+    **0.245 -> 0.167**, call **0.562 -> 0.622**. Three tests had
+    asserted the defect as the contract ("weights sum to the input
+    frequency") and now assert the property that makes it correct.
+  - **F30 was hiding the river cap collapsing onto one class.**
+    `_cap_range_to_combos` takes top-N combos by weight; the old suited
+    bias spread that selection across classes BY ACCIDENT. With correct
+    weights the most frequent class swallows the budget — at the shipped
+    cap of 9, a real river spot returned **nine combos of one offsuit
+    class**, mean hand category 0.0. Now round-robin across classes in
+    frequency order: nine classes, mean category 0.889, identical solve
+    cost. Written first with `str(class)` as tie-break, which is worse —
+    alphabetical ties put 22 and 32o ahead of AA; a stable sort on
+    frequency alone keeps canonical order.
+  - **And a river fixture that could not test what it claimed.**
+    `FAST_RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE = 1` is not a small
+    range, it is no range — one fixed hand against one fixed hand, where
+    `test_advise_river_decision_discriminates_by_hand_strength` is
+    decided by which single villain combo the cap picks. It had been
+    passing on that coin flip. **At production settings the behaviour is
+    strongly correct and always was**: facing a river all-in, 5c4d folds
+    0.971, 9s9d 0.018, AsKs 0.428, 7c3h 0.995. Raised to 3 — river
+    subset costs cap 1 = 33.6s, cap 3 = 45.0s, cap 6 = 83.4s.
+  - **One of my own claims was a test artifact**: the first pass
+    reported the corrected weights making the cap select alphabetical
+    trash (`2d2c`, `3c2c`). That was my probe imposing `str(combo)` as a
+    tie-break, not the code — the real stable sort keeps AA first.
+    Caught before it became a finding.

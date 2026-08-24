@@ -117,13 +117,33 @@ def range_from_class_frequencies(class_freqs: dict, exclude: frozenset = frozens
     already have the StartingHand objects a StrategyResult was solved
     with).
 
-    For each class with a positive frequency, that frequency is spread
-    *uniformly* across the class's own remaining unblocked combos —
-    consistent with the "every combo in a class is equally likely"
-    approximation preflop itself already makes, just carried forward to
-    the point where it hands off to combo-level reasoning. A class
+    Each of a class's remaining unblocked combos gets that class's
+    frequency directly — the per-combo probability of continuing. A class
     entirely blocked by `exclude` (every one of its combos uses an
     excluded card) contributes nothing to the result, not a crash.
+
+    **The class's total mass therefore scales with how many combos it
+    has, and that is the point (M119, audit round 12).** This used to
+    divide the frequency across the class's combos, giving every class
+    the same total mass regardless of size. Two things were wrong with
+    that, and both are visible without solving anything:
+
+      * With EVERY class continuing at 1.0 — nobody has folded anything,
+        so the range is the whole deck — the result was not uniform. A
+        suited combo came back at 0.25 and an offsuit one at 0.0833, so
+        the model believed AhKh was **three times as likely as AhKs**.
+        Pairs were 2x. The whole deck is uniform by definition.
+      * Blockers were cancelled exactly. AA kept total mass 1.0 whether
+        6, 3, or 1 of its combos survived the board — on a two-ace board
+        the single remaining combo carried the weight of all six.
+        Card-removal is the stated reason postflop works in combos at
+        all, and this step undid it.
+
+    `derive_ranges_from_path` returns CONDITIONAL frequencies —
+    P(took this line | holding this class), 1.0 for a position that has
+    not acted — and the prior over concrete combos is uniform, so the
+    posterior weight of a combo is just its class's frequency. Nothing
+    to divide.
 
     Every concrete combo belongs to exactly one class (e.g. "AhKh" is
     only ever AKs, never AKo or any other class), so this never needs to
@@ -137,9 +157,8 @@ def range_from_class_frequencies(class_freqs: dict, exclude: frozenset = frozens
         combos = combos_for_class(hand, exclude=exclude)
         if not combos:
             continue
-        weight_per_combo = freq / len(combos)
         for combo in combos:
-            range_[combo] = weight_per_combo
+            range_[combo] = freq
     return range_
 
 
