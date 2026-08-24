@@ -408,6 +408,20 @@ requests now reject unknown fields by name rather than ignoring them.
   pools and budgets for speed. Run an end-to-end `/advise` check at
   production settings after any solver change.
 
+- **Cache ceilings are sized by BYTES, not just entry count (M127).**
+  "Every cache is bounded" (M93/M104, re-verified M124) bounds the entry
+  COUNT — and entry size varies 180x, so it never bounded memory. Found
+  by PLAYING 120 hands, not by inspection: the working set grew linearly
+  at **1.4 MB/s with no plateau** (1,642 -> 4,244 MB). `river_path` held
+  **38.45 MB per entry** at a ceiling of 128 — a 4.9 GB cache alone; four
+  caches were over, 6.4 GB combined. Ceilings now derive from measured
+  entry cost against `MAX_CACHE_BYTES_PER_CACHE` (160 MB), and
+  `test_cache_ceilings_are_sized_against_what_an_entry_actually_costs`
+  measures a real entry rather than trusting a comment. Re-run after the
+  fix: **0.029 MB/s, plateau at ~997 MB.** **Don't raise a maxsize
+  without re-running that test** — the expensive postflop entries are the
+  ones that bite.
+
 - **EVERY solve cache is BOUNDED (M93, completed M104) —
   `_SolveCache(name, maxsize=N)` with LRU eviction.** Nothing evicted
   anything before M93, so heap grew ~0.065 MB per request with no

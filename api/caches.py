@@ -232,6 +232,57 @@ class _SolveCache:
 # expensive to rebuild, so the ceiling should bind only under genuinely
 # adversarial variety, never under the handful of depths a real session
 # touches.
+# M127. The per-cache byte budget, and the reason it exists.
+#
+# M93/M104 bounded every cache and M124 re-verified it. That bound is on
+# entry COUNT. Entry SIZE was never bounded, and it is not remotely
+# uniform: measured, a `preflop_raw` entry is 0.20 MB while a `turn_path`
+# entry is 7.59 MB - 38x - yet both were handed ceilings in the same
+# 128-256 range, as though entries were interchangeable. `turn_path` at
+# 128 was a ~971 MB cache on its own.
+#
+# Found by PLAYING, not by inspection. A simulated session dealing a
+# fresh board every hand grew the working set LINEARLY at 1.4 MB/s with
+# no plateau - 1,642 MB to 3,644 MB across 23 minutes, which puts a real
+# server past 8 GB inside two hours. Fifteen audit rounds and two
+# whole-project diagnostics missed it because none of them played a hand.
+#
+# 160 MB per cache is the ceiling each `maxsize` is now sized against,
+# checked by `test_cache_ceilings_are_sized_against_what_an_entry_
+# actually_costs`, which measures a real entry rather than trusting this
+# comment. 160 rather than 128 so `multiway` keeps its 64 entries: those
+# cost 66-93s each to rebuild, the most expensive solve in the product,
+# and 64 x 2.45 MB lands at 157 MB. The point is not the exact figure; it
+# is that the process now has a ceiling at all.
+#
+# Measured per entry (M127), which is what the new ceilings derive from:
+#
+#     river_path          38.45 MB    turn_path            7.95 MB
+#     flop_turn            2.64 MB    multiway             2.45 MB
+#     multiway_equity      2.40 MB    flop_multiway_path   0.41 MB
+#     preflop_raw          0.21 MB    flop_multiway        0.12 MB
+#     path_query_libraries 0.07 MB    flop                 0.06 MB
+#     flop_query_library   0.012 MB
+#
+# Four were over budget and together came to 6.4 GB: river_path at 128
+# entries was a **4.9 GB** cache on its own, turn_path 1.0 GB, flop_turn
+# 337 MB, multiway 157 MB. Right-sized, every measured cache now fits and
+# the combined ceiling is roughly 835 MB.
+#
+# The deeper fix, deliberately NOT taken here: a river entry is 38 MB
+# because it retains the whole flop->river StrategyResult — tree,
+# node_data and equity tables — when a caller only ever reads strategies
+# off it. Storing less per entry would buy back far more than trimming
+# the count does. That is a real change to what the cache holds; this is
+# the bound that stops the bleeding.
+#
+# Shrinking the big caches costs less than it looks like it should. The
+# same play session measured the real-world hit rate at ~11% - a session
+# never repeats a board, so those large postflop entries were mostly
+# being held, not reused.
+MAX_CACHE_BYTES_PER_CACHE = 160 * 1024 * 1024
+
+
 _multiway_cache = _SolveCache("multiway", maxsize=64)
 _flop_cache = _SolveCache("flop", maxsize=256)
 # Deliberately separate from _flop_cache and from each other, not one
@@ -240,7 +291,8 @@ _flop_cache = _SolveCache("flop", maxsize=256)
 # per endpoint, not request-varying, which is only safe *because* each
 # endpoint has its own dict. A shared dict would let an identical key
 # collide between two endpoints with different max_raises.
-_flop_turn_cache = _SolveCache("flop_turn", maxsize=128)
+# M127: 60, not 128. A flop_turn entry measures 2.64 MB, so 128 was 337 MB.
+_flop_turn_cache = _SolveCache("flop_turn", maxsize=60)
 _flop_to_river_cache = _SolveCache("flop_to_river", maxsize=128)
 # /solve_flop_multiway's and /solve_flop_turn_multiway's own dicts (M37)
 # — same "each endpoint gets its own" reasoning as the pair above; a
@@ -357,7 +409,8 @@ _path_query_libraries = _SolveCache("path_query_libraries", maxsize=256)
 # turn's own looser discipline (around the dict access only, not the
 # whole solve) — not query_strategy's atomic whole-call lock, since
 # this isn't going through that primitive.
-_turn_path_cache = _SolveCache("turn_path", maxsize=128)
+# M127: 20, not 128. A turn entry measures 7.95 MB, so 128 was ~1.0 GB.
+_turn_path_cache = _SolveCache("turn_path", maxsize=20)
 
 # M46's own plain-dict cache for solve_flop_to_river results — same
 # shape/reasoning as _turn_path_cache above (keyed on what the solve
@@ -365,4 +418,6 @@ _turn_path_cache = _SolveCache("turn_path", maxsize=128)
 # board, river_iterations; deliberately NOT flop_action_path/turn_card/
 # turn_action_path/river_card, resolved by walking the already-solved
 # tree afterward instead of re-solving).
-_river_path_cache = _SolveCache("river_path", maxsize=128)
+# M127: 4, not 128. A river entry measures 38.45 MB — 180x a preflop
+# one — so 128 of them was a 4.9 GB cache. See MAX_CACHE_BYTES_PER_CACHE.
+_river_path_cache = _SolveCache("river_path", maxsize=4)
