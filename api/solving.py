@@ -165,11 +165,41 @@ def _get_or_solve_multiway(stack_bb: float, players: int) -> StrategyResult:
     players), and _prewarm_common_depths already warms stack_bb=100 for
     every table size on startup. See cfg.MULTIWAY_PREFLOP_HANDS for the
     measurements and for why the previous 8-class pool was replaced."""
-    key = (round(stack_bb), players)
+    # M124 (D1). Keyed on a 5bb FLOOR bucket, not `round(stack_bb)`.
+    #
+    # This is the most expensive solve in the product — measured cold at
+    # 66s (6-max) and 93s (9-max) — and at 1bb granularity a client
+    # walking depths paid it once per integer bb, with the startup
+    # pre-warm covering only three depths of the ~200 plausible ones.
+    #
+    # The solve runs at the BUCKETED depth, not the requested one. That
+    # is not incidental: keying on the bucket while solving at the real
+    # depth would serve the first caller's deeper solve to everyone else
+    # in the band, and a tree built at 99bb offers bets a 95bb player
+    # cannot make — precisely the F13 bug M95 fixed for the postflop
+    # library. Flooring keeps `canonical <= real`, so every size the tree
+    # derives stays affordable by construction.
+    #
+    # Measured before adopting (M124), 3-max, fold frequency over all 169
+    # classes, comparing a 5bb floor-bucket against the CONTROL of
+    # re-running the same depth under a different seed:
+    #
+    #     depth   same depth, seed 1 vs 2      5bb floor-bucket
+    #     24bb    mean .050 max .778 8 flips   mean .051 max .894 8 flips
+    #     99bb    mean .053 max .652 12 flips  mean .046 max .453 10 flips
+    #
+    # Bucketing moves the strategy no more than re-running the identical
+    # solve does, and at 99bb slightly less. The substitution error is
+    # inside this solver's own run-to-run noise, which is why it is safe
+    # here even though preflop is genuinely depth-sensitive in a way
+    # postflop board texture is not. **That control is the whole
+    # justification — do not widen the bucket without re-measuring it.**
+    solved_stack_bb = canonical_stack_depth(stack_bb, cfg.MULTIWAY_STACK_BUCKET_BB)
+    key = (solved_stack_bb, players)
     table = cfg.MULTIWAY_TABLE_CONFIGS[players]
 
     def _solve():
-        config = GameConfig(positions=table["positions"], stack_bb=stack_bb)
+        config = GameConfig(positions=table["positions"], stack_bb=solved_stack_bb)
         equity_cache = _get_multiway_equity_cache(cfg.MULTIWAY_PREFLOP_HANDS)
         return solve_preflop(
             config=config,

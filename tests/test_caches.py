@@ -227,6 +227,29 @@ def test_no_solve_cache_is_unbounded():
         "An unbounded cache keyed on request input is unbounded growth."
     )
 
+    # M124 (D3): the exemption above must VERIFY its own premise, not
+    # just state it. `multiway_equity` is exempt because its only caller
+    # passes a config constant — if someone ever passes a request-derived
+    # pool, the exemption becomes false silently and this test would
+    # otherwise keep passing. That is the F27 shape M104 already fixed
+    # twice: a cache justified by what fills it today rather than by what
+    # its key admits.
+    import inspect
+    import re
+
+    from api import solving as solving_module
+
+    source = inspect.getsource(solving_module)
+    call_sites = re.findall(r"(?<!def )_get_multiway_equity_cache\(([^)]*)\)", source)
+    call_sites = [arg.strip() for arg in call_sites if arg.strip()]
+    assert call_sites, "found no call site to check — has the helper been renamed?"
+    for arg in call_sites:
+        assert arg.startswith("cfg."), (
+            f"_get_multiway_equity_cache is called with {arg!r}, which is not a config "
+            "constant. Its cache is deliberately unbounded ONLY because the hand pool "
+            "cannot vary per request — if that stops being true, give it a maxsize."
+        )
+
 
 def test_the_expensive_caches_keep_a_generous_ceiling():
     """The other half: bounding them must not make them useless.
