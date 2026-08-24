@@ -1,3 +1,4 @@
+import itertools
 import random
 import threading
 import time
@@ -5,7 +6,7 @@ import time
 import numpy as np
 import pytest
 
-from poker_solver.cards import Card
+from poker_solver.cards import _ALL_CARDS, Card
 from poker_solver.equity import (
     _HAND_TABLE_INDEX,
     MultiwayEquityCache,
@@ -19,6 +20,7 @@ from poker_solver.equity import (
     monte_carlo_equity,
     monte_carlo_equity_n,
 )
+from poker_solver.hand_eval import best_hand_rank_batch
 from poker_solver.starting_hands import StartingHand, all_starting_hands
 
 
@@ -850,3 +852,115 @@ def test_get_equity_table_concurrent_cold_start_never_produces_a_corrupt_file(tm
     on_disk = np.load(cache_path)
     assert np.array_equal(on_disk, results[0])
 
+
+
+# ---------------------------------------------------------------------------
+# M106 — equity against ground truth this codebase can regenerate
+# ---------------------------------------------------------------------------
+
+# Exact all-in equities, computed by enumerating every one of the
+# C(48,5) = 1,712,304 possible boards for the specific cards
+# `deal_two_hands` assigns to each matchup. Reproduce with
+# `_exact_equity_by_enumeration` below (~43s each, which is why the
+# values are frozen here rather than recomputed every run).
+#
+# **Deliberately NOT taken from a published equity table (M106).** The
+# audit that produced this test first checked against remembered
+# published figures and got THREE of thirteen wrong — most glaringly
+# `77 vs 65s`, entered as 0.606 when the true value is 0.818, because
+# 0.606 is the figure for a pair facing OVERCARDS and 65s is entirely
+# below a seven. Every one of those looked like an engine defect.
+#
+# Category frequencies (M105) are exact combinatorial facts and safe to
+# quote from memory. Matchup equities are suit-configuration dependent
+# and are not. Ground truth this repository can regenerate beats a number
+# recalled from outside it.
+_EXACT_EQUITY = {
+    ("77", "65s"): 0.8184,
+    ("AA", "KK"): 0.8264,
+    ("AKs", "QJs"): 0.6595,
+    ("A5s", "KQo"): 0.5995,
+}
+
+
+def _hand_from_label(label: str) -> StartingHand:
+    if len(label) == 2:
+        return StartingHand(label[0], label[1])
+    return StartingHand(label[0], label[1], suited=label[2] == "s")
+
+
+def _exact_equity_by_enumeration(hand_a: StartingHand, hand_b: StartingHand) -> float:
+    """Ground truth: every board, no sampling. Kept so the frozen values
+    above can be regenerated rather than trusted."""
+    suit_index = {suit: index for index, suit in enumerate("cdhs")}
+    (a1, a2), (b1, b2) = deal_two_hands(hand_a, hand_b)
+    used = {a1, a2, b1, b2}
+    deck = [card for card in _ALL_CARDS if card not in used]
+    boards = np.array(list(itertools.combinations(range(len(deck)), 5)), dtype=np.int64)
+    deck_values = np.array([c.value for c in deck], dtype=np.int64)
+    deck_suits = np.array([suit_index[c.suit] for c in deck], dtype=np.int64)
+    board_values, board_suits = deck_values[boards], deck_suits[boards]
+
+    def ranks(first, second):
+        values = np.concatenate([
+            np.full((len(boards), 1), first.value),
+            np.full((len(boards), 1), second.value),
+            board_values,
+        ], axis=1)
+        suits = np.concatenate([
+            np.full((len(boards), 1), suit_index[first.suit]),
+            np.full((len(boards), 1), suit_index[second.suit]),
+            board_suits,
+        ], axis=1)
+        return best_hand_rank_batch(values, suits)
+
+    rank_a, rank_b = ranks(a1, a2), ranks(b1, b2)
+    return float((np.sum(rank_a > rank_b) + 0.5 * np.sum(rank_a == rank_b)) / len(boards))
+
+
+@pytest.mark.parametrize("labels,exact", sorted(_EXACT_EQUITY.items()))
+def test_monte_carlo_equity_tracks_exact_enumeration(labels, exact):
+    """The sampled estimator must converge on the enumerated truth.
+
+    A 1.0pp tolerance at 25,000 samples is roughly 3 standard errors —
+    and the seed is fixed, so this is deterministic rather than merely
+    unlikely to flake — while still catching any *modelling* error
+    (ignoring suitedness, mishandling ties, dealing the wrong number of
+    board cards), which would move a matchup by far more than a
+    percentage point.
+    """
+    hand_a, hand_b = (_hand_from_label(label) for label in labels)
+    measured = monte_carlo_equity(hand_a, hand_b, samples=25_000, rng=random.Random(106))
+    assert measured == pytest.approx(exact, abs=0.010), (
+        f"{labels[0]} vs {labels[1]}: sampled {measured:.4f} against enumerated {exact:.4f}"
+    )
+
+
+def test_the_frozen_exact_values_can_still_be_regenerated():
+    """Guards the constants above against drift in the thing that
+    produced them. If `deal_two_hands` ever assigns different concrete
+    cards, or the evaluator changes, the frozen numbers silently stop
+    describing what the enumeration returns — and every test using them
+    keeps passing against a stale truth.
+
+    Only one matchup, because enumeration costs ~40s each.
+    """
+    exact = _exact_equity_by_enumeration(_hand_from_label("AA"), _hand_from_label("KK"))
+    assert exact == pytest.approx(_EXACT_EQUITY[("AA", "KK")], abs=0.0001)
+
+
+def test_equity_is_symmetric_within_sampling_error():
+    """`equity(a, b) + equity(b, a)` must be 1. A tie-handling bug shows
+    up here and in no single matchup's absolute value.
+
+    Tolerated to 1pp rather than exactly, because the two directions deal
+    their own concrete cards and therefore sample independently — an
+    exact assertion here would be measuring the RNG, not the property.
+    """
+    for labels in _EXACT_EQUITY:
+        hand_a, hand_b = (_hand_from_label(label) for label in labels)
+        forward = monte_carlo_equity(hand_a, hand_b, samples=20_000, rng=random.Random(11))
+        reverse = monte_carlo_equity(hand_b, hand_a, samples=20_000, rng=random.Random(11))
+        assert forward + reverse == pytest.approx(1.0, abs=0.010), (
+            f"{labels}: {forward:.4f} + {reverse:.4f} = {forward + reverse:.4f}"
+        )
