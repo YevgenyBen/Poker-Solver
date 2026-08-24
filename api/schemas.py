@@ -219,6 +219,25 @@ class AdviseResponse(BaseModel):
 
 
 class SolveResponse(BaseModel):
+    """M125 (E2) added the two confidence fields.
+
+    They existed on `AdviseResponse` alone — one of eleven response
+    models — and this is the response that serves `GET /solve/{stack_bb}
+    ?players=9`, the 9-max preflop range chart. CLAUDE.md is explicit
+    that "9-max preflop output is NOT reliable (M68, measured)" and
+    "Don't present 9-max advice as authoritative"; M76 added
+    `solver_confidence: "low"` for exactly that, and attached it to one
+    endpoint. A caller here got a complete, confident-looking 169-class
+    chart of an under-trained solve with nothing in the payload saying
+    so — including the frontend's own Preflop Ranges tab, which is the
+    most likely way a person ever sees it.
+
+    Same values, same source constants, same meaning as
+    `AdviseResponse`'s: `"low"` iff this table size is in
+    cfg.LOW_CONFIDENCE_TABLE_SIZES / cfg.SIZING_CAVEAT_TABLE_SIZES, with
+    the reason present exactly when the signal fires.
+    """
+
     stack_bb: float
     iterations: int
     elapsed_seconds: float
@@ -226,6 +245,10 @@ class SolveResponse(BaseModel):
     trained: dict[str, bool]
     position: str
     positions: list[str]
+    solver_confidence: str = "high"
+    solver_confidence_reason: str | None = None
+    sizing_confidence: str = "high"
+    sizing_confidence_reason: str | None = None
 
 
 class EquityResponse(BaseModel):

@@ -41,6 +41,26 @@ function mockMultiwayResponseFor(position: string, positions: string[] = ['BTN',
 // section at once — see TabNav/App.test.tsx) — so, unlike this file's
 // pre-tab-navigation ancestor, no fetch mock here needs to answer
 // anything but /solve.
+function mockLowConfidenceResponse() {
+  return {
+    ok: true,
+    json: () =>
+      Promise.resolve({
+        stack_bb: 100,
+        iterations: 3000,
+        elapsed_seconds: 90,
+        opening_range: { AA: { fold: 0.0, raise: 1.0 } },
+        trained: { AA: true },
+        position: 'UTG',
+        positions: ['UTG', 'BB'],
+        solver_confidence: 'low',
+        solver_confidence_reason: '9-max preflop does not converge at any affordable budget.',
+        sizing_confidence: 'low',
+        sizing_confidence_reason: 'The split among the non-fold actions moves with the seed.',
+      }),
+  };
+}
+
 describe('PreflopRangesPage', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -157,5 +177,37 @@ describe('PreflopRangesPage', () => {
     for (const pos of positions) {
       expect(screen.getByRole('button', { name: pos })).toBeInTheDocument();
     }
+  });
+
+  // M125 (E2/E3). Two things were wrong at once here. The API's
+  // confidence signals existed on /advise alone, so this tab served the
+  // 9-max range chart — which the engine's own docs say must not be
+  // presented as authoritative — with nothing saying so. And the page's
+  // own subtitle claimed the multiway chart was "a small curated hand
+  // subset ... not the full 169-hand exact solve", which M67 had made
+  // false by replacing that 8-class pool with all 169 classes.
+  it('surfaces the low-confidence caveats the API sends', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(mockLowConfidenceResponse()));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<PreflopRangesPage />);
+
+    await waitFor(() => expect(screen.getByText(/Low confidence/i)).toBeInTheDocument());
+    expect(
+      screen.getByText(/does not converge at any affordable budget/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Sizes are unreliable here/i)).toBeInTheDocument();
+    expect(screen.getByText(/moves with the seed/i)).toBeInTheDocument();
+  });
+
+  it('does not claim the multiway chart is a small curated subset', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(mockMultiwayResponseFor('BTN')));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<PreflopRangesPage />);
+    await userEvent.click(screen.getByRole('button', { name: /3-max/i }));
+
+    await waitFor(() => expect(screen.queryByText(/curated hand subset/i)).toBeNull());
+    expect(screen.getByText(/all 169 hand classes/i)).toBeInTheDocument();
   });
 });

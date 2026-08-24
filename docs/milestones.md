@@ -6562,3 +6562,46 @@ entry's own corrections before trusting its conclusions.
     flagged "25 of 48 config constants lack measurement", which was the
     heuristic misreading shared comment blocks and `= DEFAULT_X`
     aliases. Real number: one.
+
+- **M125 — second maximal diagnostic, and all three findings acted on.**
+  Run immediately after M124, deliberately targeting ground it did not
+  cover: cross-endpoint agreement after F30, library persistence,
+  concurrency, stack extremes, the dev proxy, response-schema
+  completeness, and **the running frontend in a real browser** — which
+  no diagnostic in this project had ever done. Report in
+  `docs/diagnostic-2026-08-24b.md`.
+  - **Correctness came back clean everywhere it was checked.**
+    Cross-endpoint agreement survived F30 exactly — preflop 169 hands,
+    flop 127 combos, turn 57 combos, **max delta 0.0** at every street,
+    same position and pot on both sides. Library save/load round-trips
+    exactly. Stack extremes 1bb-10,000bb all correct with no
+    unaffordable bets and exact row sums. The frontend runs with **zero
+    console errors**, and M123's corrected caveat renders on screen
+    verbatim.
+  - **All three findings were about what the product TELLS a user, not
+    what it computes** — the third consecutive diagnostic where that was
+    true.
+  - **E2 (fixed): the 9-max range chart carried no confidence signal.**
+    `solver_confidence`/`sizing_confidence` existed on `AdviseResponse`
+    alone — one of eleven response models — while `GET /solve?players=9`
+    served a confident-looking 169-class chart of an under-trained solve
+    with nothing saying so. That endpoint is what the frontend's own
+    Preflop Ranges tab calls, and CLAUDE.md says plainly "Don't present
+    9-max advice as authoritative". Now carries both, with a test
+    asserting the two endpoints AGREE so they cannot drift.
+  - **E3 (fixed): the frontend's multiway caveat was factually wrong.**
+    It said the chart was "a small curated hand subset (MCCFR), not the
+    full 169-hand exact solve" — M67 replaced that 8-class pool with all
+    169. Wrong in the reassuring direction, blaming pool size when the
+    cause is sampling variance, and lumping 9-max in with 3/6-max. **A
+    second stale claim surfaced while fixing it**: `AdviseSolver.tsx`'s
+    fallback still read "The fold-vs-play call is sound", the exact claim
+    M111 withdrew and M123 corrected server-side two milestones earlier.
+  - **E1 (fixed): the dev proxy invariant was unenforced.** All 16
+    routes were covered, but the config's own comment records this
+    breaking three times (M10 `/equity`, M25 `/preflop_walk`, M56
+    `/advise`) and explains why nothing catches it — the frontend suite
+    stubs `fetch` and structurally cannot see a proxy gap. A Python test
+    now reads both the route table and `vite.config.ts`;
+    mutation-checked by adding an uncovered route.
+  - Backend 948 passed, frontend 156 passed.

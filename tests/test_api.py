@@ -4037,3 +4037,86 @@ def test_a_bucketed_multiway_solve_never_names_an_unaffordable_bet(client):
                 assert size <= stack + 1e-9, (
                     f"{stack}bb stack was advised {action}, which it cannot afford"
                 )
+
+
+def test_every_api_route_is_reachable_through_the_dev_proxy():
+    """M125 (E1). `frontend/vite.config.ts` proxies API calls to the
+    backend by prefix, and a route whose name matches no prefix falls
+    through to the SPA's index.html and 404s in dev.
+
+    This has happened three times — M10's `/equity`, M25's
+    `/preflop_walk`, M56's `/advise` — and the config's own comment says
+    why nothing caught it:
+
+        Caught by live browser verification (a real 404), NOT by the
+        unit tests, which stub fetch and so can never see a proxy gap.
+
+    That is still true of the frontend suite, which is why this lives on
+    the Python side: it is the only place that can see both the route
+    table and the proxy config at once. A fourth occurrence now fails a
+    test instead of waiting for someone to click the right tab.
+    """
+    import re
+    from pathlib import Path
+
+    config = Path(__file__).resolve().parents[1] / "frontend" / "vite.config.ts"
+    prefixes = set(re.findall(r"'(/[a-z_]+)':\s*'http", config.read_text(encoding="utf-8")))
+    assert prefixes, "found no proxy entries — has vite.config.ts changed shape?"
+
+    routes = {
+        route.path
+        for route in api_main.app.routes
+        if getattr(route, "path", "").startswith("/")
+        and not route.path.startswith("/openapi")
+        and route.path not in ("/", "/docs", "/redoc", "/docs/oauth2-redirect")
+    }
+    assert routes, "found no API routes to check"
+
+    unreachable = sorted(r for r in routes if not any(r.startswith(p) for p in prefixes))
+    assert not unreachable, (
+        f"these routes are not covered by any vite proxy prefix and will 404 in dev: "
+        f"{unreachable}. Add an entry to frontend/vite.config.ts."
+    )
+
+
+@pytest.mark.parametrize("players,solver,sizing", [
+    (2, "high", "high"), (3, "high", "low"), (6, "high", "low"), (9, "low", "low"),
+])
+def test_the_range_chart_endpoint_carries_the_same_caveats_as_advise(
+    client, players, solver, sizing
+):
+    """M125 (E2). `solver_confidence` and `sizing_confidence` used to
+    exist on `AdviseResponse` alone — one of eleven response models.
+
+    This response serves `GET /solve/{stack_bb}?players=9`, the 9-max
+    preflop range chart, and it is what the frontend's own Preflop
+    Ranges tab calls. CLAUDE.md says "9-max preflop output is NOT
+    reliable (M68, measured)" and "Don't present 9-max advice as
+    authoritative"; M76 added the signal for exactly that and attached
+    it to one endpoint. A caller here received a complete,
+    confident-looking 169-class chart of an under-trained solve with
+    nothing in the payload saying so.
+
+    Asserted against the same table as /advise's own guard, so the two
+    endpoints cannot drift apart on the same question.
+    """
+    response = client.get(f"/solve/100?players={players}&iterations={FAST_ITERATIONS}")
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["solver_confidence"] == solver
+    assert bool(body["solver_confidence_reason"]) is (solver == "low")
+    assert body["sizing_confidence"] == sizing
+    assert bool(body["sizing_confidence_reason"]) is (sizing == "low")
+
+
+def test_advise_and_the_range_chart_agree_on_confidence(client):
+    """M125 (E2). The two endpoints answer the same underlying question
+    from the same cached solve, so a caller must not be able to get a
+    warning from one and silence from the other."""
+    for players in (2, 3, 6, 9):
+        chart = client.get(f"/solve/100?players={players}&iterations={FAST_ITERATIONS}").json()
+        advice = client.post("/advise", json=_advise_body(
+            preflop_action_path=[], players=players)).json()
+        assert chart["solver_confidence"] == advice["solver_confidence"], players
+        assert chart["sizing_confidence"] == advice["sizing_confidence"], players
