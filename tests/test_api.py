@@ -3605,3 +3605,88 @@ def test_a_failed_solve_does_not_corrupt_the_next_answer(client, monkeypatch):
     assert recovered.json()["strategy"] == clean["strategy"], (
         "the answer after a failure differs from a clean one — a partial entry survived"
     )
+
+
+# ---------------------------------------------------------------------------
+# M109 — every input that changes the answer must reach the cache key
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "field,override",
+    [
+        ("stack_bb", {"stack_bb": 60.0}),
+        ("board", {"board": "Qs8d3c"}),
+        ("hero_cards", {"hero_cards": "7h2d"}),
+        ("preflop_action_path", {"preflop_action_path": ["call_or_check", "call_or_check"]}),
+        ("flop_action_path", {"flop_action_path": ["raise"]}),
+    ],
+)
+def test_a_warm_cache_never_answers_a_different_question(client, field, override):
+    """M76's bug, generalised into an invariant.
+
+    `hero_cards` changed the solved POOL but was absent from the
+    path-query cache keys, so on a shared server the FIRST asker for a
+    spot fixed the answer and everyone after received advice for someone
+    else's hand — correct-looking, and wrong. Nothing checked whether any
+    other field had the same problem.
+
+    It is structurally invisible to the rest of this suite, whose fixture
+    clears caches between tests: every test is always the first caller.
+    So this one deliberately does NOT clear between the two requests.
+
+    The method distinguishes "missing from the key" from "genuinely does
+    not affect the answer": run the variant warm (after a baseline has
+    populated the cache) and cold (alone). If they differ, the key is
+    incomplete. Verified by mutation — reintroducing M76's bug makes the
+    `hero_cards` case fail, and only that case.
+    """
+    base = _advise_body(preflop_action_path=["raise", "call_or_check"],
+                        hero_cards="AsKh", board="Kd7c2h", players=2, stack_bb=100.0)
+    variant = {**base, **override}
+
+    def answer(body):
+        response = client.post("/advise", json=body)
+        assert response.status_code == 200, response.json()
+        payload = response.json()
+        return payload["strategy"], (payload.get("hero") or {}).get("strategy")
+
+    # Warm: baseline first, then the variant against a populated cache.
+    caches._SolveCache.clear_all()
+    answer(base)
+    warm = answer(variant)
+
+    # Cold: the variant alone.
+    caches._SolveCache.clear_all()
+    cold = answer(variant)
+
+    assert warm == cold, (
+        f"`{field}` changes the answer but is missing from a cache key: the warm "
+        "response served a previous caller's solve. This is M76's bug in a new field."
+    )
+
+
+def test_the_cache_key_probe_would_notice_a_field_that_does_nothing(client):
+    """Guards the guard.
+
+    The invariant above passes trivially if a field simply has no effect —
+    warm and cold would agree because nothing varies. So at least one
+    variant must genuinely produce a different answer on a cold cache, or
+    the whole parametrisation is asserting nothing.
+    """
+    base = _advise_body(preflop_action_path=["raise", "call_or_check"],
+                        hero_cards="AsKh", board="Kd7c2h", players=2, stack_bb=100.0)
+
+    def answer(body):
+        response = client.post("/advise", json=body)
+        assert response.status_code == 200
+        return response.json()["strategy"]
+
+    caches._SolveCache.clear_all()
+    baseline = answer(base)
+    caches._SolveCache.clear_all()
+    different_board = answer({**base, "board": "Qs8d3c"})
+    assert baseline != different_board, (
+        "changing the board did not change the answer — the probe above cannot "
+        "detect anything, because nothing varies"
+    )
