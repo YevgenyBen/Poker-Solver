@@ -5982,3 +5982,39 @@ entry's own corrections before trusting its conclusions.
     the SIZING axis broken and treated the other half as reliable; the
     other half has its own defect, and users were being told to trust it.
   - **Verification:** 887 backend tests, 154 frontend, tsc and lint clean.
+
+- **M111 — the positional defect sharpened, and two of M110's own claims
+  corrected.** M110 measured the 6-max opening range per seat and
+  reported two problems. One was real and mis-described; the other was
+  not a problem at all.
+  - **The SB row was not a defect.** M110 compared SB's 0.806 against a
+    generic 6-max SB reference of ~0.45 and called it "wildly loose".
+    When it folds to the small blind, SB is **heads-up against BB**, so
+    the right comparison is the heads-up opening frequency (~0.80-0.87)
+    and 0.806 is close to correct. A remembered reference applied to the
+    wrong situation — the same failure M106 recorded, one milestone
+    after recording it.
+  - **"The button opens tighter than under the gun" was over-read.** The
+    gap is 1.7pp; CO alone varies 2.8pp between seeds. Breaking the
+    strategy into action mass per seat at 12,000 iterations shows what is
+    actually happening — fold mass **flat at 0.82-0.84 across UTG, MP,
+    CO and BTN**:
+    | seat | live | trained | fold | raise | call | all-in |
+    |---|---|---|---|---|---|---|
+    | UTG | 6 | 1.0 | 0.824 | 0.100 | 0.064 | 0.012 |
+    | MP | 5 | 1.0 | 0.829 | 0.040 | 0.099 | 0.032 |
+    | CO | 4 | 1.0 | 0.826 | 0.078 | 0.069 | 0.027 |
+    | BTN | 3 | 1.0 | 0.841 | 0.050 | 0.057 | 0.052 |
+    | SB | 2 | 1.0 | 0.194 | 0.420 | 0.362 | 0.025 |
+    The correct statement is stronger and simpler: **position is not
+    learned at all** among non-blind seats.
+  - **Under-training is refuted:** `trained_share` is **1.0 at every
+    seat**, so the button is not starved of visits. The hypothesis was
+    testable and was tested rather than assumed — and it was the more
+    obvious explanation.
+  - **Same root cause as the sizing defect.** M98 established terminals
+    are priced `equity * pot - invested`, so *playing* is uniformly
+    underpriced; if that understatement is equal at every seat, the
+    fold/play boundary cannot move with position. **One cause, two
+    symptoms**, and it means the positional defect also needs solved
+    postflop continuation values rather than a larger budget.

@@ -154,13 +154,23 @@ requests now reject unknown fields by name rather than ignoring them.
   | UTG | 0.281 | 0.176 | 0.15-0.18 |
   | CO | 0.316 | 0.174 | ~0.26 |
   | BTN | 0.384 | **0.159** | **~0.45** |
-  | SB | 0.498 | **0.806** | ~0.45 |
-  At 3,000 the gradient is compressed (6pp of widening across four seats
-  where GTO spans ~30pp). At 12,000 **the button opens TIGHTER than under
-  the gun**, on both seeds tested — an inversion that needs no published
-  chart to condemn, since later position must open wider. Individual
+  | SB | 0.498 | 0.806 | ~0.80-0.87 |
+  **M111 sharpened this: position is not learned AT ALL among non-blind
+  seats.** At 12,000 iterations the fold mass is flat at 0.82-0.84 for
+  UTG/MP/CO/BTN, and `trained_share` is 1.0 at every seat — so it is not
+  under-training. M110 called it "the button opens tighter than UTG",
+  over-reading a 1.7pp gap smaller than the 2.8pp CO varies between
+  seeds. SB differs only because it is heads-up by then, and is correct
+  there. **Same root cause as the sizing defect:** M98 showed terminals
+  are priced at raw showdown equity, so playing is uniformly underpriced
+  and the fold/play boundary cannot move with position. One cause, two
+  symptoms — needs the architectural fix, not a bigger budget. Individual
   hands are still classified sensibly (40 random deals, zero categorical
-  violations: premiums never folded, trash folded). `SIZING_CAVEAT_REASON`
+  violations: premiums never folded, trash folded). **The SB row is NOT a
+  defect** — M110 first compared it against a generic 6-max SB figure
+  (~0.45); when it folds to SB the spot is heads-up vs BB, so ~0.80-0.87
+  is the right reference and 0.806 is close to correct. Corrected M111,
+  the same remembered-reference error M106 recorded. `SIZING_CAVEAT_REASON`
   was corrected — it used to say "trust the fold-vs-play call".
   Heads-up is unaffected (BTN opens 0.871, inside the 0.70-0.95 band).
 - **Equity noise explains the sizing INSTABILITY, not its level (M98).**
