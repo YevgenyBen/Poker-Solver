@@ -266,6 +266,23 @@ requests now reject unknown fields by name rather than ignoring them.
   11.5s (flop) / 1.5s (turn). Treat multiway postflop advice as
   correspondingly thinner, and note those caps genuinely bind now, where
   pre-M67 they never did.
+- **A class's frequency belongs to EVERY one of its combos, not divided
+  among them (M119).** `range_from_class_frequencies` gives each
+  surviving combo its class's frequency, so a class's total mass scales
+  with how many combos it has. It used to divide, which meant the whole
+  deck was not uniform (a suited combo weighed 3x an offsuit one, so
+  AhKh was "three times as likely" as AhKs) and blockers were cancelled
+  exactly (AA kept mass 1.0 whether 6, 3 or 1 combo survived). The input
+  is a CONDITIONAL frequency — P(line | class), 1.0 for a position that
+  has not acted — against a uniform prior over combos, so there is
+  nothing to divide. **Don't "normalize" a class back to mass 1.**
+  Consequence to know: `_cap_range_to_combos` now selects **round-robin
+  across classes** in frequency order, because with correct weights a
+  flat top-N lets the most frequent class swallow the whole budget (nine
+  combos of one offsuit class at the shipped river cap). Tie-break by
+  frequency alone and rely on the stable sort — adding `str(class)` puts
+  22 and 32o ahead of AA.
+
 - **The betting tree obeys the rules of poker, verified exhaustively
   (M117).** Eight legality invariants at every node of whole trees, 38
   configs: 26,354 nodes, 11,784 showdowns, zero violations. The

@@ -60,7 +60,17 @@ FAST_MAX_PATH_QUERY_CLASSES_PER_SIDE = 2
 # for the same test-speed reason. Its own class cap needs its own
 # separate shrink, mirroring FAST_MAX_PATH_QUERY_CLASSES_PER_SIDE.
 FAST_MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE = 1
-FAST_RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE = 1
+# M119 raised this from 1. One combo per side is not a small range, it
+# is no range at all: the river solve becomes one fixed hand against one
+# fixed hand, and every "does advice discriminate by hand strength"
+# assertion below is decided by WHICH single villain combo the cap
+# happens to pick. `test_advise_river_decision_discriminates_by_hand_
+# strength` passed at 1 only because the pre-M119 combo weighting
+# happened to pick a convenient one; correcting that weighting made the
+# same degenerate fixture fail. Every river test passes at 2 and above.
+# Measured on the river subset: cap 1 = 33.6s, cap 3 = 45.0s, cap 6 =
+# 83.4s — 3 buys a real range for ~11s and 6 is not worth 50s.
+FAST_RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE = 3
 
 
 @pytest.fixture(autouse=True)
@@ -3693,3 +3703,59 @@ def test_the_cache_key_probe_would_notice_a_field_that_does_nothing(client):
         "changing the board did not change the answer — the probe above cannot "
         "detect anything, because nothing varies"
     )
+
+
+def test_the_river_combo_cap_spreads_across_classes_instead_of_one():
+    """M119 (audit round 12). The river cap selects round-robin across
+    classes, not flat top-N by weight.
+
+    Since M119 every combo of a class carries that class's own frequency
+    — correctly, because the prior over concrete combos is uniform — so
+    a flat top-N breaks ties by iteration order and the single most
+    frequent class swallows the entire budget. Measured on a real river
+    spot at the shipped cap of 9, a flat top-N returned nine combos of
+    ONE offsuit class. Nine combos spanning nine classes is a strictly
+    better model of a range, and costs exactly the same to solve.
+
+    The old per-combo weighting hid this: dividing a class's frequency
+    across its combos made suited classes outrank offsuit ones per
+    combo, so the pool spread across classes by accident.
+    """
+    import random
+
+    from poker_solver.cards import Card
+    from poker_solver.combos import combo_class
+    from poker_solver.starting_hands import all_starting_hands
+    from api.solving import _cap_range_to_combos
+
+    board = frozenset(Card.from_str(t) for t in ("2h", "6d", "9c", "Kd", "4s"))
+    rng = random.Random(0)
+    varied = {hand: round(rng.random(), 3) for hand in all_starting_hands()}
+
+    kept = _cap_range_to_combos(varied, 9, board)
+    assert len(kept) == 9
+    assert len({str(combo_class(combo)) for combo in kept}) == 9, (
+        f"the cap collapsed onto too few classes: "
+        f"{sorted({str(combo_class(c)) for c in kept})}"
+    )
+    assert not any({str(c.card_a), str(c.card_b)} & {str(b) for b in board} for c in kept)
+
+    # Ties must keep canonical class order (AA first), NOT alphabetical —
+    # sorting ties by class label was tried and puts 22 and 32o ahead of AA.
+    tied = {hand: 1.0 for hand in all_starting_hands()}
+    top = _cap_range_to_combos(tied, 9, board)
+    assert [str(combo_class(combo)) for combo in top][:3] == ["AA", "KK", "QQ"]
+
+
+def test_the_river_combo_cap_is_a_no_op_when_the_range_already_fits():
+    """M119. The round-robin path must not disturb a range small enough
+    to keep whole — the cap is a budget, not a resampler."""
+    from poker_solver.cards import Card
+    from poker_solver.combos import range_from_class_frequencies
+    from poker_solver.starting_hands import StartingHand
+    from api.solving import _cap_range_to_combos
+
+    board = frozenset(Card.from_str(t) for t in ("2h", "6d", "9c"))
+    freqs = {StartingHand("A", "A"): 0.9, StartingHand("K", "Q", suited=True): 0.4}
+    expected = range_from_class_frequencies(freqs, exclude=board)
+    assert _cap_range_to_combos(freqs, 100, board) == expected
