@@ -6018,3 +6018,36 @@ entry's own corrections before trusting its conclusions.
     fold/play boundary cannot move with position. **One cause, two
     symptoms**, and it means the positional defect also needs solved
     postflop continuation values rather than a larger budget.
+
+- **M112 — costing the architectural fix M100 said could not be costed.**
+  M98 found the root cause (terminals priced at raw showdown equity);
+  M111 showed it explains the positional defect too. M100 refuted a crude
+  stand-in and concluded the real fix "cannot be justified or costed on
+  this evidence". This costs it — measurement, not a build. Full working
+  in `docs/benchmarks-2026-08-24.md`.
+  - **Naive framing says impossible.** 6-max has **15,254 showdown
+    terminals with money behind** (heads-up has 7). At 0.195s per flop
+    solve and 10 boards that is **8.3 hours per preflop solve** — and it
+    is affordable at heads-up, which does not have the defect, and
+    infeasible at 6-max, which does.
+  - **Canonicalization changes the answer.** A continuation value depends
+    on the game that follows — pot, money behind, live seats — not on the
+    action sequence that reached it. Keying on (log2 SPR bucket, live
+    count): **15,254 terminals collapse to 27 distinct spots** (4 at
+    heads-up), i.e. 52.7s rather than 8.3 hours. Same observation M20's
+    canonical library rests on, applied one street earlier.
+  - **Cost is near-quadratic in range width**, measured: 21 combos/side
+    0.272s, 66 -> 2.32s, 193 -> 14.71s, 379 -> 58.16s. 18x the combos
+    costs 214x the time. At the project's existing cap (~66 combos) the
+    precompute is **10.4 min** per (depth, table size), or ~3 min at
+    three sampled boards — inside the ~15 min the startup pre-warm
+    already spends in a daemon thread.
+  - **Verdict: affordable as an offline precompute** at the cap widths
+    already in use. The naive framing overstated it by ~50x.
+  - **Explicitly NOT established:** whether a continuation value computed
+    at *capped* ranges is accurate enough to fix anything. The caps are
+    M24-era cost controls for a different purpose. M100's lesson stands —
+    a mechanism producing plausible numbers is not thereby correct — and
+    the validation targets are already known: AA's jam should fall from
+    0.615 toward ~0.03 at 12k, and fold mass should stop being flat at
+    0.82-0.84 across UTG/MP/CO/BTN.
