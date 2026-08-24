@@ -113,8 +113,10 @@ requests now reject unknown fields by name rather than ignoring them.
   open: why N=2 is unaffected. **Don't try to fix
   this with iterations, samples, or the policy rule** — it needs
   postflop continuation value at preflop terminals. Users are told via
-  `sizing_confidence` (M98); the fold-vs-play call is unaffected and
-  remains sound at 3/6-max.
+  `sizing_confidence` (M98). **The "fold-vs-play is unaffected" half of
+  this note was wrong — corrected M110**, which measured the implied
+  opening range per seat and found its own positional defect; see the
+  next entry.
 - **A crude continuation term does NOT fix the sizing defect — don't
   tune it (M100).** `mccfr_solve(continuation=c, stack_bb=...)` adds
   `c * (equity - 1/n_live) * chips_behind` at terminals with money
@@ -142,6 +144,25 @@ requests now reject unknown fields by name rather than ignoring them.
   spot at SPR 1.5, and flagging every postflop response would devalue the
   preflop warning that marks a genuinely unusable axis. Revisit if
   measured wider and larger.
+- **The fold-vs-play call at 6-max is NOT a positional range chart
+  (M110).** M98 marked the SIZING axis broken and treated fold-vs-play as
+  the reliable half; a random-deal simulation measured the implied
+  opening range per seat and found the reliable half has its own defect.
+  Combo-weighted opening frequency, 6-max:
+  | seat | shipped 3k | 12k iters | GTO approx |
+  |---|---|---|---|
+  | UTG | 0.281 | 0.176 | 0.15-0.18 |
+  | CO | 0.316 | 0.174 | ~0.26 |
+  | BTN | 0.384 | **0.159** | **~0.45** |
+  | SB | 0.498 | **0.806** | ~0.45 |
+  At 3,000 the gradient is compressed (6pp of widening across four seats
+  where GTO spans ~30pp). At 12,000 **the button opens TIGHTER than under
+  the gun**, on both seeds tested — an inversion that needs no published
+  chart to condemn, since later position must open wider. Individual
+  hands are still classified sensibly (40 random deals, zero categorical
+  violations: premiums never folded, trash folded). `SIZING_CAVEAT_REASON`
+  was corrected — it used to say "trust the fold-vs-play call".
+  Heads-up is unaffected (BTN opens 0.871, inside the 0.70-0.95 band).
 - **Equity noise explains the sizing INSTABILITY, not its level (M98).**
   A 50-sample multiway equity estimate has error sd 0.091 — **+/-55bb of
   EV in a six-way 100bb pot**, worst measured 141bb — and the cache

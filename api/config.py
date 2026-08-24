@@ -794,13 +794,36 @@ SIZING_CAVEAT_TABLE_SIZES = {
     6: True,
     9: True,
 }
+# **The "trust the fold-vs-play call" half was too strong (M110).** It
+# was written when only the SIZING axis had been measured against a
+# reference. A random-deal simulation then measured the implied OPENING
+# RANGE per seat, and multiway preflop has a positional defect of its
+# own:
+#
+#     6-max opening frequency by seat (combo-weighted)
+#     budget    UTG     MP      CO      BTN     SB      GTO shape
+#      3,000    0.281   0.319   0.316   0.384   0.498   ~0.15 rising to ~0.45
+#     12,000    0.176   0.171   0.174   0.159   0.806
+#
+# At the shipped 3,000 the gradient is compressed — six points of
+# widening across four seats where GTO spans about thirty. At 12,000 the
+# BUTTON OPENS TIGHTER THAN UNDER THE GUN (0.159 vs 0.176), on both seeds
+# tested, while the small blind opens 0.72-0.81 against a GTO ~0.45.
+#
+# The inversion needs no published chart to condemn: later position must
+# open wider. So the honest claim is narrower than "trust fold-vs-play" —
+# individual hands are classified sensibly (40 random deals produced zero
+# categorical violations: premiums never folded, trash folded), but the
+# RANGE WIDTH per seat does not reproduce positional advantage.
 SIZING_CAVEAT_REASON = (
-    "Multiway preflop is converged for whether to play this hand, but NOT for "
-    "which sizing to use. The split among the non-fold actions (limp / raise / "
-    "all-in) moves with the random seed — at 6-max, AA's all-in frequency has "
-    "measured anywhere from 0.03 to 0.92 where a converged solve puts it near "
-    "0.03. Trust the fold-vs-play call; treat the choice between raise sizes "
-    "and the all-in as unreliable."
+    "Multiway preflop is unreliable for which sizing to use: the split among the "
+    "non-fold actions (limp / raise / all-in) moves with the random seed — at 6-max, "
+    "AA's all-in frequency has measured anywhere from 0.03 to 0.92 where a converged "
+    "solve puts it near 0.03. The fold-vs-play call is sounder but NOT fully GTO "
+    "either: individual hands are classified sensibly, while the overall opening "
+    "range does not widen with position the way GTO does — at 6-max the button has "
+    "measured TIGHTER than under the gun. Treat this as a strong hint about whether "
+    "a hand is playable, not as a positional range chart."
 )
 # The flop-leg budget for /solve_turn_multiway_from_path — the multiway
 # TURN sibling of DEFAULT/MAX_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS above.
