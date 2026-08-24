@@ -6639,3 +6639,55 @@ entry's own corrections before trusting its conclusions.
     nothing has touched it since M93, whose number predates every cache
     becoming bounded.
   - Backend 948 passed, frontend 156 passed.
+
+- **M127 — a simulated player found what fifteen audit rounds could
+  not.** 120 hands of real play against the live API (1.2 simulated
+  hours, 275 advised decisions), dealing cards, asking at every street,
+  and ACTING on the advice so the hand continued down the recommended
+  line. Report published as an artifact.
+  - **The engine never gave a wrong answer.** Zero invalid
+    distributions, zero unaffordable bets, zero premium folds, across
+    275 decisions. **The one flagged decision was my check being
+    wrong**: 84o in the BB facing a 2.5x button raise heads-up, advised
+    to call 99.98%. Verified — 84o has **30.3%** equity against a spread
+    of button openers and needs ~30% to call 1.5 into 5, against a
+    heads-up button opening ~87% of hands. Folding is the leak. The rule
+    encoded a full-ring intuition and misfired heads-up.
+  - **F33 (fixed): cache ceilings bounded entry COUNT, never bytes.**
+    Sustained play grew the working set **linearly at 1.4 MB/s with no
+    plateau** — 1,642 MB to 4,244 MB — putting a real server past 8 GB
+    inside two hours. Measured per entry: `river_path` **38.45 MB**
+    (180x a preflop entry) at a ceiling of 128 was a **4.9 GB** cache on
+    its own; `turn_path` 7.95 MB x 128 = 1.0 GB; `flop_turn` 337 MB;
+    `multiway` 157 MB. Four caches over budget, **6.4 GB combined**.
+  - **Re-derived against a measured 160 MB per-cache budget** (160 not
+    128 so `multiway` keeps 64 entries — the most expensive solve in the
+    product at 66-93s each). river_path 128 -> 4, turn_path 128 -> 20,
+    flop_turn 128 -> 60. **Re-running the same session: growth fell to
+    0.029 MB/s and plateaued at ~997 MB — a 48x reduction, and the shape
+    changed from a straight line to flat.**
+  - **M93/M104 established "every cache is bounded" and M124 re-verified
+    it — correctly.** The bound is on entry count; nothing ever asserted
+    the ceilings were sized against what an entry COSTS. The new test
+    measures a real entry and fails if any cache's ceiling exceeds the
+    byte budget; mutation-checked by restoring river_path to 128, which
+    fails with `river_path: 38.45 MB/entry x 128 = 4921 MB`.
+  - **The deeper fix deliberately not taken**: a river entry is 38 MB
+    because it retains the whole flop->river StrategyResult — tree,
+    node_data, equity tables — when callers only read strategies off it.
+    Storing less would buy back far more than trimming the count. That
+    changes what the cache holds; this is the bound that stops the
+    bleeding.
+  - **Still open, measured not fixed.** Advice takes **6.23s median,
+    19.19s p90, 40.5s p99**, with 154 of 275 decisions over 5s against a
+    15-30s decision clock. And the 10-class postflop cap is a cost
+    control that doubles as a STRATEGY control: a flopped set is advised
+    to raise **0.25%** at the shipped cap versus **40.2%** at 26 classes.
+    Controlled — solving twice at the same cap gives delta exactly 0.0,
+    so the swing is range width, not noise.
+  - **Limits of the session, stated rather than buried**: multiway
+    postflop is under-represented because the simulator built preflop
+    lines that did not close the betting round at 6-max and the API
+    correctly refused them (19 of 20 recorded failures — the error
+    message named the problem and the fix). Latency was measured on a
+    machine also running other work, so it is an upper bound.

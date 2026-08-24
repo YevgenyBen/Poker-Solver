@@ -9,6 +9,9 @@ below went unmeasured for so long.
 import threading
 import time
 
+from fastapi.testclient import TestClient
+
+import api.main as api_main
 from api.caches import _SolveCache
 
 
@@ -265,3 +268,96 @@ def test_the_expensive_caches_keep_a_generous_ceiling():
     by_name = {c.name: c for c in caches_module._SolveCache.registered()}
     assert by_name["multiway"].maxsize >= 32
     assert by_name["preflop_raw"].maxsize >= 64
+
+
+def _deep_size(obj, seen=None):
+    """Bytes an object graph actually holds, following containers and
+    counting numpy buffers by `nbytes` rather than by object header."""
+    import sys
+
+    import numpy as np
+
+    if seen is None:
+        seen = set()
+    if id(obj) in seen:
+        return 0
+    seen.add(id(obj))
+    if isinstance(obj, np.ndarray):
+        return obj.nbytes
+    size = sys.getsizeof(obj, 0)
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            size += _deep_size(key, seen) + _deep_size(value, seen)
+    elif isinstance(obj, (list, tuple, set, frozenset)):
+        for item in obj:
+            size += _deep_size(item, seen)
+    elif hasattr(obj, "__dict__"):
+        size += _deep_size(vars(obj), seen)
+    return size
+
+
+def test_cache_ceilings_are_sized_against_what_an_entry_actually_costs():
+    """M127. The bound M93/M104 established — and M124 re-verified — is on
+    entry COUNT. Entry SIZE is not bounded and varies by ~38x between
+    cache types, so uniform 128-256 ceilings were assigned as though
+    entries were interchangeable.
+
+    Found by playing rather than by inspection: a simulated session
+    grew the working set **linearly at 1.4 MB/s with no plateau** — 1,642
+    MB to 3,644 MB over 23 minutes. Fifteen audit rounds and two
+    diagnostics missed it because none of them played a hand; it only
+    appears under sustained traffic with a fresh board every time, which
+    is exactly what a real player generates.
+
+    Measured per entry: `preflop_raw` 0.20 MB, `path_query_libraries`
+    0.07 MB, `turn_path` **7.59 MB**. At its 128 ceiling that one cache
+    is a ~971 MB budget on its own.
+
+    This test measures a real entry for whichever caches the sweep below
+    populates and asserts the resulting byte budget stays under
+    `MAX_CACHE_BYTES_PER_CACHE`. It is the assertion the count-bound
+    never made.
+    """
+    from api import caches as caches_module
+
+    caches_module._SolveCache.clear_all()
+
+    # Populate a representative spread: preflop, flop, turn, river.
+    base = {"stack_bb": 100.0, "preflop_action_path": ["raise", "call_or_check"],
+            "players": 2, "hero_cards": "AsKs"}
+    with TestClient(api_main.app) as populating:
+        populating.post("/advise", json={**base, "preflop_action_path": []})
+        populating.post("/advise", json={**base, "board": "3d7s2c"})
+        turn = {**base, "board": "3d7s2c",
+                "flop_action_path": ["call_or_check", "call_or_check"], "turn_card": "Kd"}
+        populating.post("/advise", json=turn)
+        populating.post("/advise", json={**turn,
+                                         "turn_action_path": ["call_or_check", "call_or_check"],
+                                         "river_card": "9s"})
+        # the GET routes fill a different set of caches than /advise does
+        for url in ("/solve_flop?board=3d7s2c&iterations=40",
+                    "/solve_flop_turn?board=3d7s2c&iterations=40"):
+            populating.get(url)
+
+    seen, over_budget, measured = set(), [], []
+    for value in vars(caches_module).values():
+        if not isinstance(value, caches_module._SolveCache) or id(value) in seen:
+            continue
+        seen.add(id(value))
+        if not value.entries or value.maxsize is None:
+            continue
+        entry_bytes = _deep_size(next(iter(value.entries.values())))
+        budget = entry_bytes * value.maxsize
+        measured.append((value.name, entry_bytes, value.maxsize, budget))
+        if budget > caches_module.MAX_CACHE_BYTES_PER_CACHE:
+            over_budget.append(
+                f"{value.name}: {entry_bytes / 1e6:.2f} MB/entry x {value.maxsize} "
+                f"= {budget / 1e6:.0f} MB"
+            )
+
+    assert measured, "populated no caches — has the request shape changed?"
+    assert not over_budget, (
+        "these caches exceed the per-cache byte budget of "
+        f"{caches_module.MAX_CACHE_BYTES_PER_CACHE / 1e6:.0f} MB: {over_budget}. "
+        "Lower the maxsize — a ceiling on entry COUNT is not a ceiling on memory."
+    )
