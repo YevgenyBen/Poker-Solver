@@ -6051,3 +6051,45 @@ entry's own corrections before trusting its conclusions.
     the validation targets are already known: AA's jam should fall from
     0.615 toward ~0.03 at 12k, and fold mass should stop being flat at
     0.82-0.84 across UTG/MP/CO/BTN.
+
+- **M113 — the continuation-value primitive, built and validated.** M112
+  costed the architectural fix and found it affordable (15,254 terminals
+  collapse to 27 canonical spots, ~10 min of offline precompute). This
+  builds the piece everything else needs: **what a continuation value
+  actually is** — the expected value of PLAYING a spot, per hand, from a
+  real solve.
+  - **`poker_solver/continuation.py`, `expected_values_at_root`.** Walks
+    a solved tree under the AVERAGE strategy (CFR's real output, not the
+    still-oscillating current one), carrying a full (hero hand x villain
+    hand) MATRIX rather than a per-hand vector — when villain acts, which
+    action they take depends on THEIR hand, so collapsing villain's
+    dimension early would average over a decision not yet made. The
+    matrix is contracted against villain's range exactly once, at the end.
+  - **Validated by INVARIANT, not by predicting the answer.** Terminal
+    payoffs are `equity * pot - invested`, equities sum to 1 and the
+    street's own investments cancel, so both sides' expected values must
+    sum to **exactly the pot**. Holds to nine decimals on three
+    configurations.
+  - **Two of my own validation attempts were wrong first**, which is why
+    the invariant approach was adopted. The first predicted "hand A is
+    worth 6.5" from raw equity arithmetic and failed — because the tree
+    offered an all-in and was never the check-down that assumed. The
+    second stated the invariant as "sums to zero" and passed `equity.T`
+    as villain's table; villain's equity is `1 - equity` transposed, and
+    the pot is money already in the middle that both sides' EV includes.
+    Neither was a bug in the walker.
+  - **Mutation-checked, and it exposed a blind case.** Flipping villain's
+    weighting to the hero axis (`[:, None]` instead of `[None, :]`) fails
+    the asymmetric and three-hand cases and **passes the symmetric one**,
+    where rows and columns are identical by construction. A
+    symmetric-only test would have been blind to the exact error the
+    matrix design exists to prevent.
+  - Also asserted: EV is monotone in hand strength, `villain_reach` is
+    normalized and genuinely used (tilting villain toward strong hands
+    lowers hero's EV), and an empty villain range is refused rather than
+    silently producing NaN.
+  - **Not yet wired into the solver.** The precompute and the terminal
+    rewrite come next, with M112's validation targets fixed in advance so
+    the change cannot grade its own homework: AA's jam 0.615 -> ~0.03 at
+    12k, and fold mass no longer flat at 0.82-0.84 across UTG/MP/CO/BTN.
+  - **Verification:** 894 backend tests (up from 887), 154 frontend.
