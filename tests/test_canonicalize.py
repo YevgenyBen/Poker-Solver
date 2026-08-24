@@ -1,4 +1,5 @@
 import itertools
+import random
 
 import pytest
 
@@ -13,6 +14,7 @@ from poker_solver.canonicalize import (
 )
 from poker_solver.cards import SUITS, Card
 from poker_solver.combos import HandCombo
+from poker_solver.hand_eval import best_hand_rank
 
 
 def cards(text: str) -> list:
@@ -210,3 +212,78 @@ def test_canonical_stack_depth_leaves_a_sub_bucket_stack_exactly_as_it_is():
 def test_canonical_stack_depth_uses_the_documented_default_bucket():
     assert DEFAULT_STACK_BUCKET_BB == 5.0
     assert canonical_stack_depth(101.0) == canonical_stack_depth(101.0, bucket_bb=DEFAULT_STACK_BUCKET_BB)
+
+
+@pytest.mark.parametrize("n_board,trials,seed", [(3, 1200, 103), (4, 1200, 104), (5, 1200, 105)])
+def test_transport_preserves_hand_strength_against_the_board(n_board, trials, seed):
+    """M118 (audit round 11). The property the canonical library's whole
+    hit path depends on, stated in a form Monte Carlo noise cannot blur.
+
+    M20 claimed a hit serves any isomorphic board exactly; M21 withdrew
+    the bit-exact half, because flop equity is sampled and the deck's
+    suit-dependent iteration order draws different runouts for two
+    differently-suited isomorphic boards. That left the crux — "a hit
+    returns the right strategy for the right HAND" — asserted but never
+    checked, because the natural check (compare strategy numbers) is
+    exactly the one the noise ruins.
+
+    Hand STRENGTH is not sampled. If translating a hero's combo into
+    canonical space is correct, the translated combo must make exactly
+    the same five-card hand against the canonical board that the
+    original makes against the real one. That is exact, and it is the
+    whole content of "the right hand".
+    """
+    rng = random.Random(seed)
+    deck = [Card.from_str(r + s) for r in "23456789TJQKA" for s in "cdhs"]
+    for _ in range(trials):
+        cards = rng.sample(deck, n_board + 2)
+        board = tuple(cards[:n_board])
+        hero = HandCombo(cards[n_board], cards[n_board + 1])
+        canonical_board, suit_map = canonicalize_board(board)
+        canonical_hero = translate_combo(hero, suit_map)
+
+        assert translate_combo(canonical_hero, invert_suit_map(suit_map)) == hero
+        assert not ({canonical_hero.card_a, canonical_hero.card_b} & set(canonical_board)), (
+            "a translated hero collided with the canonical board"
+        )
+        assert (best_hand_rank(list(board) + [hero.card_a, hero.card_b])
+                == best_hand_rank(list(canonical_board)
+                                  + [canonical_hero.card_a, canonical_hero.card_b])), (
+            f"{hero} on {board} is not the same hand as {canonical_hero} on {canonical_board}"
+        )
+
+
+def test_transport_survives_the_boards_with_the_largest_suit_symmetry():
+    """M118. Monotone and paired flops have the biggest automorphism
+    groups, which is where M19's rejected single-pass canonicalization
+    under-collapsed (1,911 forms against the true 1,755). If transport
+    is going to break anywhere it is here.
+
+    Mutation-checked: replacing the returned `suit_map` with a different
+    valid permutation leaves the round-trip a clean bijection — 0
+    failures — while tripping the strength check 466 times and the
+    board-collision check 2,119 times across the full probe. A
+    round-trip-only test would have passed that mutation.
+    """
+    rng = random.Random(11)
+    deck = [Card.from_str(r + s) for r in "23456789TJQKA" for s in "cdhs"]
+    boards = []
+    for _ in range(150):
+        suit = rng.choice("cdhs")
+        boards.append(tuple(Card.from_str(r + suit) for r in rng.sample("23456789TJQKA", 3)))
+    for _ in range(150):
+        rank = rng.choice("23456789TJQKA")
+        suits = rng.sample("cdhs", 2)
+        other = rng.choice([r for r in "23456789TJQKA" if r != rank])
+        boards.append((Card.from_str(rank + suits[0]), Card.from_str(rank + suits[1]),
+                       Card.from_str(other + rng.choice("cdhs"))))
+    for board in boards:
+        rest = [c for c in deck if c not in set(board)]
+        hero = HandCombo(*rng.sample(rest, 2))
+        canonical_board, suit_map = canonicalize_board(board)
+        canonical_hero = translate_combo(hero, suit_map)
+        assert translate_combo(canonical_hero, invert_suit_map(suit_map)) == hero
+        assert not ({canonical_hero.card_a, canonical_hero.card_b} & set(canonical_board))
+        assert (best_hand_rank(list(board) + [hero.card_a, hero.card_b])
+                == best_hand_rank(list(canonical_board)
+                                  + [canonical_hero.card_a, canonical_hero.card_b]))

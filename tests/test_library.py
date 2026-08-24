@@ -544,3 +544,58 @@ def test_query_strategy_from_path_maps_btn_to_ip_and_bb_to_oop(preflop_pipeline_
         equity_seed=EQUITY_SEED,
     )
     assert via_path.strategy == direct.strategy
+
+
+def test_one_entry_serves_every_isomorphic_board_with_its_keys_relabelled():
+    """M118 (audit round 11). The end-to-end statement of what a
+    canonical hit is supposed to be: six suit-isomorphic query boards,
+    one stored solve, and the answer differs only in how the combos are
+    named.
+
+    Checked two ways, both exact and both immune to the Monte Carlo
+    noise M21 had to withdraw its bit-exactness claim over:
+
+      * the multiset of strategy ROWS is identical across all six
+        queries — same entry, re-keyed, nothing dropped or duplicated;
+      * every returned key is a combo actually legal against the board
+        that ASKED, not against the board that was solved.
+
+    The second is the one that matters for a caller holding a real hand:
+    a transport that returned canonical-space keys would look perfectly
+    healthy on the solved board and hand back impossible combos on every
+    other one.
+    """
+    from collections import Counter
+
+    ranges = {
+        StartingHand("A", "A"): 1.0,
+        StartingHand("K", "K"): 1.0,
+        StartingHand("A", "K", suited=True): 1.0,
+        StartingHand("7", "2", suited=False): 1.0,
+    }
+    solved_board = tuple(cards("Ac Kd 7h"))
+    library = build_library([solved_board], ranges, dict(ranges), pot=6.0,
+                            effective_stack_bb=20.0, iterations=40, equity_samples=30)
+    assert len(library) == 1
+
+    def signature(strategy):
+        return Counter(tuple(sorted((action, round(freq, 12)) for action, freq in row.items()))
+                       for row in strategy.values())
+
+    reference = None
+    for query in ("Ac Kd 7h", "Ad Kc 7s", "Ah Ks 7c", "As Kh 7d",
+                  "Ac Kh 7d", "Ah Kc 7s"):
+        board = tuple(cards(query))
+        strategy = lookup_strategy(library, board, effective_stack_bb=20.0)
+        assert strategy is not None, f"{query} did not hit the one stored entry"
+
+        board_cards = {str(card) for card in board}
+        illegal = [combo for combo in strategy if {combo[0:2], combo[2:4]} & board_cards]
+        assert not illegal, f"{query} was handed combos it cannot hold: {illegal[:3]}"
+
+        if reference is None:
+            reference = signature(strategy)
+        else:
+            assert signature(strategy) == reference, (
+                f"{query} got a different set of strategy rows from the same entry"
+            )
