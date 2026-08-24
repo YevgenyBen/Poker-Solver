@@ -5938,3 +5938,47 @@ entry's own corrections before trusting its conclusions.
     would make warm and cold agree for the wrong reason, so a separate
     test asserts that changing the board really does change the answer.
   - **Verification:** 887 backend tests (up from 881), 154 frontend.
+
+- **M110 — maximal benchmarks, and a live-play GTO comparison that found
+  a new defect.** Full report in `docs/benchmarks-2026-08-24.md`. Every
+  timing carries reference units against a workload measured in the same
+  run (0.277s), since this machine drifts ~1.7x between sessions.
+  - **Warm is flat and fast:** every `/advise` cell serves in 1.7-9.7ms
+    whatever the table size — 9-max preflop (1.86ms) beats heads-up flop
+    (4.75ms), because warm cost is response shaping, not solving.
+    Throughput ~210-250 rps and **does not scale with threads** (252 at
+    2, 228 at 8): warm requests are GIL-bound, so scale by process.
+  - **Cold scales with seats, not streets:** 9-max preflop 98.2s (37x
+    heads-up preflop); heads-up river 12.3s (4.7x).
+  - **Chance nodes cost 50-70x each:** `solve_flop` 0.195s -> `+turn`
+    10.87s -> `+turn+river` **765.6s**, 3,926x end to end. The
+    operational point is the contrast: that primitive costs 765s at 19
+    combos while the river ENDPOINT serves cold in 12.29s — the combo
+    caps are the only reason the river is reachable.
+  - **Scaling:** iterations linear, players sub-linear, equity samples
+    linear, combo pool **super-linear** (2.8x per doubling). The linear
+    sample curve is why M99's equal-cost test had to hold wall clock
+    fixed rather than assume `samples x iterations` was the budget.
+  - **NEW DEFECT — the fold-vs-play call is not a positional range
+    chart.** 40 random deals produced **zero categorical violations**
+    (no premium folded, no trash played early), but measuring the
+    combo-weighted opening frequency per seat found:
+    | seat | shipped 3k | 12k | GTO |
+    |---|---|---|---|
+    | 2max BTN | **0.871** ✓ | — | 0.70-0.95 |
+    | 6max UTG | 0.281 | 0.176 | 0.15-0.18 |
+    | 6max BTN | 0.384 | **0.159** | **~0.45** |
+    | 6max SB | 0.498 | **0.806** | ~0.45 |
+    At the shipped budget the gradient is compressed (6pp across four
+    seats where GTO spans ~30pp). At 12,000 **the button opens TIGHTER
+    than under the gun**, on both seeds — an inversion needing no
+    published chart to condemn. The 3,000-iteration ordering wobble is
+    seed-dependent and is convergence noise; the 12k inversion is not.
+  - **Two claims corrected in the product.**
+    `SIZING_CAVEAT_REASON` said "Trust the fold-vs-play call" and now
+    says it is sounder but not fully GTO, naming the positional
+    weakness. CLAUDE.md's M98 entry said the fold-vs-play call "is
+    unaffected and remains sound at 3/6-max" — also corrected. M98 marked
+    the SIZING axis broken and treated the other half as reliable; the
+    other half has its own defect, and users were being told to trust it.
+  - **Verification:** 887 backend tests, 154 frontend, tsc and lint clean.
