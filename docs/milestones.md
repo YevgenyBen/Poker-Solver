@@ -5839,3 +5839,39 @@ entry's own corrections before trusting its conclusions.
   - Cost tuned 105s -> 54s; seeds are fixed, so the tests are
     deterministic rather than merely unlikely to flake.
   - **Verification:** 869 backend tests (up from 863), 154 frontend.
+
+- **M107 — audit round 7: /advise vs the endpoint it replaced, and
+  determinism. No defect.** `api/solving.py` claims `/advise` is "a
+  unified FRONT DOOR, not a second implementation to keep in sync" and
+  "deliberately delegates rather than reimplements". Testable, the
+  deprecated routes are still live and reachable, and nothing tested it.
+  Write-up in `docs/audit-2026-08-23.md`.
+  - **Cross-endpoint agreement is EXACT.** `/solve_flop_from_path` and
+    `/advise` on the same spot, caches cleared between: identical
+    position, pot, effective stack, combo set, and a **worst strategy
+    delta of 0.0** across three lines. Asserted as exact equality, not
+    approximate — delegation means the same solve, so any difference at
+    all means a second implementation has appeared.
+  - **Determinism is exact.** The same request twice with caches cleared
+    in between (so the second genuinely re-solves) is bit-identical at
+    heads-up preflop, flop, mid-street flop, and 3-max preflop. Without
+    the clearing the test would pass trivially by reading one solve
+    twice; what it rules out is accumulated state making advice depend on
+    what the server did beforehand.
+  - **Both guards mutation-checked.** Giving `/advise`'s flop cell a
+    different iteration budget from its sibling fails all three
+    consistency cases. Making the sampled solver's seed depend on call
+    order fails the 3-MAX determinism case and not the heads-up ones,
+    which use the exact solver — which is exactly why 3-max is in the
+    parametrisation.
+  - **Diminishing returns, stated plainly.** Rounds 5-7 found no
+    defects; rounds 1-4 found six, every one in a seam (cost, contract,
+    composition, reachability) rather than in the solver. The engine
+    layers are now sound and guarded. The remaining known-wrong thing is
+    the one testing cannot fix: M98's structural sizing defect, which
+    needs solved postflop continuation values. Recorded so the next round
+    is chosen deliberately — likelier value lies in seams never probed
+    (`derive_ranges_from_path`'s reach multiplication, behaviour when a
+    solve raises mid-request) than in re-verifying layers already shown
+    correct.
+  - **Verification:** 876 backend tests (up from 869), 154 frontend.

@@ -3432,3 +3432,96 @@ def test_concurrent_cold_requests_solve_the_preflop_tree_once(client, monkeypatc
         f"{len(calls)} preflop solves ran for 6 concurrent requests on one key — "
         "single-flight is broken again; see _get_or_solve_preflop_raw"
     )
+
+
+# ---------------------------------------------------------------------------
+# M107 — /advise is a front door, not a second implementation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "label,action_path,board",
+    [
+        ("raise and call", ["raise", "call_or_check"], "Kd7c2h"),
+        ("limped", ["call_or_check", "call_or_check"], "Kd7c2h"),
+        ("3bet pot", ["raise", "raise", "call_or_check"], "Qs8d3c"),
+    ],
+)
+def test_advise_agrees_exactly_with_the_endpoint_it_replaced(client, label, action_path, board):
+    """`api/solving.py` states that `/advise` "deliberately delegates
+    rather than reimplements: every cell's own cache, cap constant, and
+    solver choice stays exactly as its sibling endpoint already had it"
+    and that it is "a unified FRONT DOOR, not a second implementation to
+    keep in sync".
+
+    That is a testable claim, and until M107 nothing tested it. If the two
+    disagree, a user's advice depends on which URL they happened to call —
+    and the deprecated route is still live, so both are reachable.
+
+    Asserted as EXACT equality, not approximate: delegation means the same
+    solve, so any difference at all means a second implementation has
+    appeared. Measured worst delta at the time of writing: 0.0.
+    """
+    caches._SolveCache.clear_all()
+    deprecated = client.post(
+        "/solve_flop_from_path",
+        json={"stack_bb": 100.0, "action_path": action_path, "board": board, "players": 2},
+    )
+    caches._SolveCache.clear_all()
+    front_door = client.post(
+        "/advise",
+        json={"stack_bb": 100.0, "preflop_action_path": action_path,
+              "board": board, "players": 2},
+    )
+
+    assert deprecated.status_code == front_door.status_code == 200
+    old, new = deprecated.json(), front_door.json()
+    assert old["position"] == new["position"]
+    assert old["pot"] == new["pot"]
+    assert old["effective_stack_bb"] == new["effective_stack_bb"]
+    assert set(old["strategy"]) == set(new["strategy"]), (
+        f"{label}: the two routes solved different combo pools"
+    )
+    for combo, row in old["strategy"].items():
+        assert row == new["strategy"][combo], (
+            f"{label}: {combo} differs between /solve_flop_from_path and /advise — "
+            "the front door has become a second implementation"
+        )
+
+
+@pytest.mark.parametrize(
+    "label,body",
+    [
+        ("preflop", dict(preflop_action_path=[], hero_cards="AsKh", players=2)),
+        ("flop", dict(preflop_action_path=["raise", "call_or_check"],
+                      hero_cards="AsKh", board="Kd7c2h", players=2)),
+        ("flop mid-street", dict(preflop_action_path=["raise", "call_or_check"],
+                                 flop_action_path=["raise"], hero_cards="5c4d",
+                                 board="Kd7c2h", players=2)),
+        ("3-max preflop", dict(preflop_action_path=[], hero_cards="JsJd", players=3)),
+    ],
+)
+def test_the_same_question_gets_the_same_answer_twice(client, label, body):
+    """Caches are cleared between the two calls, so the second genuinely
+    re-solves rather than returning the first one's stored answer.
+
+    Without that clearing this test would pass trivially — it would be
+    reading one solve twice. What it actually guards is the absence of
+    accumulated state: a module-level RNG advanced by the previous solve,
+    or a structure mutated in place, would make advice depend on whatever
+    the server happened to do beforehand. Invisible from any single call,
+    and 3-max is included specifically because it uses SAMPLED MCCFR,
+    where a mis-seeded run is exactly the failure this catches.
+    """
+    answers = []
+    for _ in range(2):
+        caches._SolveCache.clear_all()
+        response = client.post("/advise", json=_advise_body(stack_bb=100.0, **body))
+        assert response.status_code == 200
+        payload = response.json()
+        answers.append((payload["strategy"], (payload.get("hero") or {}).get("strategy")))
+
+    assert answers[0] == answers[1], (
+        f"{label}: two cold solves of the same spot disagreed — the solve is "
+        "carrying state between runs"
+    )
