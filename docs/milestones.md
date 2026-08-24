@@ -6466,3 +6466,36 @@ entry's own corrections before trusting its conclusions.
     a smarter parser.
   - **Mutation-tested**: forcing `trained_for_position` to return
     all-`True` fails the new guard with `got [True]`.
+
+- **M123 — audit round 15: the honesty signals, as a user receives
+  them.** The engine can be right and the product still mislead. Every
+  earlier round checked whether the engine was correct; this one checked
+  what a person is actually told.
+  - **The delivery chain is sound.** Measured end to end: heads-up high
+    on both axes, 3- and 6-max `sizing_confidence: low` with a reason,
+    9-max low on both with reasons, flop deliberately unflagged (M99
+    measured the flop analogue at ~5pp per street and chose not to
+    surface it, since flagging every postflop response would devalue the
+    preflop warning). The API emits exactly `"low"`/`"high"` and
+    `AdviseSolver.tsx` gates on `=== 'low'`, so no value drift; the
+    frontend suite already covers rendering each caveat.
+  - **F32 (fixed): the caveat repeated a measurement the project had
+    withdrawn.** It told users "at 6-max the button has measured TIGHTER
+    than under the gun" — M110's claim, which **M111 withdrew in the
+    same milestone that sharpened the finding**, the 1.7pp gap being
+    smaller than the 2.8pp CO varies between seeds. M111 edited this
+    string (removing "trust the fold-vs-play call") and left the
+    over-read standing. It now states M111's actual result: among
+    non-blind seats position is not learned at all, fold mass flat at
+    0.82-0.84 across UTG/MP/CO/BTN, against a GTO reference widening
+    from ~15% under the gun to ~45% on the button.
+  - **Every internal record was already correct** — CLAUDE.md, this log
+    and the constraint notes all carry M111's retraction. The one place
+    the withdrawn number survived was the sentence a person reads while
+    deciding how to play a hand, which is the only copy that changes
+    anybody's behaviour. Internal accuracy does not propagate outward on
+    its own.
+  - Guarded by SHAPE, not phrasing: the caveat must describe flatness
+    and must not assert any seat opens tighter/looser/wider than
+    another — the form of claim that was retracted, not just its
+    wording.
