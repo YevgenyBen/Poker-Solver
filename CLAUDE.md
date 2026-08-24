@@ -131,8 +131,13 @@ requests now reject unknown fields by name rather than ignoring them.
   correction is what failed. Likeliest reason, documented in advance by
   M114: `continuation_key` carries SPR and live count but NOT range
   strength, so a 3-bet pot and a limped pot at the same SPR get the same
-  value. **Try a range-strength dimension next — not more boards, not
-  more iterations.** Table cost is 1,110s for 27 spots x 3 boards at a
+  value. **M116 measured how much that matters**: holding the key fixed
+  and changing only the range the table is BUILT from moves values by up
+  to **0.23 of the pot**, on quantities whose magnitude is 0.3-1.0 — and
+  every hand correctly loses value against a tighter opponent range. So
+  the key and the building range are **one fix, not alternatives**: key
+  BY range strength *and* build each entry with a range of that strength.
+  **Not more boards, not more iterations.** Table cost is 1,110s for 27 spots x 3 boards at a
   12-class range, dominated by `build_board_equity_table`.
 - **A crude continuation term does NOT fix the sizing defect — don't
   tune it (M100).** `mccfr_solve(continuation=c, stack_bb=...)` adds
