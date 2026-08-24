@@ -909,3 +909,44 @@ MAX_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS = 200
 # that differ only in seed, which is the multiway instability M73/M74
 # and M111 already document, seen from a new angle.
 MULTIWAY_STACK_BUCKET_BB = 5.0
+
+
+# M128. The postflop counterpart to SIZING_CAVEAT_REASON, and it exists
+# for a measured reason rather than a suspected one.
+#
+# Postflop the derived range is capped to MAX_PATH_QUERY_CLASSES_PER_SIDE
+# classes per side — a pure COST control, with no strategic meaning, that
+# the user never sees. Sweeping it from 10 to 26 on one flop spot moves a
+# value hand's aggression **non-monotonically over a 250x range**:
+#
+#     cap        10    12    14    16    18    20    22    24    26
+#     9s9d set  .003  .004  .019  .025  .771  .071  .122  .393  .402
+#     QdQh      .007  .006  .006  .031  .533  .018  .023  .023  .032
+#
+# Both spike at 18 classes and collapse again; the overpair reverses
+# direction five times. This is NOT noise — solving twice at the same cap
+# gives a delta of exactly 0.0, so each figure is exact for its cap.
+#
+# **M127 got this wrong and M128 corrected it.** M127 compared two caps
+# (10 and 26), saw 0.25% against 40.2%, and called it a systematic bias
+# toward slow-playing. Nine caps show it is not a direction at all. Same
+# error shape as M110's "the button opens tighter than under the gun",
+# which M111 withdrew: a two-point difference read as a trend.
+#
+# Widening is not an escape either — cap 26 takes one flop decision from
+# 10.8s to 52.1s, 4.8x — so no setting is both affordable and stable.
+# Until the cause is understood, the honest move is the one M98 already
+# established for preflop sizing: say so.
+#
+# Scoped to the AGGRESSION axis and to postflop only. Whether to continue
+# is not implicated — that is the fold/play call, which held up across
+# 275 advised decisions in M127's play session.
+POSTFLOP_AGGRESSION_CAVEAT_REASON = (
+    "How often to bet or raise here is not reliable. The range this solve models is "
+    "capped for cost, and sweeping that cap moves a strong hand's raising frequency "
+    "erratically — a flopped set has measured anywhere from 0.3% to 77% aggression "
+    "across cap settings, without moving in a consistent direction. Whether to "
+    "continue at all is far sounder than how aggressively to do it: treat the "
+    "fold-versus-play call as the usable part, and the bet sizing and frequency as a "
+    "rough hint."
+)

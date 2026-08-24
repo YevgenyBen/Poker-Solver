@@ -216,6 +216,14 @@ class AdviseResponse(BaseModel):
     #             non-fold actions moves with the random seed
     sizing_confidence: str = "high"
     sizing_confidence_reason: str | None = None
+    # M128: scoped to how often to bet or raise, postflop only. The
+    # range a postflop solve models is capped for COST, and sweeping that
+    # cap moves a value hand's aggression non-monotonically over a 250x
+    # range (0.3% to 77% for a flopped set) with no stable affordable
+    # setting. Deliberately separate from `sizing_confidence`, which is
+    # preflop and is about which size to pick among the non-fold actions.
+    aggression_confidence: str = "high"
+    aggression_confidence_reason: str | None = None
 
 
 class SolveResponse(BaseModel):

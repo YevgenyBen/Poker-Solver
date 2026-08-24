@@ -490,4 +490,30 @@ describe('AdviseSolver', () => {
     );
     expect(screen.queryByText('AKs')).not.toBeInTheDocument();
   });
+
+  it('warns that postflop aggression is only a rough hint', async () => {
+    // M128: the range a postflop solve models is capped for COST, and
+    // sweeping that cap moves a value hand's raising frequency
+    // non-monotonically across a 250x range (0.3% to 77% for a flopped
+    // set). So the user is told that how aggressively to play is a hint
+    // — while the fold-versus-play call, which held across 275 advised
+    // decisions in M127's play session, is deliberately not implicated.
+    vi.stubGlobal(
+      'fetch',
+      mockFetch(walkFor, () =>
+        adviceResponse({
+          aggression_confidence: 'low',
+          aggression_confidence_reason:
+            'How often to bet or raise here is not reliable. Treat the fold-versus-play call as the usable part.',
+        }),
+      ),
+    );
+    render(<AdviseSolver />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Get advice' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Get advice' }));
+
+    const warning = await screen.findByRole('alert');
+    expect(warning).toHaveTextContent(/How aggressively to play is a rough hint/);
+    expect(warning).toHaveTextContent(/not reliable/);
+  });
 });

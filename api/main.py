@@ -1255,6 +1255,28 @@ async def advise_endpoint(request: AdviseRequest):
                 and request.players in cfg.SIZING_CAVEAT_TABLE_SIZES
                 else None
             ),
+            # M128: the postflop counterpart. Scoped to the AGGRESSION
+            # axis — how often to bet or raise — because that is what was
+            # measured to be unstable. Sweeping the cost-only range cap
+            # from 10 to 26 classes moves a value hand's raising
+            # frequency non-monotonically across a 250x range, and no
+            # affordable setting is stable. The fold-versus-play call
+            # held up across 275 advised decisions (M127), so it is
+            # deliberately NOT implicated here.
+            #
+            # Every postflop street, every table size: the cap applies to
+            # all of them. M99's reason for not flagging postflop was
+            # that its terminal-pricing distortion was an order of
+            # magnitude below preflop's; this is a different and much
+            # larger effect, measured directly.
+            "aggression_confidence": (
+                "low" if raw.get("street") != "preflop" else "high"
+            ),
+            "aggression_confidence_reason": (
+                cfg.POSTFLOP_AGGRESSION_CAVEAT_REASON
+                if raw.get("street") != "preflop"
+                else None
+            ),
         }
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

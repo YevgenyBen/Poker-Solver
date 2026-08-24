@@ -6691,3 +6691,41 @@ entry's own corrections before trusting its conclusions.
     correctly refused them (19 of 20 recorded failures — the error
     message named the problem and the fix). Latency was measured on a
     machine also running other work, so it is an upper bound.
+
+- **M128 — deep maximal diagnostic, and a correction to M127.** M124/M125
+  measured structure, constraints, endpoints and the browser; M127 then
+  found a 4.9 GB cache by PLAYING. So this one asked, per subsystem:
+  what does the existing guarantee literally promise, and what does a
+  real caller need? Report in `docs/diagnostic-2026-08-25.md`.
+  - **Six checks, no new defects.** Evicted entries are genuinely freed
+    (weakrefs die — the ceiling is real, not cosmetic); `_key_locks` is
+    pruned with its entries (0 after 200 distinct keys at maxsize 4);
+    repeated **cold** solves agree to delta **0.0**; board card ordering
+    is irrelevant to delta **0.0**; and M127's cache fix holds with
+    nothing over budget and a **530 MB** combined ceiling. The first two
+    matter because of M127: a byte ceiling is worthless if eviction does
+    not release, or if something leaks beside the capped thing.
+  - **Two near-misses caught before reporting.** Pool size varying with
+    hero's hand (131/136/133) is correct blocker behaviour; returned
+    combos sharing hero's cards is correct too — `strategy` is the
+    ACTING SEAT's own range, so its members are alternative holdings,
+    not simultaneous ones. Eighth and ninth time this audit that a check
+    needed checking before its result meant anything.
+  - **F34: postflop value-hand aggression is unstable against the range
+    cap** — and this **corrects M127**. M127 compared caps 10 and 26,
+    saw 0.25% against 40.2%, and called it a systematic slow-play bias.
+    Sweeping nine caps shows it is not a direction at all:
+    a set measures .003 .004 .019 .025 **.771** .071 .122 .393 .402 and
+    an overpair reverses direction **five times**. Both spike at 18
+    classes and collapse. **Not noise** — same-cap solves differ by
+    exactly 0.0. **Same error shape as M110 -> M111**: a two-point
+    difference read as a trend.
+  - **Widening is not an escape**: cap 26 takes one flop decision from
+    10.8s to **52.1s**, 4.8x. No setting is both affordable and stable.
+  - **So the response is M98's**: tell the user.
+    `POSTFLOP_AGGRESSION_CAVEAT_REASON` ships on every postflop
+    `/advise` response as `aggression_confidence`, rendered in
+    `AdviseSolver.tsx`. **Scoped to the aggression axis deliberately** —
+    the fold-versus-play call held across 275 advised decisions in M127,
+    and a test asserts the caveat does not over-claim onto it.
+  - Backend 954 passed, frontend 157 passed.

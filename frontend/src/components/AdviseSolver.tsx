@@ -511,6 +511,14 @@ export function AdviseSolver() {
             </p>
           )}
 
+          {result.aggression_confidence === 'low' && (
+            <p className="solver-warning" role="alert">
+              <strong>How aggressively to play is a rough hint.</strong>{' '}
+              {result.aggression_confidence_reason ??
+                'The range this solve models is capped for cost, and the raising frequency of a strong hand moves erratically with that cap.'}
+            </p>
+          )}
+
           {result.range_confidence && (
             <p className="depth-hint">
               Range confidence:{' '}
