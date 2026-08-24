@@ -6178,3 +6178,37 @@ entry's own corrections before trusting its conclusions.
     that is only remembered, and the machinery is the scaffolding a
     range-keyed retry would need anyway.
   - **Verification:** 897 backend tests, 154 frontend.
+
+- **M116 — why M115 failed: the building RANGE, not just the key.**
+  M115 refuted the continuation-value fix and blamed `continuation_key`
+  for carrying no range-strength dimension. That named one candidate and
+  did not separate it from a second: the table was BUILT against a
+  uniform 12-class spread across all 169 hands, far weaker than any range
+  that actually reaches a preflop showdown terminal (M108 measured a
+  raiser's range weighting KK 640x above T2o).
+  - **Measured, holding the canonical key fixed and changing only the
+    building range** (shared core of four hands, differing only in what
+    surrounds them):
+    | hand | vs loose range | vs tight range | delta |
+    |---|---|---|---|
+    | AA | 0.957 | 0.879 | -0.078 |
+    | KK | 0.639 | 0.463 | -0.176 |
+    | QQ | 0.551 | 0.344 | -0.207 |
+    | AKo | 0.652 | 0.421 | **-0.231** |
+    Values shift by up to **0.23 of the pot** on quantities whose own
+    magnitude is 0.3-1.0 — a large fraction of the signal, and every hand
+    correctly worth LESS against a tighter opponent range.
+  - **So the two candidates are one fix, not alternatives.** No key
+    refinement compensates for a table built against the wrong game. A
+    future attempt must key BY range strength *and* build each entry with
+    a range of that strength.
+  - **The first fixture could not see the effect.** It sampled a uniform
+    spread that overlapped the raiser range on **AA alone**, measured a
+    0.04 delta, and read as evidence of insensitivity. A fixture too thin
+    to detect an effect is not evidence the effect is absent — the same
+    shape as M105's stratification lesson, and caught the same way, by
+    checking what the fixture actually compared instead of trusting the
+    number.
+  - Pinned by a test asserting both the magnitude (>0.10 of pot) and the
+    direction (every hand worth less against a tighter range), so the
+    sensitivity cannot be "optimized" away by sharing one table.

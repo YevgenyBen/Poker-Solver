@@ -168,3 +168,58 @@ def test_the_table_ranks_hands_and_responds_to_stack_depth():
     assert table[shallow_key]["72o"] < table[deep_key]["72o"], (
         "trash should be worth less at low SPR, having less room to bluff"
     )
+
+
+def test_the_table_is_strongly_sensitive_to_the_range_it_is_built_from():
+    """M116. The reason M115's fix failed, pinned so it cannot be
+    "optimized" away by sharing one table across ranges.
+
+    A continuation value is the EV of playing a spot against a SPECIFIC
+    opponent range. Holding the canonical key fixed and changing only the
+    range the table is built from moves values by up to 0.23 of the pot,
+    on values whose own magnitude is 0.3-1.0 — a large fraction of the
+    signal.
+
+    M115 built all 27 spots from ONE uniform spread and the fix came out
+    null. This is why: no key refinement compensates for a table built
+    against the wrong game. A future attempt must key BY range strength
+    *and* build each entry with a range of that strength — two halves of
+    one fix, not alternatives.
+
+    Both ranges share a CORE of four hands and differ only in what
+    surrounds them, so the comparison isolates "same hand, different
+    opponent range". An earlier version of this fixture sampled a uniform
+    spread that overlapped the raiser range on AA alone, measured a 0.04
+    delta, and looked like evidence of insensitivity — a fixture too thin
+    to see the effect, not an absent effect.
+    """
+    from poker_solver.continuation import build_continuation_table, continuation_key
+    from poker_solver.starting_hands import StartingHand as Hand
+
+    core = {Hand("A", "A"): 1.0, Hand("K", "K"): 1.0,
+            Hand("A", "K", suited=False): 1.0, Hand("Q", "Q"): 1.0}
+    loose = {**core, Hand("7", "2", suited=False): 1.0, Hand("8", "3", suited=False): 1.0,
+             Hand("9", "4", suited=False): 1.0, Hand("T", "5", suited=False): 1.0}
+    tight = {**core, Hand("J", "J"): 1.0, Hand("T", "T"): 1.0,
+             Hand("A", "Q", suited=True): 1.0, Hand("K", "Q", suited=True): 1.0}
+
+    key = continuation_key(10.0, 95.0, 2)
+    spots = {key: (10.0, 95.0)}
+    against_loose = build_continuation_table(spots, loose, dict(loose),
+                                             boards=2, iterations=150, seed=11)[key]
+    against_tight = build_continuation_table(spots, tight, dict(tight),
+                                             boards=2, iterations=150, seed=11)[key]
+
+    shared = sorted(set(against_loose) & set(against_tight))
+    assert len(shared) >= 4, f"fixture lost its shared core: {shared}"
+
+    deltas = {label: against_tight[label] - against_loose[label] for label in shared}
+    assert max(abs(v) for v in deltas.values()) > 0.10, (
+        f"continuation values barely moved when the building range changed ({deltas}) — "
+        "either the builder is ignoring its ranges, or this fixture cannot discriminate"
+    )
+    # Directional, and a poker fact: every hand is worth less against a
+    # tighter opponent range.
+    assert all(v < 0 for v in deltas.values()), (
+        f"a hand gained value against a TIGHTER opponent range: {deltas}"
+    )
