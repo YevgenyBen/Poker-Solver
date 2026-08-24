@@ -6267,3 +6267,40 @@ entry's own corrections before trusting its conclusions.
     their own raise, and a dropped entering pot were each caught by
     thousands of violations. The fourth mutation — deleting F28's
     exclusion — was not caught, which *is* F28.
+
+- **M118 — audit round 11: canonical strategy transport. No defect
+  found.** The library's whole value proposition is that one solve
+  serves every suit-isomorphic board; if the translation back into the
+  caller's real suits is wrong, a hit returns a real strategy for the
+  WRONG HAND and nothing downstream can tell, because the numbers look
+  as healthy as they would if it were right.
+  - **The gap this closes is M21's own correction.** M20 claimed a hit
+    serves any isomorphic board exactly; M21 withdrew the bit-exact half
+    because flop equity is sampled and the deck's suit-dependent
+    iteration order draws different runouts for two differently-suited
+    isomorphic boards. Right correction — and it left the crux asserted
+    but unchecked, since the obvious check (compare strategy numbers) is
+    exactly the one the noise ruins.
+  - **What is exact: hand STRENGTH is not sampled.** A correctly
+    translated combo must make the same five-card hand against the
+    canonical board that the original makes against the real one.
+    **16,000 (board, hero) pairs across flop/turn/river plus monotone
+    and paired flops: zero round-trip failures, zero collisions with the
+    canonical board, zero strength changes.** Monotone and paired boards
+    are in deliberately — largest automorphism groups, and exactly where
+    M19's rejected single-pass canonicalization under-collapsed.
+  - **End to end**: six isomorphic boards against one stored solve give
+    an *identical* multiset of strategy rows, and every returned key is
+    a combo legal against the board that ASKED rather than the board
+    that was solved. Swept for leaks: nothing outside `library.py` reads
+    an entry's untranslated canonical-space strategy.
+  - **The mutation that justifies the strength check**: replacing the
+    returned `suit_map` with a DIFFERENT valid permutation leaves the
+    round-trip a flawless bijection — 0 failures, so a round-trip-only
+    test passes it — while tripping strength 466 times and board
+    collisions 2,119 times. The other two mutations (uninverted map;
+    translating one card of two) were caught 8,765 times and by crash.
+    The end-to-end test was checked separately: swapping
+    `lookup_strategy`'s translation for a raw `dict(entry.strategy)`
+    fails on the first board, the solved one included — `Ac Kd 7h`
+    canonicalizes to `7c Kd Ah`, so even it needs translating.
