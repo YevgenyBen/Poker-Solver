@@ -24,7 +24,7 @@ from starlette.concurrency import run_in_threadpool  # noqa: F401  (re-exported 
 
 from poker_solver.canonicalize import canonical_stack_depth, canonicalize_board
 from poker_solver.cards import parse_cards
-from poker_solver.combos import HandCombo, range_from_class_frequencies
+from poker_solver.combos import combo_class, HandCombo, range_from_class_frequencies
 from poker_solver.equity import MultiwayEquityCache
 from poker_solver.game_tree import (
     CALL_OR_CHECK,
@@ -719,11 +719,7 @@ def _combo_to_class(combo) -> StartingHand:
     No pair special-case is needed: two distinct cards of the same rank
     must differ in suit, so `suited` is already False for every pair.
     """
-    return StartingHand(
-        combo.card_a.rank,
-        combo.card_b.rank,
-        suited=combo.card_a.suit == combo.card_b.suit,
-    )
+    return combo_class(combo)
 
 
 @dataclasses.dataclass(frozen=True)

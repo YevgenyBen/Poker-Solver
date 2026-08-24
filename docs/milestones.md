@@ -6093,3 +6093,39 @@ entry's own corrections before trusting its conclusions.
     the change cannot grade its own homework: AA's jam 0.615 -> ~0.03 at
     12k, and fold mass no longer flat at 0.82-0.84 across UTG/MP/CO/BTN.
   - **Verification:** 894 backend tests (up from 887), 154 frontend.
+
+- **M114 — the continuation-value precompute.** M113 built the primitive
+  (what a continuation value IS); this builds the table M112's costing
+  called for, and the numbers carry real postflop structure.
+  - **`continuation_key(pot, chips_behind, live_seats)`** — the canonical
+    identity of a terminal's FOLLOWING game. Bucketed on **log2(SPR)**,
+    not raw SPR: postflop play changes with the order of magnitude of the
+    stack-to-pot ratio (SPR 1 vs 2 is a different game; 20 vs 21 is not).
+    This is what collapses M112's 15,254 terminals to 27.
+  - **`build_continuation_table`** returns EV per hand class **as a
+    multiple of the pot**, so one solved spot serves every real terminal
+    sharing its key — the point of the canonicalization. Boards are
+    sampled, not enumerated: 1,755 canonical flops per spot is not
+    affordable and the value is an average over runouts anyway.
+  - **The numbers show solved structure, not programming.** At SPR ~9.5
+    vs ~1.5: AA 0.775 -> **0.867** (worth MORE shallow, where opponents
+    have less room to outplay it), 72o 0.281 -> **0.246** (worth LESS
+    shallow, with less room to bluff), and AA > JTs > KQs > 72o at both
+    depths. Cost 2.0s for 2 spots x 2 boards, so ~40s for the full 27 —
+    better than M112's estimate.
+  - **The approximation is stated in the code, not buried.** The key
+    carries SPR and live count and NOT range strength, so a three-bet pot
+    and a limped pot at the same SPR are treated alike. That is a real
+    fidelity cost and it is unmeasured; M112 flagged it as the open
+    question. If validation fails, adding a range-strength dimension is
+    the first thing to try, not more boards.
+  - **`combo_class` moved into the engine** (`poker_solver/combos.py`,
+    beside `HandCombo`) because the engine needed it and must not import
+    from `api/` — the boundary is enforced by
+    `tests/test_package_boundary.py`. `api/solving.py`'s `_combo_to_class`
+    delegates rather than keeping a second copy.
+  - **Same NaN treatment as `solve_flop`.** Conflicting (hero, villain)
+    combo pairs come back NaN from `build_board_equity_table`, and a
+    neutral 0.5 stands in — using a differently-prepared table would
+    price the EV against a different game than the one solved.
+  - **Verification:** 897 backend tests (up from 894), 154 frontend.
