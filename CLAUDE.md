@@ -132,8 +132,18 @@ requests now reject unknown fields by name rather than ignoring them.
   seed variance) gives c=0 vs c=0.25 a delta of **-0.060 +/- 0.137,
   falling in 5/9** — a coin flip. Kept default 0.0 for reproducibility;
   costs no memory.
-  A real fix needs SOLVED flop continuation values, and that milestone
-  cannot be justified or costed on this evidence.
+  A real fix needs SOLVED flop continuation values. **M112 costed that
+  milestone** (M100 said it could not be): 6-max has 15,254 showdown
+  terminals with money behind, which looks like 8.3 hours — but they
+  collapse to **27 distinct spots** when keyed on (log2 SPR, live-seat
+  count), the same trick the canonical library already uses. Cost is
+  near-quadratic in range width (21 combos/side 0.272s, 66 -> 2.32s,
+  379 -> 58.2s), so at the existing `MAX_PATH_QUERY_CLASSES_PER_SIDE`
+  it is ~10 min of offline precompute per (depth, table size), ~3 min at
+  three sampled boards. **Affordable.** Unvalidated: whether a
+  continuation value computed at CAPPED ranges is accurate enough to fix
+  anything. Validation targets are known — AA's jam 0.615 -> ~0.03 at
+  12k, and fold mass no longer flat at 0.82-0.84 across UTG/MP/CO/BTN.
 - **The pricing flaw reaches the FLOP too, but ~10x smaller (M99).**
   `solve_flop` is flop-only (two unmodelled streets) and serves heads-up
   flop advice. Same board/ranges/pot/stack/sizes, varying only how much

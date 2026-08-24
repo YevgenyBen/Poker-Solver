@@ -193,3 +193,91 @@ This is a **new** defect class. M98 established that the SIZING axis is
 structurally broken and treated fold-vs-play as the reliable half. The
 reliable half has its own positional defect, and users were being told to
 trust it.
+
+---
+
+# Costing the architectural fix (M112)
+
+M98 found the root cause of the sizing defect: preflop terminals are
+priced at raw showdown equity, so every non-all-in line is underpriced.
+M111 showed the same understatement explains the positional defect — if
+playing is equally underpriced at every seat, the fold/play boundary
+cannot move with position. **One cause, two symptoms.**
+
+M100 tested a crude linear stand-in, refuted it, and concluded the real
+fix needs solved postflop continuation values — a milestone that "cannot
+be justified or costed on this evidence". There is now more evidence, so
+this costs it. Measurement, not a build.
+
+## The naive framing says impossible
+
+| table | tree nodes | fold terminals | all-in (priced right) | showdown needing continuation |
+|---|---|---|---|---|
+| heads-up | 46 | 15 | 8 | **7** |
+| 6-max | 151,960 | 9,105 | 31,033 | **15,254** |
+
+At 0.195s per flop solve and 10 sampled boards, 15,254 terminals is
+**8.3 hours per preflop solve**. And note where it lands: affordable at
+heads-up (7 terminals) which does not have the defect, infeasible at
+6-max which does.
+
+## Canonicalization changes the answer
+
+A continuation value does not depend on which action sequence reached a
+terminal. It depends on the game that follows — the pot, the money
+behind, and which seats are live. That is M20's canonical-library
+observation applied one street earlier.
+
+Keying on (log2 SPR bucket, live-seat count):
+
+| table | terminals | distinct spots | precompute |
+|---|---|---|---|
+| heads-up | 7 | **4** | 7.8s |
+| 6-max | 15,254 | **27** | 52.7s |
+| 6-max (quarter-SPR buckets) | 15,254 | 40 | 78.0s |
+
+**15,254 terminals collapse to 27 distinct games.**
+
+## But the cost depends on range width, near-quadratically
+
+The numbers above use `solve_flop` at the 19-combo demo range. Real
+derived ranges are wider, and this scales badly:
+
+| combos per side | seconds |
+|---|---|
+| 21 | 0.272 |
+| 66 | 2.32 |
+| 193 | 14.71 |
+| 379 | 58.16 |
+
+18x the combos costs 214x the time. So the verdict is entirely a function
+of how wide the ranges at those terminals are allowed to be:
+
+| range width | 27 spots x 10 boards | verdict |
+|---|---|---|
+| 21 combos | 73s | comfortable |
+| **66 combos** (the current `MAX_PATH_QUERY_CLASSES_PER_SIDE = 10`) | **10.4 min** | feasible offline |
+| 193 combos | 66 min | too slow |
+| 379 combos | 4.4 hours | infeasible |
+
+At three sampled boards instead of ten, the current-cap row drops to ~3
+minutes per (stack depth, table size). The startup pre-warm already runs
+~15 minutes in a background daemon thread, so this fits inside work the
+server already does.
+
+## Verdict
+
+**M100's "cannot be costed" is now costed: affordable as an offline
+precompute, at the cap widths this project already uses.** The naive
+framing made it look impossible by a factor of ~50; the collapse is what
+makes it tractable, and it is the same trick the library already relies
+on.
+
+**What is NOT established**, and must not be skipped by whoever builds
+it: whether a continuation value computed at *capped* ranges is accurate
+enough to fix anything. The caps exist as M24-era cost controls for a
+different purpose, and their effect on continuation-value fidelity is
+unmeasured. M100's lesson stands — a mechanism that produces plausible
+numbers is not thereby correct, and the validation targets are already
+known: AA's jam should fall from 0.615 toward ~0.03 at 12k, and the fold
+mass should stop being flat at 0.82-0.84 across UTG/MP/CO/BTN.
