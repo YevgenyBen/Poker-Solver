@@ -203,7 +203,11 @@ requests now reject unknown fields by name rather than ignoring them.
   (~0.45); when it folds to SB the spot is heads-up vs BB, so ~0.80-0.87
   is the right reference and 0.806 is close to correct. Corrected M111,
   the same remembered-reference error M106 recorded. `SIZING_CAVEAT_REASON`
-  was corrected — it used to say "trust the fold-vs-play call".
+  was corrected — it used to say "trust the fold-vs-play call". **M123
+  corrected it again**: it still told users "at 6-max the button has
+  measured TIGHTER than under the gun", which is M110's claim and the
+  one M111 withdrew in the same breath. It now states the flat result
+  that was actually measured.
   Heads-up is unaffected (BTN opens 0.871, inside the 0.70-0.95 band).
 - **Equity noise explains the sizing INSTABILITY, not its level (M98).**
   A 50-sample multiway equity estimate has error sd 0.091 — **+/-55bb of

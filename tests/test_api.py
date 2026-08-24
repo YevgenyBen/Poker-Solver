@@ -3759,3 +3759,56 @@ def test_the_river_combo_cap_is_a_no_op_when_the_range_already_fits():
     freqs = {StartingHand("A", "A"): 0.9, StartingHand("K", "Q", suited=True): 0.4}
     expected = range_from_class_frequencies(freqs, exclude=board)
     assert _cap_range_to_combos(freqs, 100, board) == expected
+
+
+def test_the_sizing_caveat_does_not_repeat_a_withdrawn_measurement():
+    """M123 (audit round 15). A user-facing string is the last place a
+    retracted measurement should survive.
+
+    This text used to tell users "at 6-max the button has measured
+    TIGHTER than under the gun". That is M110's claim, and **M111
+    withdrew it in the same milestone that sharpened the finding** — the
+    1.7pp gap it rested on is smaller than the 2.8pp CO varies between
+    seeds. M111's actual result is stronger and simpler: among the
+    non-blind seats position is not learned at all, fold mass flat at
+    0.82-0.84 across UTG/MP/CO/BTN.
+
+    Guarded by shape, not just by phrasing: the caveat must describe
+    flatness, and must not assert that any one seat opens tighter or
+    looser than another, which is the form of claim that was retracted.
+    """
+    caveat = api_config.SIZING_CAVEAT_REASON.lower()
+
+    assert "flat" in caveat, "the caveat should state what was measured: a flat range"
+    for withdrawn in ("tighter than", "looser than", "wider than"):
+        assert withdrawn not in caveat, (
+            f"the caveat asserts a seat-vs-seat comparison ({withdrawn!r}); M111 withdrew "
+            "exactly that claim as an over-read of a gap smaller than seed variance"
+        )
+
+
+@pytest.mark.parametrize("players,solver,sizing", [
+    (2, "high", "high"), (3, "high", "low"), (6, "high", "low"), (9, "low", "low"),
+])
+def test_every_honesty_signal_reaches_the_caller_with_a_reason(client, players, solver, sizing):
+    """M123. The engine can be right and the product still mislead. Each
+    caveat must arrive with a plain-language reason attached whenever it
+    fires, and must NOT fire (or carry a reason) when it does not apply.
+
+    Heads-up is clean on both axes because it solves exactly (CFR+)
+    against a precomputed table. 9-max is low on both. The sizing caveat
+    is deliberately preflop-only — M99 measured the flop-level analogue
+    at ~5pp per street and chose not to surface it, on the grounds that
+    flagging every postflop response would devalue the preflop warning
+    that marks a genuinely unusable axis.
+    """
+    response = client.post("/advise", json=_advise_body(preflop_action_path=[], players=players))
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["solver_confidence"] == solver
+    assert bool(body["solver_confidence_reason"]) is (solver == "low"), (
+        "a reason must be present exactly when the signal fires"
+    )
+    assert body["sizing_confidence"] == sizing
+    assert bool(body["sizing_confidence_reason"]) is (sizing == "low")

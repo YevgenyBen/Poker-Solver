@@ -815,15 +815,26 @@ SIZING_CAVEAT_TABLE_SIZES = {
 # individual hands are classified sensibly (40 random deals produced zero
 # categorical violations: premiums never folded, trash folded), but the
 # RANGE WIDTH per seat does not reproduce positional advantage.
+# M123 corrected the second half of this text. It used to tell users
+# "at 6-max the button has measured TIGHTER than under the gun" — which
+# is M110's claim, and **M111 withdrew it in the same milestone that
+# sharpened the finding**: the 1.7pp gap it rested on is smaller than
+# the 2.8pp CO varies between seeds. What M111 actually established is
+# stronger and simpler — among the non-blind seats position is not
+# learned AT ALL, with fold mass flat at 0.82-0.84 across UTG/MP/CO/BTN.
+# A user-facing string is the last place a retracted measurement should
+# survive, so this now says the thing that was measured.
 SIZING_CAVEAT_REASON = (
     "Multiway preflop is unreliable for which sizing to use: the split among the "
     "non-fold actions (limp / raise / all-in) moves with the random seed — at 6-max, "
     "AA's all-in frequency has measured anywhere from 0.03 to 0.92 where a converged "
-    "solve puts it near 0.03. The fold-vs-play call is sounder but NOT fully GTO "
-    "either: individual hands are classified sensibly, while the overall opening "
-    "range does not widen with position the way GTO does — at 6-max the button has "
-    "measured TIGHTER than under the gun. Treat this as a strong hint about whether "
-    "a hand is playable, not as a positional range chart."
+    "solve puts it near 0.03. The fold-vs-play call is sounder but is NOT a positional "
+    "range chart: individual hands are classified sensibly (premiums are never folded, "
+    "trash is), while the opening range does not widen with position at all — at 6-max "
+    "the fold frequency is flat across UTG, MP, CO and BTN, where real GTO play widens "
+    "from roughly 15% of hands under the gun to roughly 45% on the button. Treat this "
+    "as a strong hint about whether a hand is playable, not as a guide to how position "
+    "should change your range."
 )
 # The flop-leg budget for /solve_turn_multiway_from_path — the multiway
 # TURN sibling of DEFAULT/MAX_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS above.
