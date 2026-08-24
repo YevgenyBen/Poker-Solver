@@ -175,3 +175,70 @@ def test_unbounded_caches_keep_everything():
     for i in range(200):
         cache.store(i, i)
     assert len(cache.entries) == 200
+
+
+def test_no_solve_cache_is_unbounded():
+    """M104. Every solve cache must have a ceiling, because every cache
+    key in this app is reachable from a request.
+
+    Two were deliberately unbounded, justified as "at most a few dozen
+    entries ever exist, filled by the startup pre-warm". That describes
+    the entries the PRE-WARM creates, not the key: both are keyed on
+    `round(stack_bb)`, which comes from the client. A caller walking
+    stack depths mints a new entry per integer depth forever, measured at
+    **0.152 MB of heap per distinct depth**.
+
+    It also composes with a finding that was correct in isolation: M102
+    measured `stack_bb: 1e9` as absurd-but-valid and left it uncapped,
+    since the response is structurally right and no principled ceiling
+    exists. Fine alone; feeding an unbounded cache, it is a
+    memory-exhaustion path. **Neither is a defect by itself**, which is
+    why this test asserts the invariant over ALL caches rather than
+    naming the two that were wrong — the next one added will be wrong the
+    same way.
+    """
+    from api import caches as caches_module
+
+    # Inspect the MODULE's own caches, not `_SolveCache.registered()`.
+    # The registry is class-level and shared, so it also contains every
+    # throwaway cache the tests above construct — asserting over it would
+    # make this test fail for reasons that have nothing to do with the app.
+    module_caches = [
+        value
+        for value in vars(caches_module).values()
+        if isinstance(value, caches_module._SolveCache)
+    ]
+    assert module_caches, "found no caches to check — has the module layout changed?"
+
+    # `multiway_equity` is keyed by the HAND POOL, which is a config
+    # constant rather than anything a request supplies, so its key space
+    # is effectively one entry and a ceiling would add nothing. Listed
+    # explicitly with the reason, so that adding a name here stays a
+    # decision rather than a shrug.
+    keyed_by_config_not_request = {"multiway_equity"}
+
+    unbounded = [
+        c.name
+        for c in module_caches
+        if c.maxsize is None and c.name not in keyed_by_config_not_request
+    ]
+    assert not unbounded, (
+        f"unbounded solve caches with request-reachable keys: {unbounded}. "
+        "An unbounded cache keyed on request input is unbounded growth."
+    )
+
+
+def test_the_expensive_caches_keep_a_generous_ceiling():
+    """The other half: bounding them must not make them useless.
+
+    Multiway entries cost 75-140s to rebuild and the pre-warm fills them
+    on purpose, so the ceiling has to bind only under adversarial
+    variety — never under the handful of depths a real session touches.
+    Asserted as a floor on the limit so a later "tidy-up" cannot quietly
+    shrink it to something that evicts pre-warmed work.
+    """
+    from api import caches as caches_module
+
+    by_name = {c.name: c for c in caches_module._SolveCache.registered()}
+    assert by_name["multiway"].maxsize >= 32
+    assert by_name["preflop_raw"].maxsize >= 64
