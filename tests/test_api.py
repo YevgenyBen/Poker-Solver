@@ -3525,3 +3525,83 @@ def test_the_same_question_gets_the_same_answer_twice(client, label, body):
         f"{label}: two cold solves of the same spot disagreed — the solve is "
         "carrying state between runs"
     )
+
+
+# ---------------------------------------------------------------------------
+# M108 — what a failing solve must never do
+# ---------------------------------------------------------------------------
+
+
+def test_a_failing_solve_never_returns_confident_advice(client, monkeypatch):
+    """The worst possible outcome for this product, asserted directly.
+
+    Every other test in this suite exercises the happy path or a request
+    rejected BEFORE solving. Nothing asked what happens when the solver
+    itself raises — and the failure mode that would matter is not an
+    ugly error, it is a **200 with fabricated advice**, which is the
+    thing this whole codebase's honesty machinery exists to prevent.
+
+    So: an exception from the solver must propagate as a server error,
+    never be swallowed into a plausible-looking answer. Deliberately NOT
+    converted into a friendly 422 — dressing a bug up as a validation
+    failure would hide it.
+    """
+    import poker_solver.library as library
+
+    state = {"calls": 0}
+    real_solve = library.solve_flop
+
+    def exploding_solve(*args, **kwargs):
+        state["calls"] += 1
+        raise RuntimeError("simulated solver failure")
+
+    monkeypatch.setattr(library, "solve_flop", exploding_solve)
+    caches._SolveCache.clear_all()
+
+    body = _advise_body(preflop_action_path=["raise", "call_or_check"],
+                        hero_cards="AsKh", board="Kd7c2h", players=2, stack_bb=100.0)
+    with pytest.raises(RuntimeError, match="simulated solver failure"):
+        client.post("/advise", json=body)
+    assert state["calls"] > 0, (
+        "the injected failure never fired — this test proves nothing. "
+        "Check that the flop path still solves through poker_solver.library."
+    )
+
+
+def test_a_failed_solve_does_not_corrupt_the_next_answer(client, monkeypatch):
+    """Recovery is not just "the next request returns 200" — a
+    partially-written cache entry would also return 200, with advice
+    derived from it.
+
+    So the post-failure answer is compared against a CLEAN one, computed
+    before any failure happened. They must be identical.
+    """
+    import poker_solver.library as library
+
+    real_solve = library.solve_flop
+    body = _advise_body(preflop_action_path=["raise", "call_or_check"],
+                        hero_cards="AsKh", board="Kd7c2h", players=2, stack_bb=100.0)
+
+    caches._SolveCache.clear_all()
+    clean = client.post("/advise", json=body).json()
+
+    state = {"calls": 0}
+
+    def fail_once(*args, **kwargs):
+        state["calls"] += 1
+        if state["calls"] == 1:
+            raise RuntimeError("simulated solver failure")
+        return real_solve(*args, **kwargs)
+
+    monkeypatch.setattr(library, "solve_flop", fail_once)
+    caches._SolveCache.clear_all()
+    with pytest.raises(RuntimeError):
+        client.post("/advise", json=body)
+
+    # Deliberately NOT clearing the caches here: the point is to see
+    # whatever the failed request left behind.
+    recovered = client.post("/advise", json=body)
+    assert recovered.status_code == 200, "the server stayed broken after one failed solve"
+    assert recovered.json()["strategy"] == clean["strategy"], (
+        "the answer after a failure differs from a clean one — a partial entry survived"
+    )
