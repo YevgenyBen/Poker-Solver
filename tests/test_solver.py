@@ -18,6 +18,7 @@ from poker_solver.game_tree import (
     GameConfig,
     TerminalNode,
     build_game_tree,
+    resolve_action,
     postflop_action_order,
     walk,
 )
@@ -2335,3 +2336,103 @@ def test_six_max_converges_with_a_realistic_pool():
         )
         # A strong hand should not be folding under the gun at any point.
         assert more < 0.35, f"{hand} folds {more:.1%} at UTG — implausible for a real pool"
+
+
+# ---------------------------------------------------------------------------
+# M108 — reach multiplication has to mean something
+# ---------------------------------------------------------------------------
+
+
+def _premium_concentration(weights):
+    """Share of a derived range's weight held by AA and KK."""
+    total = sum(weights.values())
+    assert total > 0, "derived range is empty"
+    premium = weights.get(StartingHand("A", "A"), 0.0) + weights.get(StartingHand("K", "K"), 0.0)
+    return premium / total
+
+
+def _trash_concentration(weights):
+    total = sum(weights.values())
+    trash = (weights.get(StartingHand("T", "2", suited=False), 0.0)
+             + weights.get(StartingHand("J", "4", suited=False), 0.0))
+    return trash / total
+
+
+def test_an_aggressive_line_derives_a_stronger_range_than_a_passive_one():
+    """`derive_ranges_from_path` turns "here is what happened" into "here
+    is what each player can hold", and every postflop solve is seeded
+    from its output — so a wrong range makes every downstream strategy
+    wrong while looking entirely normal. M108's audit found nothing
+    testing it.
+
+    Asserted COMPARATIVELY rather than against fixed weights: the exact
+    numbers depend on the preflop solve's own budget and would make this
+    a brittle snapshot. What must hold regardless is the ordering — a
+    player who three-bet holds a stronger range than one who raised, who
+    holds a stronger range than one who limped. If reach multiplication
+    stopped happening, all three would collapse toward the same prior.
+    """
+    result = solve_preflop(stack_bb=100.0, iterations=400)
+
+    def derive(path):
+        actions = []
+        node = result.root
+        for kind in path:
+            action = resolve_action(node, kind)
+            actions.append(action)
+            node = node.children[action]
+        return derive_ranges_from_path(result, actions)
+
+    limped = derive(["call_or_check", "call_or_check"])
+    raised = derive(["raise", "call_or_check"])
+    three_bet = derive(["raise", "raise", "call_or_check"])
+
+    limper = _premium_concentration(limped.ranges["BTN"])
+    raiser = _premium_concentration(raised.ranges["BTN"])
+    three_bettor = _premium_concentration(three_bet.ranges["BB"])
+
+    assert raiser > limper, (
+        f"a raiser's range ({raiser:.5f}) is no stronger than a limper's ({limper:.5f}) — "
+        "reach multiplication is not discriminating between lines"
+    )
+    assert three_bettor > raiser, (
+        f"a three-bettor's range ({three_bettor:.5f}) is no stronger than a raiser's "
+        f"({raiser:.5f})"
+    )
+
+
+def test_a_raisers_range_is_weighted_away_from_trash():
+    """The other direction of the same property, and the one a bug would
+    break loudly: a player who raised should hold far more premium weight
+    than trash weight. Measured at the time of writing, KK outweighed T2o
+    by roughly 640x in the raiser's derived range."""
+    result = solve_preflop(stack_bb=100.0, iterations=400)
+    actions = []
+    node = result.root
+    for kind in ("raise", "call_or_check"):
+        action = resolve_action(node, kind)
+        actions.append(action)
+        node = node.children[action]
+    raiser = derive_ranges_from_path(result, actions).ranges["BTN"]
+
+    assert _premium_concentration(raiser) > _trash_concentration(raiser) * 5, (
+        "a raiser's range is not meaningfully weighted toward premiums"
+    )
+
+
+def test_derived_weights_are_never_negative():
+    """A negative reach is meaningless as a probability and would poison
+    every equity computation seeded from it, quietly."""
+    result = solve_preflop(stack_bb=100.0, iterations=400)
+    actions = []
+    node = result.root
+    for kind in ("raise", "raise", "call_or_check"):
+        action = resolve_action(node, kind)
+        actions.append(action)
+        node = node.children[action]
+    scenario = derive_ranges_from_path(result, actions)
+
+    for position, weights in scenario.ranges.items():
+        negatives = {hand: weight for hand, weight in weights.items() if weight < 0}
+        assert not negatives, f"{position} has negative reach weights: {negatives}"
+        assert sum(weights.values()) > 0, f"{position}'s derived range is entirely empty"

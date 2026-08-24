@@ -5875,3 +5875,40 @@ entry's own corrections before trusting its conclusions.
     solve raises mid-request) than in re-verifying layers already shown
     correct.
   - **Verification:** 876 backend tests (up from 869), 154 frontend.
+
+- **M108 — audit round 8: the two seams M107 named. No defect in
+  either.** M107 recorded that further value lay in seams never probed
+  rather than re-verifying verified layers, and named two. This is those
+  two. Write-up in `docs/audit-2026-08-23.md`.
+  - **A failing solve behaves correctly.** The failure mode that would
+    matter is not an ugly error but a **200 with fabricated advice** —
+    exactly what this codebase's honesty machinery exists to prevent. It
+    does not happen: the exception propagates as a server error, the
+    server recovers, and the post-failure answer is **bit-identical** to
+    a clean one computed beforehand, so no partial entry survives.
+    Checked separately from recovery, because "the next request returns
+    200" is a weaker claim than "the next request is right". Deliberately
+    NOT converted to a friendly 422 — dressing an unexpected solver bug
+    as a validation failure would hide it.
+  - **Reach multiplication is doing real work.** A raiser's derived range
+    weights KK **640x** above T2o; a three-bettor's is more concentrated
+    still; a limper's tilts slightly toward trash, which is correct since
+    strong hands raise. No negative weights; no two paths derive the same
+    range. The zeros are consequences of the strategy, not gaps — BB
+    holds no AA in a limped pot because AA always raises.
+  - **Guards are comparative, not snapshots.** Three-bettor stronger than
+    raiser, raiser stronger than limper — exact weights depend on the
+    preflop budget and would make the tests brittle, while the ordering
+    is what collapses if the conditioning stops. Verified by mutation:
+    replacing `reach[actor][hand] * freqs[hand]` with `reach[actor][hand]`
+    fails both range guards.
+  - **A third inert injection, caught before it became a conclusion.**
+    The failure probe first patched `api.solving.solve_flop` and got a
+    **200**, which reads as "a failing solve returns confident advice" —
+    a serious finding. It was not: the flop path solves through
+    `poker_solver.library`, so nothing was intercepted. Third time this
+    session an instrument produced a confident result while doing nothing
+    (M105's ace value, M102's fuzzer base body, this), so the shipped
+    test now asserts the injected failure actually fired and says so in
+    its message.
+  - **Verification:** 881 backend tests (up from 876), 154 frontend.
