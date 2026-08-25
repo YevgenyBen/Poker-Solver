@@ -7246,3 +7246,45 @@ entry's own corrections before trusting its conclusions.
   - No production behaviour changes: the shipped config is re-validated,
     not altered. What changes is what users are told and what the docs
     claim.
+
+- **M139 — F37: the OTHER load-bearing reference was never converged
+  either, and this one is quoted in three milestones' reasoning.** F36
+  (M138) found the postflop accuracy reference had never been
+  convergence-tested. The same question, asked of the project's other
+  standing reference — the heads-up AA-jam figure of ~0.031 — gets the
+  same answer.
+  - **Measured.** Heads-up preflop, 100bb, exact solver (deterministic,
+    so "converged" means stable in iterations), AA's open-jam at the
+    root:
+    | iterations | 500 | 1,000 | 3,000 | 12,000 | 30,000 | 60,000 |
+    |---|---|---|---|---|---|---|
+    | AA jam | 0.0159 | 0.0040 | 0.0004 | **0.0** | **0.0** | **0.0** |
+    Monotone to zero. **The converged value is 0.0**; ~0.031 corresponds
+    to roughly 300 iterations. It is also the poker-correct answer —
+    open-jamming 100bb with AA heads-up is indefensible.
+  - **What it touches.** M71 justified dropping the CFR+ clamp partly on
+    plain CFR's 0.032 "matching" the reference; M97 rejected policy
+    damping against it; M100 rejected the continuation knob against it.
+    **None of those conclusions change**, because each rests on
+    independent evidence — M71 on T7s's fold 0.744 -> 0.938 and on the
+    ratchet mechanism read from the code, M97 on damping being worse on
+    every arm, M100 on the sweep's non-monotonicity. What changes is a
+    supporting claim in each: 0.032 is not a match, it is still 0.032
+    above the right answer.
+  - **One argument actually inverts.** M100 wrote that `c=1.0` "lands
+    BELOW the ~0.031 reference" and read that as the knob gaming the
+    target. Against the corrected reference of 0.0, 0.010 lands slightly
+    ABOVE. The conclusion survives on the non-monotonicity; that
+    particular sentence does not.
+  - **Magnitude, stated honestly.** This is a 3-percentage-point error,
+    where F36 was 60. It is recorded because it sits in reasoning three
+    milestones lean on, not because it is large.
+  - **A near-false-positive caught on the way, worth recording.** The
+    same sweep showed heads-up AA at 10bb playing `call_or_check` 1.000
+    while AKs jammed 1.000 — a categorical inversion, and a real defect
+    in shipped advice if true. It is not true. Walking the continuation:
+    SB limps AA, BB raises, **SB jams 1.000**; BB jams instead, **SB
+    calls 1.000**. AA is limp-raising all-in — a trap, correctly played,
+    with AKs jamming outright for fold equity. Checking the continuation
+    before reporting is what separated this from a finding.
+  - Docs only; no code change. The shipped solver is unaffected.

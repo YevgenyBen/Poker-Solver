@@ -81,8 +81,15 @@ requests now reject unknown fields by name rather than ignoring them.
   regret while accumulating positive, so the noisiest action — the
   all-in, which swings a whole stack — collects spurious regret that
   more iterations only compound. Measured at 6-max over 3 seeds: AA's
-  jam 0.199 -> 0.032 (heads-up reference ~0.031), T7s's UTG fold
-  0.744 -> 0.938. **Exception: 9-max keeps the clamp** (`api/config.py`)
+  jam 0.199 -> 0.032, T7s's UTG fold
+  0.744 -> 0.938. **The "heads-up reference ~0.031" this used to be
+  quoted against is itself unconverged (F37, M139)** — heads-up AA's
+  open-jam at 100bb reads 0.0159 / 0.0040 / 0.0004 / 0.0 / 0.0 / 0.0 at
+  500 / 1k / 3k / 12k / 30k / 60k iterations, so the converged value is
+  **0.0** and ~0.031 is roughly a 300-iteration artifact. The
+  improvement is real and large either way (0.199 -> 0.032 against a
+  target of 0), but 0.032 does not "match" the reference — it is still
+  0.032 above the right answer. **Exception: 9-max keeps the clamp** (`api/config.py`)
   — plain CFR converges more slowly and 9-max's budget gives each seat
   only 333 traversals, where it goes the wrong way. Published DCFR was
   tried and was worse than plain CFR.
@@ -148,7 +155,10 @@ requests now reject unknown fields by name rather than ignoring them.
   budgets**, so it is not capturing the mechanism. `c=1.0 @ 3,000` looks
   like a fix (0.010 +/- 0.005, tightest arm by 10x) and is not: a big
   bonus for keeping chips behind makes the all-in *dominated*, so the
-  policy goes purely "never jam" and lands BELOW the ~0.031 reference.
+  policy goes purely "never jam". (M100 called that landing BELOW the
+  ~0.031 reference; against the corrected reference of 0.0 it lands
+  slightly ABOVE, so that argument inverts — M100's conclusion rests on
+  the sweep's non-monotonicity, which is untouched. F37, M139.)
   **The knob can produce any number, so matching the reference does not
   validate it.** A paired 9-seed test (same seed both arms, cancelling
   seed variance) gives c=0 vs c=0.25 a delta of **-0.060 +/- 0.137,
@@ -430,7 +440,10 @@ requests now reject unknown fields by name rather than ignoring them.
   by how purely a class took the observed action, premiums mix, and in 5
   of 6 measured cases the raiser's modelled range held no premium hands
   at all (M130). Rebalancing cut mean error against a full-range
-  reference **0.0944 -> 0.0319** and the worst case **0.345 -> 0.139**,
+  reference **0.0944 -> 0.0319** and the worst case **0.345 -> 0.139**
+  (both against the cap-60 anchor M138 withdrew — the REBALANCE is still
+  a real improvement, since both arms were scored the same way, but the
+  absolute figures are distances to a wrong target),
   at 8.4s -> 14.7s. **Width is not monotonically better** — cap 18
   measures worse than cap 10 on both — so sweep, never assume a
   direction. **The mechanism is NOT fixed**, only reduced: premiums are
