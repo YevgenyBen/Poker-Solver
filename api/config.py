@@ -972,7 +972,7 @@ POSTFLOP_AGGRESSION_CAVEAT_REASON = (
     "took the action they took — and premium hands still get dropped by that rule, "
     "because they mix between raising and going all-in rather than always raising. "
     "Measured against a full-range solve across five spots, the raising frequency is "
-    "off by about 3 percentage points on average and by 14 at worst, without a "
+    "off by about 6 percentage points on average and by 17 at worst, without a "
     "consistent direction. The fold-versus-play call is far sounder than how "
     "aggressively to play: trust whether to continue, and treat the raising "
     "frequency as approximate rather than correcting it in either direction."

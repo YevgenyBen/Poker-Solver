@@ -52,6 +52,7 @@ def build_board_equity_table(
     combos: list,
     samples: int = DEFAULT_BOARD_EQUITY_SAMPLES,
     rng: random.Random | None = None,
+    pair_rows: tuple | None = None,
 ) -> np.ndarray:
     """N x N table: table[i, j] = combos[i]'s average equity vs
     combos[j], given the fixed `board`, averaged over Monte Carlo
@@ -94,13 +95,38 @@ def build_board_equity_table(
     # One NumPy generator for the whole table, seeded FROM `rng` so the
     # function stays deterministic in exactly the same way it was: same
     # `rng` seed in, same table out.
-    np_rng = np.random.default_rng(rng.getrandbits(63))
+    # M132: the generator is re-seeded PER ROW, from a base drawn off
+    # `rng`, rather than advancing once across the whole triangle.
+    #
+    # One stream for the whole table makes each pair's draw depend on how
+    # many pairs were processed before it, so computing rows 4..8 alone
+    # gives different numbers than computing rows 0..12 and reading the
+    # middle. Per-row seeding makes a row's values a function of the row
+    # and nothing else, which is what lets one table be split across
+    # workers and merged bit-identically — and keeps a sequential build
+    # and a parallel one returning the same table rather than merely
+    # equivalent ones.
+    _row_seed_base = rng.getrandbits(63)
 
     # Combos blocked by the board itself can never win a share of this
     # table — every row/column for them stays NaN, exactly like i == j.
     valid = [(i, combo) for i, combo in enumerate(combos) if not combo.blocks(board_set)]
 
+    # M132: `pair_rows` limits which rows of the upper triangle this call
+    # computes, so one table can be built by several workers and merged.
+    #
+    # Row `a_pos` owns the pairs (a_pos, a_pos+1..n), and every row's set
+    # is disjoint from every other's, so slices never overlap and a merge
+    # is just "take whichever side is not NaN". A slice is otherwise
+    # identical to the full build — same seeds, same values — which is
+    # what makes parallel and sequential results bit-identical rather
+    # than merely close. None means the whole triangle, as before.
+    row_start, row_stop = pair_rows if pair_rows is not None else (0, len(valid))
+
     for a_pos, (i, combo_i) in enumerate(valid):
+        if not (row_start <= a_pos < row_stop):
+            continue
+        np_rng = np.random.default_rng(_row_seed_base + a_pos)
         for j, combo_j in valid[a_pos + 1 :]:
             if combo_i.blocks(combo_j.cards):
                 continue  # share a card with each other — impossible matchup, leave NaN

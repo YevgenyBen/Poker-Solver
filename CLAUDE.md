@@ -408,6 +408,19 @@ requests now reject unknown fields by name rather than ignoring them.
   pools and budgets for speed. Run an end-to-end `/advise` check at
   production settings after any solver change.
 
+- **A flop solve's ONE equity table is split across workers (M132), and
+  the table is seeded PER ROW to make that possible.** One stream
+  advancing across the upper triangle makes a pair's draw depend on how
+  many pairs preceded it, so no slice can reproduce the full build;
+  per-row seeding makes a row a function of the row alone, and any band
+  layout merges bit-identically. 4.79x on the table, **1.34x end to end
+  (flop 14.7s -> ~11s)**. `api/parallel.parallel_board_equity_table` is
+  injected as `equity_table_fn` — the engine stays a plain library and
+  defaults to sequential. **The pool is probed once at construction**:
+  it can build successfully on a host whose workers then die (Windows
+  `spawn` re-imports `__main__`, which fails from stdin), and the
+  fallback was correct but printed 34 tracebacks per request.
+
 - **The postflop budget is split three ways and the three move together
   (M131).** `MAX_PATH_QUERY_CLASSES_PER_SIDE` (26),
   `PATH_QUERY_EQUITY_SAMPLES` (30) and `PATH_QUERY_ITERATIONS` (500)
