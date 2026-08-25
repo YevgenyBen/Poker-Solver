@@ -941,12 +941,34 @@ MULTIWAY_STACK_BUCKET_BB = 5.0
 # Scoped to the AGGRESSION axis and to postflop only. Whether to continue
 # is not implicated — that is the fold/play call, which held up across
 # 275 advised decisions in M127's play session.
+# M130 sharpened this. M128 could only say the aggression axis was
+# "unstable"; the mechanism is now measured, and it is specific enough to
+# tell a user something they can act on.
+#
+# `_cap_range` keeps the top classes BY HOW OFTEN THEY TOOK THE OBSERVED
+# ACTION. Premium hands MIX — at 100bb the raiser's AA raises 0.495 of
+# the time because it also jams, KK 0.765, AKo 0.208 — while mediocre
+# hands raise purely at 0.99+. The tenth-place cut is 0.9912, so every
+# premium falls below it. **In 5 of 6 measured (stack, position) cases
+# the raiser's modelled range contained no premium hands at all**, though
+# they are genuinely in the real range. (The big blind's exclusion is
+# correct and different: premiums 3-bet rather than call, so their
+# calling frequency really is 0.)
+#
+# That is why value hands check: with no big pairs in the opponent's
+# model there is nothing to raise for value against. Widening the cap
+# lets premiums back in and the answer converges — a flopped set on
+# 2h6d9c measures .003 / .694 / .468 / .301 / .336 / .347 at caps
+# 10/18/26/34/44/60, settling near 0.35 against the shipped 0.003.
 POSTFLOP_AGGRESSION_CAVEAT_REASON = (
-    "How often to bet or raise here is not reliable. The range this solve models is "
-    "capped for cost, and sweeping that cap moves a strong hand's raising frequency "
-    "erratically — a flopped set has measured anywhere from 0.3% to 77% aggression "
-    "across cap settings, without moving in a consistent direction. Whether to "
-    "continue at all is far sounder than how aggressively to do it: treat the "
-    "fold-versus-play call as the usable part, and the bet sizing and frequency as a "
-    "rough hint."
+    "How often to bet or raise here is a rough hint, and it leans too passive with "
+    "strong hands. To stay affordable this solve models only a slice of the opponent's "
+    "range, chosen by how consistently each hand took the action they took — and "
+    "premium hands get dropped by that rule, because they mix between raising and "
+    "going all-in rather than always raising. With no big pairs in the opponent's "
+    "model there is little to raise for value against, so value hands are told to "
+    "check more than they should: a flopped set is advised to raise about 0.3% of the "
+    "time here where a full-range solve of the same spot puts it near 35%. The "
+    "fold-versus-play call is far sounder than how aggressively to play: trust "
+    "whether to continue, and lean more aggressive than advised with strong hands."
 )

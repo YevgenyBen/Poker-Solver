@@ -408,23 +408,30 @@ requests now reject unknown fields by name rather than ignoring them.
   pools and budgets for speed. Run an end-to-end `/advise` check at
   production settings after any solver change.
 
-- **Postflop value-hand AGGRESSION is unstable against the range cap,
-  and users are told (M128).** `MAX_PATH_QUERY_CLASSES_PER_SIDE` is a
-  pure COST control with no strategic meaning. Sweeping it 10 -> 26 on
-  one flop spot moves a value hand's raising frequency
-  **non-monotonically over a 250x range** — a flopped set measures .003
-  .004 .019 .025 **.771** .071 .122 .393 .402, an overpair reverses
-  direction five times. **Not noise**: solving twice at the same cap
-  gives delta exactly 0.0. Widening is no escape either — cap 26 takes
-  one flop decision from 10.8s to 52.1s. `/advise` returns
-  `aggression_confidence: "low"` on every postflop response.
-  **Scoped to the aggression axis on purpose** — the fold-versus-play
-  call held across 275 advised decisions (M127), and over-claiming would
-  devalue the caveat. **M127 first read two cap values as a systematic
-  slow-play bias; M128 withdrew that** — same error shape as M110's
-  "button opens tighter than UTG", a two-point difference read as a
-  trend.
-
+- **Postflop value-hand advice leans TOO PASSIVE, and the cause is
+  measured (M128 found it, M130 explained it).** `_cap_range` ranks
+  classes by how often they took the observed action. Premiums MIX — at
+  100bb the raiser's AA raises 0.495 of the time because it also jams,
+  KK 0.765, AKo 0.208 — while mediocre hands raise purely at 0.99+, and
+  the tenth-place cut is 0.9912. **In 5 of 6 measured (stack, position)
+  cases the raiser's modelled range contained no premium hands at all**,
+  so value hands have nothing to raise against. Widening the cap raises
+  it sharply, but convergence is HAND-DEPENDENT: at caps
+  10/18/26/34/44/60 a flopped set measures .003/.694/.468/.301/.336/.347
+  (settling near **0.35**, ~140x the shipped .003) while a QQ overpair
+  measures .004/.482/.040/.093/.237/.125 and is **still moving at cap
+  60**. Too-passive is established for both; a convergent TARGET only
+  for the set — don't quote 0.35 for other hands. Users are told via `aggression_confidence` (M128), and the
+  reason now names the direction so they can discount correctly.
+  **Four fixes are measured and dead — don't re-try them**: mass-ranking
+  (0.775 — keeps only 12-combo offsuit classes), stratifying by board
+  strength (0.014 — hand category lumps AA with 44), and reserving 3 or
+  5 slots for the strongest (0.0002/0.0004 — displaces 12-combo classes
+  and shrinks the pool). No top-K by a single scalar represents a range.
+  What remains: widen the cap (quadratic, cap 34 = 81s vs cap 10 = 9s)
+  or change the representation. **This is also the blocked speed lever**
+  — cost is near-quadratic in pool size, so it cannot be spent on
+  latency without making advice worse.
 - **Cache ceilings are sized by BYTES, not just entry count (M127).**
   "Every cache is bounded" (M93/M104, re-verified M124) bounds the entry
   COUNT — and entry size varies 180x, so it never bounded memory. Found
