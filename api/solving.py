@@ -752,6 +752,49 @@ def _cap_range_to_combos(class_frequencies: dict, max_combos: int, exclude: froz
     return kept
 
 
+def _cap_combo_range(combo_range: dict, max_combos: int) -> dict:
+    """Trim an ALREADY-EXPANDED combo range to a combo budget,
+    round-robin across classes in frequency order (M135).
+
+    The class-level `_cap_range` above keeps the top classes by how
+    purely they took the observed action, which M130 measured as
+    dropping every premium — premiums mix between raising and jamming,
+    so they score below hands that raise every time. Round-robin here
+    lets such a class be present with FEWER combos instead of none at
+    all, which is what a mixing hand should look like in a range.
+
+    Since M119 every combo carries its class's own frequency, so a
+    class's frequency is just any of its combos' weights.
+    """
+    if len(combo_range) <= max_combos:
+        return combo_range
+
+    by_class: dict = {}
+    for combo, weight in combo_range.items():
+        by_class.setdefault(_combo_to_class(combo), []).append((combo, weight))
+    # Frequency first; ties keep the canonical order they arrived in, the
+    # same stable-sort discipline M119 settled on (adding a str tie-break
+    # orders ties alphabetically and puts 22 ahead of AA).
+    ordered = sorted(by_class.values(), key=lambda items: -items[0][1])
+
+    kept: dict = {}
+    depth = 0
+    while len(kept) < max_combos:
+        added = False
+        for items in ordered:
+            if depth >= len(items):
+                continue
+            combo, weight = items[depth]
+            kept[combo] = weight
+            added = True
+            if len(kept) >= max_combos:
+                break
+        if not added:
+            break
+        depth += 1
+    return kept
+
+
 def _range_confidence(path_scenario, position_ranges: dict) -> dict:
     """Per-position summary of `PathScenario.trained` (M29), restricted
     to the classes that ACTUALLY survived capping (M52).

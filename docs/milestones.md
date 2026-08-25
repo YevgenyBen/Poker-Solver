@@ -7022,3 +7022,47 @@ entry's own corrections before trusting its conclusions.
     honest read is that this needs the structural change M130 named — a
     different representation rather than a better selection — or simply
     more budget. Guessing at a seventh scoring function is not the way in.
+
+- **M135 — restoring the missing premiums makes the advice WORSE, which
+  corrects M130's causal claim.** The sixth idea, recorded as untested in
+  M134, is now tested. It fails, and how it fails matters more than that
+  it does.
+  - **The idea, and why it should have worked.** M130 measured that
+    `_cap_range` drops every premium from the raiser's modelled range,
+    because it ranks classes by how PURELY they took the observed action
+    and premiums mix. Capping by COMBO budget with round-robin instead
+    lets a mixing class appear with fewer combos rather than none.
+    Verified structurally: 1,176 combos trimmed to 300 keeps **all four
+    premiums and all 169 classes**, exactly the composition M130 said was
+    missing.
+  - **Measured on the same five spots against a full-range reference:**
+    | arm | mean err | max err | pool | wall |
+    |---|---|---|---|---|
+    | shipped, 26 classes | **0.0580** | 0.1679 | 333 | 15.1s |
+    | all classes, 200 combos | 0.2403 | 0.6640 | 227 | 6.7s |
+    | all classes, 333 combos | 0.1106 | 0.2857 | 338 | 14.0s |
+    | all classes, 480 combos | 0.2571 | 0.6661 | 504 | 36.4s |
+    **At matched pool size (333 vs 338) it is 2x worse**, and it is
+    non-monotone in budget.
+  - **So premium exclusion is a CORRELATE, not the cause.** M130 wrote
+    "with no big pairs to value-bet against, value hands check" and
+    presented it as the explanation. The mechanism it describes is real
+    and still verified by
+    `test_the_range_cap_drops_premiums_the_raiser_actually_holds` — but
+    the direct remedy makes things worse, so it cannot be the cause of
+    the error. **Do not spend a milestone on "put the premiums back":
+    it has been tried and measured.**
+  - **What the six failures now suggest**, stated as a hypothesis rather
+    than a result: coherent-but-narrow beats diverse-but-thin. A range of
+    ~26 classes at near-full frequency looks like a consistent set of
+    holdings; a round-robin or stratified sample of all 169 classes with
+    one to three combos each has the right diversity but is a thin smear,
+    and no real opponent holds that. Both alternatives that deliberately
+    restored diversity — stratified (M134) and this one — came out about
+    2x worse, which is the shape that hypothesis predicts. It has NOT
+    been tested directly.
+  - `combo_cap_fn` is kept on `build_library`/`query_strategy`/
+    `query_strategy_from_path`, defaulting to None, and `_cap_combo_range`
+    kept alongside `_cap_range` — the same "keep the refuted knob at its
+    default so the result stays reproducible" discipline `mccfr_solve`
+    already applies to `optimism`, `smoothing` and `continuation`.

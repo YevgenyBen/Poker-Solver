@@ -443,13 +443,24 @@ requests now reject unknown fields by name rather than ignoring them.
   pool), and stratifying by the FULL rank tuple (M134: mean error 0.116
   against the shipped rule's 0.058, worse at both cap 10 and cap 26, so
   the coarse strength proxy was not the problem — the approach is).
-  **A sixth idea is untested rather than dead**: capping by COMBO budget
-  with round-robin across classes, the way the river path already does
-  (`_cap_range_to_combos`, M119). It cannot be tested through
-  `_cap_range`, which returns class frequencies the caller then
-  re-expands — a 200-combo cap came back as a 1,176-combo pool. Testing
-  it means moving the cap below the class->combo expansion inside
-  `library.query_strategy_from_path`.
+  **A SIXTH is dead too, and it is the one that matters (M135)**:
+  capping by COMBO budget with round-robin across classes, applied below
+  the class->combo expansion via `build_library`'s `combo_cap_fn`. It
+  keeps all four premiums and all 169 classes — exactly the composition
+  M130 said was missing — and at matched pool size it is **2x WORSE**
+  (mean error 0.111 against the shipped 0.058), non-monotone in budget.
+  **So premium exclusion is a CORRELATE, not the cause**: the mechanism
+  M130 described is real and still asserted by a test, but the direct
+  remedy makes the advice worse, so it cannot be what drives the error.
+  **Don't spend a milestone putting the premiums back.**
+
+  Working hypothesis after six failures, untested: **coherent-but-narrow
+  beats diverse-but-thin.** ~26 classes at near-full frequency look like
+  a consistent set of holdings; all 169 classes at one to three combos
+  each have the right diversity but are a smear no real opponent holds.
+  Both alternatives that deliberately restored diversity — stratified
+  (M134) and combo-budget (M135) — landed about 2x worse, which is what
+  that hypothesis predicts.
 - **Cache ceilings are sized by BYTES, not just entry count (M127).**
   "Every cache is bounded" (M93/M104, re-verified M124) bounds the entry
   COUNT — and entry size varies 180x, so it never bounded memory. Found
