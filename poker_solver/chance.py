@@ -102,6 +102,7 @@ def build_chance_node(
     max_raises: int = 4,
     chain_to_river: bool = False,
     equity_table_cache: dict | None = None,
+    equity_batch_fn=None,
 ) -> ChanceNode:
     """Build the chance node that follows a showdown-eligible `terminal`
     (action capped without a fold on whatever street `terminal` belongs
@@ -144,6 +145,37 @@ def build_chance_node(
             f"({max(terminal.invested.values())}) at this terminal"
         )
 
+    # M129 (B). The equity tables for this node's branches are built
+    # FIRST, as a batch, so a caller can compute them in parallel.
+    #
+    # They are the single largest cost in a turn or river solve — a turn
+    # node builds ~49 of them, a river solve ~2,400 — and each is a pure
+    # function of (next_board, combos), independent of every other. The
+    # 24 cores this typically runs on were doing nothing.
+    #
+    # Injected rather than implemented here: `poker_solver/` is a plain
+    # library with no runtime infrastructure (enforced by
+    # tests/test_package_boundary.py), and a process pool is exactly the
+    # kind of thing that belongs to whoever owns the request. Default
+    # None keeps the original sequential behaviour byte for byte.
+    upcoming = [(card, board + (card,)) for card in remaining_deck(board)]
+    wanted = []
+    for _, next_board in upcoming:
+        key = (next_board, tuple(combos))
+        if equity_table_cache is None or equity_table_cache.get(key) is None:
+            if next_board not in wanted:
+                wanted.append(next_board)
+
+    if wanted:
+        if equity_batch_fn is not None and len(wanted) > 1:
+            built = equity_batch_fn(wanted, combos)
+        else:
+            built = [np.nan_to_num(build_board_equity_table(b, combos), nan=0.5)
+                     for b in wanted]
+        prebuilt = dict(zip(wanted, built))
+    else:
+        prebuilt = {}
+
     branches = {}
     for card in remaining_deck(board):
         next_board = board + (card,)
@@ -161,7 +193,7 @@ def build_chance_node(
         cache_key = (next_board, tuple(combos))
         cached = None if equity_table_cache is None else equity_table_cache.get(cache_key)
         if cached is None:
-            equity_table = np.nan_to_num(build_board_equity_table(next_board, combos), nan=0.5)
+            equity_table = prebuilt[next_board]
             if equity_table_cache is not None:
                 equity_table_cache[cache_key] = equity_table
         else:
@@ -207,6 +239,7 @@ def build_chance_node(
                     t, board=_b, combos=combos, positions=positions,
                     effective_stack_bb=_s, raise_sizes=raise_sizes, max_raises=max_raises,
                     chain_to_river=True, equity_table_cache=equity_table_cache,
+                    equity_batch_fn=equity_batch_fn,
                 )
             else:
                 chance_fn = None

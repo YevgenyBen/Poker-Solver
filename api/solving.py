@@ -54,6 +54,10 @@ from poker_solver.solver import (
 from poker_solver.starting_hands import StartingHand
 from poker_solver.strategy_format import format_flop_response, format_solve_response
 
+# M129: the parallel equity-table mapper. Lives in api/ because owning a
+# process pool belongs to whoever owns the request, not the engine.
+from .parallel import parallel_equity_batch
+
 # Aliased to `cfg`: `config` is a very common LOCAL name in this
 # codebase (`config = GameConfig(...)`, `config = StreetConfig(...)`),
 # and a module-level `config` would be silently shadowed inside exactly
@@ -275,6 +279,7 @@ def _get_or_solve_flop_turn(board_cards: tuple, pot: float, stack_bb: float, ite
         raise_sizes=cfg.FLOP_TURN_RAISE_SIZES,
         max_raises=cfg.FLOP_TURN_MAX_RAISES,
         iterations=iterations,
+        equity_batch_fn=parallel_equity_batch,
     )
 
     with _flop_turn_cache.lock:
@@ -305,6 +310,7 @@ def _get_or_solve_flop_to_river(board_cards: tuple, pot: float, stack_bb: float,
         raise_sizes=cfg.FLOP_TO_RIVER_RAISE_SIZES,
         max_raises=cfg.FLOP_TO_RIVER_MAX_RAISES,
         iterations=iterations,
+        equity_batch_fn=parallel_equity_batch,
     )
 
     with _flop_to_river_cache.lock:
@@ -1436,6 +1442,7 @@ def _query_turn_from_path(
             raise_sizes=cfg.FLOP_TURN_RAISE_SIZES,
             max_raises=cfg.FLOP_TURN_MAX_RAISES,
             iterations=turn_iterations,
+            equity_batch_fn=parallel_equity_batch,
         ),
     )
 
@@ -1906,6 +1913,7 @@ def _query_river_from_path(
             raise_sizes=cfg.FLOP_TO_RIVER_RAISE_SIZES,
             max_raises=cfg.FLOP_TO_RIVER_MAX_RAISES,
             iterations=river_iterations,
+            equity_batch_fn=parallel_equity_batch,
         )
         with _river_path_cache.lock:
             _river_path_cache.store(river_solve_key, result)

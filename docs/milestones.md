@@ -6729,3 +6729,59 @@ entry's own corrections before trusting its conclusions.
     the fold-versus-play call held across 275 advised decisions in M127,
     and a test asserts the caveat does not over-claim onto it.
   - Backend 954 passed, frontend 157 passed.
+
+- **M129 — speed, measured: p90 cut 2.2x.** M127's play session put the
+  advisor at 6.23s median and 19.19s p90 against a 15-30s decision clock.
+  Profiling first (M47/M67 both record optimising on profiler intuition
+  and getting nothing), then two changes.
+  - **A — the Monte Carlo runout sampler is vectorised.** The inner loop
+    called `rng.sample` 1.5M times per cold flop request and filled
+    arrays with a Python loop, all inside the O(N^2) pair loop.
+    Replaced with one NumPy draw (`argpartition` on a random key matrix)
+    and broadcast assignment. Interleaved A/B in one process: **1.32x on
+    the table itself, 1.14x end-to-end.** Statistically equivalent
+    rather than bit-identical — the RNG stream changes, so at 4,000
+    samples the mean cell moves 0.0055 — and still fully deterministic
+    per seed.
+  - **B — chance-branch equity tables are built in parallel.** A turn
+    node builds ~49 and a river solve ~2,400, each a pure function of
+    (board, combos). `build_chance_node` now builds them as a batch
+    through an injected `equity_batch_fn`; `api/parallel.py` supplies a
+    process-pool version. **Injected rather than implemented in the
+    engine** — `poker_solver/` stays a plain library, and the default is
+    sequential, byte for byte.
+  - **Workers is 8, not 24, and that is measured**: 4 -> 2.57x,
+    8 -> 3.38x, 16 -> 2.84x, 24 -> 2.34x. It peaks at 8 and DECLINES —
+    each branch is tens of milliseconds, so past that the pool spends
+    more on dispatch than the work is worth. This machine has 24 logical
+    cores, so "one worker per core" would have been the worst setting
+    tried.
+  - **Measured on one spot, clean baselines**: flop 10.30 -> 8.55s
+    (1.20x), turn 21.25 -> 12.01s (1.77x), river 15.20 -> 7.73s (1.97x).
+  - **Measured in play**, same seed and hand count as M127's session:
+    | metric | M127 | M129 |
+    |---|---|---|
+    | p50 | 6.23s | **4.28s** |
+    | p90 | 19.19s | **8.71s** |
+    | over 5s | 154/275 (56%) | **107/284 (38%)** |
+    | session wall | 2134s | **1202s** |
+    Turn median 17.32 -> **8.19s**, river 11.55 -> **4.90s**.
+  - **Two corrections to my own measurements.** The profiled wall times
+    first reported (flop 15.1s, turn 28.1s, river 25.2s) were **inflated
+    ~39% by cProfile itself**; true baselines are 10.3/21.3/15.2s.
+    Caught because A's apparent 1.58x did not match the 1.15x the
+    profile's own attribution predicted. And "25-35% off the flop" from
+    reading the profile measured 1.14x — the `random.sample` share was
+    16% and I over-read it.
+  - **The remaining tail has one identified cause**: p99 41s and max 65s
+    are unchanged, and all three decisions over 30s were **cold 6-max
+    preflop solves**, which have no chance branches and so neither change
+    touches. They were at pre-warmed depths — the simulator uses
+    `TestClient(app)` without a context manager, so lifespan never runs
+    and the pre-warm never fires; a real deployment would have had those
+    warm.
+  - **Still short of a 3s target**, and the biggest remaining lever is
+    blocked: cost is near-quadratic in combo-pool size, but the pool
+    comes from `MAX_PATH_QUERY_CLASSES_PER_SIDE` — the parameter M128
+    measured as moving value-hand advice erratically. It cannot be spent
+    on speed without making advice worse unpredictably.

@@ -1315,6 +1315,7 @@ def solve_flop_turn(
     max_raises: int = 4,
     iterations: int = None,
     equity_seed: int = DEFAULT_EQUITY_SEED,
+    equity_batch_fn=None,
 ) -> StrategyResult:
     """Solve a flop betting round that, whenever action is capped without
     a fold, chains into a real turn betting round (dealt via a real
@@ -1363,7 +1364,7 @@ def solve_flop_turn(
         return build_chance_node(
             terminal, board=board, combos=combos, positions=positions,
             effective_stack_bb=effective_stack_bb, raise_sizes=raise_sizes, max_raises=max_raises,
-            equity_table_cache=equity_table_cache,
+            equity_table_cache=equity_table_cache, equity_batch_fn=equity_batch_fn,
         )
 
     chance_data: dict = {}
@@ -1418,6 +1419,7 @@ def solve_flop_to_river(
     max_raises: int = 4,
     iterations: int = None,
     equity_seed: int = DEFAULT_EQUITY_SEED,
+    equity_batch_fn=None,
 ) -> StrategyResult:
     """Solve a flop betting round that chains all the way to a real river
     showdown — flop->turn via a real chance node (see solve_flop_turn),
@@ -1479,6 +1481,7 @@ def solve_flop_to_river(
             terminal, board=board, combos=combos, positions=positions,
             effective_stack_bb=effective_stack_bb, raise_sizes=raise_sizes, max_raises=max_raises,
             chain_to_river=True, equity_table_cache=equity_table_cache,
+            equity_batch_fn=equity_batch_fn,
         )
 
     chance_data: dict = {}

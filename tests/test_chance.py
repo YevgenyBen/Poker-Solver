@@ -645,3 +645,51 @@ def test_the_impossible_branch_bias_is_bounded_and_always_toward_neutral():
     assert max(abs(b) for b in biases) < 0.02, (
         f"the documented approximation is larger than recorded: {max(abs(b) for b in biases):.4f}"
     )
+
+
+def test_an_injected_equity_batch_builds_the_same_node_as_sequential():
+    """M129 (B). `build_chance_node` builds its branches' equity tables
+    as a batch first, so a caller can compute them in parallel — a turn
+    node builds ~49 of them and a river solve ~2,400, each a pure
+    function of (board, combos) and independent of the rest.
+
+    The contract that matters: injecting a mapper must not change the
+    node. A caller that parallelises and one that does not must get the
+    same answer, or the advice depends on the host's core count.
+    """
+    from poker_solver.game_tree import StreetConfig, build_street_tree
+
+    board = (Card("2", "h"), Card("6", "d"), Card("9", "c"))
+    deck = [Card.from_str(r + s) for r in "23456789TJQKA" for s in "cdhs"]
+    rest = [card for card in deck if card not in set(board)]
+    combos = [HandCombo(rest[i], rest[i + 1]) for i in range(0, 8, 2)]
+
+    config = StreetConfig(positions=_POSITIONS, pot=6.0, stack_bb=20.0,
+                          raise_sizes=(), max_raises=1)
+    terminal = next(node for node in walk(build_street_tree(config))
+                    if isinstance(node, TerminalNode) and node.is_showdown)
+
+    def build(batch_fn):
+        return build_chance_node(terminal, board, combos, _POSITIONS,
+                                 effective_stack_bb=20.0, raise_sizes=(), max_raises=1,
+                                 equity_batch_fn=batch_fn)
+
+    seen = {}
+
+    def spy(boards, pool):
+        """A mapper that does exactly what the sequential path does, and
+        records that it was actually consulted — otherwise this test
+        could pass while the hook was silently ignored."""
+        from poker_solver.board_equity import build_board_equity_table
+        seen["boards"] = len(boards)
+        return [np.nan_to_num(build_board_equity_table(b, pool), nan=0.5) for b in boards]
+
+    sequential = build(None)
+    injected = build(spy)
+
+    assert seen.get("boards"), "the injected mapper was never called"
+    assert seen["boards"] == len(sequential.branches)
+    assert set(sequential.branches) == set(injected.branches)
+    for card, branch in sequential.branches.items():
+        assert np.allclose(branch.equity_table,
+                           injected.branches[card].equity_table, equal_nan=True), card

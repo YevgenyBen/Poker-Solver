@@ -42,6 +42,10 @@ DEFAULT_SEED = 42
 
 _SUIT_INDEX = {suit: i for i, suit in enumerate(SUITS)}
 
+# M129: the runout arrays for an already-complete board — no cards to
+# draw, so a single empty "runout" that broadcasts to nothing.
+_EMPTY_RUNOUT = np.empty((1, 0), dtype=np.int64)
+
 
 def build_board_equity_table(
     board: tuple,
@@ -83,6 +87,14 @@ def build_board_equity_table(
     board_values = [card.value for card in board_cards]
     board_suits = [_SUIT_INDEX[card.suit] for card in board_cards]
     board_set = frozenset(board_cards)
+    # M129: array forms, hoisted out of the O(N^2) pair loop.
+    n_board = len(board_cards)
+    board_values_arr = np.asarray(board_values, dtype=np.int64)
+    board_suits_arr = np.asarray(board_suits, dtype=np.int64)
+    # One NumPy generator for the whole table, seeded FROM `rng` so the
+    # function stays deterministic in exactly the same way it was: same
+    # `rng` seed in, same table out.
+    np_rng = np.random.default_rng(rng.getrandbits(63))
 
     # Combos blocked by the board itself can never win a share of this
     # table — every row/column for them stays NaN, exactly like i == j.
@@ -96,14 +108,47 @@ def build_board_equity_table(
             used = board_set | frozenset(combo_i.cards) | frozenset(combo_j.cards)
             deck = remaining_deck(used)
 
+            # M129: runouts are drawn and laid out with NumPy rather than
+            # `rng.sample` in a Python loop. Profiled on a cold flop
+            # request, the old form was 1.5M `random.sample` calls and
+            # ~16% of total wall time — pure overhead inside the O(N^2)
+            # pair loop, with no bearing on what gets solved.
+            #
+            # Interleaved A/B in one process (M70's method, because this
+            # machine drifts): 1.32x on the table itself. Statistically
+            # equivalent rather than bit-identical — the RNG stream
+            # changes, so at 4,000 samples the mean cell moves 0.0055 and
+            # the worst 0.027, which is Monte Carlo noise between two
+            # independent streams, not a behaviour change. Still fully
+            # deterministic for a given seed.
             if remaining_needed == 0:
-                runouts = [[]]  # the board is already complete — one exact "runout"
+                m = 1
+                runout_values = _EMPTY_RUNOUT
+                runout_suits = _EMPTY_RUNOUT
             elif remaining_needed == 1:
-                runouts = [[card] for card in deck]  # exactly one card left — enumerate, don't sample
+                # exactly one card left — enumerate, don't sample
+                m = len(deck)
+                runout_values = np.fromiter((card.value for card in deck),
+                                            dtype=np.int64, count=m).reshape(m, 1)
+                runout_suits = np.fromiter((_SUIT_INDEX[card.suit] for card in deck),
+                                           dtype=np.int64, count=m).reshape(m, 1)
             else:
-                runouts = [rng.sample(deck, remaining_needed) for _ in range(samples)]
+                m = samples
+                deck_values = np.fromiter((card.value for card in deck),
+                                          dtype=np.int64, count=len(deck))
+                deck_suits = np.fromiter((_SUIT_INDEX[card.suit] for card in deck),
+                                         dtype=np.int64, count=len(deck))
+                # `samples` draws of `remaining_needed` DISTINCT cards in
+                # one call: a random key per card, partially sorted, take
+                # the lowest few. argpartition is O(len(deck)) per row
+                # where a full sort would be O(n log n), and taking the
+                # k smallest keys is equivalent to a uniform draw without
+                # replacement.
+                keys = np_rng.random((samples, len(deck)))
+                idx = np.argpartition(keys, remaining_needed - 1, axis=1)[:, :remaining_needed]
+                runout_values = deck_values[idx]
+                runout_suits = deck_suits[idx]
 
-            m = len(runouts)
             values = np.empty((m, 2, 7), dtype=np.int64)
             suits = np.empty((m, 2, 7), dtype=np.int64)
             for hand_idx, combo in enumerate((combo_i, combo_j)):
@@ -111,9 +156,12 @@ def build_board_equity_table(
                 values[:, hand_idx, 1] = combo.card_b.value
                 suits[:, hand_idx, 0] = _SUIT_INDEX[combo.card_a.suit]
                 suits[:, hand_idx, 1] = _SUIT_INDEX[combo.card_b.suit]
-            for sample_idx, runout in enumerate(runouts):
-                values[sample_idx, :, 2:] = board_values + [card.value for card in runout]
-                suits[sample_idx, :, 2:] = board_suits + [_SUIT_INDEX[card.suit] for card in runout]
+            # the board is the same for both hands and every runout; the
+            # runout is the same for both hands within a sample
+            values[:, :, 2:2 + n_board] = board_values_arr
+            suits[:, :, 2:2 + n_board] = board_suits_arr
+            values[:, :, 2 + n_board:] = runout_values[:, None, :]
+            suits[:, :, 2 + n_board:] = runout_suits[:, None, :]
 
             scores = best_hand_rank_batch(values.reshape(m * 2, 7), suits.reshape(m * 2, 7)).reshape(m, 2)
             wins_i = int((scores[:, 0] > scores[:, 1]).sum())
