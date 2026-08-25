@@ -7106,3 +7106,49 @@ entry's own corrections before trusting its conclusions.
     is a different REPRESENTATION (bucketing strategically similar hands,
     M17's shelved machinery) rather than another way to choose among the
     169 classes. **Do not add an eighth scoring function.**
+
+- **M137 — "more budget" is closed too, and cap 26 turns out to be an
+  optimum rather than a compromise.** M136 exhausted the
+  selection-rule family and left two paths: more budget, or a different
+  representation. M132 had just made the flop table 4.79x cheaper, so
+  the first looked newly affordable — the shipped setting now costs
+  ~9.1s where M131's frontier priced it at 14.7s. Spending that on
+  accuracy was the obvious next move. It does not work.
+  - **Re-measured frontier, five spots against a full-range reference:**
+    | arm | mean err | max err | wall |
+    |---|---|---|---|
+    | shipped: cap 26 / s30 / it500 | **0.0580** | **0.1679** | 9.1s |
+    | cap 34 / s18 / it500 | 0.0568 | 0.2679 | 22.6s |
+    | cap 34 / s18 / it800 | 0.0523 | 0.2160 | 32.4s |
+    | cap 44 / s11 / it500 | 0.0551 | 0.2085 | 29.2s |
+    Mean error improves by **at most 0.006 (10%) for 2.5-3.6x the
+    cost**, and **worst-case error is WORSE at every wider cap** — 0.168
+    shipped against 0.209-0.268.
+  - **And it is not the precision being traded away.** Those arms scale
+    samples down as the pool grows, so a flat result could equally mean
+    "width helps, and the precision it cost was worth exactly as much" —
+    especially since M130's sweep at a fixed 200 samples DID show width
+    helping. Holding samples fixed at 30 and moving only the cap:
+    | arm | mean err | max err | wall |
+    |---|---|---|---|
+    | cap 26, samples 30 | 0.0580 | 0.1679 | 13.8s |
+    | cap 34, samples 30 | 0.0578 | 0.1575 | 29.0s |
+    **0.0002 of mean error for 2.1x the cost.** Width genuinely stops
+    paying past cap 26. (Within-run ratio, not the absolute seconds —
+    cap 26 read 9.1s in the run above and 13.8s here; this machine
+    drifts, which is why M70's rule exists.)
+  - **So M131's cap 26 is an optimum, not a knee.** It was chosen as a
+    cost/accuracy compromise; it turns out to have the best worst-case
+    error of anything measured and to be within 0.006 of the best mean.
+    Nothing in this dimension is being left on the table.
+  - **Both cheap paths are now closed with measurements.** Seven
+    selection rules are worse (M130-M136); more budget buys ~10% of mean
+    error for 3x cost while making the worst case worse. **The mean
+    error of 0.058 is the floor for this architecture at any shippable
+    budget.**
+  - **What remains is the one thing M130 named and nothing since has
+    touched**: a different REPRESENTATION — bucketing strategically
+    similar hands so a fixed budget describes the range's shape instead
+    of sampling from it (M17's shelved machinery, whose goal there was
+    speed and would be fidelity here). That is a real milestone, and it
+    is now the only untried idea rather than one option among several.

@@ -469,11 +469,23 @@ requests now reject unknown fields by name rather than ignoring them.
   them deliberately restore the diversity M130 called missing.
   **Don't add an eighth scoring function** — no reweighting or
   resampling of 169 classes into a ~330-combo budget beats the
-  incumbent. What is left is more budget (the frontier is measured, and
-  M132 made the flop table 4.79x cheaper) or a different
-  REPRESENTATION — bucketing strategically similar hands, M17's shelved
-  machinery — rather than another way to choose among the same 169
-  classes.
+  incumbent.
+
+  **And don't reach for more budget either: M137 closed that too.**
+  Widening past cap 26 buys at most 0.006 of mean error (10%) for
+  2.5-3.6x the cost, and makes the WORST case worse (0.168 shipped
+  against 0.209-0.268). Holding samples fixed and moving only the cap
+  isolates it: cap 34 at samples 30 gives 0.0578 against cap 26's
+  0.0580 — **0.0002 for 2.1x the cost**. Width stops paying at 26, so
+  M131's setting is an optimum rather than the compromise it was chosen
+  as. **The mean error of 0.058 is this architecture's floor at any
+  shippable budget.**
+
+  What remains is the one idea nothing has touched: a different
+  REPRESENTATION — bucketing strategically similar hands so a fixed
+  budget describes the range's SHAPE instead of sampling from it (M17's
+  shelved machinery, whose goal there was speed and would be fidelity
+  here).
 
   Untested hypothesis that fits all seven: **coherent-but-narrow beats
   diverse-but-thin.** ~26 classes at near-full frequency look like a
