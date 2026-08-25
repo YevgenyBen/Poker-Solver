@@ -4261,3 +4261,47 @@ def test_the_aggression_caveat_names_the_mechanism_but_no_longer_a_direction():
             f"the caveat still tells users to correct for a bias that has flipped "
             f"({stale!r}) — the residual now leans the other way"
         )
+
+
+def test_every_prewarm_step_succeeds(monkeypatch):
+    """M133. The pre-warm swallows each step's exception so one bad spot
+    cannot cost the others — which meant a step could fail forever in
+    silence. `solve_river_from_path` did exactly that: it asked for a
+    flop line of ["raise", "call_or_check"], but that endpoint's tree
+    runs at FLOP_TO_RIVER_MAX_RAISES=1 with no raise sizes, so no sized
+    raise exists and every attempt raised "'raise' is not legal at this
+    node". It had never once warmed anything, and every default river
+    request paid the full ~43s cold cost.
+
+    M124 made the outcomes recordable; this asserts they are all OK, so
+    a pre-warm line that stops matching its tree fails here rather than
+    quietly costing users the thing the pre-warm exists to prevent.
+
+    The heavy steps are stubbed — this checks that each line is LEGAL and
+    reachable, not that the solves are fast.
+    """
+    monkeypatch.setattr(api_config, "PREWARM_STACK_DEPTHS", (100,))
+    monkeypatch.setattr(api_config, "MULTIWAY_PREWARM_STACK_DEPTHS", ())
+    monkeypatch.setattr(api_main, "DEFAULT_ITERATIONS", FAST_ITERATIONS)
+    monkeypatch.setattr(api_config, "DEFAULT_RIVER_PATH_QUERY_ITERATIONS", FAST_ITERATIONS)
+    monkeypatch.setattr(api_config, "RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE", 1)
+    monkeypatch.setattr(api_config, "MAX_PATH_QUERY_CLASSES_PER_SIDE", 2)
+    # The autouse fixture shrinks the turn tree to max_raises=1 with no
+    # raise sizes for speed, which removes the sized raise the turn
+    # pre-warm's line depends on. Restore the PRODUCTION shape for these
+    # two, because the question here is whether each line is legal in the
+    # tree it will actually run against — under the shrunken tree the
+    # turn line is legitimately illegal and would fail for the wrong
+    # reason. That fragility is itself the point: a line is only legal
+    # because of a config value living somewhere else.
+    monkeypatch.setattr(api_config, "FLOP_TURN_MAX_RAISES", 2)
+    monkeypatch.setattr(api_config, "FLOP_TURN_RAISE_SIZES", (2.5,))
+
+    api_main._prewarm_common_depths()
+
+    failed = [s for s in api_main.PREWARM_STATUS["steps"] if not s["ok"]]
+    assert not failed, (
+        "pre-warm steps failed: "
+        + "; ".join(f"{s['name']} -> {s['error']}" for s in failed)
+    )
+    assert api_main.PREWARM_STATUS["finished"]

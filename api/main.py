@@ -761,6 +761,23 @@ def _prewarm_common_depths() -> None:
         ),
     )
 
+    # **M133, worth knowing before spending anything more here.** These
+    # last two steps warm DEPRECATED routes. `/solve_turn_from_path` and
+    # `/solve_river_from_path` were superseded by `/advise`, and their
+    # frontend clients have **zero non-test callers** — checked against
+    # `frontend/src/api.ts`, where `fetchTurnStrategyFromPath`,
+    # `fetchRiverStrategyFromPath`, `fetchFlopStrategyFromPath` and
+    # `fetchMultiwayFlopStrategyFromPath` are all defined and none is
+    # used outside tests. The comments below still name a
+    # `TurnPathSolver.tsx` that no longer exists.
+    #
+    # They are kept because the routes are still public and an external
+    # caller may use them — but they cost ~60s of a 510s startup for
+    # traffic the UI does not generate. **The high-value replacement is
+    # not obvious**: /advise's own postflop cost is board-specific, and a
+    # board cannot be usefully guessed, which is the same wall the
+    # precompute idea runs into.
+    #
     # /solve_turn_from_path's own cost (~16-26s) is in the same
     # tax-worth-avoiding bracket the two pre-warms above were already
     # accepted for. Matches TurnPathSolver.tsx's own default preflop/
@@ -780,13 +797,25 @@ def _prewarm_common_depths() -> None:
     # /solve_river_from_path's own cost (~43s at its own default combo
     # cap) is well past the tax-worth-avoiding bracket the pre-warms
     # above were already accepted for — a real, worse cold-start tax
-    # than any of them. Default line: bet/call on the flop, check/check
-    # on the turn (keeps both positions live, no all-in), a real turn
-    # card and a real, distinct river card.
+    # than any of them.
+    #
+    # **M133: the flop leg is check/check, not bet/call, and the old line
+    # had NEVER worked.** It asked for `["raise", "call_or_check"]` on the
+    # flop, but this endpoint's tree runs at FLOP_TO_RIVER_MAX_RAISES=1
+    # with empty FLOP_TO_RIVER_RAISE_SIZES, so `_build` offers no sized
+    # raise at all — only call_or_check and all_in. Every attempt raised
+    # "step 0: 'raise' is not legal at this node", so this pre-warm has
+    # been failing since it was added and every default river request has
+    # paid the full cold cost.
+    #
+    # It was invisible until M124 made the pre-warm record its outcomes;
+    # the step swallowed its own exception into a log line before that.
+    # Check/check keeps both positions live without an all-in, which is
+    # what the original comment wanted and what this tree can express.
     _prewarm_step(
         "solve_river_from_path default line",
         lambda: _query_river_from_path(
-            ["raise", "call_or_check"], ["raise", "call_or_check"],
+            ["raise", "call_or_check"], ["call_or_check", "call_or_check"],
             parse_cards("2h")[0], ["call_or_check", "call_or_check"],
             parse_cards("9s")[0], 100.0,
             tuple(parse_cards(cfg.DEFAULT_CHAINED_FLOP_BOARD)),
