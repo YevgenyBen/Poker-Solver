@@ -4263,6 +4263,47 @@ def test_the_aggression_caveat_names_the_mechanism_but_no_longer_a_direction():
         )
 
 
+def test_the_aggression_caveat_quotes_its_own_measurement():
+    """M138. The magnitudes in user-facing copy must match the recorded
+    measurement, in the units the copy uses.
+
+    This exists because the copy drifted from its evidence and nothing
+    caught it. The caveat told users the raising frequency was off "by
+    about 6 percentage points on average and by 17 at worst". Those came
+    from errors against a cap-60 solve labelled a full-range reference,
+    which was not converged: the same spot reads 0.381 / 0.5948 / 0.9186
+    at caps 60 / 100 / 200 and 0.987 uncapped at 2,500 iterations. The
+    real errors are 0.1222 mean / 0.4381 worst — the worst case was
+    understated 2.6x in the one sentence a player actually reads.
+
+    Pinning the constants alone would not have caught it, because the
+    constants agreed with the prose; both were wrong together. So this
+    asserts the PROSE against the constants, and a separate assertion
+    keeps the constants tied to the reference that produced them.
+    """
+    reason = api_config.POSTFLOP_AGGRESSION_CAVEAT_REASON
+    mean_pp = round(api_config.POSTFLOP_AGGRESSION_ERROR_MEAN * 100)
+    worst_pp = round(api_config.POSTFLOP_AGGRESSION_ERROR_WORST * 100)
+    assert f"{mean_pp} percentage points" in reason, (
+        f"the caveat's average ({reason!r}) no longer matches "
+        f"POSTFLOP_AGGRESSION_ERROR_MEAN ({mean_pp} percentage points)"
+    )
+    assert f"by {worst_pp} at worst" in reason, (
+        f"the caveat's worst case no longer matches "
+        f"POSTFLOP_AGGRESSION_ERROR_WORST ({worst_pp})"
+    )
+    # The old figures must not survive anywhere in the copy.
+    for stale in ("6 percentage points", "by 17 at worst",
+                  "3 percentage points", "by 14 at worst"):
+        assert stale not in reason, (
+            f"the caveat still quotes a withdrawn measurement ({stale!r})"
+        )
+    assert "uncapped" in reason, (
+        "the caveat should say what it was measured against — the cap-60 "
+        "solve it used to cite was not a full-range reference"
+    )
+
+
 def test_every_prewarm_step_succeeds(monkeypatch):
     """M133. The pre-warm swallows each step's exception so one bad spot
     cannot cost the others — which meant a step could fail forever in

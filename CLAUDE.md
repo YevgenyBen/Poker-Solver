@@ -471,21 +471,52 @@ requests now reject unknown fields by name rather than ignoring them.
   resampling of 169 classes into a ~330-combo budget beats the
   incumbent.
 
-  **And don't reach for more budget either: M137 closed that too.**
-  Widening past cap 26 buys at most 0.006 of mean error (10%) for
-  2.5-3.6x the cost, and makes the WORST case worse (0.168 shipped
-  against 0.209-0.268). Holding samples fixed and moving only the cap
-  isolates it: cap 34 at samples 30 gives 0.0578 against cap 26's
-  0.0580 — **0.0002 for 2.1x the cost**. Width stops paying at 26, so
-  M131's setting is an optimum rather than the compromise it was chosen
-  as. **The mean error of 0.058 is this architecture's floor at any
-  shippable budget.**
+  **And don't reach for more budget either: M137 closed that too**, and
+  M138 re-confirmed the decision against a corrected reference. Widening
+  past cap 26 is worse on both mean and worst case, non-monotonically:
+  0.1222 shipped against 0.1878 / 0.1912 / 0.1821 at caps 34 / 44 / 60.
+  Width stops paying at 26, so M131's setting is an optimum rather than
+  the compromise it was chosen as.
 
-  What remains is the one idea nothing has touched: a different
-  REPRESENTATION — bucketing strategically similar hands so a fixed
-  budget describes the range's SHAPE instead of sampling from it (M17's
-  shelved machinery, whose goal there was speed and would be fidelity
-  here).
+  **But every accuracy number this section used to quote was measured
+  against an unconverged reference, and the real error is ~2x larger
+  (F36, M138).** The "full-range reference" behind M130-M137 was a
+  cap-60 solve — 60 classes of 169 — and it does not hold still: a
+  flopped set on 2h6d9c reads **0.381 / 0.5948 / 0.9186 at caps 60 /
+  100 / 200**, and 0.987 once the uncapped solve gets 2,500 iterations.
+  The uncapped solve IS trustworthy (doubling equity samples moves it
+  0.9186 -> 0.9206; the seed does not move it), so the true answer is
+  ~0.99 and the old anchor was off by 0.6. **The shipped config's real
+  error is mean 0.1222 / worst 0.4381, not the 0.058 / 0.168 this file
+  claimed** — and 0.058 was never a floor, it was a distance to a wrong
+  target. The user-facing caveat understated the worst case 2.6x and is
+  corrected; `POSTFLOP_AGGRESSION_ERROR_MEAN`/`_WORST` now record the
+  measurement, pinned to the copy by
+  `test_the_aggression_caveat_quotes_its_own_measurement`.
+  **Why eight attempts missed it:** all seven selection rules chose
+  classes WITHIN a cap, so they shared the reference's blind spot and
+  nothing disagreed. Bucketing broke the symmetry by seeing all 169
+  classes — it looked like it was failing, and part of what it was doing
+  was disagreeing with a wrong answer. **Any new accuracy claim here
+  must state what reference it used and show that reference converged.**
+
+  **Representation is dead too — that was the last untried idea (M138).**
+  Bucketing strategically similar hands so a fixed budget describes the
+  range's SHAPE instead of sampling from it. M17's machinery cannot be
+  reused: both halves anchor on the full N x N combo table
+  (`compute_combo_strengths` builds it just to derive the bucketing
+  signal), so bucketing all 169 classes needs a ~1,176 x 1,176 table,
+  strictly more than what ships. Built the variant that avoids it —
+  cheap O(N) bucket assignment plus bucket-vs-bucket equity from SAMPLED
+  member pairs, cost B^2 x k independent of N — with two signals
+  (five-card rank; equity against a reference subset, O(N x R)) and four
+  bucket counts each. **Every arm is worse: 0.085-0.127 against the
+  shipped 0.058 on the old anchor, ~0.20 against 0.1222 on the corrected
+  one, at 2-8.5x the cost, non-monotone in bucket count.** It fails by
+  collapsing aggression specifically — equal-mass bucketing puts top set
+  and an overpair in one bucket (little mass lives at the top of a
+  range), and averaging equity inside a bucket destroys the spread that
+  value-betting monetises. **Nine ideas are now measured and dead.**
 
   Untested hypothesis that fits all seven: **coherent-but-narrow beats
   diverse-but-thin.** ~26 classes at near-full frequency look like a
