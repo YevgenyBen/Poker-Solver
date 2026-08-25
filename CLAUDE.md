@@ -436,9 +436,20 @@ requests now reject unknown fields by name rather than ignoring them.
   direction. **The mechanism is NOT fixed**, only reduced: premiums are
   still excluded at cap 26, and the residual now leans slightly
   over-aggressive rather than passive, which is why the caveat names no
-  direction. **Four selection-rule fixes are measured and dead (M130) —
-  mass-ranking, stratifying by board strength, and reserving 3 or 5
-  slots for the strongest. Don't re-try them.**
+  direction. **FIVE selection-rule fixes are measured and dead — don't
+  re-try them**: mass-ranking (0.775 vs a ~0.35 target — keeps only
+  12-combo offsuit classes), stratifying by board CATEGORY (0.014),
+  reserving 3 or 5 slots for the strongest (0.0002/0.0004 — shrinks the
+  pool), and stratifying by the FULL rank tuple (M134: mean error 0.116
+  against the shipped rule's 0.058, worse at both cap 10 and cap 26, so
+  the coarse strength proxy was not the problem — the approach is).
+  **A sixth idea is untested rather than dead**: capping by COMBO budget
+  with round-robin across classes, the way the river path already does
+  (`_cap_range_to_combos`, M119). It cannot be tested through
+  `_cap_range`, which returns class frequencies the caller then
+  re-expands — a 200-combo cap came back as a 1,176-combo pool. Testing
+  it means moving the cap below the class->combo expansion inside
+  `library.query_strategy_from_path`.
 - **Cache ceilings are sized by BYTES, not just entry count (M127).**
   "Every cache is bounded" (M93/M104, re-verified M124) bounds the entry
   COUNT — and entry size varies 180x, so it never bounded memory. Found
