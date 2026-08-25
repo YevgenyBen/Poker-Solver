@@ -4180,3 +4180,66 @@ def test_the_aggression_caveat_does_not_claim_the_fold_call_is_broken():
             f"the caveat overclaims ({overclaim!r}); only the aggression axis was "
             "measured unstable, and the fold/play call held across 275 decisions"
         )
+
+
+def test_the_range_cap_drops_premiums_the_raiser_actually_holds():
+    """M130. The measured mechanism behind M128's aggression caveat,
+    pinned because the caveat's wording now depends on it.
+
+    `_cap_range` keeps the top classes by HOW OFTEN they took the
+    observed action. Premiums MIX — at 100bb the raiser's AA raises 0.495
+    of the time because it also jams — while mediocre hands raise purely
+    at 0.99+. The tenth-place cut is 0.9912, so every premium falls below
+    it and the modelled opponent holds no big pairs. That is why value
+    hands are told to check: there is nothing to raise for value against.
+
+    Widening the cap lets them back in and the answer converges — a
+    flopped set on 2h6d9c measures .003 / .694 / .468 / .301 / .336 /
+    .347 at caps 10/18/26/34/44/60, settling near 0.35 against the
+    shipped 0.003.
+
+    Asserted on the RAISER only. The big blind's exclusion is correct and
+    unrelated: premiums 3-bet rather than call, so their calling
+    frequency genuinely is 0, and asserting over both would pass for the
+    wrong reason on one of them.
+    """
+    from poker_solver.game_tree import CALL_OR_CHECK, RAISE, GameConfig
+    from poker_solver.solver import derive_ranges_from_path, solve_preflop
+    from api.solving import _cap_range
+
+    premiums = {"AA", "KK", "QQ", "JJ", "AKs", "AKo"}
+    result = solve_preflop(config=GameConfig(stack_bb=100.0, raise_sizes=(2.5, 3.0, 2.2),
+                                             max_raises=4), iterations=400)
+    root = result.root
+    raise_action = next(a for a in root.legal_actions if a.kind == RAISE)
+    call_action = next(a for a in root.children[raise_action].legal_actions
+                       if a.kind == CALL_OR_CHECK)
+    scenario = derive_ranges_from_path(result, [raise_action, call_action])
+
+    raiser = scenario.live_positions[0]
+    full = scenario.ranges[raiser]
+    present = {str(h) for h, f in full.items() if str(h) in premiums and f > 0}
+    assert present, "the raiser's real range should contain premiums at 100bb"
+
+    kept = {str(h) for h in _cap_range(full, api_config.MAX_PATH_QUERY_CLASSES_PER_SIDE)}
+    assert not (kept & premiums), (
+        f"premiums survived the cap ({sorted(kept & premiums)}) — if the ranking has "
+        "changed, POSTFLOP_AGGRESSION_CAVEAT_REASON describes a mechanism that no "
+        "longer applies and must be rewritten"
+    )
+    # ...and the reason is purity, not absence: they are in the range,
+    # just below a cut made of hands that take one action every time.
+    cut = min(_cap_range(full, api_config.MAX_PATH_QUERY_CLASSES_PER_SIDE).values())
+    assert cut > 0.9, f"the cut should sit among near-pure strategies, got {cut}"
+    assert all(full[h] < cut for h in full if str(h) in present)
+
+
+def test_the_aggression_caveat_names_the_mechanism_and_the_direction():
+    """M130. The caveat used to say only that aggression was unreliable.
+    It now says WHY and WHICH WAY, because both are measured — a user who
+    knows the model is missing big pairs can discount in the right
+    direction, where 'unreliable' leaves them nowhere to go."""
+    reason = api_config.POSTFLOP_AGGRESSION_CAVEAT_REASON.lower()
+    assert "passive" in reason, "the caveat should name the direction of the bias"
+    assert "mix" in reason, "the caveat should name the mechanism"
+    assert "fold" in reason, "the caveat should still say which axis IS usable"

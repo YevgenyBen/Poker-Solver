@@ -6785,3 +6785,58 @@ entry's own corrections before trusting its conclusions.
     comes from `MAX_PATH_QUERY_CLASSES_PER_SIDE` — the parameter M128
     measured as moving value-hand advice erratically. It cannot be spent
     on speed without making advice worse unpredictably.
+
+- **M130 — why postflop aggression is wrong: the cap drops the
+  opponent's premiums.** M128 measured the instability and could only
+  say the answer moved erratically with a cost knob. The mechanism is
+  now measured, and four candidate fixes are closed off with numbers.
+  - **Not under-convergence.** The obvious hypothesis — a fixed 1,000
+    iterations spread over a bigger game — is dead. At 1k/4k/16k
+    iterations the caps give {10: .003, 18: .694, 26: .468} ->
+    {.000, .685, .518} -> {.000, .633, .493}: each cap CONVERGES to its
+    own stable value and the spread does not close. Each cap is a
+    different game, not a noisier one.
+  - **The shipped cap is far too passive — but only ONE of the two hands
+    swept actually converges, and that distinction is load-bearing.**
+    At caps 10/18/26/34/44/60 on 2h6d9c:
+    | hand | 10 | 18 | 26 | 34 | 44 | 60 |
+    |---|---|---|---|---|---|---|
+    | 9s9d set | .003 | .694 | .468 | .301 | .336 | **.347** |
+    | QdQh overpair | .004 | .482 | .040 | .093 | .237 | **.125** |
+    The set settles near **0.35** from cap 34 on, ~140x the shipped
+    0.003. **The overpair does not settle at all** — it is still moving
+    at cap 60. So "the answer is too passive" is established for both
+    (every value from cap 18 up is 10-170x the shipped one), while "the
+    correct answer is X" is established only for the set. Do not quote a
+    convergent target for hands other than the one measured.
+  - **The mechanism.** `_cap_range` ranks classes by how often they took
+    the observed action. Premiums MIX — at 100bb the raiser's AA raises
+    0.495 of the time because it also jams, KK 0.765, AKo 0.208 — while
+    mediocre hands raise purely at 0.99+. The tenth-place cut is 0.9912,
+    so every premium falls below it. **In 5 of 6 measured (stack,
+    position) cases the raiser's modelled range contained no premium
+    hands at all.** With no big pairs to value-bet against, value hands
+    check. (The big blind's exclusion is correct and unrelated: premiums
+    3-bet rather than call, so their calling frequency genuinely is 0.)
+  - **Four fixes measured and rejected — don't re-try these.** Target is
+    ~0.35; shipped frequency-ranking gives 0.0025.
+    | rule | result | why it fails |
+    |---|---|---|
+    | mass = freq x combos | **0.775** | keeps only 12-combo offsuit classes; drops every pair and suited hand |
+    | stratified by board strength | 0.014 | hand CATEGORY lumps AA with 44 on a dry board |
+    | reserve 3 strongest | 0.0002 | displaces 12-combo classes, shrinking the pool 130 -> 117 combos |
+    | reserve 5 strongest | 0.0004 | same, 130 -> 106 |
+    They miss in *both* directions, from 0.0002 to 0.775. **No top-K by
+    any single scalar represents a range** — a range is a distribution
+    over strength, and ten classes cannot carry the shape of 169.
+  - **What is left**: widen the cap (cost is quadratic and measured —
+    cap 34 is 81s against cap 10's 9s) or change the representation
+    (bucketing, M17's shelved machinery, whose goal here would be
+    representativeness rather than speed). Both are milestones of their
+    own.
+  - **The caveat now names the mechanism and the DIRECTION.** "Unreliable"
+    left a user nowhere to go; "the model is missing big pairs, so it
+    leans too passive with strong hands" lets them discount the right
+    way. Pinned by a test that fails if premiums ever survive the cap —
+    because then the caveat would describe a mechanism that no longer
+    applies.
