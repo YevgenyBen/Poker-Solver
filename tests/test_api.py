@@ -4305,3 +4305,45 @@ def test_every_prewarm_step_succeeds(monkeypatch):
         + "; ".join(f"{s['name']} -> {s['error']}" for s in failed)
     )
     assert api_main.PREWARM_STATUS["finished"]
+
+
+def test_the_combo_budget_cap_keeps_every_class_including_the_premiums():
+    """M135. `_cap_combo_range` is kept at its default (unused) because
+    it was MEASURED WORSE, not because it fails to do what it claims —
+    and the distinction is the finding.
+
+    It does exactly what M130's diagnosis asked for: trimming 1,176
+    combos to 300 keeps all four premiums and all 169 classes, where the
+    shipped class-level cap drops every premium. And the advice it
+    produces is **2x worse** at matched pool size (mean error 0.111
+    against 0.058), non-monotone in budget.
+
+    So premium exclusion is a correlate, not the cause. This pins the
+    structural claim so the negative result stays interpretable: if this
+    ever stopped keeping premiums, the measurement above would no longer
+    mean what it says.
+    """
+    from poker_solver.cards import Card
+    from poker_solver.combos import combo_class, range_from_class_frequencies
+    from poker_solver.starting_hands import all_starting_hands
+    from api.solving import _cap_combo_range
+
+    board = frozenset(Card.from_str(t) for t in ("2h", "6d", "9c"))
+    premiums = {"AA", "KK", "QQ", "AKs"}
+    # premiums at LOWER frequency, the way a raiser's real range has them
+    freqs = {hand: (0.5 if str(hand) in premiums else 0.99)
+             for hand in all_starting_hands()}
+    full = range_from_class_frequencies(freqs, exclude=board)
+
+    capped = _cap_combo_range(full, 300)
+    assert len(capped) == 300
+    kept_classes = {str(combo_class(combo)) for combo in capped}
+    assert premiums <= kept_classes, (
+        f"the combo budget dropped premiums it is supposed to keep: "
+        f"{sorted(premiums - kept_classes)}"
+    )
+    assert len(kept_classes) == 169, (
+        f"round-robin should reach every class, got {len(kept_classes)}"
+    )
+    # a range that already fits comes back untouched
+    assert _cap_combo_range(full, len(full) + 10) == full

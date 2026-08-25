@@ -128,6 +128,7 @@ def build_library(
     equity_seed: int = DEFAULT_EQUITY_SEED,
     stack_bucket_bb: float = DEFAULT_STACK_BUCKET_BB,
     equity_table_fn=None,
+    combo_cap_fn=None,
 ) -> dict:
     """Batch-solves `boards`, deduplicated by canonical (board, stack)
     key — two real boards that canonicalize to an already-seen key are
@@ -148,6 +149,21 @@ def build_library(
         exclude = frozenset(board)
         hero_range = range_from_class_frequencies(hero_classes, exclude=exclude)
         villain_range = range_from_class_frequencies(villain_classes, exclude=exclude)
+        # M135: an optional budget applied AFTER expansion, in combos.
+        #
+        # The caller's own cap works on CLASSES, above this line, and
+        # M130 measured what that costs: ranking classes by how purely
+        # they took the observed action drops every premium, because
+        # premiums mix. Capping here instead lets a class be present with
+        # FEWER combos rather than absent entirely — which is what a
+        # hand that mixes should look like — and puts the budget in the
+        # currency the solve's cost is actually measured in.
+        #
+        # Injected rather than implemented here, like the equity mappers:
+        # the policy belongs to whoever owns the request.
+        if combo_cap_fn is not None:
+            hero_range = combo_cap_fn(hero_range)
+            villain_range = combo_cap_fn(villain_range)
         canonical_hero_range = {translate_combo(combo, suit_map): weight for combo, weight in hero_range.items()}
         canonical_villain_range = {
             translate_combo(combo, suit_map): weight for combo, weight in villain_range.items()
@@ -318,6 +334,7 @@ def query_strategy(
     equity_seed: int = DEFAULT_EQUITY_SEED,
     stack_bucket_bb: float = DEFAULT_STACK_BUCKET_BB,
     equity_table_fn=None,
+    combo_cap_fn=None,
 ) -> QueryResult:
     """Phase 4: canonicalize-then-lookup, falling back to an on-demand
     solve on a miss — the live query path the real-time-speed roadmap
@@ -408,6 +425,7 @@ def query_strategy(
         equity_seed=equity_seed,
         stack_bucket_bb=stack_bucket_bb,
         equity_table_fn=equity_table_fn,
+        combo_cap_fn=combo_cap_fn,
     )
     library.update(new_entries)
 
@@ -438,6 +456,7 @@ def query_strategy_from_path(
     equity_seed: int = DEFAULT_EQUITY_SEED,
     stack_bucket_bb: float = DEFAULT_STACK_BUCKET_BB,
     equity_table_fn=None,
+    combo_cap_fn=None,
 ) -> QueryResult:
     """Bridges M16's derive_ranges_from_path into query_strategy: given a
     PathScenario (from walking a real preflop StrategyResult along a
@@ -544,4 +563,5 @@ def query_strategy_from_path(
         equity_seed=equity_seed,
         stack_bucket_bb=stack_bucket_bb,
         equity_table_fn=equity_table_fn,
+        combo_cap_fn=combo_cap_fn,
     )
