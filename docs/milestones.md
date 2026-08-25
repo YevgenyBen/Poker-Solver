@@ -6981,3 +6981,44 @@ entry's own corrections before trusting its conclusions.
     /advise's postflop cost is board-specific and a board cannot be
     guessed, the same wall precompute runs into.
   - Backend 966 passed.
+
+- **M134 — a fifth selection rule dies, and the sixth idea turns out to
+  be blocked by plumbing rather than by evidence.** M130 killed four ways
+  to pick a better capped range. Two more were tried here; only one of
+  them produced a real result, and the difference matters.
+  - **Stratified selection, retried properly, FAILS — record it as dead.**
+    M130's stratified attempt scored a class by `best_hand_rank(...)[0]`,
+    the hand CATEGORY, which on a dry board calls AA and 44 both "one
+    pair" and so spreads the sample across nothing. That was a fixable
+    flaw, so it was worth retrying with the full rank tuple, which orders
+    AA above 44. Measured on the same five spots against a full-range
+    reference:
+    | arm | mean err | max err | wall |
+    |---|---|---|---|
+    | shipped frequency-rank (cap 26) | **0.0580** | 0.1679 | 9.1s |
+    | stratified, full rank tuple (cap 26) | 0.1157 | 0.3311 | 18.4s |
+    | stratified, full rank tuple (cap 10) | 0.1526 | 0.3061 | 2.9s |
+    **Twice the error of the rule it was meant to beat, and twice the
+    cost.** It is worse at BOTH caps, so the strength proxy was not the
+    problem — the approach is.
+  - **Which sharpens M130's diagnosis rather than repeating it.**
+    Excluding premiums IS a measured defect. But replacing frequency
+    ranking with an even spread across strength makes things *worse*, so
+    the frequency signal carries real information despite biasing against
+    hands that mix. "The composition is wrong" was right; "so spread it
+    evenly" does not follow.
+  - **The sixth idea was NOT tested, and is recorded as untested.** The
+    river path caps by COMBO budget with round-robin across classes
+    (`_cap_range_to_combos`, M119) rather than by top-K classes, so a
+    premium does get in — with fewer combos, which is what a mixing hand
+    should have. Testing it through `_cap_range` does not work: that hook
+    returns CLASS frequencies and the caller re-expands each class to all
+    its combos, so a 200-combo cap came back with a **1,176-combo pool**
+    and 218s per spot. That is a broken harness, not a refutation.
+    Testing it for real means moving the cap below the class->combo
+    expansion inside `library.query_strategy_from_path`, which is a
+    plumbing change, not an experiment.
+  - **Five rules are now dead and one is untested-but-plausible.** The
+    honest read is that this needs the structural change M130 named — a
+    different representation rather than a better selection — or simply
+    more budget. Guessing at a seventh scoring function is not the way in.
