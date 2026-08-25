@@ -6840,3 +6840,59 @@ entry's own corrections before trusting its conclusions.
     way. Pinned by a test that fails if premiums ever survive the cap —
     because then the caveat would describe a mechanism that no longer
     applies.
+
+- **M131 — the budget was being spent in the wrong place.** M130 closed
+  off four ways to pick a better 10-class range and concluded no top-K
+  by a single scalar can represent a distribution. This is a fifth idea
+  of a different kind: not a better selection rule, but a REBALANCE
+  between knobs that already exist.
+  - **The insight follows from M130's own finding.** A postflop solve
+    costs roughly (combo pairs x equity samples). The shipped setting
+    bought 200 samples of precision for a 10-class slice whose
+    COMPOSITION M130 measured as wrong — no premiums in the raiser's
+    range. Precision behind a wrong range is wasted; trading it for
+    width should be close to free.
+  - **Measured across five (board, hand) spots**, each against its own
+    widest-affordable reference (cap 60, samples 200, ~175s per spot):
+    | cap | samples | iters | mean err | max err | wall |
+    |---|---|---|---|---|---|
+    | 10 | 200 | 1000 | 0.0944 | 0.3448 | 8.4s |
+    | 18 | 90 | 700 | 0.1366 | 0.3849 | 11.7s |
+    | 22 | 45 | 600 | 0.0527 | 0.1919 | 12.0s |
+    | **26** | **30** | **500** | **0.0319** | **0.1387** | **14.7s** |
+    | 26 | 30 | 1000 | 0.0199 | 0.0948 | 21.1s |
+    Shipped the knee: **mean error 3x better, worst case 2.5x better**,
+    at 1.75x the cost. A flopped set on 2h6d9c was advised to raise
+    **0.3%** of the time against a ~35% reference; it now returns 48.6%.
+  - **Width is NOT monotonically better** — cap 18 measures WORSE than
+    the old cap 10 on both mean and max error. Swept several points
+    rather than assuming a direction, which is the trap M110 and M127
+    both fell into.
+  - **Accuracy is not free**: every arm that beat the old setting cost
+    more time. The knee was chosen deliberately, giving up the last
+    0.012 of mean error rather than handing back all of M129's speed
+    work. The user chose this point from the measured frontier.
+  - **The caveat had to stop naming a direction, and its guard caught
+    it.** M130's text said the advice "leans too passive with strong
+    hands — lean more aggressive than advised". After the rebalance all
+    five spots lean the OTHER way (a set now 0.486 against a 0.347
+    reference), and four of the five errors are under 0.01. Telling a
+    player to correct in a direction that has flipped is worse than
+    telling them nothing, so the caveat now names the mechanism and says
+    the residual has no consistent direction. The test asserting a
+    direction was rewritten — its premise was measured false, which is
+    exactly what it existed to detect.
+  - **The mechanism is unchanged.** Premiums are still excluded at cap
+    26 (`test_the_range_cap_drops_premiums_the_raiser_actually_holds`
+    still passes), so the rebalance reduced the error without removing
+    its cause. The structural fix M130 named — a different
+    representation — is still open.
+  - **The play-level cost is larger than the per-spot frontier showed,
+    and that is worth stating.** The frontier measured one flop decision
+    (8.4s -> 14.7s). Across a 60-hand session the flop median went
+    5.16s -> 11.13s and **p90 8.71s -> 16.84s**, because flop decisions
+    are a large share of postflop volume. Turn (8.19 -> 7.74s) and river
+    (4.90 -> 4.83s) are untouched — they run on different constants.
+    p50 moved only 4.28 -> 4.86s, since preflop dominates by count and
+    is cached. Anyone weighing this tradeoff should look at p90, not the
+    per-spot number.

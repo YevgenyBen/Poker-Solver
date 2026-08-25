@@ -1085,6 +1085,11 @@ def _query_flop_from_path(
             situation.capped_scenario,
             board_cards,
             iterations=cfg.PATH_QUERY_ITERATIONS,
+            # M131: the flop path ran at board_equity's default of 200
+            # samples because nothing passed this. Precision was being
+            # bought for a 10-class range whose composition M130 measured
+            # as wrong — see cfg.PATH_QUERY_EQUITY_SAMPLES.
+            equity_samples=cfg.PATH_QUERY_EQUITY_SAMPLES,
         )
 
     path_scenario = situation.path_scenario

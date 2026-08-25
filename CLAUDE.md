@@ -49,7 +49,7 @@ requests now reject unknown fields by name rather than ignoring them.
 
 | To change… | Go to |
 |---|---|
-| a cost cap or iteration budget | `api/config.py` (each constant carries its measurement) |
+| a cost cap or iteration budget | `api/config.py` (each constant carries its measurement; **`MAX_PATH_QUERY_CLASSES_PER_SIDE`, `PATH_QUERY_EQUITY_SAMPLES` and `PATH_QUERY_ITERATIONS` move together — see M131**) |
 | how a request is answered | `api/solving.py` |
 | a URL, status code, or response shape | `api/main.py` + `api/schemas.py` |
 | solving itself | `poker_solver/` |
@@ -408,30 +408,24 @@ requests now reject unknown fields by name rather than ignoring them.
   pools and budgets for speed. Run an end-to-end `/advise` check at
   production settings after any solver change.
 
-- **Postflop value-hand advice leans TOO PASSIVE, and the cause is
-  measured (M128 found it, M130 explained it).** `_cap_range` ranks
-  classes by how often they took the observed action. Premiums MIX — at
-  100bb the raiser's AA raises 0.495 of the time because it also jams,
-  KK 0.765, AKo 0.208 — while mediocre hands raise purely at 0.99+, and
-  the tenth-place cut is 0.9912. **In 5 of 6 measured (stack, position)
-  cases the raiser's modelled range contained no premium hands at all**,
-  so value hands have nothing to raise against. Widening the cap raises
-  it sharply, but convergence is HAND-DEPENDENT: at caps
-  10/18/26/34/44/60 a flopped set measures .003/.694/.468/.301/.336/.347
-  (settling near **0.35**, ~140x the shipped .003) while a QQ overpair
-  measures .004/.482/.040/.093/.237/.125 and is **still moving at cap
-  60**. Too-passive is established for both; a convergent TARGET only
-  for the set — don't quote 0.35 for other hands. Users are told via `aggression_confidence` (M128), and the
-  reason now names the direction so they can discount correctly.
-  **Four fixes are measured and dead — don't re-try them**: mass-ranking
-  (0.775 — keeps only 12-combo offsuit classes), stratifying by board
-  strength (0.014 — hand category lumps AA with 44), and reserving 3 or
-  5 slots for the strongest (0.0002/0.0004 — displaces 12-combo classes
-  and shrinks the pool). No top-K by a single scalar represents a range.
-  What remains: widen the cap (quadratic, cap 34 = 81s vs cap 10 = 9s)
-  or change the representation. **This is also the blocked speed lever**
-  — cost is near-quadratic in pool size, so it cannot be spent on
-  latency without making advice worse.
+- **The postflop budget is split three ways and the three move together
+  (M131).** `MAX_PATH_QUERY_CLASSES_PER_SIDE` (26),
+  `PATH_QUERY_EQUITY_SAMPLES` (30) and `PATH_QUERY_ITERATIONS` (500)
+  trade against one budget, since cost is roughly (combo pairs x
+  samples). The old split — 200 samples over 10 classes — bought
+  precision for a range whose COMPOSITION was wrong: `_cap_range` ranks
+  by how purely a class took the observed action, premiums mix, and in 5
+  of 6 measured cases the raiser's modelled range held no premium hands
+  at all (M130). Rebalancing cut mean error against a full-range
+  reference **0.0944 -> 0.0319** and the worst case **0.345 -> 0.139**,
+  at 8.4s -> 14.7s. **Width is not monotonically better** — cap 18
+  measures worse than cap 10 on both — so sweep, never assume a
+  direction. **The mechanism is NOT fixed**, only reduced: premiums are
+  still excluded at cap 26, and the residual now leans slightly
+  over-aggressive rather than passive, which is why the caveat names no
+  direction. **Four selection-rule fixes are measured and dead (M130) —
+  mass-ranking, stratifying by board strength, and reserving 3 or 5
+  slots for the strongest. Don't re-try them.**
 - **Cache ceilings are sized by BYTES, not just entry count (M127).**
   "Every cache is bounded" (M93/M104, re-verified M124) bounds the entry
   COUNT — and entry size varies 180x, so it never bounded memory. Found
