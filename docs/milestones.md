@@ -6937,3 +6937,47 @@ entry's own corrections before trusting its conclusions.
     The user-facing caveat now reads "about 6 percentage points on
     average and 17 at worst", up from 3 and 14.
   - Backend 965 passed.
+
+- **M133 — the river pre-warm had never worked, and the p99 tail was my
+  own harness.** Two open items closed, one of them by finding a defect
+  the other exposed.
+  - **The p99/max tail (41-65s) was an artifact.** M127-M131's play
+    sessions used `TestClient(app)` without a context manager, so
+    lifespan never ran and the pre-warm never fired. Run WITH lifespan
+    and waiting on `PREWARM_STATUS`: after it finishes, **every multiway
+    preflop depth returns in 0.0s** — 6-max at 100/50/20, 3-max, 9-max.
+    The tail is not a production problem.
+  - **But the pre-warm takes 510s**, so a restarting server does have an
+    8.5-minute window where multiway is genuinely cold. That part is
+    real.
+  - **F35 (fixed): `solve_river_from_path`'s pre-warm had never once
+    succeeded.** It asked for a flop line of
+    `["raise", "call_or_check"]`, but that endpoint's tree runs at
+    `FLOP_TO_RIVER_MAX_RAISES=1` with empty `FLOP_TO_RIVER_RAISE_SIZES`,
+    so `_build` offers no sized raise at all — only `call_or_check` and
+    `all_in`. Every attempt raised "step 0: 'raise' is not legal at this
+    node". **It has been failing since it was added**, and every default
+    river request paid the full ~43s cold cost the pre-warm exists to
+    prevent. Now check/check, which is what the original comment wanted
+    and what this tree can express.
+  - **M124's `PREWARM_STATUS` is the only reason it was visible.** Before
+    it, the step swallowed its own exception into a log line. A test now
+    asserts EVERY step succeeds, so a pre-warm line that stops matching
+    its tree fails loudly.
+  - **That test caught a second, subtler thing**: the turn pre-warm's
+    line is legal only because production sets `FLOP_TURN_MAX_RAISES=2`.
+    Under the suite's own speed fixture, which shrinks it to 1, the same
+    line is illegal. The test restores the production shape deliberately
+    and says why — a pre-warm line's validity depends on config living
+    somewhere else entirely.
+  - **The pre-warm is partly aimed at endpoints nobody calls.**
+    `fetchTurnStrategyFromPath`, `fetchRiverStrategyFromPath`,
+    `fetchFlopStrategyFromPath` and `fetchMultiwayFlopStrategyFromPath`
+    all have **zero non-test callers** — the deprecated routes `/advise`
+    replaced — and the comments still name a `TurnPathSolver.tsx` that
+    does not exist. Those two steps cost ~60s of a 510s startup for
+    traffic the UI does not generate. Recorded rather than deleted: the
+    routes are still public. **No high-value replacement is obvious** —
+    /advise's postflop cost is board-specific and a board cannot be
+    guessed, the same wall precompute runs into.
+  - Backend 966 passed.
