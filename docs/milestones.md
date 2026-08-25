@@ -7066,3 +7066,43 @@ entry's own corrections before trusting its conclusions.
     kept alongside `_cap_range` — the same "keep the refuted knob at its
     default so the result stays reproducible" discipline `mccfr_solve`
     already applies to `optimism`, `smoothing` and `continuation`.
+
+- **M136 — a seventh rule dies, and seven failures are now enough to
+  call this structural.** M135's round-robin cap gave every class about
+  the same number of combos, which violates M119's own finding that a
+  class's mass is frequency x combo COUNT — pairs (6 combos) and offsuit
+  hands (12) both got two, so offsuit hands were ~6x under-weighted.
+  That is a concrete, diagnosed flaw, so the corrected rule was worth
+  one test.
+  - **Proportional sampling** allocates combos in proportion to each
+    class's real mass, largest-remainder so small classes are not all
+    rounded away. It does what it claims — at a 333 budget it gives AKo
+    four combos where round-robin gave two, while AA and AKs get one
+    each — and still keeps all 169 classes.
+  - **It is the worst rule tried yet:**
+    | arm | mean err | max err | pool | wall |
+    |---|---|---|---|---|
+    | shipped, 26 classes | **0.0580** | 0.1679 | 333 | 9.2s |
+    | proportional, budget 333 | 0.2403 | 0.6640 | 543 | 28.4s |
+    | proportional, budget 480 | **0.5396** | 0.6661 | 755 | 60.5s |
+    **4x the error at a 63% larger pool, and 9x at a 127% larger one.**
+    It gets monotonically WORSE as the budget grows, which rules out
+    "not enough combos" as the explanation outright.
+  - **Note the pool figure.** `combo_cap_fn` is applied to each side
+    separately and the solve pool is the union, so a 333-per-side budget
+    can produce anything from ~333 (heavy overlap) to ~666. M135's
+    round-robin arm happened to land at 338 and so WAS matched against
+    the shipped 333; this one is not, and is worse anyway.
+  - **Seven rules, all worse than ranking classes by action purity:**
+    mass-ranking, stratified-by-category, reserve-3, reserve-5,
+    stratified-by-full-rank, round-robin combo budget, and proportional
+    combo budget. They fail in both directions (0.0002 to 0.775) and
+    include three that deliberately restore the diversity M130 said was
+    missing. **The family is exhausted: no reweighting or resampling of
+    a 169-class range into a ~330-combo budget beats the incumbent.**
+  - **What that leaves.** Either more budget — the frontier is measured
+    and M132 made the flop table 4.79x cheaper, so a wider cap is more
+    affordable than it was — or the structural change M130 named, which
+    is a different REPRESENTATION (bucketing strategically similar hands,
+    M17's shelved machinery) rather than another way to choose among the
+    169 classes. **Do not add an eighth scoring function.**

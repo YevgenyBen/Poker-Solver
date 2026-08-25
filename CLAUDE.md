@@ -454,13 +454,31 @@ requests now reject unknown fields by name rather than ignoring them.
   remedy makes the advice worse, so it cannot be what drives the error.
   **Don't spend a milestone putting the premiums back.**
 
-  Working hypothesis after six failures, untested: **coherent-but-narrow
-  beats diverse-but-thin.** ~26 classes at near-full frequency look like
-  a consistent set of holdings; all 169 classes at one to three combos
-  each have the right diversity but are a smear no real opponent holds.
-  Both alternatives that deliberately restored diversity — stratified
-  (M134) and combo-budget (M135) — landed about 2x worse, which is what
-  that hypothesis predicts.
+  **A SEVENTH died too (M136)**, and it closes the family. M135's
+  round-robin gave every class the same combo count, violating M119's
+  own rule that mass is frequency x combo COUNT; the corrected
+  proportional version allocates combos by real mass. It is the worst
+  yet — mean error 0.240 against 0.058 at a 63% larger pool, and 0.540
+  at a 127% larger one. It gets monotonically WORSE with more budget,
+  so "not enough combos" is not the explanation either.
+
+  **Seven rules, all worse than ranking classes by action purity**:
+  mass-ranking, stratified-by-category, reserve-3, reserve-5,
+  stratified-by-full-rank, round-robin combo budget, proportional combo
+  budget. They fail in both directions (0.0002 to 0.775) and three of
+  them deliberately restore the diversity M130 called missing.
+  **Don't add an eighth scoring function** — no reweighting or
+  resampling of 169 classes into a ~330-combo budget beats the
+  incumbent. What is left is more budget (the frontier is measured, and
+  M132 made the flop table 4.79x cheaper) or a different
+  REPRESENTATION — bucketing strategically similar hands, M17's shelved
+  machinery — rather than another way to choose among the same 169
+  classes.
+
+  Untested hypothesis that fits all seven: **coherent-but-narrow beats
+  diverse-but-thin.** ~26 classes at near-full frequency look like a
+  consistent set of holdings; 169 classes at one to four combos each
+  have the right diversity but are a smear no real opponent holds.
 - **Cache ceilings are sized by BYTES, not just entry count (M127).**
   "Every cache is bounded" (M93/M104, re-verified M124) bounds the entry
   COUNT — and entry size varies 180x, so it never bounded memory. Found
