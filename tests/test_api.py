@@ -4234,12 +4234,30 @@ def test_the_range_cap_drops_premiums_the_raiser_actually_holds():
     assert all(full[h] < cut for h in full if str(h) in present)
 
 
-def test_the_aggression_caveat_names_the_mechanism_and_the_direction():
-    """M130. The caveat used to say only that aggression was unreliable.
-    It now says WHY and WHICH WAY, because both are measured — a user who
-    knows the model is missing big pairs can discount in the right
-    direction, where 'unreliable' leaves them nowhere to go."""
+def test_the_aggression_caveat_names_the_mechanism_but_no_longer_a_direction():
+    """M131. This test previously required the caveat to name a
+    DIRECTION, because M130 measured every spot as too passive and told
+    users to lean more aggressive.
+
+    The rebalance flipped it. Against a full-range reference across five
+    spots, all five now lean slightly the other way — a flopped set
+    reads 0.486 against a 0.347 reference — and four of those five errors
+    are under 0.01. A direction read off residuals that small, and that
+    have already reversed once, is not something to put in front of a
+    player: correcting the wrong way is worse than not correcting.
+
+    So the caveat still names the MECHANISM, which is unchanged and
+    verified by `test_the_range_cap_drops_premiums_the_raiser_actually_
+    holds`, and deliberately stops naming a direction.
+    """
     reason = api_config.POSTFLOP_AGGRESSION_CAVEAT_REASON.lower()
-    assert "passive" in reason, "the caveat should name the direction of the bias"
-    assert "mix" in reason, "the caveat should name the mechanism"
+    assert "mix" in reason, "the caveat should still name the mechanism"
     assert "fold" in reason, "the caveat should still say which axis IS usable"
+    assert "without a consistent direction" in reason, (
+        "the caveat should say the residual has no reliable direction"
+    )
+    for stale in ("lean more aggressive", "too passive", "check more than they should"):
+        assert stale not in reason, (
+            f"the caveat still tells users to correct for a bias that has flipped "
+            f"({stale!r}) — the residual now leans the other way"
+        )

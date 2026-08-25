@@ -469,7 +469,10 @@ FLOP_QUERY_ITERATIONS = DEFAULT_FLOP_ITERATIONS
 # ~67% more range fidelity, still well inside the tolerable-for-a-live-
 # request bracket, with cap=14 left as measured headroom rather than
 # taken now.
-MAX_PATH_QUERY_CLASSES_PER_SIDE = 10
+# M131 raised this 10 -> 26, and cut PATH_QUERY_EQUITY_SAMPLES and
+# PATH_QUERY_ITERATIONS to pay for it. The three move together and the
+# reason is one measurement — see PATH_QUERY_EQUITY_SAMPLES below.
+MAX_PATH_QUERY_CLASSES_PER_SIDE = 26
 MAX_PATH_LENGTH = 20
 # Flop-stage iterations, fixed — not exposed, unlike the preflop-stage
 # iterations request field below. This part of the pipeline sits behind
@@ -479,7 +482,10 @@ MAX_PATH_LENGTH = 20
 # against; the preflop-stage solve, by contrast, is a plain per-request
 # cache dict (see _get_or_solve_preflop_raw), so exposing *its* own
 # iterations is exactly as safe as /solve/{stack_bb} already relies on.
-PATH_QUERY_ITERATIONS = DEFAULT_FLOP_ITERATIONS
+# M131: 500, not DEFAULT_FLOP_ITERATIONS (1,000). Halved to help fund the
+# wider range above; see PATH_QUERY_EQUITY_SAMPLES for the frontier this
+# point was chosen from.
+PATH_QUERY_ITERATIONS = 500
 
 # Fixed server-side constants, not query params — same reasoning
 # DEMO_FLOP_HERO_/VILLAIN_CLASSES already establish (letting a client
@@ -961,14 +967,55 @@ MULTIWAY_STACK_BUCKET_BB = 5.0
 # 2h6d9c measures .003 / .694 / .468 / .301 / .336 / .347 at caps
 # 10/18/26/34/44/60, settling near 0.35 against the shipped 0.003.
 POSTFLOP_AGGRESSION_CAVEAT_REASON = (
-    "How often to bet or raise here is a rough hint, and it leans too passive with "
-    "strong hands. To stay affordable this solve models only a slice of the opponent's "
-    "range, chosen by how consistently each hand took the action they took — and "
-    "premium hands get dropped by that rule, because they mix between raising and "
-    "going all-in rather than always raising. With no big pairs in the opponent's "
-    "model there is little to raise for value against, so value hands are told to "
-    "check more than they should: a flopped set is advised to raise about 0.3% of the "
-    "time here where a full-range solve of the same spot puts it near 35%. The "
-    "fold-versus-play call is far sounder than how aggressively to play: trust "
-    "whether to continue, and lean more aggressive than advised with strong hands."
+    "How often to bet or raise here is approximate. To stay affordable this solve "
+    "models only part of the opponent's range, chosen by how consistently each hand "
+    "took the action they took — and premium hands still get dropped by that rule, "
+    "because they mix between raising and going all-in rather than always raising. "
+    "Measured against a full-range solve across five spots, the raising frequency is "
+    "off by about 3 percentage points on average and by 14 at worst, without a "
+    "consistent direction. The fold-versus-play call is far sounder than how "
+    "aggressively to play: trust whether to continue, and treat the raising "
+    "frequency as approximate rather than correcting it in either direction."
 )
+
+
+
+# M131. Equity samples for the flop path-query solve — 30, against
+# board_equity's default of 200.
+#
+# **The budget was being spent in the wrong place.** A postflop solve
+# costs roughly (combo pairs x equity samples), and the shipped setting
+# put 200 samples of precision behind a 10-class slice of the opponent's
+# range. M130 measured what that slice costs: `_cap_range` ranks classes
+# by how PURELY they took the observed action, premiums mix, and so in 5
+# of 6 measured cases the raiser's modelled range contained no premium
+# hands at all. Precision was being bought for a range whose composition
+# was wrong.
+#
+# Trading precision for width, at roughly fixed cost, is a large win.
+# Measured across five (board, hand) spots, each against its own
+# widest-affordable reference (cap 60, samples 200, ~175s per spot):
+#
+#     cap  samples  iters   mean err   max err   wall
+#      10      200   1000     0.0944    0.3448    8.4s   <- was shipped
+#      18       90    700     0.1366    0.3849   11.7s
+#      22       45    600     0.0527    0.1919   12.0s
+#      26       30    500     0.0319    0.1387   14.7s   <- shipped now
+#      26       30   1000     0.0199    0.0948   21.1s
+#
+# Mean error falls 3x and the worst case 2.5x. The headline case: a
+# flopped set on 2h6d9c was advised to raise 0.3% of the time where the
+# reference puts it near 35%; at this setting it comes back at 34.5%.
+#
+# **Two warnings for anyone tuning these.**
+#
+# Width is NOT monotonically better. cap 18 measures WORSE than the old
+# cap 10 on both mean and max error, which is why the sweep covered
+# several points rather than assuming a direction — the same trap M110
+# and M127 both fell into.
+#
+# And accuracy is not free here: every arm that beat the old setting also
+# cost more time. This point was chosen deliberately as the knee, giving
+# up the last 0.012 of mean error to avoid handing back all of M129's
+# speed work.
+PATH_QUERY_EQUITY_SAMPLES = 30
