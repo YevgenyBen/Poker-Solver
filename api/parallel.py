@@ -41,6 +41,14 @@ MIN_BATCH_FOR_POOL = 8
 
 _pool: ProcessPoolExecutor | None = None
 _pool_lock = threading.Lock()
+# Set once a host has been shown unable to spawn workers, so the probe
+# below runs at most one time rather than on every request.
+_pool_unavailable = False
+
+
+def _probe(_):
+    """Trivial task used to confirm workers can actually start."""
+    return True
 
 
 def _worker(args):
@@ -69,15 +77,40 @@ def _get_pool() -> ProcessPoolExecutor | None:
     memory per worker; once, because creating one per request under
     concurrent load is how a server runs out of processes.
     """
-    global _pool
+    global _pool, _pool_unavailable
+    if _pool_unavailable:
+        return None
     if _pool is None:
         with _pool_lock:
+            if _pool_unavailable:
+                return None
             if _pool is None:
                 try:
-                    _pool = ProcessPoolExecutor(max_workers=EQUITY_POOL_WORKERS)
-                except (OSError, ValueError):
-                    # A host that cannot spawn processes still works, just
-                    # sequentially. Never fail a request over an optimisation.
+                    pool = ProcessPoolExecutor(max_workers=EQUITY_POOL_WORKERS)
+                    # M132: prove a worker can actually START before
+                    # handing real work to the pool.
+                    #
+                    # Construction succeeds on hosts where the workers
+                    # then die — Windows `spawn` re-imports `__main__`,
+                    # which fails outright when the parent was launched
+                    # from stdin (`python - <<EOF`). The fallback below
+                    # already kept answers correct there, but every
+                    # attempt printed a worker traceback per worker, and
+                    # a request that quietly works while emitting eight
+                    # stack traces reads exactly like one that is broken.
+                    # One cheap probe, once, turns that into a single
+                    # decision.
+                    list(pool.map(_probe, [0]))
+                    _pool = pool
+                except Exception:
+                    # A host that cannot spawn still works, just
+                    # sequentially. Never fail a request over an
+                    # optimisation.
+                    try:
+                        pool.shutdown(wait=False, cancel_futures=True)
+                    except Exception:
+                        pass
+                    _pool_unavailable = True
                     return None
     return _pool
 
@@ -130,3 +163,110 @@ def parallel_equity_batch(boards, combos):
     except Exception:
         shutdown()
         return _sequential()
+
+
+# --------------------------------------------------------------------
+# M132: splitting ONE table across workers.
+#
+# `parallel_equity_batch` above maps over BOARDS, which is what a turn or
+# river solve needs — it builds ~49 or ~2,400 separate tables. A flop
+# solve builds exactly one, so that mapper never helped it, and after
+# M131 widened the range the flop became the slowest street in the
+# product at ~11s median.
+#
+# One table is still embarrassingly parallel, just along a different
+# axis: row `a_pos` of the upper triangle owns the pairs
+# (a_pos, a_pos+1..n), disjoint from every other row. M132 made
+# `build_board_equity_table` seed per row so a slice is bit-identical to
+# the same rows of a full build, which is what lets this merge exactly
+# rather than approximately.
+# --------------------------------------------------------------------
+
+# Below this many combos the split costs more than it saves.
+MIN_COMBOS_FOR_SPLIT = 120
+
+
+def _row_worker(args):
+    import random
+
+    import numpy as np
+
+    from poker_solver.board_equity import build_board_equity_table
+    from poker_solver.cards import Card
+    from poker_solver.combos import HandCombo
+
+    board_tokens, combo_tokens, samples, seed, rows = args
+    board = tuple(Card.from_str(t) for t in board_tokens)
+    combos = [HandCombo(Card.from_str(a), Card.from_str(b)) for a, b in combo_tokens]
+    return build_board_equity_table(board, combos, samples=samples,
+                                    rng=random.Random(seed), pair_rows=rows)
+
+
+def _balanced_row_bands(n_rows, n_bands):
+    """Split rows so each band holds a similar number of PAIRS.
+
+    Row `a_pos` owns `n - a_pos - 1` pairs, so equal row counts would
+    give the first worker most of the work and the last almost none.
+    Bands are cut at even quantiles of cumulative pair count instead.
+    """
+    total = n_rows * (n_rows - 1) // 2
+    if total <= 0 or n_bands <= 1:
+        return [(0, n_rows)]
+    bands, start, done, target = [], 0, 0, total / n_bands
+    for row in range(n_rows):
+        done += n_rows - row - 1
+        if done >= target * (len(bands) + 1) and len(bands) < n_bands - 1:
+            bands.append((start, row + 1))
+            start = row + 1
+    bands.append((start, n_rows))
+    return [b for b in bands if b[0] < b[1]]
+
+
+def parallel_board_equity_table(board, combos, samples=None):
+    """Build one equity table across the pool, merging row bands.
+
+    Falls back to a plain single-process build on a small pool, a host
+    that cannot spawn, or any failure — the table must not depend on
+    whether parallelism was available.
+    """
+    import random
+
+    import numpy as np
+
+    from poker_solver.board_equity import (DEFAULT_BOARD_EQUITY_SAMPLES,
+                                           DEFAULT_SEED, build_board_equity_table)
+
+    actual_samples = DEFAULT_BOARD_EQUITY_SAMPLES if samples is None else samples
+
+    def _sequential():
+        return build_board_equity_table(board, combos, samples=actual_samples,
+                                        rng=random.Random(DEFAULT_SEED))
+
+    if len(combos) < MIN_COMBOS_FOR_SPLIT:
+        return _sequential()
+    pool = _get_pool()
+    if pool is None:
+        return _sequential()
+
+    # Bands are cut over the VALID rows, which is what the engine indexes
+    # `pair_rows` against — combos blocked by the board are skipped there.
+    board_set = frozenset(board)
+    n_valid = sum(1 for c in combos if not c.blocks(board_set))
+    bands = _balanced_row_bands(n_valid, EQUITY_POOL_WORKERS)
+    if len(bands) <= 1:
+        return _sequential()
+
+    combo_tokens = [(str(c.card_a), str(c.card_b)) for c in combos]
+    board_tokens = tuple(str(c) for c in board)
+    tasks = [(board_tokens, combo_tokens, actual_samples, DEFAULT_SEED, b) for b in bands]
+    try:
+        parts = list(pool.map(_row_worker, tasks))
+    except Exception:
+        shutdown()
+        return _sequential()
+
+    merged = np.full((len(combos), len(combos)), np.nan, dtype=float)
+    for part in parts:
+        filled = np.isfinite(part)
+        merged[filled] = part[filled]
+    return merged

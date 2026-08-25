@@ -6896,3 +6896,44 @@ entry's own corrections before trusting its conclusions.
     p50 moved only 4.28 -> 4.86s, since preflop dominates by count and
     is cached. Anyone weighing this tradeoff should look at p90, not the
     per-spot number.
+
+- **M132 — the flop's single equity table, split across workers.** M129
+  parallelised chance BRANCHES, which a flop solve does not have — it
+  builds exactly one table — so the flop never benefited, and M131's
+  wider range then made it the slowest street in the product.
+  - **What made it possible**: the table is now seeded PER ROW rather
+    than one stream advancing across the upper triangle. With one stream,
+    a pair's draw depends on how many pairs preceded it, so computing
+    rows 4..8 alone differs from reading the middle of a full build.
+    Per-row seeding makes a row a function of the row alone — verified
+    that three different band layouts all merge bit-identically to the
+    full build.
+  - **4.79x on the table** (4.28s -> 0.89s at 300 combos), bit-identical.
+    End to end the flop goes **14.7s -> ~11s (1.34x)**, which matches the
+    arithmetic: the table is 41% of a flop request at the M131 settings,
+    so 4.79x on it saves ~32%. (The mix had flipped since cap 10, where
+    it was equity 66% / CFR 33%; it is now CFR 58% / equity 41%.)
+  - **Rows are banded by PAIR COUNT, not row count.** Row `a_pos` owns
+    `n - a_pos - 1` pairs, so equal row counts would hand the first
+    worker most of the triangle.
+  - **A robustness defect found in my own change.** Pool CONSTRUCTION
+    succeeds on hosts whose workers then die — Windows `spawn` re-imports
+    `__main__`, which fails outright when the parent was launched from
+    stdin. The fallback kept answers correct, but printed **34 worker
+    tracebacks** doing so, and a request that works while emitting stack
+    traces reads exactly like one that is broken. A single probe at
+    construction now decides once and caches it.
+  - **M131's accuracy table was superseded by this reseeding, and is
+    corrected rather than carried forward.** Re-measured on the same five
+    spots, against references rebuilt under the new stream:
+    | arm | mean err | max err |
+    |---|---|---|
+    | old default (cap 10/200/1000) | 0.1259 | 0.3783 |
+    | shipped (cap 26/30/500) | **0.0580** | **0.1679** |
+    **2.2x mean and 2.3x max — smaller than the 3x/2.5x M131 reported.**
+    The win is real and the direction holds; the magnitude was inflated
+    by a stream that no longer exists. The frontier's middle rows were
+    NOT re-swept, so they are indicative only, and the config says so.
+    The user-facing caveat now reads "about 6 percentage points on
+    average and 17 at worst", up from 3 and 14.
+  - Backend 965 passed.

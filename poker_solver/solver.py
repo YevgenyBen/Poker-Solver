@@ -551,6 +551,7 @@ def solve_flop(
     iterations: int = None,
     equity_samples: int = None,
     equity_seed: int = DEFAULT_EQUITY_SEED,
+    equity_table_fn=None,
 ) -> StrategyResult:
     """Solve a single flop betting round and return its strategy.
 
@@ -605,10 +606,20 @@ def solve_flop(
     )
     root = build_street_tree(config)
 
-    equity_kwargs = {"rng": random.Random(equity_seed)}
-    if equity_samples is not None:
-        equity_kwargs["samples"] = equity_samples
-    equity_table = build_board_equity_table(board, combos, **equity_kwargs)
+    # M132: `equity_table_fn` lets a caller build this one table across
+    # processes. A flop solve builds exactly ONE table, so M129's
+    # per-branch mapper never applied to it — and after M131 widened the
+    # range, the flop became the slowest street in the product. Injected
+    # for the same reason as `equity_batch_fn`: the engine is a plain
+    # library and a process pool belongs to whoever owns the request.
+    # Default None is the original single-process build, unchanged.
+    if equity_table_fn is not None:
+        equity_table = equity_table_fn(board, combos, equity_samples)
+    else:
+        equity_kwargs = {"rng": random.Random(equity_seed)}
+        if equity_samples is not None:
+            equity_kwargs["samples"] = equity_samples
+        equity_table = build_board_equity_table(board, combos, **equity_kwargs)
     equity_table = np.nan_to_num(equity_table, nan=0.5)
 
     actual_iterations = iterations if iterations is not None else DEFAULT_FLOP_ITERATIONS

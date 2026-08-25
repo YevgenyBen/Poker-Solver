@@ -56,7 +56,7 @@ from poker_solver.strategy_format import format_flop_response, format_solve_resp
 
 # M129: the parallel equity-table mapper. Lives in api/ because owning a
 # process pool belongs to whoever owns the request, not the engine.
-from .parallel import parallel_equity_batch
+from .parallel import parallel_board_equity_table, parallel_equity_batch
 
 # Aliased to `cfg`: `config` is a very common LOCAL name in this
 # codebase (`config = GameConfig(...)`, `config = StreetConfig(...)`),
@@ -1090,6 +1090,10 @@ def _query_flop_from_path(
             # bought for a 10-class range whose composition M130 measured
             # as wrong — see cfg.PATH_QUERY_EQUITY_SAMPLES.
             equity_samples=cfg.PATH_QUERY_EQUITY_SAMPLES,
+            # M132: a flop solve builds ONE equity table, so M129's
+            # per-branch mapper never applied to it. This splits that
+            # single table across the pool by row bands.
+            equity_table_fn=parallel_board_equity_table,
         )
 
     path_scenario = situation.path_scenario

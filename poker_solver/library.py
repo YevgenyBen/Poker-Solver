@@ -127,6 +127,7 @@ def build_library(
     equity_samples: int = None,
     equity_seed: int = DEFAULT_EQUITY_SEED,
     stack_bucket_bb: float = DEFAULT_STACK_BUCKET_BB,
+    equity_table_fn=None,
 ) -> dict:
     """Batch-solves `boards`, deduplicated by canonical (board, stack)
     key — two real boards that canonicalize to an already-seen key are
@@ -164,6 +165,7 @@ def build_library(
             iterations=iterations,
             equity_samples=equity_samples,
             equity_seed=equity_seed,
+            equity_table_fn=equity_table_fn,
         )
 
         library[key] = LibraryEntry(
@@ -315,6 +317,7 @@ def query_strategy(
     equity_samples: int = None,
     equity_seed: int = DEFAULT_EQUITY_SEED,
     stack_bucket_bb: float = DEFAULT_STACK_BUCKET_BB,
+    equity_table_fn=None,
 ) -> QueryResult:
     """Phase 4: canonicalize-then-lookup, falling back to an on-demand
     solve on a miss — the live query path the real-time-speed roadmap
@@ -404,6 +407,7 @@ def query_strategy(
         equity_samples=equity_samples,
         equity_seed=equity_seed,
         stack_bucket_bb=stack_bucket_bb,
+        equity_table_fn=equity_table_fn,
     )
     library.update(new_entries)
 
@@ -433,6 +437,7 @@ def query_strategy_from_path(
     equity_samples: int = None,
     equity_seed: int = DEFAULT_EQUITY_SEED,
     stack_bucket_bb: float = DEFAULT_STACK_BUCKET_BB,
+    equity_table_fn=None,
 ) -> QueryResult:
     """Bridges M16's derive_ranges_from_path into query_strategy: given a
     PathScenario (from walking a real preflop StrategyResult along a
@@ -538,4 +543,5 @@ def query_strategy_from_path(
         equity_samples=equity_samples,
         equity_seed=equity_seed,
         stack_bucket_bb=stack_bucket_bb,
+        equity_table_fn=equity_table_fn,
     )
