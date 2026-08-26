@@ -81,8 +81,15 @@ requests now reject unknown fields by name rather than ignoring them.
   regret while accumulating positive, so the noisiest action — the
   all-in, which swings a whole stack — collects spurious regret that
   more iterations only compound. Measured at 6-max over 3 seeds: AA's
-  jam 0.199 -> 0.032 (heads-up reference ~0.031), T7s's UTG fold
-  0.744 -> 0.938. **Exception: 9-max keeps the clamp** (`api/config.py`)
+  jam 0.199 -> 0.032, T7s's UTG fold
+  0.744 -> 0.938. **The "heads-up reference ~0.031" this used to be
+  quoted against is itself unconverged (F37, M139)** — heads-up AA's
+  open-jam at 100bb reads 0.0159 / 0.0040 / 0.0004 / 0.0 / 0.0 / 0.0 at
+  500 / 1k / 3k / 12k / 30k / 60k iterations, so the converged value is
+  **0.0** and ~0.031 is roughly a 300-iteration artifact. The
+  improvement is real and large either way (0.199 -> 0.032 against a
+  target of 0), but 0.032 does not "match" the reference — it is still
+  0.032 above the right answer. **Exception: 9-max keeps the clamp** (`api/config.py`)
   — plain CFR converges more slowly and 9-max's budget gives each seat
   only 333 traversals, where it goes the wrong way. Published DCFR was
   tried and was worse than plain CFR.
@@ -148,7 +155,10 @@ requests now reject unknown fields by name rather than ignoring them.
   budgets**, so it is not capturing the mechanism. `c=1.0 @ 3,000` looks
   like a fix (0.010 +/- 0.005, tightest arm by 10x) and is not: a big
   bonus for keeping chips behind makes the all-in *dominated*, so the
-  policy goes purely "never jam" and lands BELOW the ~0.031 reference.
+  policy goes purely "never jam". (M100 called that landing BELOW the
+  ~0.031 reference; against the corrected reference of 0.0 it lands
+  slightly ABOVE, so that argument inverts — M100's conclusion rests on
+  the sweep's non-monotonicity, which is untouched. F37, M139.)
   **The knob can produce any number, so matching the reference does not
   validate it.** A paired 9-seed test (same seed both arms, cancelling
   seed variance) gives c=0 vs c=0.25 a delta of **-0.060 +/- 0.137,
@@ -430,7 +440,10 @@ requests now reject unknown fields by name rather than ignoring them.
   by how purely a class took the observed action, premiums mix, and in 5
   of 6 measured cases the raiser's modelled range held no premium hands
   at all (M130). Rebalancing cut mean error against a full-range
-  reference **0.0944 -> 0.0319** and the worst case **0.345 -> 0.139**,
+  reference **0.0944 -> 0.0319** and the worst case **0.345 -> 0.139**
+  (both against the cap-60 anchor M138 withdrew — the REBALANCE is still
+  a real improvement, since both arms were scored the same way, but the
+  absolute figures are distances to a wrong target),
   at 8.4s -> 14.7s. **Width is not monotonically better** — cap 18
   measures worse than cap 10 on both — so sweep, never assume a
   direction. **The mechanism is NOT fixed**, only reduced: premiums are
@@ -487,9 +500,29 @@ requests now reject unknown fields by name rather than ignoring them.
   The uncapped solve IS trustworthy (doubling equity samples moves it
   0.9186 -> 0.9206; the seed does not move it), so the true answer is
   ~0.99 and the old anchor was off by 0.6. **The shipped config's real
-  error is mean 0.1222 / worst 0.4381, not the 0.058 / 0.168 this file
+  error is mean 0.1394 / worst 0.8810, not the 0.058 / 0.168 this file
   claimed** — and 0.058 was never a floor, it was a distance to a wrong
-  target. The user-facing caveat understated the worst case 2.6x and is
+  target. (M138 first put this at 0.1222 / 0.4381 on five spots; M140
+  widened to sixteen and it grew. **Each widening has made the defect
+  look larger, so treat these as lower bounds.**)
+
+  **M140 found the one case specific enough for a user to act on:
+  OPEN-ENDED STRAIGHT DRAWS are over-bet, 3 of 3, by +0.170 to +0.881.**
+  The worst is 7h8h on 2h6d9c, where the product recommends a 2.5x-pot
+  bet **0.88 of the time while the converged solve checks 100%** —
+  reproducible byte-identical, reference converged at that spot. It is
+  also incoherent WITHIN the class: 7h8h / 8h7d / 7s8s are the same 78
+  open-ender with near-identical true frequencies (0.0001-0.0037) and
+  ship 0.8811 / 0.4142 / 0.1720 — 5x apart on suits alone, ranked in the
+  OPPOSITE order to the truth. Gutshots and a no-draw control are clean,
+  so the caveat says open-ended, **not "draws"** — over-generalising
+  would be M110's error mirrored. Direction elsewhere is stated as
+  measured, not as it would be most useful: error tracks the TRUE
+  frequency on all 16 spots. The tempting summary "we under-bet your
+  strongest hands" is FALSE across boards — middle set flips sign
+  between 2h6d9c (0.594 true, under) and Ac7d2h (0.001 true, over).
+
+  The user-facing caveat understated the worst case 5x and is
   corrected; `POSTFLOP_AGGRESSION_ERROR_MEAN`/`_WORST` now record the
   measurement, pinned to the copy by
   `test_the_aggression_caveat_quotes_its_own_measurement`.

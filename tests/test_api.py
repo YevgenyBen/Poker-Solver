@@ -4304,6 +4304,38 @@ def test_the_aggression_caveat_quotes_its_own_measurement():
     )
 
 
+def test_the_caveat_names_the_open_ender_case_it_measured():
+    """M140. The one postflop error big enough, consistent enough and
+    nameable enough for a player to act on must stay in the copy.
+
+    Open-ended straight draws are over-bet 3 of 3 measured, by +0.170 to
+    +0.881. The worst is 7h8h on 2h6d9c, where the product recommends a
+    2.5x-pot bet 0.88 of the time and the converged solve checks 100% —
+    reproducible byte-identical across runs, with the reference itself
+    converged at that spot (0.0004 / 0.0001 / 0.0 at 1k / 2.5k / 5k).
+
+    Gutshots and a no-draw control are clean, so the caveat must say
+    OPEN-ENDED rather than "draws": over-generalising here would be the
+    same over-claim M110/M111 had to withdraw, one step in the other
+    direction.
+    """
+    reason = api_config.POSTFLOP_AGGRESSION_CAVEAT_REASON.lower()
+    assert "open-ended straight draw" in reason, (
+        "the caveat must name the one case measured consistent enough to act on"
+    )
+    assert "discount" in reason, (
+        "naming the case without telling the player what to do with it is not "
+        "actionable — the measurement supports discounting these bets"
+    )
+    # It must not over-generalise to all draws: gutshots measured clean
+    # (+0.0006 and 0.0), so warning about them would be unsupported.
+    assert "discount any suggestion to bet a draw" not in reason, (
+        "gutshots measured clean; the warning is specific to open-enders"
+    )
+    # The worst case in the copy must be the open-ender's, not a stale one.
+    assert str(round(api_config.POSTFLOP_AGGRESSION_ERROR_WORST * 100)) in reason
+
+
 def test_every_prewarm_step_succeeds(monkeypatch):
     """M133. The pre-warm swallows each step's exception so one bad spot
     cannot cost the others — which meant a step could fail forever in

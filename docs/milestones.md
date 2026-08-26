@@ -7246,3 +7246,139 @@ entry's own corrections before trusting its conclusions.
   - No production behaviour changes: the shipped config is re-validated,
     not altered. What changes is what users are told and what the docs
     claim.
+
+- **M139 — F37: the OTHER load-bearing reference was never converged
+  either, and this one is quoted in three milestones' reasoning.** F36
+  (M138) found the postflop accuracy reference had never been
+  convergence-tested. The same question, asked of the project's other
+  standing reference — the heads-up AA-jam figure of ~0.031 — gets the
+  same answer.
+  - **Measured.** Heads-up preflop, 100bb, exact solver (deterministic,
+    so "converged" means stable in iterations), AA's open-jam at the
+    root:
+    | iterations | 500 | 1,000 | 3,000 | 12,000 | 30,000 | 60,000 |
+    |---|---|---|---|---|---|---|
+    | AA jam | 0.0159 | 0.0040 | 0.0004 | **0.0** | **0.0** | **0.0** |
+    Monotone to zero. **The converged value is 0.0**; ~0.031 corresponds
+    to roughly 300 iterations. It is also the poker-correct answer —
+    open-jamming 100bb with AA heads-up is indefensible.
+  - **What it touches.** M71 justified dropping the CFR+ clamp partly on
+    plain CFR's 0.032 "matching" the reference; M97 rejected policy
+    damping against it; M100 rejected the continuation knob against it.
+    **None of those conclusions change**, because each rests on
+    independent evidence — M71 on T7s's fold 0.744 -> 0.938 and on the
+    ratchet mechanism read from the code, M97 on damping being worse on
+    every arm, M100 on the sweep's non-monotonicity. What changes is a
+    supporting claim in each: 0.032 is not a match, it is still 0.032
+    above the right answer.
+  - **One argument actually inverts.** M100 wrote that `c=1.0` "lands
+    BELOW the ~0.031 reference" and read that as the knob gaming the
+    target. Against the corrected reference of 0.0, 0.010 lands slightly
+    ABOVE. The conclusion survives on the non-monotonicity; that
+    particular sentence does not.
+  - **Magnitude, stated honestly.** This is a 3-percentage-point error,
+    where F36 was 60. It is recorded because it sits in reasoning three
+    milestones lean on, not because it is large.
+  - **A near-false-positive caught on the way, worth recording.** The
+    same sweep showed heads-up AA at 10bb playing `call_or_check` 1.000
+    while AKs jammed 1.000 — a categorical inversion, and a real defect
+    in shipped advice if true. It is not true. Walking the continuation:
+    SB limps AA, BB raises, **SB jams 1.000**; BB jams instead, **SB
+    calls 1.000**. AA is limp-raising all-in — a trap, correctly played,
+    with AKs jamming outright for fold equity. Checking the continuation
+    before reporting is what separated this from a finding.
+  - Docs only; no code change. The shipped solver is unaffected.
+
+- **M140 — the postflop aggression defect has a named worst case, and it
+  is worse than F36 measured.** F36 (M138) established the real error on
+  five spots. Widening to sixteen across the strength ladder found the
+  defect larger and, for the first time, a category a player can
+  recognise.
+  - **Open-ended straight draws are over-bet, 3 of 3**: +0.881 (7h8h),
+    +0.411 (8h7d), +0.170 (7s8s). The worst recommends `raise:12.50` —
+    ~2.5x pot — **0.88 of the time where the converged solve checks
+    100%**. Verified three ways before reporting: byte-identical across
+    three runs, reference converged at that spot (0.0004 / 0.0001 / 0.0
+    at 1k / 2.5k / 5k iterations), and not a bet-size artifact.
+  - **Incoherent within the hand class.** 7h8h / 8h7d / 7s8s are the same
+    78 open-ender on a rainbow board with near-identical true
+    frequencies (0.0001-0.0037), yet ship 0.8811 / 0.4142 / 0.1720 — 5x
+    apart on suit composition alone, and ranked in the OPPOSITE order to
+    the converged solve (7h8h holds the backdoor flush, is rated highest
+    by the shipped config and lowest by the truth).
+  - **Gutshots and the control are clean** (+0.0006, 0.0, 0.0), so the
+    warning is scoped to OPEN-ENDED draws. Saying "draws" would
+    over-generalise past the measurement — M110's error mirrored.
+  - **Sixteen-spot totals: mean 0.1394, worst 0.8810**, against M138's
+    five-spot 0.1222 / 0.4381 and the originally published 0.058 /
+    0.168. Each widening of the spot set has made the defect look
+    larger, so these are lower bounds — and the caveat is now on its
+    third correction in two days.
+  - **Direction, stated as measured rather than as it would be most
+    useful.** Error tracks the TRUE frequency on all 16 spots: hands that
+    should bet often are under-bet, hands that should rarely bet are
+    over-bet. The stronger, more useful-sounding claim — "we under-bet
+    your strongest hands" — is false across boards, since middle set
+    flips sign between 2h6d9c (0.594 true, under-bet) and Ac7d2h (0.001
+    true, over-bet). Only the open-ender case is both consistent and
+    nameable by a player, so only it is stated as advice.
+  - **Caveat rewritten and pinned.** It quotes 14 / 88, names the
+    open-ender case, and tells players to discount those bets.
+    `test_the_caveat_names_the_open_ender_case_it_measured` guards the
+    category and the action; `test_the_aggression_caveat_quotes_its_own_
+    measurement` keeps the prose tied to the constants. Both
+    mutation-tested — **the first mutation attempt was a no-op**, because
+    the caveat string is split across source lines and the edit searched
+    for the concatenated runtime text, so the "passing" test proved
+    nothing until the mutation was retargeted at the real source.
+  - No solver change. What changes is what the user is told.
+
+- **M141 — why nine ideas all failed: the cap MOVES error between hand
+  types instead of reducing it.** M140 found the product's worst error is
+  an open-ended straight draw at the shipped cap. Sweeping the cap with
+  samples and iterations fixed, over the 16-spot set, shows why no
+  setting has ever fixed anything.
+  | group | cap 26 | cap 34 | cap 44 |
+  |---|---|---|---|
+  | made hands (sets/pairs) | **0.1052** | 0.2022 | 0.2458 |
+  | draws | 0.2924 | **0.0031** | 0.0784 |
+  | air / overcards | 0.0080 | 0.0018 | 0.0047 |
+  - **Made-hand error grows monotonically with width; draw error
+    collapses.** The two move in opposite directions, so mean error stays
+    in a narrow band while its COMPOSITION shifts. Every one of the nine
+    dead ends (M130-M138) was a single-knob reweighting of the same 169
+    classes into a fixed budget — each could only redistribute error
+    between hand types, never remove it. That is why nine structurally
+    different rules all landed in 0.09-0.14: not a floor, a conservation
+    law. **A tenth scoring function cannot help.**
+  - **Cap 34 wins the raw 16-spot mean (0.0899 vs 0.1394) and is NOT
+    adopted**, because the win is one spot deep:
+    | test | cap 26 | cap 34 |
+    |---|---|---|
+    | mean, all 16 | 0.1394 | **0.0899** |
+    | mean, excluding the worst draw | **0.0899** | 0.0953 |
+    | worst case | **0.4381** | 0.7635 |
+    | spots improved | — | 8 of 16 (6 worse) |
+    | wall | **8.6s** | 23.0s |
+    It also damages top set most (0.2235 against a true 0.987 — under-
+    betting the strongest possible holding by three quarters), and
+    getting top set wrong costs more than getting a draw wrong because
+    with top set the money goes in. Draws are warned about instead
+    (M140), not tuned for.
+  - **A second methodological error, the same shape as F36 one level
+    up.** The cap was chosen three times — M131, M137, M138 — on a
+    five-spot set that contained NO DRAW, so the product's worst case was
+    absent from the evidence that set the config. F36 was a reference
+    that could not converge; this is a spot set that could not cover.
+    Both let a conclusion look solid because the evidence was incapable
+    of contradicting it. **Any future frontier here must cover made
+    hands, draws and air explicitly**, since those are now known to move
+    in opposite directions.
+  - **Considered and rejected without trying:** selecting the cap from
+    HERO's hand type (34 for draws, 26 otherwise). It would be tuning on
+    the very 16 spots that produced the split, and it is incoherent on
+    its face — the opponent's range does not depend on hero's cards.
+  - What would actually help is a model whose approximation error is not
+    paid by one hand type to spare another. Nothing in the
+    class-selection family has that property.
+  - No behaviour change. Config and docs only.
