@@ -1132,6 +1132,35 @@ BET_SIZING_COVERAGE_NOTE = (
     "smaller bets were never available, and this response cannot tell you how much to bet."
 )
 
+# M145/F41. `solver_confidence` was a pure function of TABLE SIZE and
+# knew nothing about whether the node it is describing was ever trained.
+#
+# Measured: a 3-max river (Kd7c2h Ts 4c) returns **0 of 136 hands
+# trained, every row exactly the uniform prior** - hero reads
+# `call_or_check 0.3333 / raise:18.75 0.3333 / all_in:97.50 0.3333` -
+# while the response says `solver_confidence: "high"` and
+# `range_confidence: fully_trained: true` for all three positions. Two of
+# three confidence signals vouch for an answer that was never computed.
+#
+# It is OCCASIONAL, not systematic: 1 of 6 measured (3-max/6-max, four
+# boards) came back fully untrained, the rest 46-50 of ~130. That makes
+# it worse for a user than a consistent gap - most requests look fine and
+# nothing distinguishes the one that is not.
+#
+# `range_confidence` is not wrong here, which is why it misleads: it
+# reports the PREFLOP range derivation, and those classes really were
+# fully trained. Composed with a river strategy that was never solved, it
+# reads as an endorsement of the answer.
+UNTRAINED_NODE_REASON = (
+    "This spot was not actually solved. Every hand at this decision carries the "
+    "solver's starting assumption - an even split across the available actions - "
+    "rather than a computed strategy, which is why the frequencies look evenly "
+    "balanced. An even split here means \"no answer\", not \"genuinely indifferent\". "
+    "Multiway turn and river branches are solved on demand and this one did not get "
+    "trained; asking about a different river card, or a heads-up spot, will usually "
+    "return a real solve."
+)
+
 POSTFLOP_AGGRESSION_CAVEAT_REASON = (
     "How often to bet or raise here is approximate, and so is whether to continue. "
     "To stay affordable this solve "
