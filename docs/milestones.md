@@ -7152,3 +7152,97 @@ entry's own corrections before trusting its conclusions.
     of sampling from it (M17's shelved machinery, whose goal there was
     speed and would be fidelity here). That is a real milestone, and it
     is now the only untried idea rather than one option among several.
+
+- **M138 — bucketing is the ninth dead end, and finding that out
+  exposed F36: the reference every accuracy claim since M130 was judged
+  against had never converged.** M137 left exactly one untried path, a
+  different REPRESENTATION. It loses. The measurement that showed it
+  losing is what surfaced the real problem.
+  - **Why M17's machinery could not be reused.** Both halves anchor on
+    the full N x N combo table: `compute_combo_strengths` builds
+    `build_board_equity_table` over the whole pool just to derive the
+    bucketing signal, and `build_bucket_equity_table` averages over that
+    same table. Bucketing all 169 classes needs a ~1,176 x 1,176 table —
+    strictly more than the cap-26 solve that ships. M18's finding,
+    re-confirmed by reading.
+  - **The variant that avoids it**, built in scratchpad: cheap O(N)
+    bucket assignment, then bucket-vs-bucket equity by SAMPLING member
+    pairs — cost B^2 x k, independent of N. Dropped in at
+    `query_strategy_from_path` so tree, pot, stack, positions and
+    endpoint were production's and representation was the only variable.
+    Two signals: the exact five-card rank, and — since rank is blind to
+    draws — equity against a small random reference subset, made O(N x R)
+    by ordering the reference first and passing `pair_rows`.
+    | arm | mean err | max err | wall |
+    |---|---|---|---|
+    | **control: shipped cap 26** | **0.0580** | **0.1679** | 9.2s |
+    | rank signal, 12 / 20 / 30 buckets | 0.1080 / 0.1095 / 0.1037 | 0.328-0.337 | 15-73s |
+    | equity signal, 12 / 20 / 30 / 44 buckets | 0.1167 / 0.0852 / 0.1169 / 0.1268 | 0.269-0.347 | 19-78s |
+    (errors against the OLD anchor, for comparability with M130-M137;
+    against the corrected one, shipped is 0.1222 and bucketing ~0.20.)
+  - **It fails by collapsing aggression specifically.** The three spots
+    whose reference is ~0 are fine; the two that should bet come back
+    ~0.02-0.11 at every setting, and at 12 and 20 rank-buckets the two
+    return the IDENTICAL number — top set and an overpair in one bucket.
+    Equal-mass bucketing lumps the strongest hands together because
+    little mass lives up there, and averaging equity within a bucket
+    destroys the spread value-betting monetises.
+  - **Non-monotone in bucket count**, M136's signature. Equity-signal
+    error runs 0.1167 / 0.0852 / 0.1169 / 0.1268 across B = 12/20/30/44.
+    **Misread once during the measuring**: the first two points were
+    taken as an improving trend and used to argue the signal mattered
+    after all; the sweep withdrew that. Recorded because the dip at
+    B=20 will fool the next person too.
+  - **F36 — the reference was never converged.** Every accuracy number
+    since M130 is an error against a cap-60 solve called a "full-range
+    reference". It is 60 classes of 169, and it moves further than the
+    differences it was used to adjudicate:
+    | spot | cap 60 | cap 100 | cap 200 | cap 200 @ 2500 iters |
+    |---|---|---|---|---|
+    | 2h6d9c / 9s9d | 0.381 | 0.5948 | 0.9186 | **0.9870** |
+    | 2h6d9c / QdQh | 0.2503 | 0.2842 | 0.0086 | **0.0014** |
+    The uncapped solve is the trustworthy one: doubling equity samples
+    moves 9s9d 0.9186 -> 0.9206 and the seed does not move it, while
+    more iterations push it further the way widening already pointed.
+    Both corrected answers are poker-sensible — top set on a dry board
+    value-bets ~0.99, the overpair checks.
+  - **Corrected error for the shipped config: mean 0.1222, worst
+    0.4381**, against the 0.058 / 0.168 that was published. Reference is
+    cap 200 / 200 samples / 2,500 iterations, ~850s per spot, which is
+    why no earlier milestone ran it; still drifting slightly toward the
+    extremes, so these are a LOWER bound.
+    | spot | reference | shipped | error |
+    |---|---|---|---|
+    | 2h6d9c / 9s9d | 0.9870 | 0.5489 | 0.4381 |
+    | 2h6d9c / QdQh | 0.0014 | 0.1501 | 0.1487 |
+    | 2h6d9c / AhKh | 0.0001 | 0.0109 | 0.0108 |
+    | Ac7d2h / 7s7c | 0.0010 | 0.0134 | 0.0124 |
+    | Ac7d2h / KsQs | 0.0003 | 0.0014 | 0.0011 |
+  - **The user-facing consequence, which is the point.** The caveat told
+    players the raising frequency was off "by about 6 percentage points
+    on average and by 17 at worst" — understating the worst case 2.6x in
+    the one sentence a person actually reads. Corrected to 12 and 44.
+    `POSTFLOP_AGGRESSION_ERROR_MEAN`/`_WORST` now hold the measurement
+    and `test_the_aggression_caveat_quotes_its_own_measurement` pins the
+    PROSE to them — pinning the constants alone would not have caught
+    this, because prose and constants were wrong together.
+  - **`api/config.py`'s "settling near 0.35" is withdrawn.** It read
+    .301 / .336 / .347 at caps 34/44/60 and called that convergence.
+    Three flat-looking points inside too narrow a window; past it the
+    same spot climbs to 0.987. Same error as M110/M111's two-point
+    trend, and as this milestone's own B=20 dip.
+  - **M137's DECISION survives; its justification does not.** Re-run
+    against the corrected reference, widening is still worse and still
+    non-monotone — 0.1222 shipped against 0.1878 / 0.1912 / 0.1821 at
+    caps 34 / 44 / 60 — so cap 26 stays. But "0.058 is this
+    architecture's floor" was never a floor, it was a distance to a
+    wrong target.
+  - **Why eight attempts missed it:** all seven selection rules chose
+    classes WITHIN a cap, so they shared the reference's blind spot and
+    nothing disagreed. Bucketing broke the symmetry by seeing all 169
+    classes; it looked like it was failing, and part of what it was
+    doing was disagreeing with a wrong answer. **Any new accuracy claim
+    on this axis must state its reference and show that it converged.**
+  - No production behaviour changes: the shipped config is re-validated,
+    not altered. What changes is what users are told and what the docs
+    claim.

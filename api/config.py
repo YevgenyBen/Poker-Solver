@@ -962,17 +962,49 @@ MULTIWAY_STACK_BUCKET_BB = 5.0
 # calling frequency really is 0.)
 #
 # That is why value hands check: with no big pairs in the opponent's
-# model there is nothing to raise for value against. Widening the cap
-# lets premiums back in and the answer converges — a flopped set on
-# 2h6d9c measures .003 / .694 / .468 / .301 / .336 / .347 at caps
-# 10/18/26/34/44/60, settling near 0.35 against the shipped 0.003.
+# model there is nothing to raise for value against.
+#
+# **M138 correction: that sweep did NOT converge, and the reference it
+# established was wrong.** It read .003 / .694 / .468 / .301 / .336 /
+# .347 at caps 10/18/26/34/44/60 and called the last three "settling
+# near 0.35". They are three flat-looking points inside too narrow a
+# window: measured through /advise and carried out further, the same
+# spot reads 0.381 / 0.5948 / 0.9186 at caps 60 / 100 / 200, and 0.987
+# once the uncapped solve is given 2,500 iterations. The uncapped solve
+# is the trustworthy one — doubling equity samples moves it 0.9186 ->
+# 0.9206 and the seed does not move it at all — so a flopped set bets
+# ~0.99 here, not ~0.35. This is the same error M110/M111 recorded:
+# reading a trend off too few points.
+# M138. The numbers the caveat quotes, and what they are measured
+# against. The reference is cap 200 (uncapped: all 169 classes), 200
+# equity samples, 2,500 iterations — ~850s per spot, which is why no
+# earlier milestone used it. It is stable where the old cap-60 reference
+# was not: doubling samples moves 9s9d 0.9186 -> 0.9206, and the equity
+# seed does not move it. It is still drifting slightly toward the
+# extremes with iterations, so these errors are a LOWER bound.
+#
+#   spot              reference   shipped   error
+#   2h6d9c / 9s9d        0.9870    0.5489   0.4381
+#   2h6d9c / QdQh        0.0014    0.1501   0.1487
+#   2h6d9c / AhKh        0.0001    0.0109   0.0108
+#   Ac7d2h / 7s7c        0.0010    0.0134   0.0124
+#   Ac7d2h / KsQs        0.0003    0.0014   0.0011
+#
+# Four of five err high and one errs low, but the two MATERIAL errors go
+# opposite ways (0.44 low, 0.15 over) and the other three are under
+# 0.013 — so the caveat still names no direction. Naming one off a
+# single large residual is the error this milestone exists to correct.
+POSTFLOP_AGGRESSION_ERROR_MEAN = 0.1222
+POSTFLOP_AGGRESSION_ERROR_WORST = 0.4381
+
 POSTFLOP_AGGRESSION_CAVEAT_REASON = (
     "How often to bet or raise here is approximate. To stay affordable this solve "
     "models only part of the opponent's range, chosen by how consistently each hand "
     "took the action they took — and premium hands still get dropped by that rule, "
     "because they mix between raising and going all-in rather than always raising. "
-    "Measured against a full-range solve across five spots, the raising frequency is "
-    "off by about 6 percentage points on average and by 17 at worst, without a "
+    "Measured against a genuinely uncapped solve across five spots, the raising "
+    "frequency is off by about 12 percentage points on average and by 44 at worst, "
+    "without a "
     "consistent direction. The fold-versus-play call is far sounder than how "
     "aggressively to play: trust whether to continue, and treat the raising "
     "frequency as approximate rather than correcting it in either direction."
