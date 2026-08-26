@@ -7332,3 +7332,53 @@ entry's own corrections before trusting its conclusions.
     for the concatenated runtime text, so the "passing" test proved
     nothing until the mutation was retargeted at the real source.
   - No solver change. What changes is what the user is told.
+
+- **M141 — why nine ideas all failed: the cap MOVES error between hand
+  types instead of reducing it.** M140 found the product's worst error is
+  an open-ended straight draw at the shipped cap. Sweeping the cap with
+  samples and iterations fixed, over the 16-spot set, shows why no
+  setting has ever fixed anything.
+  | group | cap 26 | cap 34 | cap 44 |
+  |---|---|---|---|
+  | made hands (sets/pairs) | **0.1052** | 0.2022 | 0.2458 |
+  | draws | 0.2924 | **0.0031** | 0.0784 |
+  | air / overcards | 0.0080 | 0.0018 | 0.0047 |
+  - **Made-hand error grows monotonically with width; draw error
+    collapses.** The two move in opposite directions, so mean error stays
+    in a narrow band while its COMPOSITION shifts. Every one of the nine
+    dead ends (M130-M138) was a single-knob reweighting of the same 169
+    classes into a fixed budget — each could only redistribute error
+    between hand types, never remove it. That is why nine structurally
+    different rules all landed in 0.09-0.14: not a floor, a conservation
+    law. **A tenth scoring function cannot help.**
+  - **Cap 34 wins the raw 16-spot mean (0.0899 vs 0.1394) and is NOT
+    adopted**, because the win is one spot deep:
+    | test | cap 26 | cap 34 |
+    |---|---|---|
+    | mean, all 16 | 0.1394 | **0.0899** |
+    | mean, excluding the worst draw | **0.0899** | 0.0953 |
+    | worst case | **0.4381** | 0.7635 |
+    | spots improved | — | 8 of 16 (6 worse) |
+    | wall | **8.6s** | 23.0s |
+    It also damages top set most (0.2235 against a true 0.987 — under-
+    betting the strongest possible holding by three quarters), and
+    getting top set wrong costs more than getting a draw wrong because
+    with top set the money goes in. Draws are warned about instead
+    (M140), not tuned for.
+  - **A second methodological error, the same shape as F36 one level
+    up.** The cap was chosen three times — M131, M137, M138 — on a
+    five-spot set that contained NO DRAW, so the product's worst case was
+    absent from the evidence that set the config. F36 was a reference
+    that could not converge; this is a spot set that could not cover.
+    Both let a conclusion look solid because the evidence was incapable
+    of contradicting it. **Any future frontier here must cover made
+    hands, draws and air explicitly**, since those are now known to move
+    in opposite directions.
+  - **Considered and rejected without trying:** selecting the cap from
+    HERO's hand type (34 for draws, 26 otherwise). It would be tuning on
+    the very 16 spots that produced the split, and it is incoherent on
+    its face — the opponent's range does not depend on hero's cards.
+  - What would actually help is a model whose approximation error is not
+    paid by one hand type to spare another. Nothing in the
+    class-selection family has that property.
+  - No behaviour change. Config and docs only.

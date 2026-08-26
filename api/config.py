@@ -1029,6 +1029,36 @@ MULTIWAY_STACK_BUCKET_BB = 5.0
 # Each widening of the spot set has made the defect look LARGER (5 spots
 # 0.1222/0.4381 -> 16 spots 0.1394/0.8810), so treat these as lower
 # bounds.
+# M141. Why no cap setting fixes this, measured on the 16-spot set:
+# **the cap moves error BETWEEN hand types rather than reducing it.**
+# Samples and iterations fixed, cap the only variable:
+#
+#   group                      cap 26    cap 34    cap 44
+#   made hands (sets/pairs)    0.1052    0.2022    0.2458
+#   draws                      0.2924    0.0031    0.0784
+#   air / overcards            0.0080    0.0018    0.0047
+#
+# Made-hand error grows monotonically with width; draw error collapses.
+# This is the clearest account yet of why nine ideas failed (M130-M138):
+# each was a single-knob reweighting of the same 169 classes into a fixed
+# budget, so each could only redistribute error between hand types, never
+# remove it — which is why nine different rules all landed in the same
+# 0.09-0.14 band.
+#
+# **Cap 34 looks better on the raw 16-spot mean (0.0899 vs 0.1394) and is
+# NOT adopted.** Excluding the single worst draw flips it (0.0953 vs
+# 0.0899 for cap 26); it wins 8 of 16 and loses 6; it makes the WORST
+# case worse (0.7635 vs 0.4381); it costs 2.7x (23.0s vs 8.6s); and the
+# spot it damages most is top set, where 0.2235 against a true 0.987
+# means under-betting the strongest possible holding by three quarters.
+# Getting top set wrong costs more than getting a draw wrong, because
+# with top set the money goes in. Draws are warned about instead, in
+# POSTFLOP_AGGRESSION_CAVEAT_REASON.
+#
+# Considered and rejected without trying: choosing the cap from HERO's
+# hand type (34 for draws, 26 otherwise). It would be tuning on the
+# 16-spot set that produced the split, and it is incoherent on its face —
+# the opponent's range does not depend on hero's cards.
 POSTFLOP_AGGRESSION_ERROR_MEAN = 0.1394
 POSTFLOP_AGGRESSION_ERROR_WORST = 0.8810
 
