@@ -3162,6 +3162,23 @@ def test_nine_max_carries_both_warnings_without_either_masking_the_other(client)
                                     hero_cards="5c4d", board="Kd7c2h", players=2)),
         ("limped flop", dict(preflop_action_path=["call_or_check", "call_or_check"],
                              hero_cards="AsKh", board="Kd7c2h", players=2)),
+        # M143/F39: turn and river were absent from this sweep, and the bound
+        # was broken at EVERY one of them — 8 of 8 turn-facing-a-bet nodes
+        # named `all_in:97.50` while reporting `max_affordable_bb: 85.0`.
+        # M101 restored the guarantee "at every node, on every street" and
+        # verified it on preflop and flop only; all eleven turn/river
+        # responses omitted the field entirely and fell through to
+        # main.py's `effective_stack_bb` default, i.e. the original bug.
+        ("turn opening", dict(preflop_action_path=["raise", "call_or_check"],
+                              flop_action_path=["call_or_check", "call_or_check"],
+                              turn_card="Ts",
+                              hero_cards="5c4d", board="Kd7c2h", players=2)),
+        ("river opening", dict(preflop_action_path=["raise", "call_or_check"],
+                               flop_action_path=["call_or_check", "call_or_check"],
+                               turn_card="Ts",
+                               turn_action_path=["call_or_check", "call_or_check"],
+                               river_card="4c",
+                               hero_cards="5c4d", board="Kd7c2h", players=2)),
     ],
 )
 def test_no_advice_names_a_bet_larger_than_max_affordable(client, label, body):
@@ -3203,6 +3220,59 @@ def test_no_advice_names_a_bet_larger_than_max_affordable(client, label, body):
     )
     assert not oversized, (
         f"{label}: advice names bets above the {bound}bb the player can commit: {oversized}"
+    )
+
+
+def test_the_affordability_bound_survives_a_turn_node_facing_a_bet(client, monkeypatch):
+    """M143 / F39. The bug M101 believed it had already fixed everywhere.
+
+    M101 restored the guarantee "at every node, on every street" and
+    swept preflop and flop only. **All eleven turn and river responses
+    omitted `max_affordable_bb` entirely**, falling through to
+    api/main.py's `raw.get("max_affordable_bb", raw["effective_stack_bb"])`
+    default — i.e. exactly the pre-M101 behaviour. Measured through
+    /advise at production settings, 8 of 8 turn-facing-a-bet nodes named
+    `all_in:97.50` while reporting `max_affordable_bb: 85.0`: advice for
+    a bet the player is told they cannot make.
+
+    This case needs its own fixture work, which is also why the sweep
+    missed it: `_disable_prewarm_and_clear_cache` sets
+    `FLOP_TURN_RAISE_SIZES = ()` for speed, so under the suite the turn
+    tree offers only check and all-in and no mid-street turn node is
+    reachable at all. Restoring one real size is what makes the node —
+    and therefore the bug — exist in a test.
+    """
+    monkeypatch.setattr(api_config, "FLOP_TURN_RAISE_SIZES", (2.5,))
+    monkeypatch.setattr(api_config, "FLOP_TURN_MAX_RAISES", 2)
+    body = _advise_body(
+        preflop_action_path=["raise", "call_or_check"],
+        flop_action_path=["call_or_check", "call_or_check"],
+        turn_card="Ts", turn_action_path=["raise"],
+        hero_cards="5c4d", board="Kd7c2h", players=2, stack_bb=100.0,
+    )
+    response = client.post("/advise", json=body)
+    assert response.status_code == 200, response.json()
+    payload = response.json()
+    assert payload["street"] == "turn"
+    bound = payload["max_affordable_bb"]
+
+    rows = list(payload["strategy"].values())
+    hero = payload.get("hero") or {}
+    if hero.get("strategy"):
+        rows.append(hero["strategy"])
+    oversized = sorted({
+        action for row in rows for action in row
+        if ":" in action and float(action.split(":", 1)[1]) > bound + 1e-9
+    })
+    assert not oversized, (
+        f"turn node facing a bet names bets above the {bound}bb bound: {oversized}"
+    )
+    # And the bound must be the street-entry stack, not the post-bet
+    # remainder — if they were equal the guarantee would be vacuous here,
+    # which is precisely how the bug hid.
+    assert bound > payload["effective_stack_bb"], (
+        "the bound equals the post-bet remainder again; that is the shape of "
+        "F39 and it makes every size at this node look unaffordable"
     )
 
 

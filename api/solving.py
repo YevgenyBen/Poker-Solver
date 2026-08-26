@@ -1556,6 +1556,10 @@ def _query_turn_from_path(
     # (not just one), same max()-over-everyone reasoning _preflop_walk's
     # own to_call computation already relies on.
     remaining_stack = effective_stack_bb - max(chance_node.invested.values())
+    # M143/F39: keep the TURN-ENTRY stack. `remaining_stack` is reassigned
+    # below once the turn's own betting is walked, and the turn tree quotes
+    # its sizes against the entry value, not the post-bet remainder.
+    turn_entry_stack = remaining_stack
 
     if isinstance(turn_node, TerminalNode):
         # The flop action already put a player fully all-in — chance.py's
@@ -1569,6 +1573,12 @@ def _query_turn_from_path(
             "trained": {},
             "pot": turn_node.pot,
             "effective_stack_bb": remaining_stack,
+            # M143/F39: the stack entering THIS street, which is what the
+            # tree quotes its sizes against. `effective_stack_bb` above is
+            # the post-bet remainder and is NOT comparable to a size;
+            # omitting this fell through to main.py's effective_stack_bb
+            # default, i.e. exactly the pre-M101 bug.
+            "max_affordable_bb": turn_entry_stack,
         }
 
     # M85: a deeper turn decision, not just branch.root. This used to be
@@ -1598,6 +1608,12 @@ def _query_turn_from_path(
         "trained": trained,
         "pot": turn_node.pot,
         "effective_stack_bb": remaining_stack,
+        # M143/F39: the stack entering THIS street, which is what the
+        # tree quotes its sizes against. `effective_stack_bb` above is
+        # the post-bet remainder and is NOT comparable to a size;
+        # omitting this fell through to main.py's effective_stack_bb
+        # default, i.e. exactly the pre-M101 bug.
+        "max_affordable_bb": turn_entry_stack,
     }
 
 
@@ -1757,6 +1773,9 @@ def _query_turn_multiway_from_path(
     # stack formula — see that function's comment for why this must stay
     # hand-in-sync with chance.py's own construction if it ever changes.
     remaining_stack = effective_stack_bb - max(flop_node.invested.values())
+    # M143/F39: the turn-entry stack, kept before this street's betting
+    # reduces `remaining_stack`. See _query_turn_from_path.
+    turn_entry_stack = remaining_stack
 
     if isinstance(turn_node, TerminalNode):
         # The flop action already put a player fully all-in — chance.py's
@@ -1769,6 +1788,12 @@ def _query_turn_multiway_from_path(
             "trained": {},
             "pot": turn_node.pot,
             "effective_stack_bb": remaining_stack,
+            # M143/F39: the stack entering THIS street, which is what the
+            # tree quotes its sizes against. `effective_stack_bb` above is
+            # the post-bet remainder and is NOT comparable to a size;
+            # omitting this fell through to main.py's effective_stack_bb
+            # default, i.e. exactly the pre-M101 bug.
+            "max_affordable_bb": turn_entry_stack,
         }
 
     if not to_river:
@@ -1810,6 +1835,12 @@ def _query_turn_multiway_from_path(
             "trained": trained,
             "pot": turn_node.pot,
             "effective_stack_bb": remaining_stack,
+            # M143/F39: the stack entering THIS street, which is what the
+            # tree quotes its sizes against. `effective_stack_bb` above is
+            # the post-bet remainder and is NOT comparable to a size;
+            # omitting this fell through to main.py's effective_stack_bb
+            # default, i.e. exactly the pre-M101 bug.
+            "max_affordable_bb": turn_entry_stack,
         }
 
     # --- One hop further: the river (M53) -------------------------------
@@ -1840,6 +1871,12 @@ def _query_turn_multiway_from_path(
             "trained": {},
             "pot": turn_terminal.pot,
             "effective_stack_bb": remaining_after_turn,
+            # M143/F39: the stack entering THIS street, which is what the
+            # tree quotes its sizes against. `effective_stack_bb` above is
+            # the post-bet remainder and is NOT comparable to a size;
+            # omitting this fell through to main.py's effective_stack_bb
+            # default, i.e. exactly the pre-M101 bug.
+            "max_affordable_bb": turn_entry_stack,
         }
 
     with _turn_multiway_path_cache.lock:
@@ -1863,6 +1900,12 @@ def _query_turn_multiway_from_path(
             "trained": {},
             "pot": river_node.pot,
             "effective_stack_bb": remaining_after_turn,
+            # M143/F39: the stack entering THIS street, which is what the
+            # tree quotes its sizes against. `effective_stack_bb` above is
+            # the post-bet remainder and is NOT comparable to a size;
+            # omitting this fell through to main.py's effective_stack_bb
+            # default, i.e. exactly the pre-M101 bug.
+            "max_affordable_bb": turn_entry_stack,
         }
 
     # M89: a multiway river decision deeper than the street's first, for
@@ -1887,6 +1930,12 @@ def _query_turn_multiway_from_path(
         "trained": result.trained_hands(river_node),
         "pot": river_node.pot,
         "effective_stack_bb": remaining_after_turn,
+        # M143/F39: the stack entering THIS street, which is what the
+        # tree quotes its sizes against. `effective_stack_bb` above is
+        # the post-bet remainder and is NOT comparable to a size;
+        # omitting this fell through to main.py's effective_stack_bb
+        # default, i.e. exactly the pre-M101 bug.
+        "max_affordable_bb": turn_entry_stack,
     }
 
 
@@ -2041,6 +2090,12 @@ def _query_river_from_path(
             "trained": {},
             "pot": turn_root.pot,
             "effective_stack_bb": remaining_stack_after_flop,
+            # M143/F39: the stack entering THIS street, which is what the
+            # tree quotes its sizes against. `effective_stack_bb` above is
+            # the post-bet remainder and is NOT comparable to a size;
+            # omitting this fell through to main.py's effective_stack_bb
+            # default, i.e. exactly the pre-M101 bug.
+            "max_affordable_bb": remaining_stack_after_flop,
         }
 
     # New relative to _query_turn_from_path: the turn is a full betting
@@ -2060,6 +2115,9 @@ def _query_river_from_path(
     # cumulative with the flop's, per game_tree.StreetConfig's own
     # per-street reset (see game_tree.py's pot_offset docstring).
     remaining_stack_after_turn = remaining_stack_after_flop - max(turn_node.invested.values())
+    # M143/F39: the RIVER-ENTRY stack, kept before the river's own betting
+    # reduces `remaining_stack_after_turn` below.
+    river_entry_stack = remaining_stack_after_turn
 
     if id(turn_node) not in result.chance_data:
         # Folded on the turn — no river decision to make.
@@ -2071,6 +2129,12 @@ def _query_river_from_path(
             "trained": {},
             "pot": turn_node.pot,
             "effective_stack_bb": remaining_stack_after_turn,
+            # M143/F39: the stack entering THIS street, which is what the
+            # tree quotes its sizes against. `effective_stack_bb` above is
+            # the post-bet remainder and is NOT comparable to a size;
+            # omitting this fell through to main.py's effective_stack_bb
+            # default, i.e. exactly the pre-M101 bug.
+            "max_affordable_bb": river_entry_stack,
         }
 
     river_chance_node = result.chance_data[id(turn_node)]
@@ -2089,6 +2153,12 @@ def _query_river_from_path(
             "trained": {},
             "pot": river_node.pot,
             "effective_stack_bb": remaining_stack_after_turn,
+            # M143/F39: the stack entering THIS street, which is what the
+            # tree quotes its sizes against. `effective_stack_bb` above is
+            # the post-bet remainder and is NOT comparable to a size;
+            # omitting this fell through to main.py's effective_stack_bb
+            # default, i.e. exactly the pre-M101 bug.
+            "max_affordable_bb": river_entry_stack,
         }
 
     # M86: a river decision deeper than the street's first. Completes the
@@ -2116,6 +2186,12 @@ def _query_river_from_path(
         "trained": trained,
         "pot": river_node.pot,
         "effective_stack_bb": remaining_stack_after_turn,
+        # M143/F39: the stack entering THIS street, which is what the
+        # tree quotes its sizes against. `effective_stack_bb` above is
+        # the post-bet remainder and is NOT comparable to a size;
+        # omitting this fell through to main.py's effective_stack_bb
+        # default, i.e. exactly the pre-M101 bug.
+        "max_affordable_bb": river_entry_stack,
     }
 
 
