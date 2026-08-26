@@ -333,6 +333,28 @@ requests now reject unknown fields by name rather than ignoring them.
   `players: 2` — heads-up advice for a 6-max question, with nothing
   saying anything was wrong. Turning this on surfaced 22 suite failures,
   all of them tests sending a `position` field that never existed.
+- **F39 (M143): the affordability guarantee was broken on EVERY turn and
+  river node.** M101 restored it "at every node, on every street" and
+  swept preflop and flop only. All **eleven** turn/river responses
+  omitted `max_affordable_bb` outright and fell through to
+  `api/main.py`'s `raw.get("max_affordable_bb",
+  raw["effective_stack_bb"])` default - the pre-M101 behaviour. Measured
+  at production settings, **8 of 8 turn-facing-a-bet nodes named
+  `all_in:97.50` while reporting `max_affordable_bb: 85.0`**: advice for
+  a bet the response itself says is unaffordable. Fixed by giving each
+  response the stack entering ITS OWN street, captured before that
+  street's betting reduces it (`turn_entry_stack`, `river_entry_stack`).
+  **The test fixture is why the sweep could never have caught it**:
+  `_disable_prewarm_and_clear_cache` sets `FLOP_TURN_RAISE_SIZES = ()`
+  for speed, so under the suite the turn tree offers only check and
+  all-in and no mid-street turn node exists at all. The guard
+  `test_the_affordability_bound_survives_a_turn_node_facing_a_bet`
+  restores one real size so the node - and the bug - can exist.
+  Also seen here and left alone: after a checked-through flop and turn, a
+  river node's only legal actions are check and all-in, so
+  `river_action_path=["raise"]` correctly 422s. A tree-shape limitation,
+  not a defect.
+
 - **Affordability is checked against `max_affordable_bb`, NOT
   `effective_stack_bb` (M101).** The latter means three different things
   by node — preflop it is the stack net of blinds while preflop sizes are

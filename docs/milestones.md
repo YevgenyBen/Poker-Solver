@@ -7431,3 +7431,52 @@ entry's own corrections before trusting its conclusions.
   - No solver change. What changes is what the user is told — and this is
     the first correction in the series that changes an INSTRUCTION rather
     than a number.
+
+- **M143 - F39: the affordability guarantee was broken on every turn and
+  river node.** Screening streets and node types after F38 turned up
+  something objective rather than statistical: advice naming a bet the
+  same response says the player cannot make.
+  - **Measured**, production settings, `/advise`: **8 of 40 nodes
+    violate, and all 8 are turn-facing-a-bet** - every board, every hero
+    hand. Each reports `max_affordable_bb: 85.0` beside `all_in:97.50`.
+    The arithmetic: hero has 97.5 behind entering the turn, villain bets
+    12.5, and the bound was reported as the 85.0 left after calling
+    rather than the 97.5 hero can actually commit.
+  - **Cause.** M101 introduced `max_affordable_bb` precisely because
+    `effective_stack_bb` means different things by node and shares no
+    baseline with action sizes - and then set it on preflop and flop
+    responses only. **All eleven turn/river responses omitted the
+    field**, so `api/main.py` filled it from its
+    `raw.get("max_affordable_bb", raw["effective_stack_bb"])` default:
+    the exact quantity M101's own comment says cannot be compared to a
+    size.
+  - **Fix.** Each response now carries the stack entering ITS OWN street,
+    captured before that street's betting reduces it - `turn_entry_stack`
+    in `_query_turn_from_path` and `_query_turn_multiway_from_path`,
+    `river_entry_stack` in `_query_river_from_path`. Sweep goes 8
+    violations -> 0; the turn node now reports `max_affordable_bb: 97.5`
+    against `effective_stack_bb: 85.0`, so the two still diverge and the
+    bound is not vacuous.
+  - **Why M101's sweep could never have caught it, even extended.** The
+    autouse fixture sets `FLOP_TURN_RAISE_SIZES = ()` for speed, so under
+    the suite the turn tree offers only check and all-in and **no
+    mid-street turn node is reachable**. Adding turn cases to the
+    parametrized sweep simply 422s. The new guard restores one real size
+    (`(2.5,)`, `FLOP_TURN_MAX_RAISES = 2`) so the node exists, and is
+    mutation-tested: reverting the fix fails it with
+    `assert not ['all_in:97.50']`.
+  - **Fourth instance of one meta-pattern**, now the dominant theme of
+    this stretch: F36 a reference that could not converge, M141 a spot
+    set with no draws, F38 a node type where folding was not legal, F39 a
+    node type the fixture made unreachable. Every time, a guarantee held
+    everywhere it was checked and the checking had a shape-shaped hole.
+    **A test fixture that shrinks the tree can delete the very node a
+    guarantee is about.**
+  - **Recorded and deliberately not "fixed":** after a checked-through
+    flop and turn, a river node's only legal actions are check and
+    all-in, so `river_action_path=["raise"]` returns 422. Honest
+    behaviour and a tree-shape limitation rather than a defect, but it
+    means a river decision facing a normal bet cannot be expressed
+    through that line.
+  - First real code fix of this stretch - everything since M138 changed
+    only what users are told. 973 backend tests pass.
