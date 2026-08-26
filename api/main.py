@@ -1262,10 +1262,8 @@ async def advise_endpoint(request: AdviseRequest):
             # problem is that its preflop solve divides iterations among
             # nine seats, and that has already happened by the time
             # anyone folds. See cfg.LOW_CONFIDENCE_TABLE_SIZES.
-            "solver_confidence": (
-                "low" if request.players in cfg.LOW_CONFIDENCE_TABLE_SIZES else "high"
-            ),
-            "solver_confidence_reason": cfg.LOW_CONFIDENCE_TABLE_SIZES.get(request.players),
+            "solver_confidence": _solver_confidence(raw, request.players)[0],
+            "solver_confidence_reason": _solver_confidence(raw, request.players)[1],
             # M98: scoped to the sizing axis, and only preflop. A
             # multiway preflop solve answers "play or fold" reliably and
             # "which size" unreliably; reporting one number for both hid
@@ -1317,6 +1315,43 @@ async def advise_endpoint(request: AdviseRequest):
         # An unsupported (street, table size) cell — e.g. players=6 at a
         # street whose own cap table has no entry. A clear 422, not a 500.
         raise HTTPException(status_code=422, detail=f"unsupported street/table-size combination: {exc}") from exc
+
+
+def _node_is_untrained(raw: dict) -> bool:
+    """True when NOTHING at this decision was trained, so every row is the
+    solver's uniform prior rather than a computed strategy.
+
+    M145/F41. Deliberately the unambiguous case only. A single hand can
+    read untrained for a benign reason - `trained_hands` documents that a
+    hand with zero reach in this position's range is untrained at any
+    iteration count - so flagging on one hand would fire constantly and
+    make `low` meaningless. Zero trained hands at the whole node cannot
+    be benign: it means the node was never visited.
+    """
+    trained = raw.get("trained")
+    if not isinstance(trained, dict) or not trained:
+        return False
+    return not any(trained.values())
+
+
+def _solver_confidence(raw: dict, players: int):
+    """(level, reason) for the headline confidence signal.
+
+    M145/F41: this used to depend only on TABLE SIZE, so a node whose
+    every row was the uniform prior still reported "high". Both causes
+    now feed it, and both reasons are reported when both apply — they are
+    different problems and a user acting on one should still see the
+    other.
+    """
+    reasons = []
+    table_size_reason = cfg.LOW_CONFIDENCE_TABLE_SIZES.get(players)
+    if table_size_reason:
+        reasons.append(table_size_reason)
+    if _node_is_untrained(raw):
+        reasons.append(cfg.UNTRAINED_NODE_REASON)
+    if not reasons:
+        return "high", None
+    return "low", " ".join(reasons)
 
 
 def _modelled_bet_sizes(raw: dict) -> list:

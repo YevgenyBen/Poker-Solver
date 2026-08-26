@@ -7516,3 +7516,48 @@ entry's own corrections before trusting its conclusions.
     it, so the note cannot degrade into blanket postflop noise.
     Mutation-tested by suppressing the append.
   - 975 backend + 157 frontend tests pass.
+
+- **M145 - F41: a node where nothing was trained was served with
+  `solver_confidence: "high"`.** Screening multiway postflop - the
+  thinnest-covered surface, after F38/F39/F40 all turned up on
+  under-guarded ones - found the honesty signals contradicting each
+  other.
+  - **Measured.** A 3-max river (`Kd7c2h` / `Ts` / `4c`): **0 of 136
+    hands trained, 137 of 137 rows exactly uniform.** Hero's advice reads
+    `call_or_check 0.3333 / raise:18.75 0.3333 / all_in:97.50 0.3333`.
+    The response reported `solver_confidence: "high"` and
+    `range_confidence: fully_trained: true` for BTN, SB and BB. Only
+    `hero.trained: false` told the truth, one field among many.
+  - **Occasional, not systematic** - 1 of 6 measured cases (two table
+    sizes, four boards); the others trained 46-50 of ~130. That is worse
+    for a user than a consistent gap: most requests look fine and nothing
+    on the response distinguishes the one that is not.
+  - **A uniform split is the perfect disguise.** `0.3333 / 0.3333 /
+    0.3333` reads as a legitimate mixed strategy - genuinely indifferent
+    between three actions - when it actually means "never computed". The
+    new reason says so explicitly: an even split here means "no answer",
+    not "genuinely indifferent".
+  - **`range_confidence` misleads without being wrong.** It reports the
+    PREFLOP range derivation, and those nine classes per position really
+    were fully trained. Composed with a river strategy that was never
+    solved, it functions as an endorsement of something it says nothing
+    about.
+  - **Fix.** `solver_confidence` was a pure function of table size; it
+    now also consults `_node_is_untrained`, and reports BOTH reasons when
+    a low-confidence table size applies as well - they are different
+    problems and a user acting on one should still see the other.
+  - **Deliberately scoped to the unambiguous case.** A single hand
+    reading untrained is often benign: `trained_hands` documents that a
+    hand with zero reach in this position's range is untrained at any
+    iteration count. Flagging that would fire constantly and make "low"
+    meaningless. Zero trained hands at the WHOLE node cannot be benign -
+    it means the node was never visited. Pinned by a test asserting the
+    signal does NOT fire on one untrained hand, on an empty `trained`
+    dict, or on an absent one.
+  - **A near-miss in the measuring, recorded.** The first mutation test
+    reported the guard surviving. It had not: `-k "untrained"` never
+    selected `test_a_node_nothing_was_trained_at_...`, whose name
+    contains `was_trained`. Re-run with explicit node ids, both guards
+    fail under mutation. A mutation test that selects the wrong tests
+    proves nothing, and prints the same reassuring output.
+  - 978 backend tests pass.

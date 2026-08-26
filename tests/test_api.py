@@ -4517,6 +4517,62 @@ def test_an_earlier_street_does_not_carry_the_river_sizing_note(client):
     )
 
 
+def test_a_node_nothing_was_trained_at_is_not_reported_as_high_confidence():
+    """M145 / F41. The signal a user checks first must know whether the
+    spot was solved.
+
+    `solver_confidence` was a pure function of TABLE SIZE. Measured: a
+    3-max river (Kd7c2h Ts 4c) returns **0 of 136 hands trained, every
+    row exactly the uniform prior** — hero reads 0.3333 / 0.3333 /
+    0.3333 — while the response said `solver_confidence: "high"` and
+    `range_confidence: fully_trained: true` for all three positions. Two
+    of three confidence signals vouched for an answer never computed.
+
+    Unit-level rather than through the API: the real case is an
+    occasional multiway river (1 of 6 measured), which is exactly the
+    kind of thing that cannot be pinned by a live request without
+    depending on which branch happened to get trained.
+    """
+    untrained = {"trained": {"AA": False, "KK": False}, "street": "river"}
+    level, reason = api_main._solver_confidence(untrained, players=2)
+    assert level == "low"
+    assert "was not actually solved" in reason
+    # and it must say what an even split MEANS, since that is how the
+    # fabricated answer disguises itself
+    assert "even split" in reason
+
+    trained = {"trained": {"AA": True, "KK": False}, "street": "river"}
+    assert api_main._solver_confidence(trained, players=2) == ("high", None)
+
+
+def test_the_untrained_signal_does_not_fire_on_one_untrained_hand():
+    """M145. Scope discipline — a confidence signal that fires everywhere
+    is as useless as one that never fires.
+
+    `trained_hands` documents a benign reason a single hand reads
+    untrained: a hand with zero reach in this position's range is
+    untrained at any iteration count. Flagging on that would make "low"
+    the normal case. Zero trained hands at the WHOLE node cannot be
+    benign — it means the node was never visited.
+    """
+    mostly = {"trained": {h: True for h in ("AA", "KK", "QQ")}, "street": "flop"}
+    mostly["trained"]["72o"] = False
+    assert api_main._solver_confidence(mostly, players=2) == ("high", None)
+    # an absent or empty trained dict is not evidence of anything
+    assert api_main._solver_confidence({"street": "flop"}, players=2) == ("high", None)
+    assert api_main._solver_confidence({"trained": {}}, players=2) == ("high", None)
+
+
+def test_both_confidence_reasons_are_reported_when_both_apply():
+    """M145. A 9-max table AND an untrained node are different problems;
+    a user acting on one should still be told the other."""
+    untrained = {"trained": {"AA": False}, "street": "river"}
+    level, reason = api_main._solver_confidence(untrained, players=9)
+    assert level == "low"
+    assert "was not actually solved" in reason
+    assert api_config.LOW_CONFIDENCE_TABLE_SIZES[9] in reason
+
+
 def test_every_prewarm_step_succeeds(monkeypatch):
     """M133. The pre-warm swallows each step's exception so one bad spot
     cannot cost the others — which meant a step could fail forever in

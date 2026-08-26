@@ -419,6 +419,25 @@ requests now reject unknown fields by name rather than ignoring them.
   budget notes say it cannot afford, and inventing a size without
   measuring it would be worse than stating what was modelled.
 
+- **F41 (M145): `solver_confidence` knew only the TABLE SIZE, so a node
+  where nothing was trained still read "high".** Measured: a 3-max river
+  (Kd7c2h Ts 4c) returns **0 of 136 hands trained, every row exactly the
+  uniform prior** - hero reads `0.3333 / 0.3333 / 0.3333` - while the
+  response said `solver_confidence: "high"` and `range_confidence:
+  fully_trained: true` for all three positions. **Two of three confidence
+  signals vouched for an answer that was never computed.** It is
+  OCCASIONAL, not systematic (1 of 6 measured; the rest 46-50 of ~130),
+  which is worse for a user than a consistent gap - most requests look
+  identical and nothing distinguishes the one that is not. `range_
+  confidence` is not wrong, which is why it misleads: it describes the
+  PREFLOP derivation, and those classes really were fully trained.
+  `solver_confidence` now folds in `_node_is_untrained` and reports both
+  reasons when a low-confidence table size ALSO applies. **Scoped to the
+  unambiguous case on purpose**: one hand reading untrained is often
+  benign (`trained_hands` documents zero-reach hands as untrained at any
+  iteration count), so flagging that would make "low" the normal case and
+  mean nothing; zero trained hands at the whole node cannot be benign.
+
 - **`trained` / `range_confidence` / `source` exist because output can
   look confident and be fabricated.** Don't strip them for tidiness.
 - **`hero_cards` is part of the path-query cache keys — do not remove it
