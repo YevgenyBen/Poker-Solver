@@ -1302,10 +1302,14 @@ async def advise_endpoint(request: AdviseRequest):
                 "low" if raw.get("street") != "preflop" else "high"
             ),
             "aggression_confidence_reason": (
-                cfg.POSTFLOP_AGGRESSION_CAVEAT_REASON
+                _aggression_reason(raw)
                 if raw.get("street") != "preflop"
                 else None
             ),
+            # M144/F40: what the tree could actually offer here. Derived
+            # from the response's own rows, not from config, so it stays
+            # honest if the sizing constants change.
+            "modelled_bet_sizes": _modelled_bet_sizes(raw),
         }
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1313,6 +1317,60 @@ async def advise_endpoint(request: AdviseRequest):
         # An unsupported (street, table size) cell — e.g. players=6 at a
         # street whose own cap table has no entry. A clear 422, not a 500.
         raise HTTPException(status_code=422, detail=f"unsupported street/table-size combination: {exc}") from exc
+
+
+def _modelled_bet_sizes(raw: dict) -> list:
+    """The bet sizes this node's tree actually offered, ascending.
+
+    M144/F40. `FLOP_TO_RIVER_RAISE_SIZES` is empty at production
+    settings, so a river node's only actions are check/call and all-in —
+    a player asking how much to bet the river cannot be answered at all.
+    Nothing in the response said so, which made `all_in: 0.11` read as
+    "shoving beat betting smaller" when smaller was never legal.
+
+    Read off the strategy rows rather than the config constants: the
+    point is to report what THIS node could express, and deriving it
+    from the answer keeps it true if the constants move.
+    """
+    rows = list((raw.get("strategy") or {}).values())
+    hero = raw.get("hero") or {}
+    if isinstance(hero, dict) and hero.get("strategy"):
+        rows.append(hero["strategy"])
+    sizes = set()
+    for row in rows:
+        for action in row:
+            if ":" in action:
+                try:
+                    sizes.add(float(action.split(":", 1)[1]))
+                except ValueError:
+                    continue
+    return sorted(sizes)
+
+
+def _has_no_intermediate_bet_size(raw: dict) -> bool:
+    """True when the only way to put money in here is all-in."""
+    rows = list((raw.get("strategy") or {}).values())
+    hero = raw.get("hero") or {}
+    if isinstance(hero, dict) and hero.get("strategy"):
+        rows.append(hero["strategy"])
+    if not rows:
+        return False
+    saw_all_in = False
+    for row in rows:
+        for action in row:
+            if action.startswith("raise:"):
+                return False
+            if action.startswith("all_in"):
+                saw_all_in = True
+    return saw_all_in
+
+
+def _aggression_reason(raw: dict) -> str:
+    """The postflop caveat, plus the sizing-coverage note where it applies."""
+    reason = cfg.POSTFLOP_AGGRESSION_CAVEAT_REASON
+    if _has_no_intermediate_bet_size(raw):
+        reason += cfg.BET_SIZING_COVERAGE_NOTE
+    return reason
 
 
 @app.post(

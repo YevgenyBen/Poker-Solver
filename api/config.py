@@ -494,6 +494,28 @@ PATH_QUERY_ITERATIONS = 500
 # is expensive enough (see the module docstring's per-iteration cost
 # finding) that it needs a shallower tree than solve_flop_turn to stay
 # in a tolerable-for-a-live-request budget.
+# M144/F40. **These two lines decide how much of poker the postflop
+# advice can even express, and one of them empties the river.** Measured
+# through /advise at production settings, the bet sizes actually offered
+# at a street's opening decision are:
+#
+#     flop   call_or_check, raise:12.50, raise:15.00, raise:11.00, all_in
+#     turn   call_or_check, raise:12.50, all_in
+#     river  call_or_check, all_in
+#
+# So a player asking how to play the river can only be told to check/call
+# or to move in for 97.5bb. `all_in: 0.11` there does NOT mean shoving
+# beat betting half the pot — half the pot was never a legal action in
+# the tree. The cost rationale below is about max_raises; the empty
+# river SIZES were never separately justified.
+#
+# Surfaced to the user rather than silently fixed: widening the river
+# tree is exactly the cost this endpoint's own budget notes say it cannot
+# afford, and inventing a size without measuring it would be worse than
+# saying what was modelled. `modelled_bet_sizes` and
+# BET_SIZING_COVERAGE_NOTE report it per response, derived from the
+# actions the tree really offered rather than from these constants, so
+# they stay true if these change.
 FLOP_TURN_MAX_RAISES = 2
 FLOP_TURN_RAISE_SIZES = (2.5,)
 FLOP_TO_RIVER_MAX_RAISES = 1
@@ -1100,6 +1122,15 @@ POSTFLOP_FOLD_ERROR_WORST = 0.8017
 
 POSTFLOP_AGGRESSION_ERROR_MEAN = 0.1394
 POSTFLOP_AGGRESSION_ERROR_WORST = 0.8810
+
+# M144/F40. Appended when the node offered no intermediate bet size at
+# all — the river, at production settings.
+BET_SIZING_COVERAGE_NOTE = (
+    " Note also that on this street the solver modelled only checking or calling and "
+    "going all-in: no intermediate bet size was a legal action in its tree. So a low "
+    "all-in frequency here does not mean a smaller bet was considered and rejected — "
+    "smaller bets were never available, and this response cannot tell you how much to bet."
+)
 
 POSTFLOP_AGGRESSION_CAVEAT_REASON = (
     "How often to bet or raise here is approximate, and so is whether to continue. "

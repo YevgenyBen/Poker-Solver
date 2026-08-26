@@ -163,6 +163,12 @@ class AdviseResponse(BaseModel):
     #
     #     every size in `strategy` <= `max_affordable_bb`
     max_affordable_bb: float
+    # M144/F40: the bet sizes this node's tree could actually offer,
+    # ascending. Empty of intermediate sizes on the river at production
+    # settings (FLOP_TO_RIVER_RAISE_SIZES is ()), where the only actions
+    # are check/call and all-in — so this says what the advice was even
+    # able to express, not just what it chose.
+    modelled_bet_sizes: list[float] = []
     strategy: dict[str, dict[str, float]]
     trained: dict[str, bool] | None
     hero: HeroAdvice | None

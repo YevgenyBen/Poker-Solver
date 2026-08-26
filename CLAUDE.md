@@ -402,6 +402,23 @@ requests now reject unknown fields by name rather than ignoring them.
   only each street's opening decision. Guarded by
   `test_the_caveat_warns_about_weak_hands_facing_a_bet`.
 
+- **F40 (M144): the river models NO bet size except all-in, and the
+  response now says so.** `FLOP_TO_RIVER_RAISE_SIZES = ()` at production
+  settings, so a river node's only actions are check/call and all-in.
+  Measured at each street's opening decision: flop and turn offer an
+  intermediate size, **river offers none**. A player asking how much to
+  bet the river cannot be answered, and without disclosure
+  `all_in: 0.11` reads as "shoving beat betting half the pot" when half
+  the pot was never a legal action - nothing was compared and nothing
+  rejected. Every response now carries **`modelled_bet_sizes`**, and
+  `BET_SIZING_COVERAGE_NOTE` is appended to the aggression caveat when
+  all-in is the only way to commit chips. **Both are derived from the
+  response's own rows, not from the config constants**, so they stay
+  true if the constants move. Deliberately surfaced rather than
+  "fixed": widening the river tree is precisely the cost that endpoint's
+  budget notes say it cannot afford, and inventing a size without
+  measuring it would be worse than stating what was modelled.
+
 - **`trained` / `range_confidence` / `source` exist because output can
   look confident and be fabricated.** Don't strip them for tidiness.
 - **`hero_cards` is part of the path-query cache keys — do not remove it

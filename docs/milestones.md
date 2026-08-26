@@ -7480,3 +7480,39 @@ entry's own corrections before trusting its conclusions.
     through that line.
   - First real code fix of this stretch - everything since M138 changed
     only what users are told. 973 backend tests pass.
+
+- **M144 - F40: the river models no bet size except all-in, and nothing
+  said so.** Fixing F39 surfaced a river node whose only actions were
+  `call_or_check` and `all_in:97.50`. That was recorded as a tree-shape
+  limitation; checking the config showed it is the shipped state of the
+  whole street.
+  - **`FLOP_TO_RIVER_RAISE_SIZES = ()`.** Measured through `/advise` at
+    production settings, the sizes actually offered at each street's
+    opening decision:
+    | street | actions |
+    |---|---|
+    | flop | call_or_check, raise:12.50, all_in |
+    | turn | call_or_check, raise:12.50, all_in |
+    | river | **call_or_check, all_in** |
+    The surrounding comment justifies the differing `max_raises` on cost
+    grounds; **the empty river SIZES were never separately justified.**
+  - **Why it matters to a user, not just a reader of config.** A player
+    asking how much to bet the river cannot be answered at all. Worse,
+    `all_in: 0.11` looks like a considered judgement that shoving beat
+    betting smaller - but smaller was never a legal action in the tree,
+    so nothing was compared and nothing rejected.
+  - **Surfaced, not silently "fixed".** Widening the river tree is
+    exactly the cost `solve_flop_to_river`'s own budget notes say it
+    cannot afford (its DEFAULT 20 iterations already costs ~63-105s), and
+    inventing a size without measuring it would be worse than stating
+    what was modelled. Every response now reports
+    **`modelled_bet_sizes`**, and `BET_SIZING_COVERAGE_NOTE` is appended
+    to the aggression caveat when all-in is the only way to commit chips.
+  - **Both signals are derived from the response's own strategy rows,
+    never from the config constants.** Reading the constants would make
+    the disclosure a second thing to keep in sync - the failure mode F36
+    and M143 both came from. Guarded two ways: the river must report
+    all-in only AND carry the note, and an earlier street must NOT carry
+    it, so the note cannot degrade into blanket postflop noise.
+    Mutation-tested by suppressing the append.
+  - 975 backend + 157 frontend tests pass.
