@@ -1059,25 +1059,71 @@ MULTIWAY_STACK_BUCKET_BB = 5.0
 # hand type (34 for draws, 26 otherwise). It would be tuning on the
 # 16-spot set that produced the split, and it is incoherent on its face —
 # the opponent's range does not depend on hero's cards.
+# M142 / F38. **The fold-versus-play call is NOT the sound half, and
+# this caveat used to tell users it was.** Every measurement behind that
+# claim was taken at a street's OPENING decision, where folding is not
+# even a legal action because checking is free. Measured at a node
+# FACING A BET (flop_action_path=["raise"]), against the same converged
+# reference, 10 spots:
+#
+#   hand                fold err   aggression err   shipped shove
+#   top set               0.0000           0.0000          0.9904
+#   middle set            0.0000           0.0000          0.8807
+#   overpair              0.0000           0.3581          0.9636
+#   open-ender            0.0042           0.0057          0.9990
+#   top pair              0.0003           0.1454          0.1831
+#   gutshot / weak        0.0109           0.0108          0.0001
+#   overcards (TsJs)      0.1695           0.2162          0.2370
+#   overcards (AhKh)      0.3222           0.0078          0.0051
+#   air (8s9s)            0.5608           0.5573          0.5672
+#   air (KsQs)            0.8017           0.3926          0.0639
+#
+#   mean fold error 0.1870 (worst 0.8017)
+#   mean aggression error 0.1694 (worst 0.5573)
+#
+# The two axes are comparably wrong here, so "the fold call is far
+# sounder" is withdrawn. Strong hands are fine — top set, middle set and
+# the open-ender all shove ~0.99 and the converged solve agrees. The
+# failure is concentrated in WEAK hands facing a bet, and it is not
+# merely over-calling: **with nine-high (8s9s on Ac7d2h) the product
+# recommends shoving 97.5bb 0.5672 of the time where the correct play is
+# to fold 0.9869.** Verified byte-identical across runs, with the
+# reference identical at 1,000 / 2,500 / 5,000 iterations.
+#
+# Why nothing caught it: M127's play session judged 275 decisions
+# CATEGORICALLY (premiums never folded, trash folded). This solver does
+# fold air sometimes and never folds premiums, so it passes every such
+# check while folding at a quarter of the correct rate. And M138-M141's
+# 16-spot sweeps all measured the opening decision, a different node.
+POSTFLOP_FOLD_ERROR_MEAN = 0.1870
+POSTFLOP_FOLD_ERROR_WORST = 0.8017
+
 POSTFLOP_AGGRESSION_ERROR_MEAN = 0.1394
 POSTFLOP_AGGRESSION_ERROR_WORST = 0.8810
 
 POSTFLOP_AGGRESSION_CAVEAT_REASON = (
-    "How often to bet or raise here is approximate. To stay affordable this solve "
+    "How often to bet or raise here is approximate, and so is whether to continue. "
+    "To stay affordable this solve "
     "models only part of the opponent's range, chosen by how consistently each hand "
     "took the action they took — and premium hands still get dropped by that rule, "
     "because they mix between raising and going all-in rather than always raising. "
     "Measured against a genuinely uncapped solve across sixteen spots, the raising "
     "frequency is off by about 14 percentage points on average and by 88 at worst, "
     "without a "
-    "consistent direction overall. One case is specific enough to act on: with an "
+    "consistent direction overall. Two cases are specific enough to act on. First: "
+    "with an "
     "open-ended straight draw this advice overstates betting badly and in every "
     "case measured — in the worst, it recommends a bet of two and a half times the "
     "pot 88% of the time where the correct play is to check. Discount any "
-    "suggestion to bet an open-ended straight draw. Everywhere else, the residual "
-    "has no reliable direction, so treat the raising frequency as approximate "
-    "rather than correcting it yourself. The fold-versus-play call is far sounder "
-    "than how aggressively to play: trust whether to continue."
+    "suggestion to bet an open-ended straight draw. Second: facing a bet with a "
+    "weak hand, this continues far more often than it should, and sometimes "
+    "recommends going all-in — holding nine-high it went all-in 57% of the time "
+    "where the correct play is to fold 99%. Fold weak hands facing a bet more "
+    "often than this suggests, and treat any recommendation to commit chips with "
+    "one as unreliable. With a made hand or a strong draw, the continue-or-fold "
+    "call measured essentially exact. Everywhere else the residual has no reliable "
+    "direction, so treat the frequency as approximate rather than correcting it "
+    "yourself."
 )
 
 

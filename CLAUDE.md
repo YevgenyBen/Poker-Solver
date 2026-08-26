@@ -354,6 +354,32 @@ requests now reject unknown fields by name rather than ignoring them.
   solve is already cached, so this is a tree walk" — true for the second
   caller, wrong for the first, who is the one waiting. Pinned by a test
   that counts SOLVES, not seconds.
+- **F38 (M142): the fold-versus-play call is NOT the sound half, and the
+  caveat used to tell users it was.** Every measurement behind that claim
+  was taken at a street's OPENING decision — where folding is not a legal
+  action at all, because checking is free. Measured at a node FACING A
+  BET against the same converged reference, 10 spots:
+  | axis | mean error | worst |
+  |---|---|---|
+  | fold / continue | **0.1870** | 0.8017 |
+  | aggression | 0.1694 | 0.5573 |
+  Comparably wrong, so **"the fold call is far sounder" is withdrawn**.
+  Strong hands are fine (top set, middle set and an open-ender all shove
+  ~0.99 and the converged solve agrees); the failure is concentrated in
+  WEAK hands facing a bet, and it is not just over-calling: **with
+  nine-high (8s9s on Ac7d2h) the product recommends shoving 97.5bb
+  0.5672 of the time where the correct play is to fold 0.9869.** A player
+  who follows that loses a stack. Verified byte-identical across runs,
+  reference identical at 1k / 2.5k / 5k iterations.
+  **Why nothing caught it:** M127 judged 275 decisions CATEGORICALLY
+  (premiums never folded, trash folded) — this solver does fold air
+  sometimes and never folds premiums, so it passes every such check while
+  folding at a quarter of the correct rate; and M138-M141's 16-spot
+  sweeps all measured the opening decision, a different node.
+  **Any future postflop measurement must cover nodes facing a bet**, not
+  only each street's opening decision. Guarded by
+  `test_the_caveat_warns_about_weak_hands_facing_a_bet`.
+
 - **`trained` / `range_confidence` / `source` exist because output can
   look confident and be fabricated.** Don't strip them for tidiness.
 - **`hero_cards` is part of the path-query cache keys — do not remove it
