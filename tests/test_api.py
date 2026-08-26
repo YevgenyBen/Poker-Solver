@@ -4163,18 +4163,34 @@ def test_postflop_advice_carries_the_aggression_caveat(client, path, fields, str
 
 
 def test_the_aggression_caveat_does_not_claim_the_fold_call_is_broken():
-    """M128. Scope discipline, pinned.
+    """M128, premise CORRECTED by M142.
 
-    M127 first read two cap values as a systematic bias toward
-    slow-playing; nine values showed chaos instead. The correction
-    matters for what the user is told: this caveat covers HOW
-    aggressively to play, not WHETHER to continue, because only the
-    former was measured unstable. Over-claiming here would repeat
-    M110's error in the copy a person reads.
+    This used to assert the caveat covers HOW aggressively to play and
+    not WHETHER to continue, "because only the former was measured
+    unstable". That premise was false, and the reason it survived is
+    worth keeping: every measurement behind it was taken at a street's
+    OPENING decision, where folding is not a legal action at all because
+    checking is free. Measured at a node FACING A BET, the fold call is
+    as wrong as the aggression call (mean 0.1870 vs 0.1694) and its worst
+    case is worse (0.8017 vs 0.5573).
+
+    So the caveat must no longer vouch for the fold axis. What it must
+    still avoid is the opposite over-claim — the axis is exact for made
+    hands and strong draws, and telling players to distrust it wholesale
+    would be as wrong as the promise it replaces.
     """
     reason = api_config.POSTFLOP_AGGRESSION_CAVEAT_REASON.lower()
     assert "how often" in reason or "how aggressively" in reason
-    assert "fold" in reason, "the caveat should say which axis IS usable"
+    assert "fold" in reason, "the caveat should still address the fold axis"
+    for withdrawn in ("far sounder", "trust whether to continue"):
+        assert withdrawn not in reason, (
+            f"the caveat still vouches for the fold call ({withdrawn!r}); M142 "
+            "measured it as bad as the aggression call at a node facing a bet"
+        )
+    assert "essentially exact" in reason, (
+        "the caveat should still say where the fold call IS reliable — with a "
+        "made hand or a strong draw — or it over-claims in the other direction"
+    )
     for overclaim in ("do not trust", "unusable", "ignore this advice"):
         assert overclaim not in reason, (
             f"the caveat overclaims ({overclaim!r}); only the aggression axis was "
@@ -4334,6 +4350,35 @@ def test_the_caveat_names_the_open_ender_case_it_measured():
     )
     # The worst case in the copy must be the open-ender's, not a stale one.
     assert str(round(api_config.POSTFLOP_AGGRESSION_ERROR_WORST * 100)) in reason
+
+
+def test_the_caveat_warns_about_weak_hands_facing_a_bet():
+    """M142 / F38. The most consequential warning in the response.
+
+    Facing a bet with a weak hand the product does not merely over-call:
+    holding nine-high (8s9s on Ac7d2h) it recommends shoving 97.5bb
+    0.5672 of the time where the converged solve folds 0.9869. Verified
+    byte-identical across runs with the reference identical at 1k / 2.5k
+    / 5k iterations.
+
+    A player who follows that loses a stack, so the copy must say it —
+    and must say it in terms a player can apply before knowing the
+    answer: weak hand, facing a bet.
+    """
+    reason = api_config.POSTFLOP_AGGRESSION_CAVEAT_REASON.lower()
+    assert "facing a bet" in reason, (
+        "the warning must name the node type, since the same hands are fine "
+        "at a street's opening decision"
+    )
+    assert "weak hand" in reason, "the warning must name the hand type"
+    assert "all-in" in reason or "commit chips" in reason, (
+        "over-calling understates it — the product recommends going all-in "
+        "with nine-high 57% of the time here"
+    )
+    assert "fold weak hands facing a bet more often" in reason, (
+        "the warning must tell the player what to do, not only that the "
+        "number is unreliable"
+    )
 
 
 def test_every_prewarm_step_succeeds(monkeypatch):

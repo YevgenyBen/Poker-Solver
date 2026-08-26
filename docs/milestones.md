@@ -7382,3 +7382,52 @@ entry's own corrections before trusting its conclusions.
     paid by one hand type to spare another. Nothing in the
     class-selection family has that property.
   - No behaviour change. Config and docs only.
+
+- **M142 — F38: the fold-versus-play call is not the sound half, and the
+  caveat was telling users it was.** M141 closed the aggression axis. The
+  caveat's remaining promise — "trust whether to continue" — had never
+  been checked against a converged reference, only against M127's
+  categorical play session. It does not hold.
+  - **Why the promise survived so long:** every measurement behind it was
+    taken at a street's OPENING decision, where **folding is not a legal
+    action** — checking is free. The fold axis had effectively never been
+    measured. Asking at a node facing a bet
+    (`flop_action_path=["raise"]`), 10 spots, same converged reference:
+    | axis | mean error | worst |
+    |---|---|---|
+    | fold / continue | **0.1870** | 0.8017 |
+    | aggression | 0.1694 | 0.5573 |
+  - **Strong hands are fine.** Top set, middle set and an open-ender all
+    shove ~0.99 and the converged solve agrees; made hands and strong
+    draws have fold error <= 0.011. The failure is entirely in WEAK hands
+    facing a bet, 4 of 4: +0.170 (TsJs), +0.322 (AhKh), +0.561 (8s9s),
+    +0.802 (KsQs).
+  - **And it is not merely over-calling.** Holding nine-high on Ac7d2h
+    the product recommends **all_in:97.50 at 0.5672 where the converged
+    solve folds 0.9869**; KsQs raises 0.34 and shoves 0.06 with king-high
+    on an ace board. A player following this loses a stack. Verified the
+    same three ways as M140's outlier: byte-identical across runs,
+    reference identical at 1,000 / 2,500 / 5,000 iterations, full action
+    row inspected rather than one summed number.
+  - **Why nothing caught it.** M127 judged 275 decisions categorically —
+    premiums never folded, trash folded. This solver does fold air
+    sometimes and never folds premiums, so it passes every such check
+    while folding at a quarter of the correct rate; a frequency 4x wrong
+    is invisible to a test that only asks whether a fold ever happened.
+    Separately, M138-M141's 16-spot sweeps all measured the opening
+    decision. **Any future postflop measurement must cover nodes facing a
+    bet.**
+  - **Caveat rewritten.** It no longer says the fold call is "far
+    sounder" or to "trust whether to continue"; it names the case (weak
+    hand, facing a bet), says what to do (fold more often, distrust any
+    recommendation to commit chips), and still records where the axis IS
+    exact (made hands and strong draws) so it does not over-claim in the
+    other direction. `POSTFLOP_FOLD_ERROR_MEAN`/`_WORST` record the
+    measurement. Two guards, both mutation-tested:
+    `test_the_caveat_warns_about_weak_hands_facing_a_bet` and the
+    corrected `test_the_aggression_caveat_does_not_claim_the_fold_call_
+    is_broken`, whose original premise ("only the aggression axis was
+    measured unstable") this milestone falsifies.
+  - No solver change. What changes is what the user is told — and this is
+    the first correction in the series that changes an INSTRUCTION rather
+    than a number.
