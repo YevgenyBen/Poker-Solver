@@ -4451,6 +4451,72 @@ def test_the_caveat_warns_about_weak_hands_facing_a_bet():
     )
 
 
+def test_the_river_says_it_modelled_no_bet_sizes(client):
+    """M144 / F40. The river cannot answer "how much should I bet?", and
+    the response has to admit it.
+
+    `FLOP_TO_RIVER_RAISE_SIZES` is `()` at production settings, so a
+    river node's only actions are check/call and all-in. Measured at a
+    street's opening decision:
+
+        flop   call_or_check, raise:12.50, all_in
+        turn   call_or_check, raise:12.50, all_in
+        river  call_or_check, all_in
+
+    Without this note, `all_in: 0.11` on the river reads as "shoving beat
+    betting half the pot" — but half the pot was never a legal action in
+    the tree, so nothing was compared and nothing was rejected.
+
+    The signal is derived from the response's own rows rather than from
+    the config constants, so it keeps telling the truth if the constants
+    move.
+    """
+    body = _advise_body(
+        preflop_action_path=["raise", "call_or_check"],
+        flop_action_path=["call_or_check", "call_or_check"], turn_card="Ts",
+        turn_action_path=["call_or_check", "call_or_check"], river_card="4c",
+        hero_cards="5c4d", board="Kd7c2h", players=2, stack_bb=100.0,
+    )
+    payload = client.post("/advise", json=body).json()
+    assert payload["street"] == "river"
+
+    sizes = payload["modelled_bet_sizes"]
+    assert sizes, "the response should report which sizes the tree offered"
+    bound = payload["max_affordable_bb"]
+    assert all(size <= bound + 1e-9 for size in sizes)
+    # All-in only: no intermediate size was ever legal here.
+    assert sizes == [pytest.approx(bound)], (
+        f"the river is expected to model all-in only, got {sizes} against a "
+        f"{bound}bb bound — if intermediate sizes now exist this test should be "
+        "revisited rather than deleted, and the disclosure below relaxed"
+    )
+    reason = payload["aggression_confidence_reason"]
+    assert "no intermediate bet size" in reason, (
+        "a river response offering only all-in must say so, or a low all-in "
+        "frequency reads as a comparison that never happened"
+    )
+
+
+def test_an_earlier_street_does_not_carry_the_river_sizing_note(client):
+    """M144. The disclosure must be node-derived, not blanket-postflop.
+
+    Attaching it to every postflop response would make it noise, and
+    would be false: the flop and turn do offer an intermediate size.
+    """
+    body = _advise_body(
+        preflop_action_path=["raise", "call_or_check"],
+        hero_cards="5c4d", board="Kd7c2h", players=2, stack_bb=100.0,
+    )
+    payload = client.post("/advise", json=body).json()
+    assert payload["street"] == "flop"
+    assert any(
+        0 < size < payload["max_affordable_bb"] for size in payload["modelled_bet_sizes"]
+    ), "the flop is expected to offer at least one intermediate size"
+    assert "no intermediate bet size" not in payload["aggression_confidence_reason"], (
+        "the sizing note fired on a street that does model intermediate bets"
+    )
+
+
 def test_every_prewarm_step_succeeds(monkeypatch):
     """M133. The pre-warm swallows each step's exception so one bad spot
     cannot cost the others — which meant a step could fail forever in
