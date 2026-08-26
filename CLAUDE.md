@@ -500,9 +500,29 @@ requests now reject unknown fields by name rather than ignoring them.
   The uncapped solve IS trustworthy (doubling equity samples moves it
   0.9186 -> 0.9206; the seed does not move it), so the true answer is
   ~0.99 and the old anchor was off by 0.6. **The shipped config's real
-  error is mean 0.1222 / worst 0.4381, not the 0.058 / 0.168 this file
+  error is mean 0.1394 / worst 0.8810, not the 0.058 / 0.168 this file
   claimed** — and 0.058 was never a floor, it was a distance to a wrong
-  target. The user-facing caveat understated the worst case 2.6x and is
+  target. (M138 first put this at 0.1222 / 0.4381 on five spots; M140
+  widened to sixteen and it grew. **Each widening has made the defect
+  look larger, so treat these as lower bounds.**)
+
+  **M140 found the one case specific enough for a user to act on:
+  OPEN-ENDED STRAIGHT DRAWS are over-bet, 3 of 3, by +0.170 to +0.881.**
+  The worst is 7h8h on 2h6d9c, where the product recommends a 2.5x-pot
+  bet **0.88 of the time while the converged solve checks 100%** —
+  reproducible byte-identical, reference converged at that spot. It is
+  also incoherent WITHIN the class: 7h8h / 8h7d / 7s8s are the same 78
+  open-ender with near-identical true frequencies (0.0001-0.0037) and
+  ship 0.8811 / 0.4142 / 0.1720 — 5x apart on suits alone, ranked in the
+  OPPOSITE order to the truth. Gutshots and a no-draw control are clean,
+  so the caveat says open-ended, **not "draws"** — over-generalising
+  would be M110's error mirrored. Direction elsewhere is stated as
+  measured, not as it would be most useful: error tracks the TRUE
+  frequency on all 16 spots. The tempting summary "we under-bet your
+  strongest hands" is FALSE across boards — middle set flips sign
+  between 2h6d9c (0.594 true, under) and Ac7d2h (0.001 true, over).
+
+  The user-facing caveat understated the worst case 5x and is
   corrected; `POSTFLOP_AGGRESSION_ERROR_MEAN`/`_WORST` now record the
   measurement, pinned to the copy by
   `test_the_aggression_caveat_quotes_its_own_measurement`.

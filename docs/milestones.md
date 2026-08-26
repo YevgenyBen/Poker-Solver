@@ -7288,3 +7288,47 @@ entry's own corrections before trusting its conclusions.
     with AKs jamming outright for fold equity. Checking the continuation
     before reporting is what separated this from a finding.
   - Docs only; no code change. The shipped solver is unaffected.
+
+- **M140 — the postflop aggression defect has a named worst case, and it
+  is worse than F36 measured.** F36 (M138) established the real error on
+  five spots. Widening to sixteen across the strength ladder found the
+  defect larger and, for the first time, a category a player can
+  recognise.
+  - **Open-ended straight draws are over-bet, 3 of 3**: +0.881 (7h8h),
+    +0.411 (8h7d), +0.170 (7s8s). The worst recommends `raise:12.50` —
+    ~2.5x pot — **0.88 of the time where the converged solve checks
+    100%**. Verified three ways before reporting: byte-identical across
+    three runs, reference converged at that spot (0.0004 / 0.0001 / 0.0
+    at 1k / 2.5k / 5k iterations), and not a bet-size artifact.
+  - **Incoherent within the hand class.** 7h8h / 8h7d / 7s8s are the same
+    78 open-ender on a rainbow board with near-identical true
+    frequencies (0.0001-0.0037), yet ship 0.8811 / 0.4142 / 0.1720 — 5x
+    apart on suit composition alone, and ranked in the OPPOSITE order to
+    the converged solve (7h8h holds the backdoor flush, is rated highest
+    by the shipped config and lowest by the truth).
+  - **Gutshots and the control are clean** (+0.0006, 0.0, 0.0), so the
+    warning is scoped to OPEN-ENDED draws. Saying "draws" would
+    over-generalise past the measurement — M110's error mirrored.
+  - **Sixteen-spot totals: mean 0.1394, worst 0.8810**, against M138's
+    five-spot 0.1222 / 0.4381 and the originally published 0.058 /
+    0.168. Each widening of the spot set has made the defect look
+    larger, so these are lower bounds — and the caveat is now on its
+    third correction in two days.
+  - **Direction, stated as measured rather than as it would be most
+    useful.** Error tracks the TRUE frequency on all 16 spots: hands that
+    should bet often are under-bet, hands that should rarely bet are
+    over-bet. The stronger, more useful-sounding claim — "we under-bet
+    your strongest hands" — is false across boards, since middle set
+    flips sign between 2h6d9c (0.594 true, under-bet) and Ac7d2h (0.001
+    true, over-bet). Only the open-ender case is both consistent and
+    nameable by a player, so only it is stated as advice.
+  - **Caveat rewritten and pinned.** It quotes 14 / 88, names the
+    open-ender case, and tells players to discount those bets.
+    `test_the_caveat_names_the_open_ender_case_it_measured` guards the
+    category and the action; `test_the_aggression_caveat_quotes_its_own_
+    measurement` keeps the prose tied to the constants. Both
+    mutation-tested — **the first mutation attempt was a no-op**, because
+    the caveat string is split across source lines and the edit searched
+    for the concatenated runtime text, so the "passing" test proved
+    nothing until the mutation was retargeted at the real source.
+  - No solver change. What changes is what the user is told.

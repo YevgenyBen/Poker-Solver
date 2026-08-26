@@ -983,31 +983,71 @@ MULTIWAY_STACK_BUCKET_BB = 5.0
 # seed does not move it. It is still drifting slightly toward the
 # extremes with iterations, so these errors are a LOWER bound.
 #
-#   spot              reference   shipped   error
-#   2h6d9c / 9s9d        0.9870    0.5489   0.4381
-#   2h6d9c / QdQh        0.0014    0.1501   0.1487
-#   2h6d9c / AhKh        0.0001    0.0109   0.0108
-#   Ac7d2h / 7s7c        0.0010    0.0134   0.0124
-#   Ac7d2h / KsQs        0.0003    0.0014   0.0011
+# M140 widened this from 5 spots to 16, across the strength ladder, and
+# the defect is larger and has a named worst case.
 #
-# Four of five err high and one errs low, but the two MATERIAL errors go
-# opposite ways (0.44 low, 0.15 over) and the other three are under
-# 0.013 — so the caveat still names no direction. Naming one off a
-# single large residual is the error this milestone exists to correct.
-POSTFLOP_AGGRESSION_ERROR_MEAN = 0.1222
-POSTFLOP_AGGRESSION_ERROR_WORST = 0.4381
+#   spot                          hand              ref    shipped   error
+#   2h6d9c / 7h8h    open-ended straight draw    0.0001    0.8811   +0.8810
+#   2h6d9c / 9s9d                     top set    0.9870    0.5489   -0.4381
+#   2h6d9c / 8h7d    open-ended straight draw    0.0037    0.4142   +0.4105
+#   2h6d9c / 7s8s    open-ended straight draw    0.0020    0.1720   +0.1700
+#   2h6d9c / QdQh                    overpair    0.0014    0.1501   +0.1487
+#   2h6d9c / 2s2c                  bottom set    0.0385    0.1261   +0.0876
+#   2h6d9c / 9h8h            top pair + bdfd     0.0003    0.0283   +0.0280
+#   2h6d9c / TsJs      overcards + backdoor      0.0003    0.0202   +0.0199
+#   2h6d9c / 6s6c                  middle set    0.5940    0.5784   -0.0156
+#   Ac7d2h / 7s7c                  middle set    0.0010    0.0134   +0.0124
+#   2h6d9c / AhKh                         air    0.0001    0.0109   +0.0108
+#   Ac7d2h / AsKs         top pair top kicker    0.0003    0.0060   +0.0057
+#   Ac7d2h / KsQs                         air    0.0003    0.0014   +0.0011
+#   2h6d9c / 5s7s                     gutshot    0.0000    0.0006   +0.0006
+#   Ac7d2h / 4h5h                     gutshot    0.0000    0.0000    0.0000
+#   Ac7d2h / 8s9s        no draw, no pair        0.0000    0.0000    0.0000
+#
+# **Open-ended straight draws are the named failure, 3 of 3.** The
+# product recommends a ~2.3x-pot overbet (`raise:12.50`) 0.88 of the time
+# on 7h8h where the converged solve checks 100% — reproducible three
+# times byte-identical, reference converged at that spot (0.0004 /
+# 0.0001 / 0.0 at 1k / 2.5k / 5k iterations). Gutshots and the no-draw
+# control are clean, so this is specific to open-enders, not draws
+# generally.
+#
+# **And it is incoherent WITHIN the class**: 7h8h / 8h7d / 7s8s are the
+# same 78 open-ender on a rainbow board with near-identical true
+# frequencies (0.0001-0.0037), yet ship 0.8811 / 0.4142 / 0.1720 — 5x
+# apart on suits alone, and ranked in the OPPOSITE order to the
+# converged solve.
+#
+# Direction, stated as measured rather than as it would be most useful:
+# the error tracks the TRUE frequency (high-frequency hands under-bet,
+# low-frequency over-bet) on all 16 spots. The tempting summary — "we
+# under-bet your strongest hands" — is false across boards, since middle
+# set flips sign between 2h6d9c (0.594 true, under) and Ac7d2h (0.001
+# true, over). Only the open-ender category is both consistent and
+# nameable by a player.
+#
+# Each widening of the spot set has made the defect look LARGER (5 spots
+# 0.1222/0.4381 -> 16 spots 0.1394/0.8810), so treat these as lower
+# bounds.
+POSTFLOP_AGGRESSION_ERROR_MEAN = 0.1394
+POSTFLOP_AGGRESSION_ERROR_WORST = 0.8810
 
 POSTFLOP_AGGRESSION_CAVEAT_REASON = (
     "How often to bet or raise here is approximate. To stay affordable this solve "
     "models only part of the opponent's range, chosen by how consistently each hand "
     "took the action they took — and premium hands still get dropped by that rule, "
     "because they mix between raising and going all-in rather than always raising. "
-    "Measured against a genuinely uncapped solve across five spots, the raising "
-    "frequency is off by about 12 percentage points on average and by 44 at worst, "
+    "Measured against a genuinely uncapped solve across sixteen spots, the raising "
+    "frequency is off by about 14 percentage points on average and by 88 at worst, "
     "without a "
-    "consistent direction. The fold-versus-play call is far sounder than how "
-    "aggressively to play: trust whether to continue, and treat the raising "
-    "frequency as approximate rather than correcting it in either direction."
+    "consistent direction overall. One case is specific enough to act on: with an "
+    "open-ended straight draw this advice overstates betting badly and in every "
+    "case measured — in the worst, it recommends a bet of two and a half times the "
+    "pot 88% of the time where the correct play is to check. Discount any "
+    "suggestion to bet an open-ended straight draw. Everywhere else, the residual "
+    "has no reliable direction, so treat the raising frequency as approximate "
+    "rather than correcting it yourself. The fold-versus-play call is far sounder "
+    "than how aggressively to play: trust whether to continue."
 )
 
 
