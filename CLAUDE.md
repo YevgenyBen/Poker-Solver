@@ -263,6 +263,24 @@ requests now reject unknown fields by name rather than ignoring them.
   on that street is being asked about; absent means the street's first.
   Works heads-up and multiway. Before this, `/advise` answered only each
   street's opening decision — a player facing a bet could not ask.
+- **F42 (M146): a CACHED branch was not necessarily a TRAINED one.**
+  `ensure_mccfr_chance_branch` opened with an unconditional early return
+  on a `chance_data` hit, and **M75 added its `train_iterations` block
+  BELOW that return** - so any branch already present was handed back
+  with whatever training it had, including none. Branches come to exist
+  untrained in normal operation: while one branch is trained, its own
+  `chance_fn` dispatches into the next street's branches and stores them
+  in the same `result.chance_data` (passed in as `chance_data=`), leaving
+  a root with an all-zero `InfoSetTable`. **So SAMPLING a river card
+  during turn training is what poisoned it** - the opposite of intuition.
+  Measured at 3-max (Kd7c2h / Ts / 4c): 0 of 136 trained before, **50 of
+  136 after**, while an unsampled card (9h) trained normally either way.
+  This is the root cause of F41's "occasional" untrained node. Costs
+  nothing measurable: 27.4s cold against 27.0s for a case that always
+  trained. **The test is `trained_mask().any()`, NOT whether a
+  `node_data` entry exists** - a first fix checked existence and changed
+  nothing, because the dispatch creates that entry too.
+
 - **Multiway turn/river branches are SOLVED on demand (M75) — don't
   remove that.** MCCFR samples one next card per terminal, so the card a
   client actually asks about is almost never one the solve sampled.
