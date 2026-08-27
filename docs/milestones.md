@@ -7636,3 +7636,40 @@ entry's own corrections before trusting its conclusions.
     believed-good and unproven. Targeting the multiway live-decision
     response specifically, it fails correctly.
   - 980 backend tests pass.
+
+- **M148 - the frontend was showing the number M101 exists to replace.**
+  The advice header rendered `pot X / {effective_stack_bb}bb effective`
+  **directly above** a strategy row quoting sizes on a different baseline,
+  so a real turn node displayed "85bb effective" above `all_in:97.50`.
+  That is F39's confusion surfaced to users rather than to API consumers.
+  - **Fixed** to show `max_affordable_bb` - the one bound every size in
+    the strategy can be compared against - as "up to N bb".
+  - **F40's river gap now reaches the UI** as its own hint rather than
+    only inside the 245-word caveat paragraph: "Only checking/calling and
+    going all-in were modelled here - no smaller bet size was available
+    to the solver." Derived from `modelled_bet_sizes`, not from the
+    street, so it stays true if the sizing constants move.
+  - **Both new response fields are now typed.** They were absent from
+    `AdviseResponse`, and the test fixture is typed
+    `Partial<Record<string, unknown>>`, so **`tsc` could not catch it** -
+    the existing tests had been rendering `up to undefined bb` and
+    passing, because nothing asserted on it.
+  - **A wrong-framework false start, recorded.** The first tests used MSW
+    (`server.use` / `http.post`); this suite drives the component with
+    `vi.stubGlobal('fetch', mockFetch(...))`. Rewritten to match. A
+    matcher also had to be narrowed - both the preflop WALK line and the
+    advice line contain "to act, pot", and the first version asserted
+    against the walk line.
+  - **Mutation-tested**: reverting both UI changes fails 2 tests.
+  - `onlyAllInModelled` lives in `frontend/src/betSizing.ts`, not in the
+    component file - the linter flags a non-component export as breaking
+    fast refresh, and `hands.ts` / `colors.ts` set the precedent.
+  - **The caveat length is left alone, deliberately.** Measured at 245
+    words / 1,424 characters, which is long for a warning panel. Every
+    sentence is a measurement, and the two actionable lines (discount
+    open-ended-draw bets; fold weak hands facing a bet) would be the
+    first casualties of compression. Splitting it presentationally means
+    sentence-parsing text containing figures like "97.5bb", and
+    collapsing it hides content inside a `role="alert"`. Shortening it is
+    a decision about which measurement to drop, not a mechanical fix.
+  - 980 backend + 161 frontend tests pass.

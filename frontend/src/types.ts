@@ -252,6 +252,20 @@ export interface AdviseResponse {
   is_terminal: boolean;
   pot: number;
   effective_stack_bb: number;
+  /** M101/M143: the ONE bound every size in `strategy` can be compared
+   * against. `effective_stack_bb` above means different things by node —
+   * at a mid-street node it is the shortest remaining stack once someone
+   * has bet — and shares no baseline with the action sizes, which are
+   * total commitment within the street's tree. Showing that one beside
+   * the strategy is what let a real node read "85bb effective" next to
+   * `all_in:97.50`. */
+  max_affordable_bb: number;
+  /** M144: the bet sizes this node's tree could actually offer,
+   * ascending. On the river at production settings it holds only the
+   * all-in amount, because `FLOP_TO_RIVER_RAISE_SIZES` is empty — so a
+   * low all-in frequency there is not a smaller bet being rejected, it is
+   * a smaller bet never having been available. */
+  modelled_bet_sizes: number[];
   strategy: OpeningRange;
   trained: TrainedMap | null;
   hero: HeroAdvice | null;

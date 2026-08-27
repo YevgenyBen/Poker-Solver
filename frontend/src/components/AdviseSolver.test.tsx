@@ -34,6 +34,7 @@ const FOLD_OUT_WALK = {
   legal_actions: [],
 };
 
+
 function adviceResponse(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     street: 'preflop',
@@ -44,6 +45,12 @@ function adviceResponse(overrides: Partial<Record<string, unknown>> = {}) {
     is_terminal: false,
     pot: 1.5,
     effective_stack_bb: 99,
+    // M148: the bound the strategy's sizes can actually be compared
+    // against. Distinct from effective_stack_bb on purpose — at a
+    // mid-street node the two differ, and showing the wrong one put
+    // "85bb effective" directly above `all_in:97.50`.
+    max_affordable_bb: 99,
+    modelled_bet_sizes: [2.5, 99],
     strategy: { AKs: { fold: 0.0, call_or_check: 0.3, 'raise:2.50': 0.7 } },
     trained: { AKs: true },
     hero: null,
@@ -78,6 +85,88 @@ const walkFor = (path: string[]) => {
 describe('AdviseSolver', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it('shows the bound the sizes can be compared against, not the post-bet remainder', async () => {
+    // M148. A real mid-street node reports effective_stack_bb 85 beside
+    // all_in:97.50 — both correct, not comparable (M101). The header used
+    // to show the first, directly above a strategy quoting the second.
+    vi.stubGlobal(
+      'fetch',
+      mockFetch(walkFor, () =>
+        adviceResponse({
+          street: 'turn',
+          effective_stack_bb: 85,
+          max_affordable_bb: 97.5,
+          strategy: { AKs: { fold: 0.1, call_or_check: 0.3, 'all_in:97.50': 0.6 } },
+        }),
+      ),
+    );
+    render(<AdviseSolver />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Get advice' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Get advice' }));
+
+    // Two elements say "to act, pot": the preflop WALK line and the
+    // advice line. The advice one renders last.
+    await waitFor(() => expect(screen.getAllByText(/to act, pot/).length).toBeGreaterThan(1));
+    const status = screen.getAllByText(/to act, pot/).at(-1)!;
+    expect(status.textContent).toContain('up to 97.5bb');
+    expect(status.textContent).not.toContain('85bb');
+  });
+
+  it('says when all-in was the only way to commit chips', async () => {
+    // M144/F40: the river models no bet size except all-in, so a low
+    // all-in frequency is not a smaller bet being rejected.
+    vi.stubGlobal(
+      'fetch',
+      mockFetch(walkFor, () =>
+        adviceResponse({
+          street: 'river',
+          max_affordable_bb: 97.5,
+          modelled_bet_sizes: [97.5],
+          hero: {
+            cards: 'AsKs',
+            strategy: { call_or_check: 0.89, 'all_in:97.50': 0.11 },
+            trained: true,
+            in_range: true,
+            range_trained: true,
+          },
+        }),
+      ),
+    );
+    render(<AdviseSolver />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Get advice' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Get advice' }));
+
+    expect(
+      await screen.findByText(/no smaller bet size was available to the solver/i),
+    ).toBeInTheDocument();
+  });
+
+  it('does not say it when a smaller bet was modelled', async () => {
+    vi.stubGlobal(
+      'fetch',
+      mockFetch(walkFor, () =>
+        adviceResponse({
+          street: 'flop',
+          max_affordable_bb: 97.5,
+          modelled_bet_sizes: [12.5, 97.5],
+          hero: {
+            cards: 'AsKs',
+            strategy: { call_or_check: 0.5, 'raise:12.50': 0.5 },
+            trained: true,
+            in_range: true,
+            range_trained: true,
+          },
+        }),
+      ),
+    );
+    render(<AdviseSolver />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Get advice' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Get advice' }));
+
+    await screen.findByText(/Your hand: AsKs/);
+    expect(screen.queryByText(/no smaller bet size was available/i)).not.toBeInTheDocument();
   });
 
   it('walks the preflop root on mount and offers its legal actions', async () => {
