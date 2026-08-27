@@ -1059,6 +1059,80 @@ def test_ensure_mccfr_chance_branch_is_the_same_object_as_the_m44_alias():
     assert ensure_flop_turn_multiway_branch is ensure_mccfr_chance_branch
 
 
+def test_a_cached_untrained_branch_is_trained_when_training_is_asked_for():
+    """M146 / F42. A CACHED branch is not necessarily a TRAINED one.
+
+    `ensure_mccfr_chance_branch` began with an unconditional early return
+    on a `chance_data` hit, and M75 added its `train_iterations` block
+    BELOW that return. So any branch already in `chance_data` was handed
+    back with whatever training it had, including none.
+
+    Branches come to exist untrained in normal operation: while one
+    branch is trained, its own `chance_fn` dispatches into the next
+    street's branches and stores them in the same `result.chance_data`
+    (passed in as `chance_data=`). Those entries get a root and an
+    all-zero `InfoSetTable`.
+
+    Measured through /advise at 3-max (Kd7c2h / Ts / 4c): **0 of 136 hands
+    trained, every row exactly the uniform prior**, while a river card
+    that had NOT been sampled trained normally at 46/136. Sampling a card
+    during the previous street's training is what poisoned it.
+
+    The condition is built here directly rather than by hunting for one
+    the dispatch happened to create — a first version of this test did
+    that and SKIPPED under mutation instead of failing, because reverting
+    the fix also removed the dispatch that produced its own precondition.
+    """
+    board = (Card("7", "h"), Card("2", "d"), Card("9", "c"))
+    position_ranges = {
+        "OOP": {HandCombo(Card("7", "s"), Card("7", "c")): 1.0},
+        "MID": {HandCombo(Card("A", "h"), Card("A", "d")): 1.0},
+        "IP": {HandCombo(Card("9", "d"), Card("8", "d")): 1.0},
+    }
+    positions = ("OOP", "MID", "IP")
+    shared = dict(position_ranges=position_ranges, positions=positions,
+                  effective_stack_bb=15.0, raise_sizes=(), max_raises=1,
+                  equity_samples=50)
+    result = solve_flop_to_river_multiway(
+        board=board, pot=9.0, iterations=20, seed=1, **shared,
+    )
+    flop_terminal = _find_a_showdown_terminal(result.root)
+    turn_card = next(c for c in remaining_deck(board))
+
+    # Cache the branch UNTRAINED, exactly as a dispatch would leave it.
+    untrained = ensure_mccfr_chance_branch(
+        result, flop_terminal, turn_card, board=board, train_iterations=0, **shared,
+    )
+    assert isinstance(untrained.root, DecisionNode), "need a real decision to train"
+    table = result.node_data.get(id(untrained.root))
+    assert table is None or not table.trained_mask().any(), (
+        "precondition: the branch must start untrained"
+    )
+
+    # Now ask for it WITH training. The branch object must be reused (the
+    # caller may already hold references into it) and it must come back
+    # trained.
+    again = ensure_mccfr_chance_branch(
+        result, flop_terminal, turn_card, board=board, train_iterations=25, **shared,
+    )
+    assert again is untrained, "the cached branch should be reused, not rebuilt"
+    trained_table = result.node_data.get(id(again.root))
+    assert trained_table is not None and trained_table.trained_mask().any(), (
+        "a cached-but-untrained branch was handed back as-is; every hand then "
+        "falls through to the uniform prior, which a user sees as a perfectly "
+        "even split across actions"
+    )
+
+    # And a second ask must NOT retrain it — otherwise every request pays
+    # for training that already happened.
+    before = dict(result.node_data)
+    third = ensure_mccfr_chance_branch(
+        result, flop_terminal, turn_card, board=board, train_iterations=25, **shared,
+    )
+    assert third is again
+    assert len(result.node_data) == len(before), "trained branch was retrained"
+
+
 def test_ensure_mccfr_chance_branch_builds_a_river_hop_from_a_four_card_board():
     # M44 left open whether a SECOND chained hop needs structurally
     # different treatment. M53's answer, proven here rather than argued:

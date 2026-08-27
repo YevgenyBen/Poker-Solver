@@ -7561,3 +7561,43 @@ entry's own corrections before trusting its conclusions.
     fail under mutation. A mutation test that selects the wrong tests
     proves nothing, and prints the same reassuring output.
   - 978 backend tests pass.
+
+- **M146 - F42: a cached branch was not necessarily a trained one, which
+  is the root cause of F41.** M145 disclosed that a node could be served
+  wholly untrained; this is why it happened.
+  - **The bug is an ordering one.** `ensure_mccfr_chance_branch` began
+    with an unconditional `if key in result.chance_data: return`, and M75
+    added its `train_iterations` block BELOW it. Any branch already in
+    `chance_data` was returned with whatever training it had.
+  - **Branches come to exist untrained in normal operation.** While one
+    branch is trained, its own `chance_fn` dispatches into the next
+    street's branches and stores them in the same `result.chance_data`
+    (it is passed in as `chance_data=`). Those entries get a root and an
+    all-zero `InfoSetTable` and nothing else.
+  - **So sampling a card is what poisons it** - the opposite of what
+    intuition suggests. Traced directly:
+    | river card | already cached | node_data added | trained |
+    |---|---|---|---|
+    | 4c | **yes** | 0 | 0/136 |
+    | 9h | no | 41 | 46/136 |
+    After the fix, 4c trains at **50/136**.
+  - **The first fix was a no-op, and the re-run caught it.** It tested
+    `id(cached.root) in result.node_data` as a proxy for "trained". The
+    dispatch creates that entry too - just empty - so the condition was
+    always true and nothing changed. The real question is whether the
+    entry ACCUMULATED anything: `trained_mask()` is exactly the
+    `totals > 0` condition `average_strategy()` already checks before
+    substituting the uniform prior, which is also the question the
+    honesty signal asks, so fix and disclosure now agree by construction.
+  - **The first regression test was worthless, and the mutation caught
+    that.** It hunted for an untrained branch the dispatch happened to
+    create, and under mutation it SKIPPED rather than failed - reverting
+    the fix also removed the dispatch that produced its own precondition.
+    Rewritten to build the condition directly (`train_iterations=0`, then
+    ask again with training), it fails correctly and prints the all-zero
+    table. It also pins the other direction: a second ask must NOT
+    retrain, or every request would pay for training already done.
+  - **Cost: none measurable.** 27.4s cold for the previously-untrained
+    case against 27.0s for one that always trained; warm 0.005s.
+  - F41's disclosure stays: it is the safety net for any node that is
+    still untrained for a different reason. 979 backend tests pass.

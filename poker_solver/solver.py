@@ -981,24 +981,62 @@ def ensure_mccfr_chance_branch(
     real sampled one would have carried on to a river.
     """
     key = (id(terminal), card)
-    if key in result.chance_data:
-        return result.chance_data[key]
-
     combos = sorted(set().union(*(r.keys() for r in position_ranges.values())), key=str)
-    branch = build_mccfr_chance_branch(
-        terminal,
-        card=card,
-        board=board,
-        combos=combos,
-        positions=positions,
-        effective_stack_bb=effective_stack_bb,
-        raise_sizes=raise_sizes,
-        max_raises=max_raises,
-        equity_seed=equity_seed,
-        chain_to_river=chain_to_river,
-        **({"equity_samples": equity_samples} if equity_samples is not None else {}),
-    )
-    result.chance_data[key] = branch
+    cached = result.chance_data.get(key)
+    if cached is not None:
+        # M146/F42: a cached branch is NOT necessarily a trained one, and
+        # this used to return it unconditionally — skipping the
+        # `train_iterations` block below, which M75 added *after* this
+        # early return.
+        #
+        # A branch can come to exist without ever being trained: while the
+        # TURN branch is trained here, its own `chance_fn` dispatches into
+        # river branches and stores them in this same `result.chance_data`
+        # (it is passed in as `chance_data=`). Those entries have a root
+        # but no `node_data`. A client later asking about one of those
+        # exact cards got the untrained branch back.
+        #
+        # Measured at 3-max (Kd7c2h / Ts / 4c): **0 of 136 hands trained,
+        # every row exactly the uniform prior**, while a request for a
+        # river card that had NOT been sampled (9h) trained normally at
+        # 46/136. So sampling a card during turn training is what poisoned
+        # it — the opposite of what intuition suggests.
+        #
+        # A terminal root has nothing to train and would otherwise be
+        # retrained on every request forever.
+        #
+        # **The test is whether the entry accumulated anything, NOT
+        # whether it exists.** A first attempt at this fix checked
+        # `id(cached.root) in result.node_data` and changed nothing: the
+        # dispatch that created the branch also creates an all-zero
+        # `InfoSetTable` for its root, so the entry is present while every
+        # hand still falls back to the uniform prior. `trained_mask()` is
+        # exactly the `totals > 0` condition `average_strategy()` already
+        # checks internally, which is the real question here.
+        cached_table = result.node_data.get(id(cached.root))
+        already_trained = cached_table is not None and bool(cached_table.trained_mask().any())
+        if (
+            train_iterations <= 0
+            or isinstance(cached.root, TerminalNode)
+            or already_trained
+        ):
+            return cached
+        branch = cached
+    else:
+        branch = build_mccfr_chance_branch(
+            terminal,
+            card=card,
+            board=board,
+            combos=combos,
+            positions=positions,
+            effective_stack_bb=effective_stack_bb,
+            raise_sizes=raise_sizes,
+            max_raises=max_raises,
+            equity_seed=equity_seed,
+            chain_to_river=chain_to_river,
+            **({"equity_samples": equity_samples} if equity_samples is not None else {}),
+        )
+        result.chance_data[key] = branch
 
     if train_iterations > 0:
         # M75: actually SOLVE the freshly-built branch, instead of handing
