@@ -4,6 +4,7 @@ import { fetchAdvice, SolveError } from '../api';
 import { MULTIWAY_TABLE_SIZES, type MultiwayTableSize } from '../hands';
 import { usePreflopWalk } from '../usePreflopWalk';
 import type { AdviseRequest, AdviseResponse, LegalActionOption } from '../types';
+import { onlyAllInModelled } from '../betSizing';
 
 const DEFAULT_STACK_BB = 100;
 const DEFAULT_BOARD = 'Jh7d2c';
@@ -440,7 +441,11 @@ export function AdviseSolver() {
               {SOURCE_LABELS[result.source] ?? result.source}
             </span>{' '}
             — {result.street}, {result.player_to_act ?? 'no one'} to act, pot {result.pot} /{' '}
-            {result.effective_stack_bb}bb effective ({result.positions.join('/')}) —{' '}
+            {/* M148: `max_affordable_bb`, not `effective_stack_bb`. The two
+                differ at any mid-street node, and only this one shares a
+                baseline with the sizes in the strategy below — showing the
+                other put "85bb effective" directly above `all_in:97.50`. */}
+            up to {result.max_affordable_bb}bb ({result.positions.join('/')}) —{' '}
             {result.elapsed_seconds.toFixed(2)}s
           </p>
 
@@ -472,6 +477,17 @@ export function AdviseSolver() {
                   {result.hero.range_trained === false && (
                     <p className="depth-hint">
                       The preflop derivation for your hand&rsquo;s class wasn&rsquo;t fully backed by real solving.
+                    </p>
+                  )}
+                  {/* M148: on the river the tree offers no bet size except
+                      all-in, so a low all-in frequency is not a smaller bet
+                      being rejected — a smaller bet was never available.
+                      Derived from the response's own sizes, so it stays true
+                      if the sizing config changes. */}
+                  {onlyAllInModelled(result) && (
+                    <p className="depth-hint">
+                      Only checking/calling and going all-in were modelled here — no smaller bet
+                      size was available to the solver, so this can&rsquo;t tell you how much to bet.
                     </p>
                   )}
                 </>
