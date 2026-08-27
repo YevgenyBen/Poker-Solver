@@ -7601,3 +7601,38 @@ entry's own corrections before trusting its conclusions.
     case against 27.0s for one that always trained; warm 0.005s.
   - F41's disclosure stays: it is the safety net for any node that is
     still untrained for a different reason. 979 backend tests pass.
+
+- **M147 - multiway turn/river facing a bet: screened, nothing wrong.**
+  The last node type no guard reached. Six consecutive findings came from
+  exactly this shape of gap (F36-F42), so the negative result is worth
+  recording as much as the positives were.
+  - **8 nodes** - 3-max and 6-max, turn and river, facing a bet, two
+    boards. Every one clean: no size above `max_affordable_bb`, every
+    node trained (47-64 hands of ~130-174), no untrained rows, and no
+    stack committed with a genuinely weak hand.
+  - **It confirmed two things that had been taken on trust.** M143 fixed
+    `_query_turn_multiway_from_path` alongside the heads-up path but only
+    swept heads-up afterwards, so the multiway half shipped on a reading
+    of the code - the exact habit this stretch kept punishing. And F42's
+    fix holds on a second path: no untrained node appeared anywhere here.
+  - **A near-false-positive, the third of its kind this session.** The
+    6-max river on Kd7c2h/Ts/4c flagged hero committing 0.21 with what
+    the harness labelled "no pair, no draw" - but the river 4c pairs
+    hero's 4d. Re-run with genuine air (9s6h, Jh8d): 0.152 and 0.013,
+    both below threshold, and the pair correctly commits MORE than the
+    air hands. Hand labelling has now nearly produced a false finding
+    three times (8s9s in M140, this, and the M142 screen); check the hand
+    category, not the hole cards.
+  - **The real gap was in the testing, not the product.** The multiway
+    affordability fix had no test and could not have one under the
+    fixture: `_disable_prewarm_and_clear_cache` sets
+    `MULTIWAY_FLOP_RAISE_SIZES = ()`, so the mid-street multiway turn
+    node does not exist in the suite - the same fixture-shaped hole as
+    F39. `test_the_affordability_bound_survives_a_multiway_turn_facing_a_
+    bet` restores the sizes so the node exists.
+  - **Mutation-testing it needed care.** The first attempt reverted only
+    the heads-up site (the multiway one differs in indentation) and the
+    multiway test passed anyway - which would have left the guard
+    believed-good and unproven. Targeting the multiway live-decision
+    response specifically, it fails correctly.
+  - 980 backend tests pass.

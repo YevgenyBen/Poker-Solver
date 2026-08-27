@@ -3276,6 +3276,56 @@ def test_the_affordability_bound_survives_a_turn_node_facing_a_bet(client, monke
     )
 
 
+def test_the_affordability_bound_survives_a_multiway_turn_facing_a_bet(client, monkeypatch):
+    """M147. The MULTIWAY half of M143's fix, which had no test.
+
+    F39 patched `_query_turn_multiway_from_path` alongside the heads-up
+    path, but only heads-up was swept afterwards — so the multiway
+    responses were fixed on the strength of reading the code, which is
+    exactly the habit F36 through F42 kept punishing.
+
+    Reachable only with the tree restored, the same reason the heads-up
+    sibling needs it: `_disable_prewarm_and_clear_cache` sets
+    `MULTIWAY_FLOP_RAISE_SIZES = ()` for speed, so under the suite the
+    multiway turn offers only check and all-in and no mid-street node
+    exists to test.
+
+    Screened live at production settings across 8 multiway turn/river
+    nodes facing a bet (3-max and 6-max, two boards): no violations, no
+    untrained nodes. This pins that result.
+    """
+    monkeypatch.setattr(api_config, "MULTIWAY_FLOP_RAISE_SIZES", (2.5,))
+    monkeypatch.setattr(api_config, "MULTIWAY_FLOP_MAX_RAISES", 2)
+    body = _advise_body(
+        preflop_action_path=["raise", "call_or_check", "call_or_check"],
+        flop_action_path=["call_or_check", "call_or_check", "call_or_check"],
+        turn_card="Ts", turn_action_path=["raise"],
+        hero_cards="5c4d", board="Kd7c2h", players=3, stack_bb=100.0,
+    )
+    response = client.post("/advise", json=body)
+    assert response.status_code == 200, response.json()
+    payload = response.json()
+    assert payload["street"] == "turn"
+    assert payload["players"] == 3
+    bound = payload["max_affordable_bb"]
+
+    rows = list(payload["strategy"].values())
+    hero = payload.get("hero") or {}
+    if hero.get("strategy"):
+        rows.append(hero["strategy"])
+    oversized = sorted({
+        action for row in rows for action in row
+        if ":" in action and float(action.split(":", 1)[1]) > bound + 1e-9
+    })
+    assert not oversized, (
+        f"multiway turn facing a bet names bets above the {bound}bb bound: {oversized}"
+    )
+    assert bound > payload["effective_stack_bb"], (
+        "the bound equals the post-bet remainder again — F39's shape, which makes "
+        "every size at this node look unaffordable"
+    )
+
+
 def test_max_affordable_is_not_silently_equal_to_effective_stack(client):
     """The field has to earn its existence.
 
