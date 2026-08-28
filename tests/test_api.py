@@ -4547,6 +4547,20 @@ def test_the_river_says_it_modelled_no_bet_sizes(client):
         "a river response offering only all-in must say so, or a low all-in "
         "frequency reads as a comparison that never happened"
     )
+    # M151: and it must say the missing size changes the PLAY, not only
+    # the size. Re-solving the same river spot with one normal size
+    # available moves a top pair from checking 0.9941 to checking 0.6449
+    # (betting 0.35), and a busted draw from moving all in ~0.988 of the
+    # time to betting a third of the pot. A player who reads only "we
+    # cannot tell you how much" will still check down value hands.
+    assert "distorts the play" in reason.lower(), (
+        "the note understates the defect: missing sizes change the action, "
+        "not just its magnitude"
+    )
+    assert "both directions" in reason.lower(), (
+        "the distortion runs both ways — value hands check, bluffs shove — "
+        "and naming only one would leave the other unflagged"
+    )
 
 
 def test_an_earlier_street_does_not_carry_the_river_sizing_note(client):

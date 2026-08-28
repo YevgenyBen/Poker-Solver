@@ -7772,3 +7772,44 @@ entry's own corrections before trusting its conclusions.
     coverage table above is re-measured on the production solve.
   - F43's disclosure (M149) stays as the safety net for any node still
     returning the prior for another reason.
+
+- **M151 - what the river's missing bet sizes actually cost.** F40 (M144)
+  framed the gap as "cannot tell you how much to bet" and surfaced it.
+  Re-solving the same river spot with one normal size available shows it
+  changes the ACTION, in both directions.
+  - **Measured**, `Kd7c2hTs4c`, pot 5 / stack 97.5, cap 26, standalone
+    river solve at 0.75x pot:
+    | hero | shipped check | with a size | shipped all-in |
+    |---|---|---|---|
+    | AsKs top pair | 0.9941 | 0.6449 (bets 0.35) | 0.0059 |
+    | KhQd top pair | 0.9941 | 0.5206 (bets 0.48) | 0.0059 |
+    | **9s8s nine-high** | 0.0121 | 0.0048 (bets 0.98) | **~0.988** |
+    | 7d7h middle pair | 0.7055 | 0.9511 | 0.2945 |
+    | AcQc ace-high | 1.0000 | 0.9982 | 0.0000 |
+    With all-in the only way to bet, the strategy collapses into
+    check-or-shove: **value hands check when they should bet small, and
+    bluffs move a whole stack into a 5bb pot when they should bet 3.75.**
+  - **The bluff half is F38 arriving by a different route.** There, weak
+    hands over-committed because of RANGE composition; here it is the
+    SIZE menu. Two mechanisms, one user-visible failure - fixing either
+    will not fix the other.
+  - **Cost of the two possible fixes, both measured.**
+    `solve_flop_to_river` takes ONE `raise_sizes` for all three streets,
+    so enabling river sizes widens flop and turn as well, and that
+    chain's DEFAULT 20 iterations already costs 63-105s. A standalone
+    river solve is cheap - **~7s**, and river equity is EXACT rather than
+    sampled because the board is complete - but uses ranges that skip
+    flop/turn narrowing.
+  - **Not fixed, deliberately.** A first reading suggested checked-through
+    lines would be exempt from the range approximation, since nobody bet.
+    That is wrong: checking is itself an action with frequencies in a
+    solved strategy, so even a checked-through line carries information.
+    The approximation is real in every line, and trading a disclosed gap
+    for an unvalidated model is not an improvement - the same reasoning
+    that declined cap 34 in M141 despite it winning the headline metric.
+  - **The disclosure now says what was measured.** It previously said the
+    response could not tell you how much to bet; a player reading only
+    that would keep checking down value hands. It now says the missing
+    size distorts the play in both directions, and
+    `test_the_river_says_it_modelled_no_bet_sizes` pins both halves.
+  - 987 backend tests pass.
