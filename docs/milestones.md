@@ -7813,3 +7813,45 @@ entry's own corrections before trusting its conclusions.
     size distorts the play in both directions, and
     `test_the_river_says_it_modelled_no_bet_sizes` pins both halves.
   - 987 backend tests pass.
+
+- **M152 - precision is dead too, and the metric that made it look alive
+  is biased.** Reviewing how the postflop defect had been measured
+  surfaced an axis nobody had isolated: M137 held samples at 30 and moved
+  the CAP; M138's converged reference moved cap, samples and iterations
+  TOGETHER. So "the cap is what binds" was never tested against its
+  complement.
+  - **Cap held at 26, precision raised**, against M138's converged
+    references:
+    | arm | mean err | worst | wall |
+    |---|---|---|---|
+    | shipped s30/it500 | 0.2992 | 0.881 | 9.7s |
+    | s200/it500 | 0.1840 | 0.4764 | 13.5s |
+    | s30/it2500 | **0.1268** | 0.4762 | 36.4s |
+    | s200/it2500 | 0.1752 | 0.588 | 40.2s |
+    Non-monotone: both knobs together is WORSE than iterations alone.
+  - **Per spot it is M141's conservation law on an independent axis.**
+    More precision pushes everything toward betting less:
+    | hero | true | shipped | s30/it2500 | |
+    |---|---|---|---|---|
+    | 9s9d top set | 0.9870 | 0.5489 | 0.5108 | **worse** |
+    | 6s6c middle set | 0.5940 | 0.5784 | 0.4958 | **worse** |
+    | QdQh overpair | 0.0014 | 0.1501 | 0.0060 | better |
+    | 7h8h open-ender | 0.0001 | 0.8811 | 0.0547 | better |
+    | 7s7c middle set | 0.0010 | 0.0134 | 0.0005 | better |
+    3 of 5 better, 2 of 5 worse - cap 34's signature. **Nothing yet moves
+    top set toward its true 0.987.**
+  - **The metric problem is the bigger find.** Three of five spots have a
+    true value near ZERO, so any change reducing aggression improves the
+    mean without improving the advice. That is why iterations appear to
+    halve the error, and why cap 34 won M141's raw 16-spot mean. **Mean
+    error over an unbalanced spot set is not a usable metric for this
+    defect**; per-hand-type error is.
+  - **No config change.** it2500's 3.75x cost buys a mean that is an
+    artifact while making the spots a player most wants right worse.
+  - **Also repairs a lost doc.** M141's CLAUDE.md block never landed: its
+    apply script wrote `api/config.py` first, then hit a failed assertion
+    on CLAUDE.md, and the traceback was masked because that command timed
+    out and was moved to the background. The commit shows only config.py
+    and milestones.md. CLAUDE.md is the file loaded every session, so the
+    conservation law was missing from exactly where it matters. Restored
+    here alongside M152.
