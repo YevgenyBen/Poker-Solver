@@ -626,6 +626,18 @@ requests now reject unknown fields by name rather than ignoring them.
   0.1487 inside M138's headline mean) are not meaningful.** Check a
   spot's stability at ITS OWN settings before quoting an error for it.
 
+- **Only the FLOP equity table is sampled; turn and river tables are
+  exact (verified M154).** `remaining_needed <= 1` enumerates every
+  single-card runout and ignores `samples`/`rng`. That is why
+  `build_chance_node` accepts no `equity_samples`/`equity_seed` and
+  `solve_flop_turn` drops `equity_samples` - every table they build is a
+  turn or river board, so there is nothing to tune. M153 flagged this as
+  unverified; it is now measured and pinned by
+  `test_only_the_flop_table_is_sampled_which_is_why_chance_nodes_take_no_samples`,
+  because if turn boards ever became sampled the chance-node path would
+  silently fall back to library defaults for a quantity its callers
+  believe they control.
+
 - **A flop solve's ONE equity table is split across workers (M132), and
   the table is seeded PER ROW to make that possible.** One stream
   advancing across the upper triangle makes a pair's draw depend on how
