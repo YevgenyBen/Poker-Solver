@@ -7673,3 +7673,48 @@ entry's own corrections before trusting its conclusions.
     collapsing it hides content inside a `role="alert"`. Shortening it is
     a decision about which measurement to drop, not a mechanical fix.
   - 980 backend + 161 frontend tests pass.
+
+- **M149 - F43: `trained` means VISITED, not LEARNED, and the gap is
+  user-visible on the most expensive decision in preflop poker.** Found
+  while scoping the M112-M116 continuation fix, and it is the same root
+  cause as that fix's blocker.
+  - **Measured through /advise.** 6-max, hero AA facing a 4-bet:
+    | field | value |
+    |---|---|
+    | hero strategy | fold 0.3333 / call 0.3333 / all-in 0.3333 |
+    | `hero.trained` | **true** |
+    | `solver_confidence` | **high** |
+    | node trained | 101/169 |
+    Folding aces to a 4-bet a third of the time is a stack-losing
+    instruction, and every signal called it fine.
+  - **Why F41's guard correctly stayed quiet.** M145 flags a node where
+    NOTHING is trained; here most of the node is. `trained_mask()` asks
+    whether a hand accumulated any strategy_sum - whether it was VISITED.
+    `current_strategy()` returns the uniform prior whenever every regret
+    is <= 0, and M73 measured ~70% of rows all-negative. So a hand can be
+    visited repeatedly and still average to exactly the prior. The
+    distinction was documented in the solver and never connected to the
+    honesty signals.
+  - **Heads-up is unaffected**, measured at the same spots: BTN opens
+    0.998, facing a 3-bet 0.48/0.52, facing a 4-bet jams 1.0. This is the
+    sampled multiway solver failing to reach deep preflop nodes, not a
+    property of the signals.
+  - **Scoped three ways** so the signal keeps meaning something: EXACT
+    uniformity only (near-uniform is a real answer sitting near
+    indifference); only when `trained` is true (a false `trained` already
+    fires a louder hero-specific warning, and saying it twice reads as
+    two problems); never on single-action rows or absent data.
+  - **The wording earns its length.** An even three-way split is a
+    legitimate solver output, so the reason says explicitly that this one
+    is "not a recommendation to mix evenly" - without that a player could
+    reasonably act on it.
+  - **Shipped as a no-op first, caught by the live sweep.** The first
+    version read `raw.get("hero")`, but `hero` is assembled inside
+    `advise` and never lands in `raw`, so it returned False for every
+    real request while every unit test passed - they fed it a hand-built
+    dict shaped the way the response was ASSUMED to look. Second time
+    this session (M146's first fix had the same shape). There is now a
+    deliberate wiring test that stubs only the solve and exercises the
+    real hero assembly and response shaping; mutation-testing confirms
+    reverting ONLY the wiring fails that test alone, while both unit
+    tests still pass.

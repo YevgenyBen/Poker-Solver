@@ -1,5 +1,7 @@
 import threading
 
+from unittest import mock
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -4621,6 +4623,103 @@ def test_both_confidence_reasons_are_reported_when_both_apply():
     assert level == "low"
     assert "was not actually solved" in reason
     assert api_config.LOW_CONFIDENCE_TABLE_SIZES[9] in reason
+
+
+def test_a_uniform_hero_row_that_claims_to_be_trained_is_flagged():
+    """M149 / F43. `trained` means VISITED, not LEARNED.
+
+    Measured through /advise: a 6-max player holding AA facing a 4-bet is
+    told **fold 0.3333 / call 0.3333 / all-in 0.3333** while the response
+    reports `hero.trained: true`, `solver_confidence: "high"`, and 101 of
+    169 hands trained at the node. Folding aces to a 4-bet a third of the
+    time is a stack-losing instruction.
+
+    F41/M145's signal correctly stays quiet — most of the node IS
+    trained. `trained_mask()` asks whether a hand accumulated any
+    strategy_sum, i.e. whether it was visited; `current_strategy()`
+    returns the uniform prior whenever every regret is <= 0, which M73
+    measured at ~70% of rows. So a hand can be visited repeatedly and
+    still average to exactly the prior.
+    """
+    hero = {"trained": True,
+            "strategy": {"fold": 1 / 3, "call_or_check": 1 / 3, "all_in:100.00": 1 / 3}}
+    assert api_main._hero_row_is_the_prior(hero)
+    level, reason = api_main._solver_confidence({"trained": {"AA": True}}, 6, hero)
+    assert level == "low"
+    assert "even split" in reason
+    # It must say the split is not a recommendation to mix — an even
+    # split across three actions is otherwise a legitimate solver output.
+    assert "not a recommendation to mix" in reason
+
+
+def test_the_uniform_row_signal_stays_quiet_where_it_should():
+    """M149. Scope, pinned in three directions.
+
+    A signal that fires everywhere is worth nothing, and two of these
+    would make it fire constantly.
+    """
+    # A real answer.
+    assert not api_main._hero_row_is_the_prior(
+        {"trained": True, "strategy": {"fold": 0.0, "all_in:100.00": 1.0}})
+    # NEAR-uniform is a real computed answer close to indifference.
+    assert not api_main._hero_row_is_the_prior(
+        {"trained": True, "strategy": {"a": 0.3334, "b": 0.3333, "c": 0.3333}})
+    # `trained: false` already carries a louder hero-specific warning;
+    # saying it twice in different words reads as two problems.
+    assert not api_main._hero_row_is_the_prior(
+        {"trained": False, "strategy": {"a": 1 / 3, "b": 1 / 3, "c": 1 / 3}})
+    # No hero, single-action rows, and absent strategies are not evidence.
+    assert not api_main._hero_row_is_the_prior(None)
+    assert not api_main._hero_row_is_the_prior({"trained": True, "strategy": {"fold": 1.0}})
+    assert not api_main._hero_row_is_the_prior({"trained": True})
+
+
+def test_the_uniform_row_signal_is_actually_wired_to_the_response(client):
+    """M149. The unit tests above passed while the signal never fired.
+
+    `hero` is assembled inside `advise` and never lands in `raw`, so a
+    first version reading `raw.get("hero")` returned False for every real
+    request — and every unit test still passed, because they fed it a
+    hand-built dict shaped the way the response was ASSUMED to look.
+
+    So this drives the real endpoint. It asserts the wiring, not the
+    logic: whatever spot the fixture produces, if hero's row comes back
+    exactly uniform while claiming to be trained, the confidence must say
+    so.
+    """
+    # The real 6-max spot needs a full-budget solve; under the suite's
+    # shrunken fixture it does not reproduce, and a skipping test proves
+    # nothing. So the SOLVE is stubbed and everything downstream of it —
+    # hero assembly, the confidence call, response shaping — is real.
+    uniform = {"fold": 1 / 3, "call_or_check": 1 / 3, "all_in:100.00": 1 / 3}
+    raw = {
+        "street": "preflop", "positions": ["BTN", "BB"], "position": "BTN",
+        "player_to_act": "BTN", "is_terminal": False, "pot": 40.5,
+        "effective_stack_bb": 83.5, "max_affordable_bb": 83.5,
+        "strategy": {"AA": dict(uniform), "72o": dict(uniform)},
+        "trained": {"AA": True, "72o": True},
+        "hero_key": "AA", "hero_in_range": True, "hero_range_trained": True,
+        "source": "mccfr", "elapsed_seconds": 0.1,
+    }
+
+    def fake_advise(*_args, **_kwargs):
+        return raw
+
+    with mock.patch.object(api_main, "_advise", fake_advise):
+        response = client.post(
+            "/advise",
+            json=_advise_body(preflop_action_path=["raise", "raise", "raise"],
+                              hero_cards="AsAh", players=6, stack_bb=100.0),
+        )
+    assert response.status_code == 200, response.json()
+    payload = response.json()
+    assert payload["hero"]["trained"] is True, "the fixture must be the MISLEADING case"
+    assert payload["solver_confidence"] == "low", (
+        "hero's row is exactly the uniform prior and the response still reports high "
+        "confidence — the signal is computed but not wired to the response, which is "
+        "exactly how the first version of this fix shipped as a no-op"
+    )
+    assert "even split" in (payload["solver_confidence_reason"] or "")
 
 
 def test_every_prewarm_step_succeeds(monkeypatch):
