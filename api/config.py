@@ -1125,11 +1125,42 @@ POSTFLOP_AGGRESSION_ERROR_WORST = 0.8810
 
 # M144/F40. Appended when the node offered no intermediate bet size at
 # all — the river, at production settings.
+# M151. What the missing river sizes actually COST, measured rather than
+# assumed. F40 (M144) framed the gap as "cannot tell you how much to
+# bet"; re-solving the same river spot with one normal size (0.75x pot)
+# available shows it changes the ACTION, in both directions:
+#
+#   hero            shipped check   with a size        shipped all-in
+#   AsKs top pair          0.9941   0.6449 (bets .35)          0.0059
+#   KhQd top pair          0.9941   0.5206 (bets .48)          0.0059
+#   9s8s nine-high         0.0121   0.0048 (bets .98)          ~0.988
+#   7d7h middle pair       0.7055   0.9511                     0.2945
+#   AcQc ace-high          1.0000   0.9982                     0.0000
+#
+# With all-in the only way to bet, the strategy collapses into
+# check-or-shove: value hands check when they should bet small, and
+# bluffs move a whole stack into a 5bb pot when they should bet 3.75.
+#
+# **Why this is disclosed and not fixed.** `solve_flop_to_river` takes ONE
+# `raise_sizes` for all three streets, so enabling river sizes widens the
+# flop and turn too — and that chain's DEFAULT 20 iterations already
+# costs 63-105s. A standalone river solve is cheap (~7s, and river equity
+# is exact rather than sampled because the board is complete), but it
+# would use ranges that skip flop/turn narrowing. Checking is itself an
+# action with frequencies, so even a checked-through line carries
+# information: the approximation is real in every line, and trading a
+# known gap for an unvalidated model is not an improvement.
 BET_SIZING_COVERAGE_NOTE = (
     " Note also that on this street the solver modelled only checking or calling and "
     "going all-in: no intermediate bet size was a legal action in its tree. So a low "
     "all-in frequency here does not mean a smaller bet was considered and rejected — "
-    "smaller bets were never available, and this response cannot tell you how much to bet."
+    "smaller bets were never available. That distorts the PLAY here, not just the size. "
+    "Measured against the same spot re-solved with one normal bet size available: a top "
+    "pair that should bet about a third of the time instead checks 99%, and a busted "
+    "draw that should bet a third of the pot instead moves all in 99% of the time. "
+    "Treat the checking and the all-in frequencies on this street as unreliable in both "
+    "directions, and do not read a high check frequency as a reason to give up on a "
+    "value hand."
 )
 
 # M145/F41. `solver_confidence` was a pure function of TABLE SIZE and

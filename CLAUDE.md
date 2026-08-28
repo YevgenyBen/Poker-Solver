@@ -436,6 +436,24 @@ requests now reject unknown fields by name rather than ignoring them.
   "fixed": widening the river tree is precisely the cost that endpoint's
   budget notes say it cannot afford, and inventing a size without
   measuring it would be worse than stating what was modelled.
+  **M151 measured what that costs, and it is worse than "cannot tell you
+  how much".** Re-solving the same river spot with ONE normal size
+  (0.75x pot) available changes the ACTION, both ways: a top pair goes
+  from checking **0.9941** to checking 0.6449 and betting 0.35, and
+  nine-high goes from moving all in **~0.988** of the time to betting a
+  third of the pot. With all-in the only way to bet, the strategy
+  collapses into check-or-shove - value hands check, bluffs jam a stack
+  into a 5bb pot. (The bluff half is F38's behaviour by a different
+  route: there it was RANGE composition, here the SIZE menu. Fixing one
+  will not fix the other.) **Still not fixed, and the reason is
+  recorded**: `solve_flop_to_river` takes ONE `raise_sizes` for all three
+  streets, so enabling river sizes widens flop and turn too and that
+  chain's default 20 iterations already costs 63-105s. A standalone river
+  solve is cheap (~7s, and river equity is EXACT since the board is
+  complete) but uses ranges that skip flop/turn narrowing - and checking
+  is itself an action with frequencies, so even a checked-through line
+  carries information. Trading a disclosed gap for an unvalidated model
+  is not an improvement.
 
 - **F41 (M145): `solver_confidence` knew only the TABLE SIZE, so a node
   where nothing was trained still read "high".** Measured: a 3-max river
