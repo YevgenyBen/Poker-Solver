@@ -8043,3 +8043,54 @@ entry's own corrections before trusting its conclusions.
     rather than read the patched module.
   - Cost is 3.1x on a solve cached per (stack, players) and pre-warmed at
     startup. 993 backend tests pass.
+
+- **M158 - a repeat flop request warm-starts instead of solving cold.**
+  M155 measured the product's real problem: flop p90 64.5s against the
+  15-30 seconds a player at a table has to act, with 71 of 73 requests
+  paying a full cold solve because hero's class partitions the cache.
+  - **Result, same board and successive hero hands:**
+    | board | first | later requests | later mean |
+    |---|---|---|---|
+    | Kd7c2h | 13.2s | 3.0 / 2.5 / 2.9 / 2.8 | **2.8s** |
+    | 9dAd5s | 14.9s | 2.8 / 2.5 / 2.3 / 2.5 | **2.5s** |
+    | Js6cKs | 14.8s | 2.7 / 2.6 / 2.4 / 2.6 | **2.6s** |
+    The first request on a canonical spot still pays full price; this
+    shortens the common case rather than removing the cold solve.
+  - **How.** `poker_solver/warmstart.py` re-keys a solved tree's
+    `node_data` by ACTION PATH - stable across the tree rebuild every
+    request does, where `id(node)` is not - and grafts it onto the new
+    tree, giving any hand the cached solve lacked a zero row.
+    `cfr.solve` gained `initial_node_data`, which works because
+    `_solve_recurse` already does `node_data.setdefault(...)`.
+  - **Judged against the solver's own noise, not against zero.** Hero's
+    force-inclusion moves the solve less than the equity seed does
+    (M155: p90 0.002-0.107 against 0.024-0.112). Warm-vs-cold differs by
+    **0.0037-0.0147** end to end. 25 refinement iterations was also
+    measured and is worse where it matters (0.0898 on one board), so 50
+    is a floor rather than the cheapest setting that looked acceptable.
+  - **A real bug, caught by an existing guard.** The store was first
+    keyed on `(canonical board, canonical stack)` alone - so two
+    different preflop action paths, meaning different RANGES and a
+    genuinely different question, shared a warm start.
+    `test_a_warm_cache_never_answers_a_different_question` failed
+    exactly as its own message predicts: "M76's bug in a new field". Now
+    keyed on everything that changes the ranges, and deliberately not on
+    hero.
+  - **What that guard asserts for hero changed, deliberately.** It
+    demanded warm == cold, which warm-starting breaks by a noise-level
+    amount. The fixture runs 20 iterations over 2 classes, where nothing
+    is converged and warm-vs-cold says nothing about bias - drift there
+    measured 0.09-0.14 as an artifact of the regime. So the hero case now
+    asserts M76's ACTUAL guarantee (hero gets a real answer for their own
+    hand, not the previous caller's) and fidelity moved to
+    `tests/test_warmstart.py`, where the iteration count makes
+    convergence mean something.
+  - **Safety properties, each its own test**: a new hand inherits no
+    regret from whichever combo held its index; tables whose action count
+    changed are dropped rather than reshaped (a different tree is not a
+    starting point); `solve` rejects warm data shaped for another pool
+    instead of broadcasting; only COLD solves are stored so refinements
+    never compound; refinement is clamped to the cold budget.
+  - **Two of my own errors on the way**: a missing import that surfaced
+    only on the store path, and `id(c)` applied to what were already ids
+    after the cache-registration scan changed. 998 backend tests pass.

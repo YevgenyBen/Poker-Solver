@@ -321,6 +321,35 @@ _flop_to_river_multiway_cache = _SolveCache("flop_to_river_multiway", maxsize=12
 # coupling that made this distinction easy to miss in the first place —
 # it surfaced here as a real AttributeError during this milestone, not as
 # a design review note.
+class _MappingSolveCache(_SolveCache):
+    """A bounded cache that engine code can treat as a plain mapping.
+
+    M158. `poker_solver` takes a `warm_store` and uses it as a dict —
+    `store.get(key)` and `store[key] = value` — because the engine must
+    not know about this module's cache class (the boundary
+    tests/test_package_boundary.py enforces). `_SolveCache` already
+    supplies `get`; this adds the one missing piece so the same LRU
+    bound, eviction and registration apply to it as to every other cache.
+    """
+
+    def __setitem__(self, key, value):
+        self.store(key, value)
+
+    def __contains__(self, key):
+        return self.get(key) is not None
+
+
+# M158: solved canonical spots, reused to warm-start a later request for
+# the same spot with a different hero or a merely suit-isomorphic board.
+# Keyed exactly as the canonical library is — (canonical board, canonical
+# stack) — so one entry serves every board isomorphic to it.
+#
+# An entry holds a combo list plus one InfoSetTable per decision node,
+# the same order of size as the library entry it accompanies, so it takes
+# the library's own ceiling rather than a larger one.
+_canonical_warm_starts = _MappingSolveCache("canonical_warm_starts", maxsize=256)
+
+
 _flop_query_library = _SolveCache("flop_query_library", maxsize=2048)
 
 # /solve_flop_multiway_from_path's (M42) own plain dict cache —

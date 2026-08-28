@@ -80,6 +80,7 @@ from .cards import Card
 from .combos import HandCombo, range_from_class_frequencies
 from .game_tree import GameConfig, TerminalNode, postflop_action_order
 from .solver import PathScenario, StrategyResult, solve_flop
+from .warmstart import index_by_path
 
 LIBRARY_FORMAT_VERSION = 1
 
@@ -129,6 +130,8 @@ def build_library(
     stack_bucket_bb: float = DEFAULT_STACK_BUCKET_BB,
     equity_table_fn=None,
     combo_cap_fn=None,
+    warm_store: dict | None = None,
+    warm_iterations: int | None = None,
 ) -> dict:
     """Batch-solves `boards`, deduplicated by canonical (board, stack)
     key — two real boards that canonicalize to an already-seen key are
@@ -169,6 +172,22 @@ def build_library(
             translate_combo(combo, suit_map): weight for combo, weight in villain_range.items()
         }
 
+        # M158: a previous solve of this SAME canonical spot - a
+        # different hero, or a merely suit-isomorphic board - is a
+        # legitimate starting point. Hero's force-inclusion moves the
+        # solve less than the equity seed does (M155), and 50 refinement
+        # iterations from a grafted start land within 0.0011-0.0155 of a
+        # full cold solve at 9.7-11.4x less solve time.
+        warm = None if warm_store is None else warm_store.get(key)
+        solve_iterations = iterations
+        if warm is not None and warm_iterations is not None:
+            # Never refine MORE than a cold solve would run. A caller can
+            # legitimately ask for fewer iterations than the warm budget
+            # (the test suite runs 20 for speed), and refining past that
+            # would make the warm answer more solved than the cold one it
+            # is supposed to approximate — which reads as drift when it is
+            # really extra work.
+            solve_iterations = min(warm_iterations, iterations) if iterations else warm_iterations
         result = solve_flop(
             board=canonical_board,
             hero_range=canonical_hero_range,
@@ -178,11 +197,19 @@ def build_library(
             positions=positions,
             raise_sizes=raise_sizes,
             max_raises=max_raises,
-            iterations=iterations,
+            iterations=solve_iterations,
             equity_samples=equity_samples,
             equity_seed=equity_seed,
             equity_table_fn=equity_table_fn,
+            warm_start=warm,
         )
+        if warm_store is not None and warm is None:
+            # Only the COLD solve is recorded. Storing a warm result would
+            # let refinements compound on refinements, drifting away from
+            # what a cold solve of this spot would say with nothing to
+            # measure the drift against.
+            warm_store[key] = (list(result.hands),
+                               index_by_path(result.root, result.node_data))
 
         library[key] = LibraryEntry(
             canonical_board=canonical_board,
@@ -335,6 +362,8 @@ def query_strategy(
     stack_bucket_bb: float = DEFAULT_STACK_BUCKET_BB,
     equity_table_fn=None,
     combo_cap_fn=None,
+    warm_store: dict | None = None,
+    warm_iterations: int | None = None,
 ) -> QueryResult:
     """Phase 4: canonicalize-then-lookup, falling back to an on-demand
     solve on a miss — the live query path the real-time-speed roadmap
@@ -426,6 +455,8 @@ def query_strategy(
         stack_bucket_bb=stack_bucket_bb,
         equity_table_fn=equity_table_fn,
         combo_cap_fn=combo_cap_fn,
+        warm_store=warm_store,
+        warm_iterations=warm_iterations,
     )
     library.update(new_entries)
 
@@ -457,6 +488,8 @@ def query_strategy_from_path(
     stack_bucket_bb: float = DEFAULT_STACK_BUCKET_BB,
     equity_table_fn=None,
     combo_cap_fn=None,
+    warm_store: dict | None = None,
+    warm_iterations: int | None = None,
 ) -> QueryResult:
     """Bridges M16's derive_ranges_from_path into query_strategy: given a
     PathScenario (from walking a real preflop StrategyResult along a
@@ -564,4 +597,6 @@ def query_strategy_from_path(
         stack_bucket_bb=stack_bucket_bb,
         equity_table_fn=equity_table_fn,
         combo_cap_fn=combo_cap_fn,
+        warm_store=warm_store,
+        warm_iterations=warm_iterations,
     )
