@@ -7972,3 +7972,39 @@ entry's own corrections before trusting its conclusions.
     disclosed not fixed) and 9-max T7s folding 0.152 under the gun
     against a documented 0.125 - fully trained and non-uniform, so
     M150's on-demand solving does not touch it.
+
+- **M156 - F38's worst cases are a tree-shape defect, not a range defect.**
+  Item 2 of the M155 work list. The play session recorded 19 stack
+  commitments with weak hands facing a bet; the severe ones are on the
+  turn and river.
+  - **Cause, measured.** Facing a bet the turn offers exactly `fold /
+    call_or_check / all_in:97.50` - no sized raise at all.
+    `FLOP_TURN_RAISE_SIZES=(2.5,)` with `FLOP_TURN_MAX_RAISES=2` provides
+    one size for the FIRST raise, so a re-raise can only be a shove. The
+    flop is unaffected: `(2.5, 3.0, 2.2)` at max_raises 4 gives
+    `raise:37.50` facing a bet. **A hand that wants to raise a third of
+    the pot has no such action, so the weight lands on the only
+    aggressive button that exists.**
+  - **The fix works on the worst case and costs elsewhere:**
+    | hand | shipped | sized re-raise |
+    |---|---|---|
+    | middle pair | shove **1.000** | sized 0.576, shove 0.424 |
+    | top pair | call 0.866, shove 0.134 | sized 0.348, shove **0.475** |
+    | open-ender | fold 0.996 | fold 0.996 |
+    | wall | 18-20s | 28-32s |
+  - **Not adopted, deliberately.** Middle pair stacking off 100% facing
+    one bet is indefensible and the sized raise more than halves it - but
+    top pair's shove more than triples, which is M141's conservation
+    pattern appearing on a third axis (cap width, precision, and now the
+    size menu). Adjudicating needs a converged TURN reference, which
+    costs what a flop reference costs. M155 measured latency as the top
+    user-facing problem, so paying 1.5x on the turn leg for an unmeasured
+    accuracy change is exactly the trade M151 declined.
+  - **The disclosure already covers it**, verified rather than assumed: a
+    turn-facing-a-bet node reports `modelled_bet_sizes: [97.5]` and
+    carries the note that the missing size distorts the play in both
+    directions. The 56 all-in-only nodes in the M155 session were all
+    disclosed.
+  - **What would change the verdict**: a converged turn reference, or a
+    way to add the action without the 1.5x - the tree grows because
+    `max_raises` deepens every line, not just the one facing a bet.

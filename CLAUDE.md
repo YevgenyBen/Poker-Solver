@@ -394,6 +394,32 @@ requests now reject unknown fields by name rather than ignoring them.
   solve is already cached, so this is a tree walk" — true for the second
   caller, wrong for the first, who is the one waiting. Pinned by a test
   that counts SOLVES, not seconds.
+- **F38's worst cases have a STRUCTURAL cause on the turn: the tree
+  cannot express a sized re-raise (M156).** `FLOP_TURN_RAISE_SIZES=(2.5,)`
+  with `FLOP_TURN_MAX_RAISES=2` gives ONE size for the first raise, so
+  facing a bet the only aggressive action left is a 97.5bb shove -
+  measured actions are exactly `fold / call_or_check / all_in`. The flop
+  does NOT have this problem (its tree runs `(2.5, 3.0, 2.2)` at
+  max_raises 4 and offers `raise:37.50` facing a bet), which is why F38's
+  turn and river cases are the severe ones. **A hand that wants to raise
+  a third of the pot has no such button, so the solver puts weight on the
+  only one there is.**
+  Adding a sized re-raise (two sizes, max_raises 3) was measured:
+  | hand | shipped | with a sized re-raise |
+  |---|---|---|
+  | middle pair | **shove 1.000** | sized 0.576, shove 0.424 |
+  | top pair | call 0.866, shove 0.134 | sized 0.348, **shove 0.475** |
+  | open-ender | fold 0.996 | fold 0.996 |
+  | cost | 18-20s | 28-32s (**1.5x**) |
+  **Not adopted.** It fixes the indefensible case (stacking off with
+  middle pair facing one bet) and worsens top pair, which is M141's
+  conservation pattern on a third axis; adjudicating needs a converged
+  TURN reference, and turn references are as expensive as flop ones.
+  Latency is already the top complaint (M155), so paying 1.5x for an
+  unmeasured accuracy change is the trade M151 declined. **The node type
+  is already disclosed** - `modelled_bet_sizes` reports `[97.5]` and the
+  caveat says the missing size distorts the play in both directions.
+
 - **F38 (M142): the fold-versus-play call is NOT the sound half, and the
   caveat used to tell users it was.** Every measurement behind that claim
   was taken at a street's OPENING decision — where folding is not a legal
