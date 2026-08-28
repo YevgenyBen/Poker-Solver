@@ -406,7 +406,20 @@ def _solve_recurse(
             )
         child_values.append(child_value)
 
-    node_value = np.zeros((num_hands, num_hands))
+    # M160: follow the equity table's precision rather than forcing
+    # float64. These are the solve's dominant cost — one num_hands x
+    # num_hands matrix per node, ~809KB at 318 combos in float64, carried
+    # through every node on every iteration. Measured on a real flop
+    # solve: 16 decision nodes and 29 terminals, 11.2ms per iteration,
+    # ~18GB of traffic per 500-iteration solve. The values themselves come
+    # from a 30-sample Monte Carlo equity estimate whose own error is
+    # ~0.09, so float64's 16 digits were never carrying information.
+    #
+    # Accumulators stay float64 — see InfoSetTable.zeros. Regret sums
+    # accumulate across hundreds of iterations, which is where precision
+    # actually matters; these transients do not.
+    value_dtype = child_values[0].dtype if child_values else equity_table.dtype
+    node_value = np.zeros((num_hands, num_hands), dtype=value_dtype)
     for a_idx, child_value in enumerate(child_values):
         if acting_is_a:
             node_value += strategy[:, a_idx][:, None] * child_value
@@ -417,7 +430,7 @@ def _solve_recurse(
         acting_reach = reach_a if acting_is_a else reach_b
         opponent_reach = reach_b if acting_is_a else reach_a
 
-        cf_action_values = np.zeros((num_hands, len(actions)))
+        cf_action_values = np.zeros((num_hands, len(actions)), dtype=value_dtype)
         for a_idx, child_value in enumerate(child_values):
             if acting_is_a:
                 cf_action_values[:, a_idx] = child_value @ opponent_reach
@@ -532,13 +545,16 @@ def solve(
         # through to this.
         return np.array([hand.combo_weight for hand in hands])
 
+    # M160: match the equity table, or every operation promotes back to
+    # float64 and the halved table read buys nothing downstream.
+    reach_dtype = equity_table.dtype if equity_table.dtype.kind == "f" else float
     reach_a = np.array(
         initial_reach[position_a] if position_a in initial_reach else _default_reach(),
-        dtype=float,
+        dtype=reach_dtype,
     )
     reach_b = np.array(
         initial_reach[position_b] if position_b in initial_reach else _default_reach(),
-        dtype=float,
+        dtype=reach_dtype,
     )
 
     # M158: `initial_node_data` warm-starts the solve. `_solve_recurse`

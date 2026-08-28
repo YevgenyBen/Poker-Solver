@@ -8094,3 +8094,42 @@ entry's own corrections before trusting its conclusions.
   - **Two of my own errors on the way**: a missing import that surfaced
     only on the store path, and `id(c)` applied to what were already ids
     after the cache-registration scan changed. 998 backend tests pass.
+
+- **M160 - the flop solve runs in float32, and the real bottleneck is
+  named.** The M159 session left the flop as the whole remaining latency
+  problem (p50 16.8s, p90 60.1s) and showed M158's warm start does not
+  help a solo player, who sees a fresh canonical board nearly every hand.
+  So the FIRST solve had to get cheaper.
+  - **Anatomy first, per M67's warning that a profiler's obvious target
+    can yield zero.** A real flop solve: 318 combos, **16 decision nodes,
+    29 terminals**, 11.2ms/iteration, ~700us per node visit, cost linear
+    in iterations. The tree is tiny; there is no Python hot loop. The
+    cost is `_solve_recurse` carrying a `num_hands x num_hands` matrix
+    through every node - ~809KB each in float64, about **18GB of memory
+    traffic per 500-iteration solve**.
+  - **Float32 on the value path**: 1.12-1.32x measured by interleaved A/B
+    in ONE process (M70's rule - a before/after across runs showed
+    8.9s -> 6.8s, which is inside this machine's known 1.7x drift and was
+    discarded). Worst strategy drift **below 5e-6** across three boards.
+  - **Why it is free rather than a trade.** The entries are Monte Carlo
+    equity estimates from 30 samples, whose own error is ~0.09 (M98
+    measured that class of estimate). Carrying a +/-0.09 quantity in 16
+    significant digits preserved nothing; float32's ~7 already exceed
+    what the input justifies.
+  - **Accumulators deliberately stay float64.** Regret sums accumulate
+    across hundreds of iterations and that is where precision matters;
+    they are `num_hands x num_actions`, negligible beside the N x N
+    transients that dominate bandwidth. Applying float32 indiscriminately
+    would risk the numerically sensitive part for no further gain.
+  - **This is an improvement, not a fix, and the remaining gap is
+    named.** 1.25x takes the flop from ~16.8s to ~13s - still outside a
+    comfortable shot clock. Every conventional lever is already closed:
+    no Python hot loop (M67), a 16-node tree so pruning is pointless, and
+    both accuracy knobs exhausted (M141's cap conservation law, M152's
+    precision one). **The real fix is algorithmic**: the recursion
+    returns N x N from every node and multiplies it by strategy at each
+    ancestor, giving depth x actions x N^2, where vector CFR collapses a
+    terminal to an N-vector immediately and stays O(N) above it.
+    Estimated 3-5x. Not attempted here: it rewrites the solver the
+    canonical library, every reference solve and 999 tests depend on.
+  - 999 backend tests pass.
