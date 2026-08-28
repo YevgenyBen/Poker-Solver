@@ -228,11 +228,25 @@ requests now reject unknown fields by name rather than ignoring them.
   M8 that 50 samples distorts MCCFR *via the all-in*; `api/config.py`
   overrode it to 50 on fold-rate measurements and the warning was never
   reconciled.
-- **9-max preflop output is NOT reliable (M68, measured).** T7s folds
-  only 12.5% under the gun at 9 handed, where it should be near 100%
-  and 6-max reaches 87.4%. Eight opponents make the sampled variance
-  too high for any affordable iteration count. 3-max and 6-max are in
-  much better shape. Don't present 9-max advice as authoritative.
+- **9-max is much better than M68 recorded, and "no affordable budget
+  converges" was an INFERENCE, not a measurement (M157).** M68 measured
+  T7s folding 12.5% under the gun at ONE budget (3,000 iterations) and
+  concluded from per-iteration cost that a converging count was
+  unaffordable. Nobody ran a higher one. Measured across three seeds,
+  with no overlap between arms:
+  | arm | T7s fold | AA jam | 72o fold |
+  |---|---|---|---|
+  | 3,000 + CFR+ clamp (was shipped) | .1522 / .0678 / .1450 | .81-.85 | .973-.982 |
+  | **12,000 plain CFR (now shipped)** | **.8628 / .4508 / .8783** | **.06-.17** | **1.0000** |
+  T7s reaches a mean **0.731** against 6-max's 0.874, where the old arm
+  managed 0.122; AA stops jamming 100bb four-fifths of the time. This
+  also satisfies M71's own condition - it kept the clamp at 9-max "until
+  its budget can support the better rule", and at 1,333 traversals per
+  seat instead of 333, plain CFR wins on every measure. **Cost 3.1x**
+  (169s -> 525s), paid once per (stack, players) and pre-warmed.
+  **9-max stays flagged low-confidence**: the T7s seed spread is 0.43, so
+  this is materially better advice, not a converged solve, and the
+  warning was rewritten because its old numbers are now false.
 - **A precomputed multiway equity table DOESN'T WORK — don't re-try it
   (M68).** It's the intuitive analog of heads-up's disk-cached 169x169
   table and M67 recommended it, but the tuple space can't be collapsed

@@ -4886,6 +4886,73 @@ def test_solve_flop_passes_its_seed_to_an_injected_builder():
     )
 
 
+def test_nine_max_uses_the_budget_that_actually_converges():
+    """M157. 9-max was left at a budget its own config called insufficient.
+
+    `api/config.py` said 9-max "does not converge at any affordable
+    budget" and kept 3,000 iterations with the CFR+ clamp "because more
+    is directionally better, not because it is enough". The 12.5% T7s
+    figure behind that was measured at ONE budget; the conclusion that a
+    converging count is unaffordable was an inference, and nobody ran a
+    higher one.
+
+    Measured across three seeds, no overlap between arms:
+
+        arm             T7s fold                 AA jam    72o fold
+        3,000 + clamp   .1522 / .0678 / .1450    .81-.85   .973-.982
+        12,000 plain    .8628 / .4508 / .8783    .06-.17   1.0000
+
+    T7s reaches a mean 0.731 against 6-max's documented 0.874. M71 kept
+    the clamp here "until its budget can support the better rule" — at
+    1,333 traversals per seat instead of 333, it does.
+    """
+    # The autouse fixture rewrites MULTIWAY_TABLE_CONFIGS' iteration
+    # counts down for speed, so the SHIPPED budget has to be read from
+    # the source rather than the patched module.
+    import ast
+    import inspect
+
+    source = inspect.getsource(api_config)
+    tree = ast.parse(source)
+    shipped = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            getattr(t, "id", None) == "MULTIWAY_TABLE_CONFIGS" for t in node.targets
+        ):
+            shipped = ast.literal_eval(node.value)
+    assert shipped is not None, "MULTIWAY_TABLE_CONFIGS not found in source"
+    assert shipped[9]["iterations"] >= 12_000, (
+        "9-max is back below the budget where it converges; at 3,000 its "
+        "under-the-gun fold rate for T7s was 0.12 against 6-max's 0.87"
+    )
+    table = api_config.MULTIWAY_TABLE_CONFIGS[9]
+    assert not table.get("floor_regret"), (
+        "9-max is back on the CFR+ clamp. M71 kept it only until the budget "
+        "could support plain CFR, and at 12,000 iterations plain CFR wins on "
+        "every measure across three seeds"
+    )
+
+
+def test_nine_max_still_warns_but_no_longer_quotes_withdrawn_numbers():
+    """M157. The warning has to match what was measured.
+
+    It previously told users T7s "reaches only 0.30 at 9,000 iterations",
+    and that 9-max "does not converge at any affordable budget". Both are
+    withdrawn: 12,000 iterations without the clamp reach 0.73 on average.
+    The cell is still flagged, because the seed spread is 0.43.
+    """
+    reason = api_config.LOW_CONFIDENCE_TABLE_SIZES[9]
+    assert "does not converge at any affordable budget" not in reason, (
+        "the warning still states the claim M157 measured as false"
+    )
+    assert "0.30" not in reason, "the warning still quotes a withdrawn measurement"
+    assert "seed" in reason, (
+        "the warning should name what is still wrong — the answer moves with "
+        "the solver's seed — rather than only that it is imperfect"
+    )
+    assert 9 in api_config.LOW_CONFIDENCE_TABLE_SIZES, "9-max must stay flagged"
+
+
 def test_every_prewarm_step_succeeds(monkeypatch):
     """M133. The pre-warm swallows each step's exception so one bad spot
     cannot cost the others — which meant a step could fail forever in

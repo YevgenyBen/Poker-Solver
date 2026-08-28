@@ -8008,3 +8008,38 @@ entry's own corrections before trusting its conclusions.
   - **What would change the verdict**: a converged turn reference, or a
     way to add the action without the 1.5x - the tree grows because
     `max_raises` deepens every line, not just the one facing a bet.
+
+- **M157 - 9-max was left at a budget its own config called
+  insufficient.** Item 4 of the M155 work list, and the claim blocking it
+  turned out to be an inference.
+  - **What config.py said**: 9-max "does not converge at any affordable
+    budget", keeping 3,000 iterations "because more is directionally
+    better, not because it is enough". The 12.5% T7s figure behind that
+    is real - measured at ONE budget. The conclusion that a converging
+    count is unaffordable came from per-iteration cost arithmetic, and no
+    higher budget was ever run.
+  - **Measured, three seeds, no overlap between arms:**
+    | arm | T7s fold | mean | AA jam | 72o fold | wall |
+    |---|---|---|---|---|---|
+    | 3,000 + clamp | .1522 / .0678 / .1450 | 0.122 | .81-.85 | .973-.982 | 139-168s |
+    | **12,000 plain** | **.8628 / .4508 / .8783** | **0.731** | **.06-.17** | **1.0000** | 473-580s |
+    Every seed of the new arm beats every seed of the old on T7s (min
+    0.4508 against max 0.1522). 6-max's documented figure is 0.874.
+  - **It also satisfies M71's own condition.** M71 kept the CFR+ clamp at
+    9-max explicitly "until its budget can support the better rule",
+    because plain CFR went the wrong way at 333 traversals per seat. At
+    12,000 that is 1,333 per seat and plain CFR wins on every measure -
+    and the effects compound, since M71 established the clamp is a
+    ratchet that worsens with iterations.
+  - **The warning stays, rewritten.** The seed spread on T7s is 0.43, so
+    9-max is materially better advice rather than a converged solve. The
+    old text quoted "reaches only 0.30 at 9,000 iterations" and "does not
+    converge at any affordable budget"; both are now false and both are
+    gone. Guarded by a test that asserts the shipped budget and the
+    absence of the withdrawn numbers.
+  - **A fixture wrinkle worth knowing**: `_disable_prewarm_and_clear_cache`
+    rewrites every table's iteration count down for speed, so a test
+    asserting the SHIPPED budget has to parse it out of the config source
+    rather than read the patched module.
+  - Cost is 3.1x on a solve cached per (stack, players) and pre-warmed at
+    startup. 993 backend tests pass.

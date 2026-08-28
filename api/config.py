@@ -300,10 +300,30 @@ MULTIWAY_TABLE_CONFIGS = {
     # too few, measured: AA's jam goes the WRONG way there (0.777 ->
     # 0.982). So 9-max keeps the clamp until its budget can support the
     # better rule. One more reason 9-max is the least trustworthy cell.
+    # M157: 12,000 iterations and PLAIN CFR, replacing 3,000 with the
+    # clamp. M71 kept the clamp here "until its budget can support the
+    # better rule" — 3,000 iterations gave each of nine seats only 333
+    # traversals, where plain CFR went the wrong way. At 12,000 it is
+    # 1,333 per seat and the better rule wins decisively. Three seeds,
+    # every one better on every measure, with no overlap between arms:
+    #
+    #   arm                T7s fold (3 seeds)          AA jam     72o fold
+    #   3,000 + clamp      .1522 / .0678 / .1450       .81-.85    .973-.982
+    #   12,000 plain       .8628 / .4508 / .8783       .06-.17    1.0000
+    #
+    # T7s reaches a mean 0.731 against 6-max's documented 0.874, where
+    # the shipped arm managed 0.122. **config.py's own claim that "the
+    # per-iteration cost makes the count that would converge
+    # unaffordable" was an INFERENCE, never measured** — the 12.5% figure
+    # behind it was taken at one budget and nobody ran a higher one.
+    # Cost is 3.1x (139-168s -> 473-580s), paid once per (stack, players)
+    # and pre-warmed at startup.
+    #
+    # 9-max stays flagged low-confidence: the T7s spread across seeds is
+    # 0.43, so this is materially better advice, not a converged solve.
     9: {
         "positions": ("UTG", "UTG1", "MP1", "MP2", "MP3", "CO", "BTN", "SB", "BB"),
-        "iterations": 3_000,
-        "floor_regret": True,
+        "iterations": 12_000,
     },
 }
 
@@ -773,10 +793,14 @@ MULTIWAY_BRANCH_TRAIN_ITERATIONS = 100
 # 3,000 iterations and only 0.301 at 9,000, against 6-max's 0.94.
 LOW_CONFIDENCE_TABLE_SIZES = {
     9: (
-        "9-max preflop does not converge at any affordable budget — iterations "
-        "divide among nine seats, so each gets a third of what 6-max gives. "
-        "Measured: T7s's under-the-gun fold rate reaches only 0.30 at 9,000 "
-        "iterations where 6-max reaches 0.94. Treat this as a hint, not GTO."
+        "9-max preflop is the least converged table size: iterations divide among "
+        "nine seats, so each gets a third of what 6-max gives. It is much better "
+        "than it was — a hand like T7s under the gun now folds about 73% of the "
+        "time on average where it used to fold 12%, and the answer for a premium "
+        "no longer swings wildly — but it still varies with the solver's random "
+        "seed, by up to 0.43 on that same hand. Treat it as a strong hint rather "
+        "than GTO, and lean on the fold-or-play call rather than the exact "
+        "frequency."
     ),
 }
 
