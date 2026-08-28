@@ -4819,6 +4819,73 @@ def test_the_prior_test_is_exact_not_approximate():
     assert not solving._row_is_the_prior({})
 
 
+def test_the_injected_equity_builder_honours_its_seed():
+    """M153 / F44. `equity_seed` was silently dropped on the flop path.
+
+    `parallel_board_equity_table` took no seed and hardcoded
+    `DEFAULT_SEED`, while `solve_flop` called it as
+    `equity_table_fn(board, combos, equity_samples)`. From M132 onward the
+    production path therefore ignored `equity_seed` entirely.
+
+    Nothing was WRONG with the tables — still deterministic, still
+    correct. What broke was the ability to vary the seed as a convergence
+    check, and M138 cited "the seed does not move it" as evidence its
+    reference had converged. That evidence was empty: the seed could not
+    move it. Measured afterwards, two spots gave byte-identical values
+    across seeds twice each, which is what prompted looking.
+    """
+    import numpy as np
+    from api.parallel import parallel_board_equity_table
+    from poker_solver.cards import Card
+    from poker_solver.combos import HandCombo
+
+    board = tuple(Card.from_str(t) for t in ("2h", "6d", "9c"))
+    combos = [HandCombo(Card.from_str(a), Card.from_str(b)) for a, b in
+              (("9s", "9d"), ("Qd", "Qh"), ("Ah", "Kh"), ("Ts", "Tc"),
+               ("7s", "7c"), ("5s", "4d"))]
+    first = np.nan_to_num(parallel_board_equity_table(board, combos, 30, seed=0))
+    other = np.nan_to_num(parallel_board_equity_table(board, combos, 30, seed=99))
+    again = np.nan_to_num(parallel_board_equity_table(board, combos, 30, seed=0))
+
+    assert not np.allclose(first, other), (
+        "the injected equity builder ignores its seed — a seed-variation "
+        "convergence check on this path cannot vary anything"
+    )
+    assert np.allclose(first, again), "the same seed must still reproduce"
+
+
+def test_solve_flop_passes_its_seed_to_an_injected_builder():
+    """M153. The parameter has to survive the call, not just exist.
+
+    The defect was in the CALL, not the builder: `solve_flop` dropped the
+    seed on the floor when an `equity_table_fn` was injected, which is
+    the production configuration.
+    """
+    from poker_solver.cards import Card
+    from poker_solver.combos import HandCombo
+    from poker_solver.solver import solve_flop
+
+    seen = {}
+
+    def spy(board, combos, samples, seed=None):
+        seen["seed"] = seed
+        from poker_solver.board_equity import build_board_equity_table
+        import random
+        return build_board_equity_table(board, combos, samples=samples or 10,
+                                        rng=random.Random(seed or 0))
+
+    board = tuple(Card.from_str(t) for t in ("2h", "6d", "9c"))
+    hero = {HandCombo(Card.from_str("9s"), Card.from_str("9d")): 1.0}
+    villain = {HandCombo(Card.from_str("Ah"), Card.from_str("Kh")): 1.0}
+    solve_flop(board, hero, villain, pot=5.0, effective_stack_bb=20.0,
+               positions=("OOP", "IP"), iterations=5, equity_samples=10,
+               equity_seed=1234, equity_table_fn=spy)
+    assert seen.get("seed") == 1234, (
+        f"solve_flop did not pass equity_seed to the injected builder (got "
+        f"{seen.get('seed')!r}) — this is exactly how F44 shipped"
+    )
+
+
 def test_every_prewarm_step_succeeds(monkeypatch):
     """M133. The pre-warm swallows each step's exception so one bad spot
     cannot cost the others — which meant a step could fail forever in

@@ -7855,3 +7855,42 @@ entry's own corrections before trusting its conclusions.
     and milestones.md. CLAUDE.md is the file loaded every session, so the
     conservation law was missing from exactly where it matters. Restored
     here alongside M152.
+
+- **M153 - F44: `equity_seed` was silently dropped, and one converged
+  reference turns out to be a coin flip.** Chasing whether a cheap
+  full-range solve could replace the shipped cap turned up both.
+  - **The cheap-full-range idea is dead on cost.** At cap 200, s30 costs
+    **827s** against the reference's ~850s at s200 - cutting samples
+    saved nothing, because the ~1.38M-pair equity table over ~1,176
+    combos dominates, not the per-pair sample count. Offline
+    precomputation over 1,755 canonical flops would be ~400 hours.
+  - **It did confirm the diagnosis**: the full range is what fixes value
+    hands. Top set reads 0.549 at cap 26 and **0.9887 at cap 200**,
+    matching the reference to 0.0017. The cure is correct and
+    unaffordable, which is more useful to know than another failed
+    selection rule.
+  - **F44.** `parallel_board_equity_table(board, combos, samples=None)`
+    took no seed and hardcoded `DEFAULT_SEED`; `solve_flop` called it as
+    `equity_table_fn(board, combos, equity_samples)`. So from M132
+    onward, `equity_seed` did nothing whenever a builder was injected -
+    the production path. The tables were never wrong, but **a
+    seed-variation convergence check on that path could not vary
+    anything**, and M138 used exactly that check as evidence. Found
+    because seed pairs kept coming back byte-identical; an innocent
+    explanation was nearly accepted for the second time before the call
+    site was read.
+  - **Reference stability, re-measured** at cap 200 / it2500:
+    | spot | s30 | s60 | s60 seed99 | s100 | s200 (ref) |
+    |---|---|---|---|---|---|
+    | 9s9d top set | 0.9887 | 0.9853 | 0.9853 | 0.9889 | 0.9870 |
+    | QdQh overpair | 0.0013 | **0.8614** | **0.8614** | 0.0014 | 0.0014 |
+    9s9d is stable across every cell. QdQh flips wholesale at s60,
+    reproducibly - **M74's bang-bang behaviour** on a near-tied decision.
+    Its reference is one side of a coin flip, so per-spot errors against
+    it, including the 0.1487 that fed M138's headline mean, are not
+    meaningful. The load-bearing findings do not rest on it.
+  - **Left open, deliberately**: `build_chance_node` accepts neither
+    `equity_samples` nor `equity_seed`, so turn/river chance-branch
+    tables always use library defaults. Whether that is deliberate is not
+    established, and guessing would be the error this milestone exists to
+    correct.
