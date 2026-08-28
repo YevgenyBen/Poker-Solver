@@ -728,6 +728,47 @@ requests now reject unknown fields by name rather than ignoring them.
   range), and averaging equity inside a bucket destroys the spread that
   value-betting monetises. **Nine ideas are now measured and dead.**
 
+  **M141: they all failed for ONE reason — the cap MOVES error between
+  hand types instead of reducing it.** Measured on the 16-spot set with
+  samples and iterations fixed, so the cap is the only variable:
+  | group | cap 26 | cap 34 | cap 44 |
+  |---|---|---|---|
+  | made hands (sets/pairs) | **0.1052** | 0.2022 | 0.2458 |
+  | draws | 0.2924 | **0.0031** | 0.0784 |
+  | air / overcards | 0.0080 | 0.0018 | 0.0047 |
+  Made-hand error grows monotonically with width while draw error
+  collapses, so mean error stays in a narrow band while its COMPOSITION
+  shifts. Every one of the nine was a single-knob reweighting of the same
+  169 classes into a fixed budget — each could only redistribute error,
+  never remove it, which is why nine structurally different rules all
+  landed in 0.09-0.14. **Not a floor: a conservation law.**
+  Cap 34 wins the raw 16-spot mean (0.0899 vs 0.1394) and is deliberately
+  NOT adopted — excluding the single worst draw flips it, it wins 8/16
+  and loses 6/16, its worst case is worse (0.7635 vs 0.4381), it costs
+  2.7x, and it damages top set most (0.2235 against a true 0.987).
+
+  **M152 confirmed the same law on a SECOND axis: PRECISION is dead too.**
+  Nobody had isolated it — M137 held samples at 30 and moved the cap,
+  M138's reference moved cap/samples/iterations together, so the error was
+  attributed to the cap by default. Holding the cap at 26 and raising
+  precision gives mean error 0.2992 (shipped s30/it500) -> 0.1840
+  (s200/it500) -> **0.1268** (s30/it2500) -> 0.1752 (s200/it2500) —
+  non-monotone, and per spot the same trade: **more precision pushes
+  everything toward betting less**, fixing hands whose true frequency is
+  ~0 (open-ender 0.881 -> 0.055) and breaking the ones that should bet
+  (top set 0.438 -> 0.476, middle set 0.016 -> 0.098). 3 of 5 better, 2 of
+  5 worse — cap 34's signature exactly. **Nothing yet moves top set toward
+  its true 0.987.**
+
+  **And the metric is biased: MEAN ERROR DEPENDS ON SPOT-SET
+  COMPOSITION.** Three of those five spots have a true value near zero, so
+  any change that reduces aggression improves the mean without improving
+  the advice. That is why iterations appear to halve the error, and why
+  cap 34 won M141's raw mean — both sets are dominated by low-true spots.
+  **Report per-hand-type error here, never a mean over an unbalanced
+  set**; two milestones have now nearly adopted a config change on the
+  strength of one.
+
   Untested hypothesis that fits all seven: **coherent-but-narrow beats
   diverse-but-thin.** ~26 classes at near-full frequency look like a
   consistent set of holdings; 169 classes at one to four combos each
