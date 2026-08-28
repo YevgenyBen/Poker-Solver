@@ -20,9 +20,12 @@ deliberate rather than incidental.
 import dataclasses
 import threading
 
+import numpy as np
+
 from starlette.concurrency import run_in_threadpool  # noqa: F401  (re-exported for callers)
 
 from poker_solver.canonicalize import canonical_stack_depth, canonicalize_board
+from poker_solver.cfr import mccfr_solve
 from poker_solver.cards import parse_cards
 from poker_solver.combos import combo_class, HandCombo, range_from_class_frequencies
 from poker_solver.equity import MultiwayEquityCache
@@ -2312,6 +2315,84 @@ def _live_position_count(request, iterations: int) -> int:
                if p not in node.folded)
 
 
+def _row_is_the_prior(row: dict) -> bool:
+    """True when a strategy row is exactly the uniform prior.
+
+    M149's finding, applied at the solving layer: `trained` means the
+    hand was VISITED, not that it learned anything. `current_strategy()`
+    returns the prior whenever every regret is <= 0.
+    """
+    values = list(row.values())
+    return len(values) > 1 and max(values) - min(values) < 1e-9
+
+
+def _ensure_preflop_node_trained(result, node, players: int, hero_key=None) -> bool:
+    """Solve ONE deep preflop node's subtree on demand. Returns whether
+    it did any work.
+
+    M150. The multiway preflop solve learns roughly the first four levels
+    of a 289,036-node tree (see cfg.PREFLOP_DEEP_NODE_TRAIN_ITERATIONS
+    for the coverage measurement), so a client asking about a 4-bet gets
+    an exactly uniform row — F43's "fold aces a third of the time".
+
+    Same shape as `ensure_mccfr_chance_branch` one street earlier: build
+    nothing, but TRAIN the subtree the caller actually reached, merge it
+    into the shared result's `node_data`, and let the existing cache make
+    every later request for that line free.
+
+    **The reach is uniform, and that is an assumption, not a
+    derivation.** The ranges reaching a deep node are exactly what is not
+    known — the parent nodes are themselves unlearned (M149), so there is
+    no reach to inherit. This replaces "never computed" with "computed
+    against a stated prior", which is an improvement in kind rather than
+    a complete answer.
+
+    Heads-up is excluded: its exact solver enumerates every hand at every
+    node, so there is nothing here to fix.
+    """
+    if players == 2:
+        return False
+    strategy = result.strategy_at(node)
+    if not strategy:
+        return False
+    # Fire on the user-visible defect, not on every imperfect node:
+    # hero's own row being the prior, or nothing trained at all. Firing
+    # whenever any row is uniform would trigger on most deep nodes and
+    # buy little for the hand actually being asked about.
+    trained = result.trained_hands(node)
+    hero_row = strategy.get(hero_key) if hero_key else None
+    needs_work = (
+        (hero_row is not None and _row_is_the_prior(hero_row))
+        or not any(trained.values())
+    )
+    if not needs_work:
+        return False
+
+    hands = list(result.hands)
+    live = tuple(p for p in result.config.positions if p not in node.folded)
+    if len(live) < 2:
+        return False
+    equity_cache = _get_multiway_equity_cache(cfg.MULTIWAY_PREFLOP_HANDS)
+    reach = {position: np.ones(len(hands)) for position in live}
+    with _multiway_cache.lock:
+        # Re-check under the lock: a concurrent request may have trained
+        # this same node already, and the solve is not free.
+        if hero_row is not None and not _row_is_the_prior(
+            result.strategy_at(node).get(hero_key, hero_row)
+        ):
+            return False
+        node_data = mccfr_solve(
+            node, hands, live, equity_cache,
+            iterations=cfg.PREFLOP_DEEP_NODE_TRAIN_ITERATIONS,
+            seed=1, initial_reach=reach,
+        )
+        # Merge, never replace: keys are id(node) and the subtree's nodes
+        # are the SAME objects the parent solve already knows about, so
+        # this overwrites exactly the rows it just improved.
+        result.node_data.update(node_data)
+    return True
+
+
 def _advise_preflop(request, iterations: int, hero_combo=None) -> dict:
     """The one /advise cell with no sibling endpoint behind it (M51):
     real preflop strategy at whatever node the action path reaches.
@@ -2331,9 +2412,12 @@ def _advise_preflop(request, iterations: int, hero_combo=None) -> dict:
             "Supply a board for postflop advice, or shorten the path."
         )
 
+    hero_key = None if hero_combo is None else str(_combo_to_class(hero_combo))
+    # M150: a deep multiway node the shipped budget never learned gets
+    # solved here, on demand, rather than answered with the prior.
+    _ensure_preflop_node_trained(preflop_result, node, request.players, hero_key)
     strategy = preflop_result.strategy_at(node)
     trained = preflop_result.trained_hands(node)
-    hero_key = None if hero_combo is None else str(_combo_to_class(hero_combo))
     live_positions = [p for p in preflop_result.config.positions if p not in node.folded]
     return {
         "street": "preflop",

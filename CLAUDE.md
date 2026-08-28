@@ -473,6 +473,32 @@ requests now reject unknown fields by name rather than ignoring them.
   `trained` is true**: near-uniform is a real answer near indifference,
   and a false `trained` already fires a louder hero-specific warning.
 
+- **Deep multiway preflop nodes are SOLVED ON DEMAND (M150) — the
+  architectural fix, and the first one that improves advice rather than
+  disclosing that advice is bad.** The 6-max preflop tree has **289,036
+  decision nodes** and the shipped solve learns roughly the first four
+  levels. Measured on the PRODUCTION cached solve, learned rows by depth:
+  | depth | 0-2 | 3 | 4 | 5 | 6 | 7 | 8+ |
+  |---|---|---|---|---|---|---|---|
+  | nodes | 19 | 46 | 145 | 441 | 1,118 | 2,678 | ~285,000 |
+  | learned | 100% | 80% | 48% | 21% | 12% | 3% | **0%** |
+  Neither obvious fix applies: 285,000 nodes cannot be targeted-trained,
+  and M72/M73 measured 6-max destabilising at 12k iterations, orders of
+  magnitude short. So `_ensure_preflop_node_trained` borrows the pattern
+  the postflop path already runs — `ensure_mccfr_chance_branch` trains a
+  branch when a client asks for it. **A deep subtree is SMALL for the
+  same reason it is deep: the F43 node has 10 nodes below it.** Measured
+  through `/advise`: AA facing a 4-bet **0.3333/0.3333/0.3333 -> jam
+  0.9999**, and trash at the same node **-> fold 0.998**, because one
+  solve repairs every hand at the node (169/169 trained). 2.2s at
+  `PREFLOP_DEEP_NODE_TRAIN_ITERATIONS = 200`, then cached (warm 0.07s).
+  **The reach is UNIFORM and that is an assumption, not a derivation** —
+  the ranges reaching a deep node are exactly what is not known, since
+  its parents are unlearned too. This replaces "never computed" with
+  "computed against a stated prior". Fires only on the user-visible
+  defect (hero's row IS the prior, or nothing trained at the node);
+  heads-up is excluded, its exact solver having nothing to fix.
+
 - **The multiway preflop CONTINUATION fix (M112-M116) is blocked
   upstream, and F43 is the same root cause (M149).** M116's prescription
   is to key by range strength AND build each entry with a range of that

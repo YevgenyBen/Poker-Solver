@@ -1177,6 +1177,29 @@ BET_SIZING_COVERAGE_NOTE = (
 # 0.3333) is a real computed answer that happens to be close to
 # indifferent, and flagging it would make "low" the normal case. Exact
 # equality across every action is the prior's own signature.
+# M150. Iterations for solving ONE deep preflop node on demand.
+#
+# The 6-max preflop tree has **289,036 decision nodes** and the shipped
+# solve learns roughly the first four levels — measured on the production
+# cached solve, learned rows by depth: 100/100/100% at 0-2, then 80% (d3),
+# 48% (d4), 21% (d5), 12% (d6), 3% (d7), **0% at d8+**, where ~285,000 of
+# the nodes live. Neither obvious fix applies: 285,000 nodes cannot be
+# targeted-trained, and M72/M73 measured 6-max destabilising at 12k
+# iterations, orders of magnitude short of covering them.
+#
+# So this borrows the pattern the postflop path already runs in
+# production: `ensure_mccfr_chance_branch` (M75, fixed M146) builds and
+# trains a branch when a client actually asks for it, paying only for
+# lines someone requests. A deep preflop subtree is SMALL for the same
+# reason it is deep — the F43 node (BTN facing a 4-bet, depth 6) has
+# **10 nodes** below it.
+#
+# Measured on that node: AA goes from an even 0.3333 split (101/169
+# trained) to **jam 0.9999 at 200 iterations in 2.2s** (169/169 trained),
+# and to 1.0 at 1,000 iterations in 8.1s. 200 buys the correct answer;
+# the rest buys decimals on a request that already costs seconds.
+PREFLOP_DEEP_NODE_TRAIN_ITERATIONS = 200
+
 UNIFORM_ROW_REASON = (
     "Your hand's numbers here are an even split across every action, which is the "
     "solver's starting assumption rather than anything it worked out — the hand was "

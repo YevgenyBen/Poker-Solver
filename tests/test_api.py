@@ -4722,6 +4722,89 @@ def test_the_uniform_row_signal_is_actually_wired_to_the_response(client):
     assert "even split" in (payload["solver_confidence_reason"] or "")
 
 
+def test_a_deep_preflop_node_is_solved_on_demand():
+    """M150. The architectural fix: solve the deep node, don't disclose it.
+
+    The 6-max preflop tree has 289,036 decision nodes and the shipped
+    solve learns roughly the first four levels (production cached solve,
+    learned rows by depth: 80% at d3, 48% d4, 21% d5, 12% d6, 3% d7, 0%
+    at d8+ where ~285,000 nodes live). Neither obvious fix applies:
+    285,000 nodes cannot be targeted-trained, and M72/M73 measured 6-max
+    destabilising at 12k iterations.
+
+    So this borrows the postflop pattern — `ensure_mccfr_chance_branch`
+    trains a branch when a client asks for it. A deep preflop subtree is
+    SMALL for the same reason it is deep: the node below has 10 nodes.
+
+    Measured through /advise: AA facing a 4-bet went from an even 0.3333
+    split to **jam 0.9999**, and trash at the same node from 0.3333 to
+    **fold 0.998** — one solve repairs every hand at the node.
+    """
+    from api import solving
+
+    result = solving._get_or_solve_multiway(100.0, 3)
+    # Walk to the deepest reachable node, which is where the budget runs out.
+    node, depth = result.root, 0
+    while depth < 6:
+        nxt = None
+        for action in node.legal_actions:
+            child = node.children[action]
+            if hasattr(child, "legal_actions") and child.legal_actions:
+                nxt = child
+                break
+        if nxt is None:
+            break
+        node, depth = nxt, depth + 1
+
+    strategy = result.strategy_at(node)
+    hero_key = next(iter(strategy))
+    # Force the trigger: whatever this fixture's node looks like, the
+    # helper must act when hero's row IS the prior and must not when it
+    # is not. Both directions are asserted below.
+    uniform_rows = [k for k, row in strategy.items() if solving._row_is_the_prior(row)]
+    if not uniform_rows:
+        pytest.skip("this fixture's deepest node is already fully learned")
+    hero_key = uniform_rows[0]
+
+    did_work = solving._ensure_preflop_node_trained(result, node, 3, hero_key)
+    assert did_work, "an exactly-uniform hero row should have been solved for"
+    assert not solving._row_is_the_prior(result.strategy_at(node)[hero_key]), (
+        "the row is still the uniform prior after solving on demand"
+    )
+
+    # And a second ask must not redo the work.
+    assert not solving._ensure_preflop_node_trained(result, node, 3, hero_key), (
+        "an already-solved node was solved again — every request would pay for it"
+    )
+
+
+def test_on_demand_preflop_training_leaves_heads_up_alone():
+    """M150. Heads-up has nothing to fix and must not pay for a check.
+
+    Its exact solver enumerates every hand at every node, so every row is
+    real — measured: BTN opens 0.998, facing a 4-bet jams 1.0.
+    """
+    from api import solving
+
+    result = solving._get_or_solve_preflop_raw(100.0, 200, players=2)
+    node = result.root
+    assert not solving._ensure_preflop_node_trained(result, node, 2, "AA")
+
+
+def test_the_prior_test_is_exact_not_approximate():
+    """M150. A near-uniform row is a real answer near indifference.
+
+    Treating it as the prior would trigger on-demand solves for genuinely
+    solved nodes, which is cost for nothing.
+    """
+    from api import solving
+
+    assert solving._row_is_the_prior({"a": 1 / 3, "b": 1 / 3, "c": 1 / 3})
+    assert not solving._row_is_the_prior({"a": 0.3334, "b": 0.3333, "c": 0.3333})
+    assert not solving._row_is_the_prior({"a": 1.0})
+    assert not solving._row_is_the_prior({})
+
+
 def test_every_prewarm_step_succeeds(monkeypatch):
     """M133. The pre-warm swallows each step's exception so one bad spot
     cannot cost the others — which meant a step could fail forever in
