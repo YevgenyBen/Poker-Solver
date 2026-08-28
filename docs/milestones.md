@@ -7718,3 +7718,57 @@ entry's own corrections before trusting its conclusions.
     real hero assembly and response shaping; mutation-testing confirms
     reverting ONLY the wiring fails that test alone, while both unit
     tests still pass.
+
+- **M150 - deep multiway preflop nodes are solved on demand.** The
+  architectural fix M112-M116 was reaching for, arrived at from the other
+  end: instead of correcting terminal PRICING with continuation values,
+  fix the unlearned NODES that made those values unbuildable (M149).
+  - **The measurement that reframed it.** The 6-max preflop tree has
+    **289,036 decision nodes**, and the production cached solve learns
+    roughly the first four levels:
+    | depth | 0-2 | 3 | 4 | 5 | 6 | 7 | 8+ |
+    |---|---|---|---|---|---|---|---|
+    | nodes | 19 | 46 | 145 | 441 | 1,118 | 2,678 | ~285,000 |
+    | learned | 100% | 80% | 48% | 21% | 12% | 3% | **0%** |
+    Neither instinctive fix survives contact with that: 285,000 nodes
+    cannot be targeted-trained, and M72/M73 measured 6-max destabilising
+    at 12k iterations - orders of magnitude short of covering depth 8.
+  - **The pattern was already in the codebase, one street later.**
+    `ensure_mccfr_chance_branch` (M75, fixed M146) builds and trains a
+    postflop branch when a client actually asks for it. The preflop tree
+    had the identical problem and no equivalent. **A deep subtree is
+    small for the same reason it is deep** - the F43 node (depth 6) has
+    **10 nodes** below it.
+  - **Measured through /advise:**
+    | spot | before | after |
+    |---|---|---|
+    | 6-max AA facing a 4-bet | 0.3333 / 0.3333 / 0.3333 | **jam 0.9999** |
+    | 6-max trash facing a 4-bet | 0.3333 / 0.3333 / 0.3333 | **fold 0.998** |
+    | 6-max AA facing an open | already correct | unchanged |
+    | HU AA facing a 4-bet | jam 1.0 | unchanged |
+    The trash row is repaired for free: one solve trains every hand at
+    the node (101/169 -> 169/169). 2.2s of work at 200 iterations, then
+    cached - warm 0.07s.
+  - **The reach is uniform, and that is an assumption rather than a
+    derivation.** The ranges reaching a deep node are precisely what is
+    not known, because its parents are unlearned too (M149). This
+    converts "never computed" into "computed against a stated prior" -
+    an improvement in kind, not a complete answer, and the docstring says
+    so rather than implying the subtree solve is unconditionally right.
+  - **Scoped**: fires only when hero's own row IS the prior or nothing at
+    the node is trained, re-checks under the cache lock so concurrent
+    requests do not both pay, and excludes heads-up outright (its exact
+    solver enumerates every hand at every node).
+  - **Three measurement bugs of my own surfaced getting here**, all
+    caught by cross-checking rather than by the numbers looking wrong: a
+    missing `__main__` guard let pool workers print junk (31 decision
+    nodes); a node counter dropped its root reference so garbage-collected
+    subtrees had their `id()`s reused (30 nodes, against a verified
+    289,036); and the first coverage probes called `solve_preflop`
+    directly with default seed and hands, measuring a solve production
+    never runs - `_get_or_solve_multiway` passes
+    `hands=MULTIWAY_PREFLOP_HANDS`, an equity cache, `floor_regret` and
+    **seed=1**, and M110 documented 6-max varying enormously by seed. The
+    coverage table above is re-measured on the production solve.
+  - F43's disclosure (M149) stays as the safety net for any node still
+    returning the prior for another reason.
