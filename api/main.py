@@ -1262,8 +1262,8 @@ async def advise_endpoint(request: AdviseRequest):
             # problem is that its preflop solve divides iterations among
             # nine seats, and that has already happened by the time
             # anyone folds. See cfg.LOW_CONFIDENCE_TABLE_SIZES.
-            "solver_confidence": _solver_confidence(raw, request.players)[0],
-            "solver_confidence_reason": _solver_confidence(raw, request.players)[1],
+            "solver_confidence": _solver_confidence(raw, request.players, hero)[0],
+            "solver_confidence_reason": _solver_confidence(raw, request.players, hero)[1],
             # M98: scoped to the sizing axis, and only preflop. A
             # multiway preflop solve answers "play or fold" reliably and
             # "which size" unreliably; reporting one number for both hid
@@ -1334,7 +1334,42 @@ def _node_is_untrained(raw: dict) -> bool:
     return not any(trained.values())
 
 
-def _solver_confidence(raw: dict, players: int):
+def _hero_row_is_the_prior(hero: dict | None) -> bool:
+    """True when HERO's own row is exactly the uniform prior.
+
+    M149/F43. Distinct from `_node_is_untrained`, which asks whether the
+    whole node went unvisited. A hand can be visited many times and still
+    average to exactly the prior: `current_strategy()` returns it
+    whenever every regret is <= 0, which M73 measured at ~70% of rows. So
+    `trained` (i.e. "was visited") can be true while the answer is the
+    starting assumption — measured at 6-max with AA facing a 4-bet, where
+    the response claimed `hero.trained: true` and `solver_confidence:
+    "high"` beside fold/call/jam at 0.3333 each.
+
+    EXACT uniformity only. A near-uniform row is a real computed answer
+    that happens to sit near indifference; flagging those would make
+    "low" the normal case and mean nothing.
+    """
+    # Takes the hero block DIRECTLY, not the raw solve dict: `hero` is
+    # assembled in `advise` itself and never lands in `raw`, so a first
+    # version reading `raw.get("hero")` silently never fired.
+    if not isinstance(hero, dict):
+        return False
+    # Only the MISLEADING combination. When `trained` is false the
+    # response already carries a louder, hero-specific warning ("these
+    # numbers are the untrained default"), and saying it twice in
+    # different words reads as two problems instead of one. The gap this
+    # closes is a uniform row that every existing signal calls fine.
+    if hero.get("trained") is not True:
+        return False
+    row = hero.get("strategy") or {}
+    if len(row) < 2:
+        return False
+    values = list(row.values())
+    return max(values) - min(values) < 1e-9
+
+
+def _solver_confidence(raw: dict, players: int, hero: dict | None = None):
     """(level, reason) for the headline confidence signal.
 
     M145/F41: this used to depend only on TABLE SIZE, so a node whose
@@ -1349,6 +1384,10 @@ def _solver_confidence(raw: dict, players: int):
         reasons.append(table_size_reason)
     if _node_is_untrained(raw):
         reasons.append(cfg.UNTRAINED_NODE_REASON)
+    elif _hero_row_is_the_prior(hero):
+        # `elif`: when the whole node is untrained the node-level reason
+        # already says so, and both would be the same news twice.
+        reasons.append(cfg.UNIFORM_ROW_REASON)
     if not reasons:
         return "high", None
     return "low", " ".join(reasons)

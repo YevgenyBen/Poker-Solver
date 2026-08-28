@@ -1151,6 +1151,40 @@ BET_SIZING_COVERAGE_NOTE = (
 # reports the PREFLOP range derivation, and those classes really were
 # fully trained. Composed with a river strategy that was never solved, it
 # reads as an endorsement of the answer.
+# M149/F43. **`trained` means VISITED, not LEARNED — and the gap is
+# user-visible on the most expensive decision in preflop poker.**
+#
+# Measured: a 6-max player holding AA facing a 4-bet is told **fold
+# 0.3333 / call 0.3333 / all-in 0.3333** — an exactly uniform split —
+# while the response reports `hero.trained: true`, `solver_confidence:
+# "high"`, and 101 of 169 hands trained at the node. Folding aces to a
+# 4-bet a third of the time is a stack-losing instruction.
+#
+# Why nothing caught it. F41/M145 flags a node where NOTHING is trained;
+# here most of the node IS trained, so that signal correctly stays quiet.
+# `trained_mask()` asks whether a hand accumulated any strategy_sum, i.e.
+# whether it was VISITED. `current_strategy()` returns the uniform prior
+# whenever every regret is <= 0 — M73 measured ~70% of rows all-negative
+# — so a hand can be visited repeatedly and still average to exactly the
+# prior. The distinction was documented in the solver and never connected
+# to the honesty signals.
+#
+# Heads-up is unaffected: measured at the same spots the exact solver
+# returns real answers (BTN opens 0.998, facing a 4-bet jams 1.0). This
+# is the sampled multiway solver failing to reach deep preflop nodes.
+#
+# Scoped to EXACT uniformity. A near-uniform row (0.3334 / 0.3333 /
+# 0.3333) is a real computed answer that happens to be close to
+# indifferent, and flagging it would make "low" the normal case. Exact
+# equality across every action is the prior's own signature.
+UNIFORM_ROW_REASON = (
+    "Your hand's numbers here are an even split across every action, which is the "
+    "solver's starting assumption rather than anything it worked out — the hand was "
+    "reached during solving but never learned a preference, so this is not a "
+    "recommendation to mix evenly. Treat it as no answer for this hand. A different "
+    "line, a shallower spot, or heads-up will usually return a real one."
+)
+
 UNTRAINED_NODE_REASON = (
     "This spot was not actually solved. Every hand at this decision carries the "
     "solver's starting assumption - an even split across the available actions - "

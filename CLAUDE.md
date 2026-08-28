@@ -456,6 +456,37 @@ requests now reject unknown fields by name rather than ignoring them.
   iteration count), so flagging that would make "low" the normal case and
   mean nothing; zero trained hands at the whole node cannot be benign.
 
+- **F43 (M149): `trained` means VISITED, not LEARNED — and the gap put
+  "fold aces to a 4-bet a third of the time" in front of a user.**
+  Measured: 6-max, hero AA facing a 4-bet returns **fold 0.3333 / call
+  0.3333 / all-in 0.3333** while the response says `hero.trained: true`,
+  `solver_confidence: "high"`, and 101 of 169 hands trained at the node.
+  F41's signal correctly stays quiet — most of the node IS trained.
+  `trained_mask()` asks whether a hand accumulated any strategy_sum, i.e.
+  whether it was VISITED; `current_strategy()` returns the uniform prior
+  whenever every regret is <= 0, and M73 measured ~70% of rows
+  all-negative, so a hand can be visited repeatedly and still average to
+  exactly the prior. **Heads-up is unaffected** (BTN opens 0.998, facing
+  a 4-bet jams 1.0) — this is the sampled multiway solver not reaching
+  deep preflop nodes. `_hero_row_is_the_prior` now feeds
+  `solver_confidence`. **Scoped to EXACT uniformity, and only when
+  `trained` is true**: near-uniform is a real answer near indifference,
+  and a false `trained` already fires a louder hero-specific warning.
+
+- **The multiway preflop CONTINUATION fix (M112-M116) is blocked
+  upstream, and F43 is the same root cause (M149).** M116's prescription
+  is to key by range strength AND build each entry with a range of that
+  strength. **That range does not exist at multiway.** Deep preflop nodes
+  return the uniform prior, so `derive_ranges_from_path` multiplies every
+  class by the same constant and composition never changes: measured at
+  6-max, `BTN open / SB 3bet / BB 4bet / BTN call` yields **premium
+  shares byte-identical to the 3-bet line** (BTN 0.0196, SB 0.0938, BB
+  0.0332 — and 0.0332 is exactly a uniform range's premium share).
+  Heads-up differentiates correctly: the 4-bettor's range is **0.883
+  premium**. So the continuation table cannot be built per-spot until
+  deep multiway preflop nodes are actually solved. **Don't spend another
+  milestone on the table.**
+
 - **`trained` / `range_confidence` / `source` exist because output can
   look confident and be fabricated.** Don't strip them for tidiness.
 - **`hero_cards` is part of the path-query cache keys — do not remove it
