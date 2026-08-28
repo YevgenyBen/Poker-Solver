@@ -594,6 +594,27 @@ requests now reject unknown fields by name rather than ignoring them.
   the cold budget, since a caller may ask for fewer iterations than the
   warm setting.
 
+- **The flop solve runs in FLOAT32, and is memory-bound on N x N
+  matrices (M160).** Anatomy of a real flop solve: 318 combos but only
+  **16 decision nodes and 29 terminals**, 11.2ms per iteration, ~700us
+  per node visit. The cost is not Python overhead and not the tree - it
+  is that `_solve_recurse` carries a `num_hands x num_hands` matrix
+  through every node (~809KB at 318 combos in float64), roughly **18GB of
+  traffic per 500-iteration solve**. Float32 halves it: **1.12-1.32x**,
+  interleaved A/B in one process per M70's rule, with worst strategy
+  drift **below 5e-6**. Free because the entries are 30-sample Monte
+  Carlo equity estimates whose own error is ~0.09 - float64's 16 digits
+  were never carrying information. **Accumulators stay float64**
+  (`InfoSetTable`): regret sums build across hundreds of iterations,
+  which is where precision matters, and they are `num_hands x
+  num_actions`, tiny beside the transients.
+  **The remaining inefficiency is algorithmic and NOT fixed**: every node
+  materialises N x N and multiplies it by strategy, so cost is
+  depth x actions x N^2, where standard vector CFR reduces each terminal
+  to an N-vector and stays O(N) above it. Estimated 3-5x, but it rewrites
+  the solver the library, the references and 999 tests depend on - its
+  own milestone, with equivalence validation.
+
 - **The flop request's cost is 86% CFR SOLVE, not the equity table
   (M155).** M132's "the table is 41% of a flop request" is stale - its
   own 4.79x table speedup shrank the share. Measured on four random

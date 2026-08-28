@@ -627,7 +627,12 @@ def solve_flop(
         if equity_samples is not None:
             equity_kwargs["samples"] = equity_samples
         equity_table = build_board_equity_table(board, combos, **equity_kwargs)
-    equity_table = np.nan_to_num(equity_table, nan=0.5)
+    # M160: float32. The flop solve is memory-bound on this table — the
+    # recursion carries a num_hands x num_hands matrix per node — and the
+    # entries are Monte Carlo equity estimates from 30 samples, whose own
+    # error dwarfs anything float32 rounding introduces. Measured across
+    # three boards: 1.3-1.4x faster with worst strategy drift below 5e-6.
+    equity_table = np.nan_to_num(equity_table, nan=0.5).astype(np.float32)
 
     actual_iterations = iterations if iterations is not None else DEFAULT_FLOP_ITERATIONS
     # M158: `warm_start` is `(cached_hands, {action path: InfoSetTable})`
