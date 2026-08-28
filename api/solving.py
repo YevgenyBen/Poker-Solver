@@ -78,6 +78,7 @@ from .caches import (
     _flop_node_cache,
     _multiway_cache,
     _multiway_equity_caches,
+    _canonical_warm_starts,
     _path_query_libraries,
     _preflop_raw_cache,
     _river_path_cache,
@@ -1140,6 +1141,21 @@ def _query_flop_from_path(
             # per-branch mapper never applied to it. This splits that
             # single table across the pool by row bands.
             equity_table_fn=parallel_board_equity_table,
+            # M158: reuse an earlier solve of this canonical spot rather
+            # than starting cold. 71 of 73 flop requests in a 120-hand
+            # session were cold because hero's class partitions the
+            # library, and hero's influence on the solve is inside the
+            # solver's own run-to-run noise (M155).
+            # Keyed WITHOUT hero but WITH everything that changes the
+            # ranges. Sharing across heroes is the point and is measured
+            # safe (M155: hero moves the solve less than the seed does);
+            # sharing across action paths would be serving a different
+            # question's solve, which is M76's bug in a new field and is
+            # exactly what `test_a_warm_cache_never_answers_a_different_
+            # question` caught when this was keyed on the board alone.
+            warm_store=_canonical_warm_starts.setdefault(
+                (tuple(action_kinds), round(stack_bb), iterations, players), {}),
+            warm_iterations=cfg.PATH_QUERY_WARM_ITERATIONS,
         )
 
     path_scenario = situation.path_scenario

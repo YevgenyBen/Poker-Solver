@@ -505,6 +505,36 @@ MAX_PATH_LENGTH = 20
 # M131: 500, not DEFAULT_FLOP_ITERATIONS (1,000). Halved to help fund the
 # wider range above; see PATH_QUERY_EQUITY_SAMPLES for the frontier this
 # point was chosen from.
+# M158. Refinement iterations when a flop request can warm-start from an
+# earlier solve of the same canonical spot, instead of the 500 a cold
+# solve runs.
+#
+# **Why this is the highest-value change for a player at a table.** M155
+# measured flop latency at 16.8s median and 64.5s at p90 on random
+# boards. A player has 15-30 seconds to act, so a tenth of decisions
+# could not be answered before they had to be made. The CFR solve is 86%
+# of that cost and 71 of 73 flop requests paid it COLD - because hero's
+# combo is force-included before the cap, putting hero's class in the
+# cache key (M76).
+#
+# M155 also measured that hero's inclusion moves the solve LESS than
+# changing the equity seed does (p90 0.002-0.107 against 0.024-0.112), so
+# a cached hero-free solve of the same canonical spot is a legitimate
+# starting point. Measured across three boards, 50 refinement iterations
+# from a grafted start against a full 500-iteration cold solve:
+#
+#     board     cold    warm   speedup   hero row delta
+#     Js6cKs    8.0s    0.8s     9.7x           0.0011
+#     KcKsQd    5.7s    0.6s     9.7x           0.0010
+#     9dAd5s    7.6s    0.7s    11.4x           0.0155
+#
+# The worst delta, 0.0155, is well inside the seed-to-seed noise above -
+# the warm answer is not distinguishable from the cold one by anything
+# this solver can resolve. 25 iterations was also measured and is worse
+# where it matters (0.0898 on the same board), so 50 is the floor rather
+# than the cheapest setting that looked fine.
+PATH_QUERY_WARM_ITERATIONS = 50
+
 PATH_QUERY_ITERATIONS = 500
 
 # Fixed server-side constants, not query params — same reasoning

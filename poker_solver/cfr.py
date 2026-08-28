@@ -454,6 +454,7 @@ def solve(
     chance_fn: Optional[Callable] = None,
     chance_data: Optional[dict] = None,
     linear_averaging: bool = True,
+    initial_node_data: Optional[dict] = None,
 ) -> dict:
     """Run `iterations` of CFR+ over `root`, for the given `hands`.
 
@@ -540,7 +541,25 @@ def solve(
         dtype=float,
     )
 
-    node_data: dict = {}
+    # M158: `initial_node_data` warm-starts the solve. `_solve_recurse`
+    # does `node_data.setdefault(id(node), zeros(...))`, so a
+    # pre-populated dict simply IS the starting point - regrets and
+    # strategy sums accumulate on top of whatever is handed in.
+    #
+    # The caller owns the hard part: node_data is keyed by `id(node)` and
+    # every request rebuilds its tree, so tables have to be re-keyed onto
+    # the new nodes (a node's action path from the root is stable across
+    # rebuilds of the same config) and re-shaped if the hand pool changed.
+    # Passing a table whose row count does not match `hands` is a
+    # programming error, so it is checked rather than broadcast.
+    node_data: dict = dict(initial_node_data or {})
+    for table in node_data.values():
+        if table.regret_sum.shape[0] != len(hands):
+            raise ValueError(
+                f"initial_node_data has {table.regret_sum.shape[0]} hand rows "
+                f"but this solve has {len(hands)} hands — re-shape the tables "
+                "onto the new pool before warm-starting"
+            )
     for iteration in range(iterations):
         updating_player = position_a if iteration % 2 == 0 else position_b
         _solve_recurse(

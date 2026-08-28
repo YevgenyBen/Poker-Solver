@@ -573,6 +573,27 @@ requests now reject unknown fields by name rather than ignoring them.
 
 - **`trained` / `range_confidence` / `source` exist because output can
   look confident and be fabricated.** Don't strip them for tidiness.
+- **A repeat flop request WARM-STARTS from the cached canonical solve
+  (M158) — 13-15s cold, 2.5-2.8s after.** `poker_solver/warmstart.py`
+  re-keys a solved tree's `node_data` by ACTION PATH (stable across the
+  tree rebuild every request does, unlike `id(node)`) and grafts it onto
+  the new tree, giving hands the cached solve lacked a zero row. 50
+  refinement iterations then replace 500 cold ones.
+  **Justified by the right yardstick, not by zero**: hero's
+  force-inclusion moves the solve less than the equity seed does (M155),
+  and warm-vs-cold differs by 0.0037-0.0147 end to end against
+  seed-only noise of 0.024-0.112. 25 iterations was measured and is
+  worse where it counts (0.0898), so `PATH_QUERY_WARM_ITERATIONS = 50`
+  is a floor, not the cheapest setting that looked fine.
+  **The store is keyed on everything that changes the RANGES but not on
+  hero** — sharing across heroes is the point; sharing across action
+  paths serves a different question's solve, which
+  `test_a_warm_cache_never_answers_a_different_question` caught when
+  this was keyed on the board alone. **Only COLD solves are stored**, so
+  refinements never compound on refinements. Refinement is clamped to
+  the cold budget, since a caller may ask for fewer iterations than the
+  warm setting.
+
 - **The flop request's cost is 86% CFR SOLVE, not the equity table
   (M155).** M132's "the table is 41% of a flop request" is stale - its
   own 4.79x table speedup shrank the share. Measured on four random

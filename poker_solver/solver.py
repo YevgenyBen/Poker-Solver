@@ -38,6 +38,7 @@ from .game_tree import (
     build_street_tree,
 )
 from .starting_hands import all_starting_hands
+from .warmstart import graft_node_data
 
 # Exact path (heads-up): measured ~3-4ms/iteration at full 169-hand
 # scale (M4) — 1000 iterations lands comfortably in low-single-digit
@@ -552,6 +553,7 @@ def solve_flop(
     equity_samples: int = None,
     equity_seed: int = DEFAULT_EQUITY_SEED,
     equity_table_fn=None,
+    warm_start=None,
 ) -> StrategyResult:
     """Solve a single flop betting round and return its strategy.
 
@@ -628,6 +630,16 @@ def solve_flop(
     equity_table = np.nan_to_num(equity_table, nan=0.5)
 
     actual_iterations = iterations if iterations is not None else DEFAULT_FLOP_ITERATIONS
+    # M158: `warm_start` is `(cached_hands, {action path: InfoSetTable})`
+    # from an earlier solve of the SAME canonical spot — see
+    # warmstart.index_by_path. Grafting it lets a request refine an
+    # existing solve instead of starting cold, which is where 86% of a
+    # flop request's time goes (M155). Hands the cached solve did not
+    # have start at zero, exactly as a cold solve starts them.
+    initial_node_data = None
+    if warm_start is not None:
+        cached_hands, by_path = warm_start
+        initial_node_data = graft_node_data(root, by_path, cached_hands, combos)
     start = time.perf_counter()
     node_data = solve(
         root,
@@ -636,6 +648,7 @@ def solve_flop(
         iterations=actual_iterations,
         positions=positions,
         initial_reach={hero_position: hero_reach, villain_position: villain_reach},
+        initial_node_data=initial_node_data,
     )
     elapsed = time.perf_counter() - start
 
