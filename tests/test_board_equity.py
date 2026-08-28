@@ -142,3 +142,57 @@ def test_turn_board_equity_deterministic_with_no_rng_supplied():
     table_1 = build_board_equity_table(board, [strong, weak])
     table_2 = build_board_equity_table(board, [strong, weak])
     assert table_1[0, 1] == table_2[0, 1]
+
+def test_only_the_flop_table_is_sampled_which_is_why_chance_nodes_take_no_samples():
+    """M154. The property a design decision rests on, pinned.
+
+    `build_chance_node` accepts neither `equity_samples` nor
+    `equity_seed`, and `solve_flop_turn` documents dropping
+    `equity_samples` because "board_equity tables built here are all
+    turn-board tables - remaining_needed==1 - which are resolved exactly,
+    not sampled, so there's nothing to tune".
+
+    M153 flagged that as unverified rather than guess at it. It is
+    correct: `remaining_needed <= 1` enumerates every single-card runout
+    and ignores `samples`/`rng` entirely. Every table a chance node
+    builds is a turn board (one card to come) or a river board (none), so
+    there is genuinely nothing to tune.
+
+    If that ever stops being true - if turn boards became sampled - the
+    chance-node path would silently start using library defaults for a
+    quantity its callers think they control, and nothing else would say
+    so.
+    """
+    import random
+
+    import numpy as np
+
+    combos = [
+        HandCombo(Card.from_str("9s"), Card.from_str("9d")),
+        HandCombo(Card.from_str("Qd"), Card.from_str("Qh")),
+        HandCombo(Card.from_str("Ah"), Card.from_str("Kh")),
+        HandCombo(Card.from_str("5s"), Card.from_str("4d")),
+    ]
+
+    def table(board_text, samples, seed):
+        board = tuple(Card.from_str(board_text[i:i + 2])
+                      for i in range(0, len(board_text), 2))
+        return np.nan_to_num(
+            build_board_equity_table(board, combos, samples=samples,
+                                     rng=random.Random(seed)))
+
+    # Flop: two cards to come, Monte Carlo — sampling must matter.
+    assert not np.allclose(table("2h6d9c", 5, 0), table("2h6d9c", 400, 7)), (
+        "the flop table stopped depending on its sample count — either it "
+        "became exact, or sampling is being ignored where it should not be"
+    )
+    # Turn and river: resolved exactly, so neither knob may change them.
+    assert np.allclose(table("2h6d9cKs", 5, 0), table("2h6d9cKs", 400, 7)), (
+        "a TURN board table now depends on sampling — chance nodes take no "
+        "sample count precisely because it did not, so they would now be "
+        "silently using library defaults"
+    )
+    assert np.allclose(table("2h6d9cKsQh", 5, 0), table("2h6d9cKsQh", 400, 7)), (
+        "a RIVER board table now depends on sampling, though a complete "
+        "board has nothing left to draw"
+    )

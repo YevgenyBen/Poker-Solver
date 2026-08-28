@@ -7894,3 +7894,31 @@ entry's own corrections before trusting its conclusions.
     tables always use library defaults. Whether that is deliberate is not
     established, and guessing would be the error this milestone exists to
     correct.
+
+- **M154 - the M153 open item resolves as a non-defect, and is now
+  pinned.** M153 flagged that `build_chance_node` accepts neither
+  `equity_samples` nor `equity_seed`, and deliberately did not guess
+  whether that was intentional.
+  - **It is intentional and correct.** `solve_flop_turn`'s docstring says
+    its tables are "resolved exactly, not sampled, so there's nothing to
+    tune". Measured rather than taken on trust:
+    | board | samples/rng ignored |
+    |---|---|
+    | flop (2 to come) | **no** - sampled |
+    | turn (1 to come) | **yes** - exact |
+    | river (0 to come) | **yes** - exact |
+    `remaining_needed <= 1` enumerates every single-card runout. Every
+    table a chance node builds is a turn or river board, so no sample
+    count could apply.
+  - **A near-miss worth recording.** `build_board_equity_table`'s opening
+    summary lists what it averages - "2 for a flop board, 1 for a turn
+    board" - which reads as though turn boards are sampled, and looked
+    like a contradiction with `solve_flop_turn`. The detailed paragraph
+    below it states the `remaining_needed <= 1` exception correctly. A
+    docstring's summary and its detail disagreeing in appearance is
+    enough to send someone chasing a defect that is not there, which is
+    why the property is now a test rather than a comment.
+  - Guarded in both directions: the flop table MUST still depend on its
+    sample count, and turn/river tables must not. If turn boards ever
+    became sampled, the chance-node path would silently use library
+    defaults for a quantity its callers think they control.
