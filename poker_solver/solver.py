@@ -614,7 +614,12 @@ def solve_flop(
     # library and a process pool belongs to whoever owns the request.
     # Default None is the original single-process build, unchanged.
     if equity_table_fn is not None:
-        equity_table = equity_table_fn(board, combos, equity_samples)
+        # M153/F44: the seed goes THROUGH the injected builder. It used to
+        # stop here — `equity_table_fn(board, combos, equity_samples)` — so
+        # `equity_seed` was inert whenever one was injected, which is the
+        # production path. Passed by keyword so an injected function that
+        # does not care can ignore it.
+        equity_table = equity_table_fn(board, combos, equity_samples, seed=equity_seed)
     else:
         equity_kwargs = {"rng": random.Random(equity_seed)}
         if equity_samples is not None:

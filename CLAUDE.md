@@ -595,6 +595,37 @@ requests now reject unknown fields by name rather than ignoring them.
   pools and budgets for speed. Run an end-to-end `/advise` check at
   production settings after any solver change.
 
+- **F44 (M153): `equity_seed` was SILENTLY DROPPED on the production flop
+  path, so every seed-variation check there proved nothing.**
+  `parallel_board_equity_table` took no seed and hardcoded `DEFAULT_SEED`,
+  while `solve_flop` called it as `equity_table_fn(board, combos,
+  equity_samples)`. From M132 onward, injecting a builder - the shipped
+  configuration - made `equity_seed` inert. **Nothing was wrong with the
+  tables** (still deterministic, still correct); what broke is that a
+  seed could not be varied as a convergence check, and **M138 cited "the
+  seed does not move it" as evidence its reference had converged.** That
+  evidence was empty. Found because two spots returned byte-identical
+  values across seeds, twice each - an explanation was nearly accepted
+  for that a second time before checking the call site. Fixed by
+  threading the seed through both the call and the builder; guarded by
+  two tests, one per half.
+
+- **The converged reference is trustworthy for SOME spots and not
+  others (M153).** Re-measured at cap 200 / 2,500 iterations across
+  sample counts:
+  | spot | s30 | s60 | s100 | s200 (ref) |
+  |---|---|---|---|---|
+  | 9s9d top set | 0.9887 | 0.9853 | 0.9889 | 0.9870 |
+  | QdQh overpair | 0.0013 | **0.8614** | 0.0014 | 0.0014 |
+  9s9d is stable everywhere, so the finding it carries — value hands
+  need the full range, 0.549 at cap 26 against ~0.99 — is solid. QdQh
+  flips wholesale at one sample count, which is **M74's bang-bang
+  behaviour**: a near-tied decision where regret matching swings the
+  whole strategy rather than nudging it. **Its reference is one side of a
+  coin flip, and per-spot errors measured against it (including the
+  0.1487 inside M138's headline mean) are not meaningful.** Check a
+  spot's stability at ITS OWN settings before quoting an error for it.
+
 - **A flop solve's ONE equity table is split across workers (M132), and
   the table is seeded PER ROW to make that possible.** One stream
   advancing across the upper triangle makes a pair's draw depend on how

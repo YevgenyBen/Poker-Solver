@@ -222,12 +222,21 @@ def _balanced_row_bands(n_rows, n_bands):
     return [b for b in bands if b[0] < b[1]]
 
 
-def parallel_board_equity_table(board, combos, samples=None):
+def parallel_board_equity_table(board, combos, samples=None, seed=None):
     """Build one equity table across the pool, merging row bands.
 
     Falls back to a plain single-process build on a small pool, a host
     that cannot spawn, or any failure — the table must not depend on
     whether parallelism was available.
+
+    M153/F44: `seed` exists because it was silently DROPPED before. This
+    function took no seed and hardcoded `DEFAULT_SEED`, while `solve_flop`
+    called it as `equity_table_fn(board, combos, equity_samples)` — so
+    from M132 onward, `equity_seed` did nothing on the production flop
+    path. Nothing was wrong with the tables (still deterministic), but a
+    seed-variation check on that path could not vary anything, and M138
+    cited "the seed does not move it" as evidence its reference had
+    converged. That evidence was empty.
     """
     import random
 
@@ -237,10 +246,11 @@ def parallel_board_equity_table(board, combos, samples=None):
                                            DEFAULT_SEED, build_board_equity_table)
 
     actual_samples = DEFAULT_BOARD_EQUITY_SAMPLES if samples is None else samples
+    actual_seed = DEFAULT_SEED if seed is None else seed
 
     def _sequential():
         return build_board_equity_table(board, combos, samples=actual_samples,
-                                        rng=random.Random(DEFAULT_SEED))
+                                        rng=random.Random(actual_seed))
 
     if len(combos) < MIN_COMBOS_FOR_SPLIT:
         return _sequential()
@@ -258,7 +268,7 @@ def parallel_board_equity_table(board, combos, samples=None):
 
     combo_tokens = [(str(c.card_a), str(c.card_b)) for c in combos]
     board_tokens = tuple(str(c) for c in board)
-    tasks = [(board_tokens, combo_tokens, actual_samples, DEFAULT_SEED, b) for b in bands]
+    tasks = [(board_tokens, combo_tokens, actual_samples, actual_seed, b) for b in bands]
     try:
         parts = list(pool.map(_row_worker, tasks))
     except Exception:
