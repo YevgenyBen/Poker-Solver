@@ -7922,3 +7922,53 @@ entry's own corrections before trusting its conclusions.
     sample count, and turn/river tables must not. If turn boards ever
     became sampled, the chance-node path would silently use library
     defaults for a quantity its callers think they control.
+
+- **M155 - a 120-hand play session, and the cost structure that explains
+  its latency.** Same hand count and seed as M127's session so the two
+  compare, with a check added for every defect found since.
+  - **Correctness: 287 decisions, zero defects**, against five checks
+    that did not exist before - uniform-prior rows (F43), untrained nodes
+    (F41/F42), unaffordable bets (F39), undisclosed all-in-only streets
+    (F40/M151), and stack commitments with weak hands (F38). Four of the
+    five exist because a real failure got past M127's categorical checks,
+    which passed 275 decisions while the solver folded at a quarter of
+    the correct rate.
+    | check | hits | undisclosed |
+    |---|---|---|
+    | answer is the uniform prior | 0 | 0 |
+    | nothing trained at the node | 0 | 0 |
+    | bet above `max_affordable_bb` | 0 | 0 |
+    | all-in is the only modelled size | 56 | **0** |
+    | stack committed with a weak hand | 19 | n/a |
+  - **Latency is the regression**: p50 4.28s -> 5.62s, p90 8.71s ->
+    **35.79s**, p99 79.3s, worst 87.4s, 157 of 287 decisions over 5s.
+    Part was bought deliberately - M131 widened the cap 10 -> 26 knowing
+    it took a flop decision from 8.4s to 14.7s - but that benchmark used
+    ONE fixed board. Across random boards the same path runs 16.8s median
+    and 64.5s at p90, and cost tracks stack depth (5.4s at 20bb against
+    17.5s at 50bb).
+  - **Where the time goes, measured rather than assumed.** The equity
+    table is **14%** of the solve leg, not M132's stale 41% - that
+    milestone's own speedup shrank it. The CFR solve is 86%. End to end
+    through `/advise`, `query_strategy_from_path` is 5.2-16.6s and the
+    cached preflop solve ~3.5s, with nothing unaccounted.
+  - **Hero's force-inclusion is inside the solver's own noise.** Adding
+    hero moves other hands by p90 0.002-0.107; a seed-only re-run of the
+    identical hero-free solve moves them **as much or more** (p90
+    0.024-0.112). So the per-hero cache partition costs a full cold solve
+    - on 71 of 73 flop requests - to preserve noise. This is the M124
+    control applied one street later, and it was only askable because
+    M153 fixed the dropped `equity_seed`.
+  - **Not yet fixed, and why.** Serving an out-of-range hero from one
+    cached canonical solve still needs hero's own row. Best response
+    against the cached villain strategy is the principled option and
+    gives PURE advice, losing the mixing every other row has; a
+    warm-started refinement keeps mixing but needs `node_data` keyed by
+    something stable across rebuilt trees, since it is keyed by
+    `id(node)` today. Both are real milestones, and shipping either
+    half-validated would repeat the M151 trade this project already
+    declined.
+  - Unchanged and confirmed: 19 weak-hand stack commitments (F38,
+    disclosed not fixed) and 9-max T7s folding 0.152 under the gun
+    against a documented 0.125 - fully trained and non-uniform, so
+    M150's on-demand solving does not touch it.

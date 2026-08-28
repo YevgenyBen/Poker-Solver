@@ -533,6 +533,31 @@ requests now reject unknown fields by name rather than ignoring them.
 
 - **`trained` / `range_confidence` / `source` exist because output can
   look confident and be fabricated.** Don't strip them for tidiness.
+- **The flop request's cost is 86% CFR SOLVE, not the equity table
+  (M155).** M132's "the table is 41% of a flop request" is stale - its
+  own 4.79x table speedup shrank the share. Measured on four random
+  boards at production settings: table **14%**, solve **86%**, ~8.9s
+  total for the solve leg. Through `/advise` end to end a flop request is
+  8.7-20.1s, of which `query_strategy_from_path` is 5.2-16.6s (a 3x
+  spread by board) and the cached preflop solve ~3.5s. **Anything aimed
+  at flop latency must attack the CFR solve**; caching or extending the
+  equity table caps out at 14%.
+
+- **Hero's force-inclusion changes the flop solve NO MORE THAN THE SEED
+  DOES (M155).** Adding hero's combo to a ~330-combo pool moves other
+  hands' strategies by p90 0.002-0.107, worst 0.36-0.66, 1-50 hands over
+  0.05. Re-running the IDENTICAL hero-free solve under a different equity
+  seed moves it **as much or more**: p90 0.024-0.112, worst 0.35-0.47,
+  12-53 hands over 0.05. So the per-hero cache partition pays a full cold
+  solve to preserve something indistinguishable from the solver's own
+  noise - and 71 of 73 flop requests in a 120-hand session were cold for
+  exactly that reason. The M124 control pattern, and only askable because
+  M153 fixed `equity_seed`. **M76's guard still stands** (hero must get
+  an answer at all); what is now measured is that the SOLVE need not
+  depend on hero. Serving an out-of-range hero from one cached canonical
+  solve is the open design - it needs a way to produce hero's own row
+  (best response, or a warm-started refinement) and neither is built.
+
 - **`hero_cards` is part of the path-query cache keys — do not remove it
   (M76).** Hero's combo is force-included into the derived range before
   the top-K cap, so the SOLVE depends on hero. When the keys ignored
