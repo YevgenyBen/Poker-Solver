@@ -5361,3 +5361,61 @@ def test_on_demand_training_is_wired_to_the_multiway_flop_response(client, monke
         "expected the opening decision AND the mid-flop node to be offered for training"
     )
     assert seen[0] is not seen[1], "the mid-flop node was not the one offered"
+
+
+def test_the_multiway_flop_trainer_is_given_a_string_hero_key():
+    """M164. The bug M163's own tests could not see.
+
+    `StrategyResult.strategy_at` keys by `str(hand)`. M163 passed the
+    HandCombo OBJECT, so `strategy.get(hero_key)` never matched and the
+    hero-row trigger — the entire reason that function exists — could
+    never fire. It still ran on the much rarer "nothing at this node is
+    trained" condition, which is exactly what M163's tests exercised, so
+    they passed while three play sessions showed the uniform rows
+    completely unchanged.
+
+    Asserts the KEY TYPE at the production call site, because that is the
+    thing that was wrong and a behavioural test at this node needs a spot
+    the suite's shrunken fixtures do not reliably produce.
+    """
+    import inspect
+
+    source = inspect.getsource(api_solving._query_flop_multiway_from_path)
+    assert "_ensure_flop_multiway_node_trained(" in source
+    # Both call sites must stringify hero before handing it over.
+    assert source.count("str(hero_combo)") >= 2, (
+        "the multiway flop trainer is being passed a non-string hero key again — "
+        "strategy_at() keys by str(hand), so an object key silently never matches"
+    )
+
+
+def test_the_multiway_flop_trainer_fires_on_a_uniform_hero_row():
+    """M164. The behaviour the key type controls.
+
+    A node where SOME hands are trained but the hand being asked about
+    still reads as the bare prior is precisely the case M163 meant to fix
+    and could not reach. Given a string key that is present and uniform,
+    the trainer must do work and must change that row.
+    """
+    board, result = _tiny_multiway_flop_result(iterations=1)
+    target = row_key = None
+    for node in walk(result.root):
+        if not hasattr(node, "player_to_act"):
+            continue
+        strategy = result.strategy_at(node)
+        for key, row in strategy.items():
+            if len(row) > 1 and max(row.values()) - min(row.values()) < 1e-9:
+                target, row_key = node, key
+                break
+        if target is not None:
+            break
+    assert target is not None, "fixture produced no uniform row to repair"
+
+    before = dict(result.strategy_at(target)[row_key])
+    did_work = api_solving._ensure_flop_multiway_node_trained(
+        result, target, board, row_key)
+    assert did_work is True, "the trainer did not fire on a uniform hero row"
+    after = result.strategy_at(target)[row_key]
+    assert after != before or any(result.trained_hands(target).values()), (
+        "the trainer claimed to work but the node is unchanged"
+    )

@@ -8305,3 +8305,33 @@ entry's own corrections before trusting its conclusions.
   - Eight new tests, taking the suite 1,010 -> 1,018. Every attempted
     mutation of the new logic is caught by them - nine mutations across
     the three code changes.
+
+- **M164 - the M163 trainer was passing the wrong key type and did
+  nothing.** `StrategyResult.strategy_at` keys by `str(hand)`. M150's
+  preflop trainer passes `str(_combo_to_class(hero_combo))`; M163's
+  postflop sibling passed the `HandCombo` object, so
+  `strategy.get(hero_key)` never matched, `hero_row` was always None, and
+  the hero-row trigger could not fire. The function still ran on its
+  second, much rarer condition ("nothing at this node is trained"), which
+  is precisely the branch M163's own tests exercised - so a full suite
+  and four mutation tests all passed while the feature was inert.
+  - **Found by re-running the three sessions and comparing counters,
+    not by a test.** Uniform-prior rows came back **0/3/2 both before and
+    after M163 - byte-identical, same hands, same nodes**. A single run
+    would have reported "0 defects" and looked like success; the
+    like-for-like three-run comparison is what made the absence of change
+    visible. This is the R6 rule earning its place immediately.
+  - A first hypothesis - that these were 6-max hands folded down to two
+    live players, taking the heads-up cell - was **wrong**, and checking
+    it is what surfaced the real cause: the captured requests showed six
+    live positions, so the multiway cell was reached and the trainer was
+    being called; it was declining to act.
+  - Measured after the fix, on the exact failing request (hero ATo on
+    As Ks 5h facing a raise): **0.3333 / 0.3333 / 0.3333 -> fold 0.0018 /
+    call 0.0405 / all-in 0.9577**, `solver_confidence` low -> high. Top
+    pair had been folding a third of the time.
+  - **The lesson is about what the tests asserted.** They proved the
+    trainer works when it runs and that the call site reaches it; neither
+    proves it runs for the reason it exists. The new guard asserts the
+    KEY TYPE at both call sites, and restoring the object key fails it.
+  - Two new tests, suite 1,018 -> 1,020. Three mutations, all caught.

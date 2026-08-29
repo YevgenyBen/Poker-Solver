@@ -1249,7 +1249,9 @@ def _query_flop_multiway_from_path(
 
     # M163: repair the OPENING decision BEFORE formatting it, if it came
     # back as the bare prior. See _ensure_flop_multiway_node_trained.
-    _ensure_flop_multiway_node_trained(cached, cached.root, board_cards, hero_combo)
+    _ensure_flop_multiway_node_trained(
+        cached, cached.root, board_cards,
+        None if hero_combo is None else str(hero_combo))
     formatted = format_flop_response(cached, board="".join(str(c) for c in board_cards))
     response = {
         "board": formatted["board"],
@@ -1309,7 +1311,9 @@ def _query_flop_multiway_from_path(
     # M163: a mid-flop node is deeper in the sampled tree than the
     # opening decision, so it is MORE likely to be the bare prior, not
     # less.
-    _ensure_flop_multiway_node_trained(cached, flop_node, board_cards, hero_combo)
+    _ensure_flop_multiway_node_trained(
+        cached, flop_node, board_cards,
+        None if hero_combo is None else str(hero_combo))
     return {
         **response,
         "flop_action_path": list(flop_action_kinds),
@@ -2403,7 +2407,7 @@ def _row_is_the_prior(row: dict) -> bool:
     return len(values) > 1 and max(values) - min(values) < 1e-9
 
 
-def _ensure_flop_multiway_node_trained(result, node, board_cards, hero_combo=None) -> bool:
+def _ensure_flop_multiway_node_trained(result, node, board_cards, hero_key=None) -> bool:
     """Solve ONE multiway flop node's subtree on demand. Returns whether
     it did any work.
 
@@ -2435,7 +2439,14 @@ def _ensure_flop_multiway_node_trained(result, node, board_cards, hero_combo=Non
     if not strategy:
         return False
     trained = result.trained_hands(node)
-    hero_row = strategy.get(hero_combo) if hero_combo is not None else None
+    # M164: `hero_key` is a STRING, because `StrategyResult.strategy_at`
+    # keys by `str(hand)`. M163 passed the HandCombo object here, so this
+    # lookup never matched and the hero-row trigger - the whole reason
+    # this function exists - could not fire. The trainer still ran on the
+    # much rarer "nothing trained at all" condition, which is why its
+    # tests passed and three play sessions showed the uniform rows
+    # completely unchanged.
+    hero_row = strategy.get(hero_key) if hero_key else None
     # Same scope as M150: fire on the user-visible defect only. Firing
     # whenever ANY row is uniform would trigger on most nodes and buy
     # nothing for the hand actually being asked about.
@@ -2457,7 +2468,7 @@ def _ensure_flop_multiway_node_trained(result, node, board_cards, hero_combo=Non
         # Re-check under the lock: a concurrent request may have trained
         # this node already, and the solve is not free.
         if hero_row is not None and not _row_is_the_prior(
-            result.strategy_at(node).get(hero_combo, hero_row)
+            result.strategy_at(node).get(hero_key, hero_row)
         ):
             return False
         node_data = mccfr_solve(

@@ -631,9 +631,24 @@ requests now reject unknown fields by name rather than ignoring them.
   never formed a preference" and "never reached at all" are different
   news a user can act on.
 
-- **Multiway FLOP nodes are trained on demand (M163)** —
-  `_ensure_flop_multiway_node_trained`, the postflop sibling of M150's
-  preflop trainer, at `MULTIWAY_FLOP_NODE_TRAIN_ITERATIONS = 400`.
+- **Multiway FLOP nodes are trained on demand (M163, and it did NOT
+  work until M164)** — `_ensure_flop_multiway_node_trained`, the postflop
+  sibling of M150's preflop trainer, at
+  `MULTIWAY_FLOP_NODE_TRAIN_ITERATIONS = 400`.
+  **`hero_key` is a STRING and must stay one.** `StrategyResult.
+  strategy_at` keys by `str(hand)`; M163 passed the `HandCombo` OBJECT,
+  so the lookup silently never matched, `hero_row` was always None, and
+  the hero-row trigger - the entire reason the function exists - could
+  never fire. It still ran on the much rarer "nothing at this node is
+  trained" branch, which is exactly what M163's tests exercised, so they
+  passed while the feature did nothing. Three play sessions before and
+  after M163 returned **byte-identical uniform rows**, which is what
+  exposed it. Measured after M164 on the real failing request (hero ATo,
+  As Ks 5h, facing a raise): **0.3333/0.3333/0.3333 -> fold 0.0018 /
+  call 0.0405 / all-in 0.9577**, and `solver_confidence` low -> high
+  because there is now an answer. Pinned by
+  `test_the_multiway_flop_trainer_is_given_a_string_hero_key`, which
+  asserts the KEY TYPE at both call sites.
   Affordable only because M162 made multiway equity ~28x cheaper. Same
   scope and same caveat as M150: it fires only when hero's row IS the
   prior or nothing at the node is trained, and **the reach it assumes is
