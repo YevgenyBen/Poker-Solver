@@ -1355,13 +1355,17 @@ def _hero_row_is_the_prior(hero: dict | None) -> bool:
     # version reading `raw.get("hero")` silently never fired.
     if not isinstance(hero, dict):
         return False
-    # Only the MISLEADING combination. When `trained` is false the
-    # response already carries a louder, hero-specific warning ("these
-    # numbers are the untrained default"), and saying it twice in
-    # different words reads as two problems instead of one. The gap this
-    # closes is a uniform row that every existing signal calls fine.
-    if hero.get("trained") is not True:
-        return False
+    # M163/F47: this used to return False whenever `trained` was not
+    # True, on the reasoning that an untrained hero already carries a
+    # louder warning. It does carry one - in the `hero.trained` FIELD -
+    # but `solver_confidence` never read that field, so the headline
+    # signal still said "high" over a row that is purely the prior.
+    # Measured in a 120-hand session: a six-handed flop decision returned
+    # 0.3333 across fold/call/all-in and called itself high confidence.
+    #
+    # Structural now: this asks only whether the row IS the prior.
+    # `_solver_confidence` picks which reason to give, because "reached
+    # but never preferred" and "never reached" are different news.
     row = hero.get("strategy") or {}
     if len(row) < 2:
         return False
@@ -1387,7 +1391,14 @@ def _solver_confidence(raw: dict, players: int, hero: dict | None = None):
     elif _hero_row_is_the_prior(hero):
         # `elif`: when the whole node is untrained the node-level reason
         # already says so, and both would be the same news twice.
-        reasons.append(cfg.UNIFORM_ROW_REASON)
+        #
+        # M163/F47: which reason depends on whether the hand was reached
+        # at all. Both are the prior; only one of them was ever looked at.
+        reasons.append(
+            cfg.UNIFORM_ROW_REASON
+            if isinstance(hero, dict) and hero.get("trained") is True
+            else cfg.UNTRAINED_HERO_ROW_REASON
+        )
     if not reasons:
         return "high", None
     return "low", " ".join(reasons)

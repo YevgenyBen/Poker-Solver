@@ -8237,3 +8237,71 @@ entry's own corrections before trusting its conclusions.
   - Five new tests (six cases with parametrisation); all four attempted
     mutations of the sharing logic are caught by them. Full suite green
     at 1,010.
+
+- **M163 - the recommendations pass, and two of the six were wrong.**
+  Worked through the six recommendations the three-session report
+  produced, in order.
+  - **R1: the mid-flop node was 29x slower than the opening decision on
+    the same board, and the reason was not the one the report gave.** The
+    report blamed a missing warm-start cache. That was true but minor;
+    the real cause is that this call passed neither `equity_samples` nor
+    `equity_table_fn`, so it built its equity table at `board_equity`'s
+    default of 200 samples, sequentially, where the opening decision uses
+    30 through the parallel builder. M131 and M132 each fixed exactly
+    this for the canonical-library path and neither reached here.
+    Measured through `/advise`: **35.08s -> 1.22s** cold, **34.55s ->
+    0.84s** for a second hero. Also a consistency fix, since M88 exists
+    to make both flop decisions model the same game and equity precision
+    is part of that game.
+    Validated: 30 samples moves the answer LESS than a different equity
+    seed does (p90 0.088/0.052 vs 0.103/0.085), and warm-starting moves
+    it p90 0.0003 with no entry over 0.05.
+  - **R2 / F47: an untrained uniform row read as "high" confidence.**
+    M149's guard was gated on `trained is True` because an untrained hero
+    "already fires a louder warning" - which lives in a FIELD that
+    `solver_confidence` never consulted. Both causes now report low, with
+    different reasons. Required deliberately overturning an assertion
+    M149 wrote to pin the old behaviour, which is that guard working as
+    designed.
+  - **R3: multiway flop nodes are trained on demand**, the postflop
+    sibling of M150, at 400 iterations. Affordable only after M162. The
+    defect is rare (1 in 837 decisions), so mechanism and wiring are
+    tested separately rather than pretending to an end-to-end repro - and
+    the wiring test immediately caught that the test's preflop path
+    folded to two live players and never reached the multiway cell.
+  - **R5 was NOT a defect, and the report's own grouping invented it.**
+    The report noted multiway facing-a-bet at 17.4s against 0.78s for the
+    opening decision, and flagged that `api/solving.py`'s comment claims
+    that cell needs no new solve. Measured: the facing-a-bet node costs
+    **0.01s and triggers zero solves** - the comment and the code are
+    both right. The session cost is the FIRST request on a board paying
+    the cold solve; multiway players often face a bet immediately, so
+    that decision carries it. Grouping session latency by node type
+    attributed a cold-start cost to a node type.
+  - **R4 failed to build a converged reference, and that is the finding.**
+    Seed spread across budgets: 0.462 / 0.295 / 0.333 / 0.308 / **0.240**
+    at 200 / 1k / 4k / 12k / 30k - still 0.240 at 150x the shipped
+    budget, non-monotone. But a SAME-SEED comparison across budgets does
+    converge (0.0118 at 12k vs 30k), so the solve settles to a
+    seed-dependent answer rather than to an answer.
+    Splitting the sources: **MCCFR traversal seed 0.467 / 0.357 / 0.328;
+    equity seed 0.321 / 0.231 / 0.205.** Sampling noise is the larger
+    term - the opposite of the hypothesis this milestone started with,
+    which was that M98's frozen-equity mechanism would dominate.
+    More samples help partially (9.4x samples moves equity-seed spread
+    0.212 -> 0.170 and 0.295 -> 0.136 across two boards, at 2.4x cost)
+    and are NOT adopted: they leave the dominant term untouched, and
+    "better" cannot be scored without the reference this exercise failed
+    to build.
+    **One sweep reported 0.045 at 3,000 samples; replication across four
+    seed pairs showed that was a single pair's luck** (the others: 0.20,
+    0.17, 0.17). Three points were nearly read as a trend for the second
+    time in this project's history.
+  - **R6 is a method change, applied here and recorded in CLAUDE.md:**
+    three sessions, not one, for any quality claim. Timing repeats
+    (median 0.81-0.90s, heads-up flop 1.15-1.17s across three runs);
+    defect counts do not (uniform rows 0/3/2, stack-commits 20/12/10),
+    and F47 appeared in one run of three.
+  - Eight new tests, taking the suite 1,010 -> 1,018. Every attempted
+    mutation of the new logic is caught by them - nine mutations across
+    the three code changes.
