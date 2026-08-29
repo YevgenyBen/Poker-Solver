@@ -8182,3 +8182,58 @@ entry's own corrections before trusting its conclusions.
   - Five new tests, and all four attempted mutations of the new logic are
     caught by them - including the exact dead-pot error above. Full suite
     green at 1,004.
+
+- **M162 - the multiway flop shares its board runouts (~28x), and the
+  measurement that made it possible found a bigger problem than latency.**
+  M161 left the multiway flop as the slowest thing a player waits for
+  (27.8s in the play session). It runs on the sampled solver, which M161
+  did not touch.
+  - **Anatomy first, and it ruled out the obvious answer.** M161's
+    vector rewrite does not transfer: `_mccfr_recurse` already returns a
+    length-N vector. Measured instead: a real 3-way flop solve is **99%
+    equity lookups** (427 at 12.7ms) against only 42 decision nodes and
+    2,296 node visits, and 96% of a lookup is `best_hand_rank_batch`.
+    The tree and the traversal are nothing; the hand evaluation is
+    everything.
+  - **The waste.** `nway_combo_equity_vector` redraws runouts for every
+    opponent tuple, so the same candidate is re-ranked on fresh boards
+    thousands of times per solve. A candidate's rank on a runout does not
+    depend on WHICH opponents it faces - only the comparison does.
+    `SharedRunoutRanks` draws runouts once per board, ranks each combo
+    once, and turns every lookup into integer comparisons.
+  - **26.3x / 31.4x / 26.3x**, interleaved A/B in one process per M70's
+    rule (5.32s -> 0.19s on the first board).
+  - **Sharing costs effective samples, and that is paid for, not
+    ignored.** Shared runouts cannot exclude each tuple's hole cards, so
+    collisions are dropped - the same variance-not-bias trade M68 made in
+    `_simulate_equity_shared_board` and this module already made for the
+    candidate's own two cards, extended to the opponents'. ~23% dropped
+    at three-handed against ~8% before, so `SHARED_RUNOUT_SAMPLES = 320`
+    rather than 200.
+  - **Validated where the answer can be exact.** On turn and river boards
+    both implementations enumerate, and dropping collisions leaves exactly
+    the deck the per-tuple version enumerated - so equality is required,
+    not approximate agreement: **0.0 across 1,420 comparisons**, zero
+    NaN-contract mismatches. On flop boards, mean difference 0.020, and
+    three controls say noise rather than bias: the reference disagrees
+    with itself under a different seed by more (0.036 vs 0.030), signed
+    error against a 4,000-sample truth is ~0 for both, and absolute error
+    against that truth is lower for shared (0.0156 vs 0.0247).
+  - **A correction to this milestone's own first reading.** The initial
+    A/B compared the implementation gap against ONE seed pair per board
+    and appeared to exceed it on one of three. Measured properly against
+    a DISTRIBUTION of seed-pair gaps (p90 0.130-0.326), the
+    implementation gap (0.231-0.277 across four seeds) sits inside it at
+    or below the median. One seed pair is a single draw, and the one it
+    drew happened to be the smallest.
+  - **F46, and it is the real finding.** Two solves differing only in
+    seed disagree by p90 0.473 at the shipped budget, 0.449 at 1,000
+    iterations, and **0.313 at 4,000** - twenty times the shipped budget,
+    worst case still 0.959. Multiway flop advice is substantially noise.
+    The budget was deliberately not raised here: 4,000 iterations is now
+    affordable (~1.5s, still cheaper than today's solve), but "more
+    stable" is not "more correct" - M152 measured that exact trap - and
+    scoring it needs a converged multiway reference that does not exist.
+  - Five new tests (six cases with parametrisation); all four attempted
+    mutations of the sharing logic are caught by them. Full suite green
+    at 1,010.

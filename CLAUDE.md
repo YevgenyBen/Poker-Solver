@@ -594,6 +594,64 @@ requests now reject unknown fields by name rather than ignoring them.
   the cold budget, since a caller may ask for fewer iterations than the
   warm setting.
 
+- **The multiway flop solve SHARES its board runouts, and is ~28x faster
+  (M162).** Anatomy first, per M67: a real 3-way flop solve is **99%
+  equity lookups** - 427 of them at 12.7ms - against a tree of only 42
+  decision nodes and 2,296 visits, and 96% of a lookup is
+  `best_hand_rank_batch`. M161's fix does not transfer here:
+  `_mccfr_recurse` already returns a length-N vector, so the sampled
+  solver was O(N) per node already.
+  The waste was that `nway_combo_equity_vector` **redraws runouts for
+  every opponent tuple**, re-ranking the same candidate on fresh boards
+  thousands of times. A candidate's rank on a runout does not depend on
+  who it is compared against - only the comparison does. `SharedRunoutRanks`
+  draws runouts ONCE per board, ranks each combo once (lazily), and
+  reduces every lookup to integer comparisons. **26.3x / 31.4x / 26.3x on
+  three boards, interleaved A/B in one process.**
+  **The one thing that changes, and why it is sound**: shared runouts
+  cannot exclude each tuple's hole cards, so colliding samples are
+  DROPPED instead. That is not an approximation - rejection sampling from
+  the larger deck gives exactly the conditional distribution of the
+  smaller one - it costs effective sample count, ~23% at three-handed
+  against the per-tuple version's ~8%. Hence `SHARED_RUNOUT_SAMPLES = 320`
+  against the old default of 200: **don't lower it to 200 thinking it
+  matches**, it would not.
+  **Validated where it can be exact, not just where it is convenient.**
+  On TURN and RIVER boards both implementations enumerate rather than
+  sample, and dropping collisions leaves precisely the deck the per-tuple
+  version enumerated - so they must agree to the digit, and do (0.0 over
+  1,420 comparisons, zero NaN-contract mismatches). On flop boards they
+  can only agree within Monte Carlo error: mean 0.020, and the controls
+  say noise not bias - the reference disagrees with ITSELF under a
+  different seed by MORE (0.036 vs 0.030), signed error against a
+  4,000-sample truth is ~0 for both, and absolute error against that
+  truth is **lower** for shared (0.0156 vs 0.0247), because 320 shared
+  samples net more usable runouts than 200 per-tuple ones. Faster and
+  slightly more accurate.
+
+- **F46 (M162): multiway flop advice is NOISE-DOMINATED, and 20x the
+  budget does not fix it.** Two solves of the same spot differing only in
+  seed disagree by **p90 0.473, worst 1.0** at the shipped 200
+  iterations. At 1,000 it is 0.449; at **4,000 - twenty times the shipped
+  budget - it is still 0.313, worst 0.959.** So a multiway flop strategy
+  is substantially a draw from a distribution, not a solved answer, and
+  more iterations converge it only slowly.
+  This was invisible before M162 because measuring it cost 5.3s per solve;
+  at 0.19s the whole sweep is seconds. **It also reframes what M162's own
+  speedup is worth**: the 28x buys latency, and it buys the ABILITY to
+  attack this, but it does not itself make the advice better.
+  **The budget was deliberately NOT raised in M162.** 4,000 iterations
+  now costs ~1.5s - still 3.5x cheaper than today's 200-iteration solve -
+  so it is affordable, and it does reduce noise. But "more stable" is not
+  "more correct": M152 measured exactly that trap on the flop path, where
+  more precision fixed hands whose true frequency was ~0 and broke the
+  ones that should bet. Raising it needs a converged multiway reference
+  to score against, and none exists. Changing the budget inside a
+  performance milestone would also have made the speedup unmeasurable -
+  the same reasoning as F45.
+  Note the multiway preflop budgets (M72) are a SEPARATE constant and a
+  separate finding; this is `DEFAULT_FLOP_MULTIWAY_ITERATIONS`.
+
 - **The exact solver propagates an N-VECTOR, not an N x N matrix
   (M161) — 13.1x on a production-sized flop pool.** M160 named this as
   the remaining fix and estimated 3-5x; measured, it is larger, and the
