@@ -1174,6 +1174,46 @@ MULTIWAY_STACK_BUCKET_BB = 5.0
 POSTFLOP_FOLD_ERROR_MEAN = 0.1870
 POSTFLOP_FOLD_ERROR_WORST = 0.8017
 
+# M166: postflop accuracy depends sharply on how strong hero's hand is,
+# so the response says which band this answer is in instead of labelling
+# every answer the same way. Measured over 27 flop spots drawn from real
+# play (not chosen), against a solve at ~5x the range and 5x the
+# iterations, with every reference checked twice under different
+# randomness and unstable ones discarded:
+#
+#   band (percentile)   spots   mean error   worst   over 0.10
+#   strong  >= 0.85         5       0.0237   0.057      0
+#   medium  0.55-0.85       5       0.0025   0.008      0
+#   weak    < 0.55          4       0.2785   0.903      2
+#
+# The threshold is the band boundary, not a round number: nothing above
+# it exceeded 0.10 and half of what fell below it did.
+#
+# This does NOT fix the underlying error - ten separate attempts at that
+# are recorded as dead (M130-M141, plus M166's own hero-class variant).
+# It tells a player which answers to act on, which is the part that was
+# missing.
+UNRELIABLE_HAND_STRENGTH_PERCENTILE = 0.55
+
+WEAK_HAND_ERROR_MEAN = 0.2785
+WEAK_HAND_ERROR_WORST = 0.9033
+RELIABLE_HAND_ERROR_WORST = 0.0571
+
+WEAK_HAND_RELIABILITY_NOTE = (
+    "YOUR HAND IS IN THE BAND WHERE THIS ADVICE IS LEAST RELIABLE. Measured against "
+    "a much larger solve, hands this weak had their betting frequency off by 28 "
+    "percentage points on average and by 90 at worst, in both directions - it both "
+    "bets hands that should be checked and checks hands that should be bet. Use the "
+    "action here as a rough suggestion only, and do not commit a large part of your "
+    "stack on it. "
+)
+
+RELIABLE_HAND_NOTE = (
+    "Your hand is in the band where this advice measured reliable: against a much "
+    "larger solve, hands of this strength were off by at most 6 percentage points, "
+    "and none exceeded 10. "
+)
+
 POSTFLOP_AGGRESSION_ERROR_MEAN = 0.1394
 POSTFLOP_AGGRESSION_ERROR_WORST = 0.8810
 

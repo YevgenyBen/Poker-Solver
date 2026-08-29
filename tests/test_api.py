@@ -5544,3 +5544,79 @@ def test_the_exact_node_trainer_leaves_a_differentiated_node_alone():
     assert api_solving._ensure_exact_node_trained(
         result, branch.root, branch.equity_table, key) is False
     assert result.strategy_at(branch.root)[key] == trained_row
+
+
+# ---------------------------------------------------------------------------
+# M166: the postflop caveat is calibrated to hero's own hand.
+#
+# Measured over 27 flop spots drawn from real play: nothing in the upper
+# two strength bands was off by more than 0.10, and half the weak band
+# was — worst 0.90. The advice could not be fixed (ten attempts are
+# recorded as dead), so the response now says which band it is in.
+# ---------------------------------------------------------------------------
+
+
+def test_a_weak_hand_gets_the_unreliable_band_warning(client):
+    """The case the signal exists for. Nine-high on an ace-high board sits
+    in the band where measured error averaged 28 points and reached 90."""
+    response = client.post("/advise", json={
+        "hero_cards": "9s8s", "board": "As7d2h", "players": 2, "stack_bb": 100.0,
+        "preflop_action_path": ["raise", "call_or_check"],
+    })
+    assert response.status_code == 200, response.json()
+    body = response.json()
+    assert body["hand_strength_percentile"] < api_config.UNRELIABLE_HAND_STRENGTH_PERCENTILE
+    reason = body["aggression_confidence_reason"]
+    assert reason.startswith(api_config.WEAK_HAND_RELIABILITY_NOTE), reason[:120]
+    # It must say the thing a player can act on, not merely "low confidence".
+    assert "do not commit a large part of your stack" in reason
+
+
+def test_a_strong_hand_is_told_the_advice_measured_reliable(client):
+    """The other half, and the half that makes the warning worth reading: a
+    caveat attached to every answer is one a player learns to ignore."""
+    response = client.post("/advise", json={
+        "hero_cards": "AhAd", "board": "As7d2h", "players": 2, "stack_bb": 100.0,
+        "preflop_action_path": ["raise", "call_or_check"],
+    })
+    assert response.status_code == 200, response.json()
+    body = response.json()
+    assert body["hand_strength_percentile"] >= api_config.UNRELIABLE_HAND_STRENGTH_PERCENTILE
+    reason = body["aggression_confidence_reason"]
+    assert reason.startswith(api_config.RELIABLE_HAND_NOTE), reason[:120]
+    assert not reason.startswith(api_config.WEAK_HAND_RELIABILITY_NOTE)
+
+
+def test_the_two_bands_actually_differ_on_one_board(client):
+    """Guards the thing a constant-returning implementation would break:
+    the same board, the same action, two hands, two different verdicts."""
+    base = {"board": "As7d2h", "players": 2, "stack_bb": 100.0,
+            "preflop_action_path": ["raise", "call_or_check"]}
+    strong = client.post("/advise", json={**base, "hero_cards": "AhAd"}).json()
+    weak = client.post("/advise", json={**base, "hero_cards": "9s8s"}).json()
+    assert strong["hand_strength_percentile"] > weak["hand_strength_percentile"]
+    assert (strong["aggression_confidence_reason"]
+            != weak["aggression_confidence_reason"])
+
+
+def test_the_band_note_quotes_its_own_measurement():
+    """M140's rule, applied here: copy that states a number must state the
+    number that was measured, so the two cannot drift apart."""
+    weak = api_config.WEAK_HAND_RELIABILITY_NOTE
+    assert str(round(api_config.WEAK_HAND_ERROR_MEAN * 100)) in weak
+    assert str(round(api_config.WEAK_HAND_ERROR_WORST * 100)) in weak
+    reliable = api_config.RELIABLE_HAND_NOTE
+    assert str(round(api_config.RELIABLE_HAND_ERROR_WORST * 100)) in reliable
+
+
+def test_preflop_has_no_hand_strength_reading(client):
+    """There is no board preflop, so there is nothing to measure strength
+    against. Reporting one would be inventing it."""
+    response = client.post("/advise", json={
+        "hero_cards": "AhAd", "players": 2, "stack_bb": 100.0,
+        "preflop_action_path": [],
+    })
+    assert response.status_code == 200, response.json()
+    body = response.json()
+    assert body["hand_strength_percentile"] is None
+    assert body["aggression_confidence_reason"] is None
