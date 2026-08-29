@@ -1299,6 +1299,19 @@ BET_SIZING_COVERAGE_NOTE = (
 # measured multiway flop strategies as noise-dominated at low budgets -
 # this does not fix that (see F46), it only replaces "never computed"
 # with "computed against a stated prior".
+# M165: the HEADS-UP river sibling of the two constants below. A river
+# node reached through the flop->turn->river chain gets very little of
+# that chain's own 20 iterations, and rows come back as the bare prior
+# even though the exact solver visited them - `trained` is true, every
+# regret is still <= 0, so `average_strategy` never leaves the uniform
+# start. Measured on a real request: 10 of 19 hands at one river node.
+#
+# 200 rather than 50: the subtree converges by ~50 (0.9992 at 50, 1.0 at
+# 200 on the measured spot) and it is a two-action tree over ~19 combos,
+# so the extra iterations cost almost nothing and leave margin for spots
+# that settle more slowly.
+RIVER_NODE_TRAIN_ITERATIONS = 200
+
 MULTIWAY_FLOP_NODE_TRAIN_ITERATIONS = 400
 
 PREFLOP_DEEP_NODE_TRAIN_ITERATIONS = 200

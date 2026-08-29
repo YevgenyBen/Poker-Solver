@@ -8335,3 +8335,41 @@ entry's own corrections before trusting its conclusions.
     proves it runs for the reason it exists. The new guard asserts the
     KEY TYPE at both call sites, and restoring the object key fails it.
   - Two new tests, suite 1,018 -> 1,020. Three mutations, all caught.
+
+- **M165 - the river's uniform rows, and two wrong conclusions on the way
+  to them.** The three-session comparison left five uniform-prior rows:
+  three on the flop (M163/M164) and two on the river.
+  - **Different cause from the multiway case.** The heads-up river runs
+    the EXACT solver, which visits every hand at every node - so
+    `trained` is true and the row is still exactly uniform, because every
+    regret stayed <= 0 through the chained solve's 20 iterations. F43's
+    mechanism in the exact solver.
+  - **Measured on the real failing request** (hero Jc9c, 3d Kc 4d / 4s /
+    8c): 10 of 19 hands at the node were the bare prior, hero included,
+    returning `check 0.5 / all-in 47.5bb 0.5` with jack-high. After
+    `_ensure_exact_node_trained`: **check 0.99995**, node 10/19 uniform
+    -> 0/19, trained 19/19, `solver_confidence` low -> high. The subtree
+    converges at ~50 iterations (0.9992) so 200 is comfortable margin.
+  - **First wrong conclusion: "the turn inverts".** Extending the same
+    repair to the turn looked like obvious thoroughness, and a sweep
+    showed value hands betting small while air jammed and nothing
+    checked. That sweep asked as a different hero each time; hero is
+    force-included into the range, so every row came from a different
+    solve. It compared five solves, not one node with and without
+    training. Withdrawn.
+  - **Second wrong conclusion, from a broken control.** The first attempt
+    to fix that A/B matched hands by `set(cards)`, which cannot tell
+    `7s2h` from `7h2s`, and read a different hand's row while reporting
+    `fired=False`. Also withdrawn.
+  - **What is actually true about the turn**: the trainer would never
+    fire there. Hero's row is always trained because hero is
+    force-included; the uniform rows belong to hands the user never sees.
+    A/B with hero held fixed and only the trainer toggled: **0 firings
+    across five heroes, byte-identical strategies**. The turn call site
+    was built, measured, and removed, with the finding recorded in place.
+  - The through-line: two confident conclusions from comparisons where
+    more than one thing varied - the hero key in M164, hero itself here.
+    Both times the tell was a number moving when the thing under test had
+    not changed.
+  - Three new tests, suite 1,020 -> 1,023. Four mutations, all caught,
+    including passing the flop's equity table instead of the river's.

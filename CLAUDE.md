@@ -631,6 +631,43 @@ requests now reject unknown fields by name rather than ignoring them.
   never formed a preference" and "never reached at all" are different
   news a user can act on.
 
+- **The HEADS-UP RIVER node is trained on demand (M165), and its cause is
+  NOT the multiway one.** `_ensure_exact_node_trained`. The exact solver
+  visits every hand at every node, so a uniform row here does not mean an
+  unvisited node - `trained` is true. It means every regret at that row
+  is still <= 0, so `current_strategy()` returned the prior on every
+  iteration and the average never left it: F43's "visited is not learned"
+  in the exact solver, caused by a river node seeing very little of the
+  flop->turn->river chain's own 20 iterations.
+  Measured on a real request (hero Jc9c, 3d Kc 4d / 4s / 8c): **10 of 19
+  hands at the node read as the bare prior**, hero among them, returning
+  `check 0.5 / all-in 47.5bb 0.5` with jack-high - advice that shoves half
+  a stack half the time with a hand that should never bet. After:
+  **check 0.99995**, and the node goes 10/19 uniform -> **0/19**, 19/19
+  trained. The subtree converges fast (0.9992 at 50 iterations, 1.0 at
+  200), hence `RIVER_NODE_TRAIN_ITERATIONS = 200`.
+  **Pass the RIVER branch's own equity table**, not the flop's - valuing
+  the hand on the wrong board would still return a confident answer.
+  Guarded by `test_the_river_trainer_is_given_that_rivers_own_equity_table`.
+
+- **The TURN is deliberately NOT given the same repair, because it would
+  never fire (M165).** Hero is force-included into the derived range
+  (M51/M76), so hero's own row at a turn node is always trained and
+  differentiated. The uniform rows there belong to OTHER hands, which no
+  user sees: measured 42 of 66 at one real node, with hero not among
+  them. **A/B with the trainer toggled and hero held fixed: 0 firings
+  across five heroes** (top set, middle set, top pair, gutshot, air),
+  strategies byte-identical either way. Consistent with three 120-hand
+  sessions producing uniform rows on the flop and river and none on the
+  turn.
+  **A withdrawn claim worth knowing about**: an earlier version of this
+  work asserted the turn "inverts" when repaired - value betting small
+  while air jammed - with a table of frequencies. That table asked as a
+  DIFFERENT hero each time, and hero force-inclusion changes the range
+  and therefore the solve, so it compared five solves rather than one
+  node with and without training. **Any before/after here must hold hero
+  fixed and toggle only the thing being tested.**
+
 - **Multiway FLOP nodes are trained on demand (M163, and it did NOT
   work until M164)** — `_ensure_flop_multiway_node_trained`, the postflop
   sibling of M150's preflop trainer, at
