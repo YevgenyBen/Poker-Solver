@@ -6,7 +6,11 @@ import pytest
 from poker_solver.board_equity import build_board_equity_table
 from poker_solver.cards import Card
 from poker_solver.combos import HandCombo
-from poker_solver.multiway_board_equity import NwayBoardEquityCache, nway_combo_equity_vector
+from poker_solver.multiway_board_equity import (
+    NwayBoardEquityCache,
+    SharedRunoutRanks,
+    nway_combo_equity_vector,
+)
 
 
 def cards(text: str) -> list:
@@ -301,3 +305,128 @@ def test_cache_different_boards_do_not_collide():
     vector_a = cache_a.traverser_equity_vector(opponents)
     vector_b = cache_b.traverser_equity_vector(opponents)
     assert vector_a[0] != pytest.approx(vector_b[0])
+
+
+# ---------------------------------------------------------------------------
+# M162: shared-runout ranks. `nway_combo_equity_vector` redraws runouts for
+# every opponent tuple; `SharedRunoutRanks` draws them once per board and
+# reduces each lookup to integer comparisons. The estimator must not change.
+# ---------------------------------------------------------------------------
+
+
+def _three_way_pool(board):
+    """A pool big enough that blockers and conflicts actually occur."""
+    from poker_solver.combos import range_from_class_frequencies
+    from poker_solver.starting_hands import all_starting_hands
+
+    hands = all_starting_hands()
+    combos = set()
+    for i in range(3):
+        combos |= set(range_from_class_frequencies(
+            {h: 1.0 for h in hands[i * 3:i * 3 + 6]}, exclude=frozenset(board)))
+    return sorted(combos, key=str)
+
+
+@pytest.mark.parametrize("board_text,label", [
+    ("Jh 7d 2c 9s 4h", "river"),
+    ("Jh 7d 2c 9s", "turn"),
+])
+def test_shared_runouts_are_exact_on_turn_and_river_boards(board_text, label):
+    # The sharp test, and the reason it is sharp: with one card or none
+    # left to come, BOTH implementations enumerate rather than sample.
+    # Sharing draws from a deck that excludes only the board and then
+    # drops the runouts that collide with somebody's hole cards - which
+    # leaves precisely the deck the per-tuple version enumerated. So this
+    # is not "close", it must be equal to the digit. Any difference is a
+    # bug in the collision handling, which is the one part of the sharing
+    # argument that could be wrong.
+    board = tuple(cards(board_text))
+    pool = _three_way_pool(board)
+    shared = SharedRunoutRanks(board)
+    picker = random.Random(3)
+    for _ in range(4):
+        opponents = tuple(picker.sample(pool, 2))
+        reference = nway_combo_equity_vector(board, opponents, pool,
+                                             rng=random.Random(99))
+        got = shared.equity_vector(opponents, pool)
+        assert np.array_equal(np.isnan(reference), np.isnan(got))
+        both = ~np.isnan(reference)
+        assert np.allclose(reference[both], got[both], atol=0, rtol=0)
+
+
+def test_shared_runouts_keep_the_nan_contract():
+    # NaN means "cannot physically happen", and it has to keep meaning
+    # that: a candidate sharing a card with the board or an opponent, and
+    # every entry when the opponents cannot coexist at all.
+    board = tuple(cards("Jh 7d 2c"))
+    hero = HandCombo(Card.from_str("As"), Card.from_str("Kd"))
+    blocks_board = HandCombo(Card.from_str("Jh"), Card.from_str("Ks"))
+    blocks_opponent = HandCombo(Card.from_str("Ts"), Card.from_str("Qc"))
+    opponent = HandCombo(Card.from_str("Ts"), Card.from_str("9s"))
+    shared = SharedRunoutRanks(board, samples=60)
+
+    got = shared.equity_vector((opponent,), [hero, blocks_board, blocks_opponent])
+    assert not np.isnan(got[0])
+    assert np.isnan(got[1])          # shares Jh with the board
+    assert np.isnan(got[2])          # shares Ts with the opponent
+    # Opponents that conflict with each other: every entry is NaN.
+    clashing = (opponent, HandCombo(Card.from_str("Ts"), Card.from_str("2s")))
+    assert np.all(np.isnan(shared.equity_vector(clashing, [hero])))
+    # An opponent sitting on the board: same.
+    on_board = (HandCombo(Card.from_str("Jh"), Card.from_str("4d")),)
+    assert np.all(np.isnan(shared.equity_vector(on_board, [hero])))
+
+
+def test_shared_runouts_do_not_depend_on_lookup_order():
+    # Determinism was previously bought with a per-tuple derived seed. It
+    # now comes from there being a single draw per board, but the
+    # guarantee callers rely on is the same one: an answer depends on the
+    # opponent tuple, never on what was asked before it.
+    board = tuple(cards("Jh 7d 2c"))
+    pool = _three_way_pool(board)
+    first, second = (pool[0], pool[30]), (pool[5], pool[40])
+
+    a = SharedRunoutRanks(board, samples=80)
+    forward = (a.equity_vector(first, pool), a.equity_vector(second, pool))
+    b = SharedRunoutRanks(board, samples=80)
+    backward_second = b.equity_vector(second, pool)
+    backward_first = b.equity_vector(first, pool)
+
+    for expected, got in ((forward[0], backward_first), (forward[1], backward_second)):
+        assert np.array_equal(np.isnan(expected), np.isnan(got))
+        mask = ~np.isnan(expected)
+        assert np.array_equal(expected[mask], got[mask])
+
+
+def test_shared_runouts_rank_combos_outside_the_candidate_pool():
+    # Opponents come from the same pool in every current caller, but the
+    # table must not silently return garbage if one does not - it ranks
+    # lazily, so an unseen combo has to be ranked on demand rather than
+    # missing from the dict.
+    board = tuple(cards("Jh 7d 2c"))
+    hero = HandCombo(Card.from_str("As"), Card.from_str("Kd"))
+    outsider = HandCombo(Card.from_str("Qs"), Card.from_str("Qh"))
+    shared = SharedRunoutRanks(board, samples=60)
+    got = shared.equity_vector((outsider,), [hero])
+    assert not np.isnan(got[0])
+    assert 0.0 <= got[0] <= 1.0
+
+
+def test_the_nway_cache_uses_shared_runouts():
+    # Wiring: the cache is the thing the solver actually calls, and the
+    # speedup only exists if it goes through the shared table. A cache
+    # whose answers match a directly-built table is going through it.
+    board = tuple(cards("Jh 7d 2c"))
+    pool = _three_way_pool(board)
+    cache = NwayBoardEquityCache(board, pool, samples=80, seed=5)
+    direct = SharedRunoutRanks(board, samples=80, seed=5)
+    opponents = (pool[1], pool[25])
+    from_cache = cache.traverser_equity_vector(opponents)
+    from_table = direct.equity_vector(opponents, pool)
+    assert np.array_equal(np.isnan(from_cache), np.isnan(from_table))
+    mask = ~np.isnan(from_cache)
+    assert np.array_equal(from_cache[mask], from_table[mask])
+    # And it still memoizes.
+    assert len(cache) == 1
+    cache.traverser_equity_vector(opponents)
+    assert len(cache) == 1
