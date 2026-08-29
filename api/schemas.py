@@ -230,6 +230,12 @@ class AdviseResponse(BaseModel):
     # preflop and is about which size to pick among the non-fold actions.
     aggression_confidence: str = "high"
     aggression_confidence_reason: str | None = None
+    # M166: how strong hero's hand is on this board, 0.0-1.0, against
+    # every hand that could be held there. The number behind the
+    # reliability band named in `aggression_confidence_reason`, exposed
+    # so a caller can act on it without parsing prose. None preflop
+    # (no board) and whenever hero's cards are absent.
+    hand_strength_percentile: float | None = None
 
 
 class SolveResponse(BaseModel):

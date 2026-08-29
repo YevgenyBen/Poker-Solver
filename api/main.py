@@ -548,6 +548,7 @@ from starlette.concurrency import run_in_threadpool
 from poker_solver.board_equity import two_combo_equity
 from poker_solver.canonicalize import canonical_stack_depth, canonicalize_board
 from poker_solver.cards import parse_cards
+from poker_solver.hand_strength import strength_percentile
 from poker_solver.combos import HandCombo, range_from_class_frequencies
 from poker_solver.equity import MultiwayEquityCache
 from poker_solver.game_tree import (
@@ -1300,7 +1301,15 @@ async def advise_endpoint(request: AdviseRequest):
                 "low" if raw.get("street") != "preflop" else "high"
             ),
             "aggression_confidence_reason": (
-                _aggression_reason(raw)
+                _aggression_reason(raw, hero)
+                if raw.get("street") != "preflop"
+                else None
+            ),
+            # M166: the number behind the band note, so a caller can act on
+            # it directly instead of parsing prose. None when hero's cards
+            # or the board are missing.
+            "hand_strength_percentile": (
+                _hand_strength_percentile(raw, hero)
                 if raw.get("street") != "preflop"
                 else None
             ),
@@ -1450,9 +1459,48 @@ def _has_no_intermediate_bet_size(raw: dict) -> bool:
     return saw_all_in
 
 
-def _aggression_reason(raw: dict) -> str:
-    """The postflop caveat, plus the sizing-coverage note where it applies."""
+def _hand_strength_percentile(raw: dict, hero: dict | None) -> float | None:
+    """How strong hero's hand is on this board, 0.0-1.0, or None.
+
+    M166. Returns None rather than guessing whenever the inputs are not
+    both present and parseable - a wrong strength reading would attach
+    the wrong reliability note, which is worse than attaching none.
+    """
+    if not isinstance(hero, dict):
+        return None
+    cards = hero.get("cards")
+    board = raw.get("board")
+    if not cards or not board:
+        return None
+    try:
+        hero_cards = parse_cards(cards)
+        board_cards = parse_cards(board)
+        if len(hero_cards) != 2 or not 3 <= len(board_cards) <= 5:
+            return None
+        return strength_percentile(HandCombo(*hero_cards), tuple(board_cards))
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def _aggression_reason(raw: dict, hero: dict | None = None) -> str:
+    """The postflop caveat, calibrated to hero's own hand where possible.
+
+    M166: the blanket caveat told every player the same thing, while the
+    measured error splits sharply by hand strength - nothing in the upper
+    two bands exceeded 0.10 and half the weak band did. Leading with which
+    band this hand is in turns a warning a player learns to ignore into
+    one that distinguishes the answers worth acting on.
+
+    The band note goes FIRST because it is the part that changes between
+    requests; the standing caveat that follows does not.
+    """
     reason = cfg.POSTFLOP_AGGRESSION_CAVEAT_REASON
+    percentile = _hand_strength_percentile(raw, hero)
+    if percentile is not None:
+        if percentile < cfg.UNRELIABLE_HAND_STRENGTH_PERCENTILE:
+            reason = cfg.WEAK_HAND_RELIABILITY_NOTE + reason
+        else:
+            reason = cfg.RELIABLE_HAND_NOTE + reason
     if _has_no_intermediate_bet_size(raw):
         reason += cfg.BET_SIZING_COVERAGE_NOTE
     return reason

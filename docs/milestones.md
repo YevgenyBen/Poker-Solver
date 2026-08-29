@@ -8373,3 +8373,49 @@ entry's own corrections before trusting its conclusions.
     not changed.
   - Three new tests, suite 1,020 -> 1,023. Four mutations, all caught,
     including passing the flop's equity table instead of the river's.
+
+- **M166 - a ten-game benchmark, a withdrawn accusation, and a signal
+  instead of a cure.**
+  - **Ten full games** (1,200 hands, 2,733 decisions, seeds 31-40),
+    finally enough volume to put a rate on defects that had been
+    appearing and vanishing between single runs.
+  - **Speed is finished as a problem.** p50 **0.86s**, p90 5.05s, and the
+    worst of 2,733 decisions was **15.7s** - 100% inside 16 seconds,
+    99.9% inside 10. Nine of ten games had a worst case under 7s. A hand
+    taken to the river costs ~9s of waiting spread over four betting
+    rounds. Zero uniform-prior rows in 1,200 hands (M163-M165 held), one
+    flagged decision in 2,733.
+  - **A WITHDRAWN finding, and the same error this project logged
+    twice before.** The benchmark reported the big blind folding 8%
+    facing a raise heads-up and called it broken, against a remembered
+    "25-35%". That figure belongs to larger raise sizes. Two measurements
+    say the advice is right: a best response against the button's real
+    solved range folds **6.3%** where the advisor recommends 5.3%, worth
+    **0.0021 bb/hand**; and the defence tracks the price correctly -
+    fold **0.1% / 5.3% / 38.2% / 55.9%** as the open goes 2.0 / 2.5 / 3.5
+    / 5.0bb. M110 and M111 made the same remembered-reference mistake;
+    this is the third. **Establish the reference for THIS tree before
+    calling a frequency wrong.**
+  - **The real defect is postflop weak hands, and it is not fixable by
+    reweighting.** 27 spots across two studies: strong and medium bands
+    never exceed 0.10 error, the weak band averages 0.279 and reaches
+    0.903, in BOTH directions (betting air that should check, checking a
+    flush draw that should bet 99.3%).
+  - **The tenth attempt at the cap died here.** Hero is out of the capped
+    range on 97% of postflop decisions, so including hero's whole class
+    looked like the missing fix. Two spots improved, two got much worse,
+    mean error 0.400 -> 0.571.
+  - **What shipped is calibration, not a cure.**
+    `poker_solver/hand_strength.py` plus a band note leading the postflop
+    caveat and a `hand_strength_percentile` field. The threshold is the
+    measured band boundary. Ranks against every possible hand rather than
+    the modelled range, on purpose.
+  - **Two process notes.** A mutation of the turn's six-card path was
+    MISSED by the test written for it - the test compared a pair against
+    air, which passes whether or not the turn card is used. Rewritten
+    around a hand the turn makes (deuces becoming a set), it catches the
+    mutation - and its first assertion was itself wrong: the lowest pair
+    scores 0.612, not below 0.55, because most random hands miss the
+    board entirely. The code was right; the guess was not.
+  - Fourteen new tests, suite 1,023 -> 1,039. Six mutations attempted,
+    five caught immediately and the sixth after the test was rewritten.

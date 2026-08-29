@@ -631,6 +631,41 @@ requests now reject unknown fields by name rather than ignoring them.
   never formed a preference" and "never reached at all" are different
   news a user can act on.
 
+- **Postflop accuracy splits sharply by HAND STRENGTH, and the response
+  now says which band it is in (M166).** Measured over **27 flop spots
+  drawn from real play** (two studies, spots sampled not chosen), against
+  a solve at ~5x the range and 5x the iterations, every reference solved
+  twice under different randomness with unstable ones discarded:
+  | band (percentile) | spots | mean error | worst | over 0.10 |
+  |---|---|---|---|---|
+  | strong >= 0.85 | 5 | 0.0237 | 0.057 | **0** |
+  | medium 0.55-0.85 | 5 | 0.0025 | 0.008 | **0** |
+  | weak < 0.55 | 4 | **0.2785** | **0.903** | **2** |
+  Nothing in the upper two bands exceeded 0.10 and half the weak band
+  did, which is where `UNRELIABLE_HAND_STRENGTH_PERCENTILE = 0.55` comes
+  from - a measured boundary, not a round number.
+  `poker_solver/hand_strength.py` ranks hero against **every** hand that
+  can coexist with the board, deliberately NOT against the modelled
+  range: a range-relative measure would inherit whatever is wrong with
+  the range, which is the thing being warned about. 2.4ms, all three
+  streets (the turn's six cards are scored as the best of their six
+  five-card subsets).
+  **This does not fix the error - it discloses it.** The advice on weak
+  hands is exactly as wrong as before; a player is now told when they are
+  holding one.
+
+- **A TENTH range-composition fix is measured and dead (M166): including
+  hero's whole CLASS instead of bolting hero on as one combo.** The
+  benchmark found hero is outside the capped range on **97% of postflop
+  decisions**, so the solver is normally asked "how does the single worst
+  hand in a strong range play" - a different question from the one asked.
+  Including hero's class at full weight looked like the fix. Measured on
+  five spots: two improved (0.361 -> 0.178, 0.384 -> 0.191), two got much
+  worse (0.160 -> 0.510, 0.104 -> 0.983), one unchanged, and **mean error
+  rose 0.400 -> 0.571**. M141's conservation law again.
+  **Ten ideas are now dead** - the nine in M130-M141 plus this one. Do not
+  add an eleventh reweighting of classes into a fixed budget.
+
 - **The HEADS-UP RIVER node is trained on demand (M165), and its cause is
   NOT the multiway one.** `_ensure_exact_node_trained`. The exact solver
   visits every hand at every node, so a uniform row here does not mean an
