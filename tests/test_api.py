@@ -10,6 +10,7 @@ from api import config as api_config
 from api import main as api_main
 from api import solving as api_solving
 from api.main import app
+from poker_solver.game_tree import walk
 from poker_solver.cards import parse_cards, remaining_deck
 from poker_solver.starting_hands import StartingHand
 
@@ -4730,15 +4731,60 @@ def test_the_uniform_row_signal_stays_quiet_where_it_should():
     # NEAR-uniform is a real computed answer close to indifference.
     assert not api_main._hero_row_is_the_prior(
         {"trained": True, "strategy": {"a": 0.3334, "b": 0.3333, "c": 0.3333}})
-    # `trained: false` already carries a louder hero-specific warning;
-    # saying it twice in different words reads as two problems.
-    assert not api_main._hero_row_is_the_prior(
+    # M163/F47 CORRECTED this one. M149 asserted here that `trained:
+    # false` needs no signal because it "already carries a louder
+    # hero-specific warning". It does — in the `hero.trained` FIELD — but
+    # `solver_confidence` never read that field, so the headline signal
+    # still said "high" over a row that is purely the prior. Measured in
+    # a 120-hand session: a six-handed flop decision returned 0.3333
+    # across fold/call/all-in and called itself high confidence. The row
+    # IS the prior either way; only the reason differs.
+    assert api_main._hero_row_is_the_prior(
         {"trained": False, "strategy": {"a": 1 / 3, "b": 1 / 3, "c": 1 / 3}})
     # No hero, single-action rows, and absent strategies are not evidence.
     assert not api_main._hero_row_is_the_prior(None)
     assert not api_main._hero_row_is_the_prior({"trained": True, "strategy": {"fold": 1.0}})
     assert not api_main._hero_row_is_the_prior({"trained": True})
 
+
+
+def test_an_untrained_uniform_hero_row_is_not_served_as_high_confidence():
+    """M163/F47. Found by running three 120-hand sessions instead of one.
+
+    A six-handed flop decision returned `fold 0.3333 / call 0.3333 /
+    all-in 0.3333` — the solver's untouched starting assumption — while
+    the response reported `solver_confidence: "high"`. It appeared in one
+    session of three, which is also why single-session "0 defects" claims
+    in this project's history cannot be trusted.
+
+    M149 built exactly this signal but gated it on `trained is True`,
+    reasoning that an untrained hero already carries a louder warning.
+    That warning is a FIELD on the hero block; the headline confidence
+    signal never consulted it. This is F41's shape — a signal vouching
+    for something that was never computed — one layer further down.
+
+    Both causes must report low, and they must give DIFFERENT reasons: a
+    hand that was reached and never formed a preference is a different
+    problem from one that was never reached, and a user can act on the
+    difference.
+    """
+    uniform = {"fold": 1 / 3, "call_or_check": 1 / 3, "all_in:97.50": 1 / 3}
+
+    reached, reached_why = api_main._solver_confidence(
+        {"trained": {"AA": True}}, 6, {"trained": True, "strategy": uniform})
+    never, never_why = api_main._solver_confidence(
+        {"trained": {"AA": True}}, 6, {"trained": False, "strategy": uniform})
+
+    assert reached == "low"
+    assert never == "low", "an untrained uniform row still claimed high confidence"
+    assert reached_why != never_why, "both causes gave the same reason"
+    assert "never reached" in never_why
+    assert "never learned a preference" in reached_why
+
+    # A real computed row is unaffected either way — the signal must not
+    # start firing on ordinary answers.
+    real = {"fold": 0.1, "call_or_check": 0.8, "all_in:97.50": 0.1}
+    assert api_main._solver_confidence({}, 6, {"trained": True, "strategy": real})[0] == "high"
 
 def test_the_uniform_row_signal_is_actually_wired_to_the_response(client):
     """M149. The unit tests above passed while the signal never fired.
@@ -5089,3 +5135,229 @@ def test_the_combo_budget_cap_keeps_every_class_including_the_premiums():
     )
     # a range that already fits comes back untouched
     assert _cap_combo_range(full, len(full) + 10) == full
+
+
+# ---------------------------------------------------------------------------
+# M163: the mid-flop node solves like the opening decision on its street.
+# ---------------------------------------------------------------------------
+
+
+def test_the_mid_flop_node_solves_at_the_same_equity_precision_as_its_street(
+        client, monkeypatch):
+    """M163. The two flop decisions are supposed to model the same game.
+
+    M88 split this path off the turn's solve precisely so a user asking
+    twice on one street gets one street's answer. But this call passed
+    neither `equity_samples` nor `equity_table_fn`, so it built its
+    equity table at `board_equity`'s own default of 200 samples,
+    SEQUENTIALLY, while the opening decision on the same board built one
+    at PATH_QUERY_EQUITY_SAMPLES through the parallel builder. M131 and
+    M132 each fixed exactly this for the canonical-library path and
+    neither reached here.
+
+    Equity precision is part of the game being modelled, so this is the
+    F12 inconsistency in a field M88 did not check — and it cost 35.08s
+    against the opening decision's 0.83s on the same board, measured
+    through /advise.
+
+    Asserts on the arguments the solve actually receives, because the
+    symptom (latency) is exactly what a test fixture shrinks away.
+    """
+    seen = {}
+    real = api_solving.solve_flop
+
+    def spy(**kwargs):
+        seen.update(kwargs)
+        return real(**kwargs)
+
+    monkeypatch.setattr(api_solving, "solve_flop", spy)
+    response = client.post("/advise", json={
+        "hero_cards": "AhKd", "board": "Qs7c2h", "players": 2, "stack_bb": 100.0,
+        "preflop_action_path": ["raise", "call_or_check"],
+        "flop_action_path": ["raise"],
+    })
+    assert response.status_code == 200, response.json()
+    assert seen, "the mid-flop node did not reach solve_flop at all"
+    assert seen["equity_samples"] == api_config.PATH_QUERY_EQUITY_SAMPLES
+    assert seen["equity_table_fn"] is not None
+
+
+def test_a_second_hero_on_one_board_warm_starts_the_mid_flop_solve(
+        client, monkeypatch):
+    """M163. `_flop_node_cache`'s key has to include hero (M76), so every
+    new hero missed it and paid a full cold solve — 34.55s measured.
+
+    The warm store drops hero and keeps everything that changes the
+    ranges, the same split M158 made for the canonical library. This
+    counts SOLVES rather than seconds, so the fixture's shrunken budgets
+    cannot hide it, and asserts the second hero refines: fewer iterations
+    than a cold solve, and a warm start actually supplied.
+    """
+    calls = []
+    real = api_solving.solve_flop
+
+    def spy(**kwargs):
+        calls.append(kwargs)
+        return real(**kwargs)
+
+    monkeypatch.setattr(api_solving, "solve_flop", spy)
+    body = {"board": "Qs7c2h", "players": 2, "stack_bb": 100.0,
+            "preflop_action_path": ["raise", "call_or_check"],
+            "flop_action_path": ["raise"]}
+
+    first = client.post("/advise", json={**body, "hero_cards": "AhKd"})
+    assert first.status_code == 200, first.json()
+    second = client.post("/advise", json={**body, "hero_cards": "9s9d"})
+    assert second.status_code == 200, second.json()
+
+    assert len(calls) == 2, "expected one solve per hero"
+    assert calls[0]["warm_start"] is None
+    assert calls[1]["warm_start"] is not None, (
+        "the second hero re-solved from cold — the warm store is not wired"
+    )
+    assert calls[1]["iterations"] <= calls[0]["iterations"]
+
+
+def test_the_mid_flop_warm_store_only_ever_holds_a_cold_solve(client, monkeypatch):
+    """M163, mirroring `library.build_library`'s own rule.
+
+    If a refinement were stored it would become the base of the next
+    refinement, and the effective iteration count would drift away from
+    anything that was measured. Three heroes on one board: the stored
+    entry must still be the first, cold one.
+    """
+    calls = []
+    real = api_solving.solve_flop
+
+    def spy(**kwargs):
+        calls.append(kwargs)
+        return real(**kwargs)
+
+    monkeypatch.setattr(api_solving, "solve_flop", spy)
+    body = {"board": "Qs7c2h", "players": 2, "stack_bb": 100.0,
+            "preflop_action_path": ["raise", "call_or_check"],
+            "flop_action_path": ["raise"]}
+    for hero in ("AhKd", "9s9d", "JcTc"):
+        assert client.post("/advise", json={**body, "hero": hero} if False else
+                           {**body, "hero_cards": hero}).status_code == 200
+
+    assert len(calls) == 3
+    warm_starts = [c["warm_start"] for c in calls]
+    assert warm_starts[0] is None
+    assert warm_starts[1] is not None and warm_starts[2] is not None
+    # Every refinement starts from the SAME cold solve, not from each other.
+    assert warm_starts[1] is warm_starts[2]
+
+
+# ---------------------------------------------------------------------------
+# M163: on-demand training for a MULTIWAY FLOP node that came back as the
+# uniform prior — the postflop sibling of M150's preflop trainer.
+#
+# The defect is RARE (one occurrence in 837 decisions across three
+# sessions), so it cannot be summoned through /advise on demand. That is
+# precisely the shape of bug this project has shipped no-op "fixes" for
+# before, so the mechanism and the wiring are proven separately.
+# ---------------------------------------------------------------------------
+
+
+def _tiny_multiway_flop_result(iterations):
+    """A real 3-way flop solve, deliberately under-trained so untrained
+    nodes actually exist."""
+    from poker_solver.cards import Card
+    from poker_solver.combos import range_from_class_frequencies
+    from poker_solver.solver import solve_flop_multiway
+    from poker_solver.starting_hands import all_starting_hands
+
+    board = tuple(Card.from_str(c) for c in ("Jh", "7d", "2c"))
+    hands = all_starting_hands()
+    positions = ("OOP", "MID", "IP")
+    ranges = {
+        position: range_from_class_frequencies(
+            {h: 1.0 for h in hands[index * 2:index * 2 + 3]}, exclude=frozenset(board))
+        for index, position in enumerate(positions)
+    }
+    result = solve_flop_multiway(
+        board=board, position_ranges=ranges, pot=6.0, effective_stack_bb=20.0,
+        positions=positions, raise_sizes=(2.5,), max_raises=2,
+        iterations=iterations,
+    )
+    return board, result
+
+
+def test_on_demand_training_repairs_an_untrained_multiway_flop_node():
+    """M163. The mechanism, on a node that really is the bare prior.
+
+    Solved at one iteration so untrained nodes exist, then trained on
+    demand — the node must go from "nothing learned" to a real strategy.
+    """
+    board, result = _tiny_multiway_flop_result(iterations=1)
+    target = None
+    for node in walk(result.root):
+        if not hasattr(node, "player_to_act"):
+            continue
+        if not any(result.trained_hands(node).values()):
+            target = node
+            break
+    assert target is not None, "no untrained node to repair — fixture too generous"
+
+    did_work = api_solving._ensure_flop_multiway_node_trained(result, target, board)
+    assert did_work is True
+    assert any(result.trained_hands(target).values()), (
+        "the node is still untrained after training it"
+    )
+
+
+def test_on_demand_training_leaves_an_already_solved_node_alone():
+    """M163. Scope. A trainer that fires on every node would re-solve the
+    tree on every request and, worse, overwrite answers that were derived
+    from real ranges with ones derived from a uniform assumption.
+    """
+    board, result = _tiny_multiway_flop_result(iterations=200)
+    root = result.root
+    if not any(result.trained_hands(root).values()):
+        pytest.skip("fixture produced an untrained root; nothing to assert here")
+    before = {hand: dict(row) for hand, row in result.strategy_at(root).items()}
+    assert api_solving._ensure_flop_multiway_node_trained(result, root, board) is False
+    assert result.strategy_at(root) == before
+
+
+def test_on_demand_training_is_wired_to_the_multiway_flop_response(client, monkeypatch):
+    """M163. The unit tests above would pass with the call site missing.
+
+    F43 shipped exactly that: every unit test green while the signal
+    never fired, because the production path did not call it. This
+    asserts the real /advise path reaches the trainer, at BOTH flop
+    nodes, with the node it is actually answering about.
+    """
+    seen = []
+    real = api_solving._ensure_flop_multiway_node_trained
+
+    def spy(result, node, board_cards, hero_combo=None):
+        seen.append(node)
+        return real(result, node, board_cards, hero_combo)
+
+    monkeypatch.setattr(api_solving, "_ensure_flop_multiway_node_trained", spy)
+    body = {"hero_cards": "AhKd", "board": "Qs7c2h", "players": 6, "stack_bb": 100.0,
+            # Three live players after the flop — UTG/MP fold, CO raises,
+            # BTN calls, SB folds, BB calls. A path that folds down to two
+            # takes the HEADS-UP flop cell instead, which this trainer does
+            # not serve; an earlier version of this test used one and
+            # asserted against a code path it never reached.
+            "preflop_action_path": ["fold", "fold", "raise", "call_or_check",
+                                    "fold", "call_or_check"]}
+
+    opening = client.post("/advise", json=body)
+    assert opening.status_code == 200, opening.json()
+    assert len(seen) == 1, "the opening decision never reached the trainer"
+
+    seen.clear()
+    # `call_or_check`, not `raise`: the suite fixture shrinks
+    # MULTIWAY_FLOP_RAISE_SIZES, so the multiway flop root offers only
+    # check and all-in. Checking still reaches the NEXT player's decision,
+    # which is the mid-street node this needs.
+    mid = client.post("/advise", json={**body, "flop_action_path": ["call_or_check"]})
+    assert mid.status_code == 200, mid.json()
+    assert len(seen) == 2, (
+        "expected the opening decision AND the mid-flop node to be offered for training"
+    )
+    assert seen[0] is not seen[1], "the mid-flop node was not the one offered"

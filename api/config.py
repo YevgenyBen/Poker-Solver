@@ -1283,6 +1283,24 @@ BET_SIZING_COVERAGE_NOTE = (
 # trained) to **jam 0.9999 at 200 iterations in 2.2s** (169/169 trained),
 # and to 1.0 at 1,000 iterations in 8.1s. 200 buys the correct answer;
 # the rest buys decimals on a request that already costs seconds.
+# M163: the postflop sibling of PREFLOP_DEEP_NODE_TRAIN_ITERATIONS, for a
+# MULTIWAY FLOP node that comes back as the uniform prior. M150 solved
+# deep preflop nodes on demand; the same defect exists one street later
+# and was measured in a 120-hand session, where a six-handed flop
+# decision returned 0.3333 across every action.
+#
+# Affordable only because M162 made multiway equity ~28x cheaper: a whole
+# 200-iteration multiway flop solve now costs ~0.19s, so training one
+# SUBTREE at twice that budget is a fraction of a second. Before M162 the
+# same work would have cost ~11s and would not have been worth doing.
+#
+# Higher than the preflop constant because the node being repaired is a
+# postflop node with concrete combos rather than 169 classes, and F46
+# measured multiway flop strategies as noise-dominated at low budgets -
+# this does not fix that (see F46), it only replaces "never computed"
+# with "computed against a stated prior".
+MULTIWAY_FLOP_NODE_TRAIN_ITERATIONS = 400
+
 PREFLOP_DEEP_NODE_TRAIN_ITERATIONS = 200
 
 UNIFORM_ROW_REASON = (
@@ -1291,6 +1309,26 @@ UNIFORM_ROW_REASON = (
     "reached during solving but never learned a preference, so this is not a "
     "recommendation to mix evenly. Treat it as no answer for this hand. A different "
     "line, a shallower spot, or heads-up will usually return a real one."
+)
+
+# M163/F47: the same news for a hand that was never REACHED. M149 scoped
+# `_hero_row_is_the_prior` to `trained is True`, reasoning that a false
+# `trained` already fires a louder hero-specific warning. It does - but
+# that warning is the `hero.trained` FIELD, and `solver_confidence` never
+# saw it, so the headline signal still read "high" over an untrained
+# uniform row. Measured in a 120-hand session: one six-handed flop
+# decision returned fold/call/all-in at 0.3333 each while calling itself
+# high confidence.
+#
+# Kept separate from UNIFORM_ROW_REASON because the cause differs and a
+# user can act on the difference: that one was reached and never formed a
+# preference, this one was never reached at all.
+UNTRAINED_HERO_ROW_REASON = (
+    "Your hand's numbers here are an even split across every action, which is the "
+    "solver's starting assumption rather than anything it worked out - this hand was "
+    "never reached while solving this spot, so nothing was computed for it. Treat it "
+    "as no answer for this hand rather than a recommendation to mix evenly. A "
+    "different line, a shallower spot, or heads-up will usually return a real one."
 )
 
 UNTRAINED_NODE_REASON = (

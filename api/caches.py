@@ -349,6 +349,18 @@ class _MappingSolveCache(_SolveCache):
 # the library's own ceiling rather than a larger one.
 _canonical_warm_starts = _MappingSolveCache("canonical_warm_starts", maxsize=256)
 
+# M163: the same idea for the MID-flop node, which cannot use the one
+# above. That store is keyed on the CANONICAL board (so one entry serves
+# every isomorphic board); this path solves the real board at the real
+# stack, and its own `_flop_node_cache` key must include hero (M76). This
+# store drops hero and keeps everything that changes the ranges, so the
+# second hero to ask about a board refines rather than re-solves.
+#
+# An entry is the same shape and order of size as a canonical warm start
+# — a combo list plus one InfoSetTable per decision node — so it takes
+# the same ceiling.
+_flop_node_warm_starts = _MappingSolveCache("flop_node_warm_starts", maxsize=256)
+
 
 _flop_query_library = _SolveCache("flop_query_library", maxsize=2048)
 

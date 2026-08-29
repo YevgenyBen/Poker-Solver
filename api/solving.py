@@ -38,6 +38,8 @@ from poker_solver.game_tree import (
     postflop_action_order,
     resolve_action,
 )
+from poker_solver.multiway_board_equity import NwayBoardEquityCache
+from poker_solver.warmstart import index_by_path
 from poker_solver.library import query_strategy, query_strategy_from_path
 from poker_solver.solver import (
     DEFAULT_FLOP_TO_RIVER_MULTIWAY_ITERATIONS,
@@ -79,6 +81,7 @@ from .caches import (
     _multiway_cache,
     _multiway_equity_caches,
     _canonical_warm_starts,
+    _flop_node_warm_starts,
     _path_query_libraries,
     _preflop_raw_cache,
     _river_path_cache,
@@ -1244,6 +1247,9 @@ def _query_flop_multiway_from_path(
             _flop_multiway_path_cache.store(key, result)
         cached = result
 
+    # M163: repair the OPENING decision BEFORE formatting it, if it came
+    # back as the bare prior. See _ensure_flop_multiway_node_trained.
+    _ensure_flop_multiway_node_trained(cached, cached.root, board_cards, hero_combo)
     formatted = format_flop_response(cached, board="".join(str(c) for c in board_cards))
     response = {
         "board": formatted["board"],
@@ -1300,6 +1306,10 @@ def _query_flop_multiway_from_path(
             "flop_action_path reaches a terminal — the flop's action has closed, so there is no "
             "flop decision left to advise. Supply a turn_card for turn advice."
         )
+    # M163: a mid-flop node is deeper in the sampled tree than the
+    # opening decision, so it is MORE likely to be the bare prior, not
+    # less.
+    _ensure_flop_multiway_node_trained(cached, flop_node, board_cards, hero_combo)
     return {
         **response,
         "flop_action_path": list(flop_action_kinds),
@@ -1318,6 +1328,32 @@ def _query_flop_multiway_from_path(
     }
 
 
+def _solve_flop_node(board_cards, situation, oop_position, ip_position, pot,
+                     effective_stack_bb, warm, warm_store):
+    """One mid-flop `solve_flop`, warm-started when this board has been
+    solved for another hero already.
+
+    Only COLD solves are stored, mirroring `library.build_library`: a
+    refinement must never become the base of another refinement, or the
+    iteration budget compounds away from what was measured.
+    """
+    result = solve_flop(
+        board=board_cards,
+        hero_range=situation.position_ranges[oop_position],
+        villain_range=situation.position_ranges[ip_position],
+        pot=pot,
+        effective_stack_bb=effective_stack_bb,
+        positions=(oop_position, ip_position),
+        iterations=(min(cfg.PATH_QUERY_WARM_ITERATIONS, cfg.PATH_QUERY_ITERATIONS)
+                    if warm is not None else cfg.PATH_QUERY_ITERATIONS),
+        equity_samples=cfg.PATH_QUERY_EQUITY_SAMPLES,
+        equity_table_fn=parallel_board_equity_table,
+        warm_start=warm,
+    )
+    if warm is None:
+        warm_store["solve"] = (list(result.hands),
+                               index_by_path(result.root, result.node_data))
+    return result
 def _query_flop_node_from_path(
     preflop_action_kinds: list,
     flop_action_kinds: list,
@@ -1395,16 +1431,41 @@ def _query_flop_node_from_path(
         players,
         _hero_cache_component(hero_combo, situation.hero_in_range),
     )
+    # M163: this call used to pass neither `equity_samples` nor
+    # `equity_table_fn`, so it built its equity table at board_equity's
+    # own default of 200 samples, sequentially — while the opening
+    # decision on the SAME street builds one at
+    # PATH_QUERY_EQUITY_SAMPLES (30) through the parallel builder. M131
+    # and M132 each fixed exactly this for the canonical-library path and
+    # neither reached here.
+    #
+    # Measured through /advise on one board: the opening decision for a
+    # fresh hero cost 0.83s and this node cost 35.08s. It is also the
+    # inconsistency M88 exists to prevent — the two flop decisions are
+    # supposed to model the same game, and equity precision is part of
+    # the game they model.
+    #
+    # `warm_store` is the M158 pattern applied here: keyed on everything
+    # that changes the RANGES but NOT on hero, so a second hero on the
+    # same board refines a cached solve instead of paying a cold one.
+    # `_flop_node_cache`'s own key must keep hero (M76), which is exactly
+    # why it misses so often and why this store is worth having.
+    warm_store = _flop_node_warm_starts.setdefault(
+        (tuple(preflop_action_kinds), round(stack_bb), iterations, board_cards, players),
+        {},
+    )
+    warm = warm_store.get("solve")
     result = _flop_node_cache.get_or_compute(
         flop_solve_key,
-        lambda: solve_flop(
-            board=board_cards,
-            hero_range=situation.position_ranges[oop_position],
-            villain_range=situation.position_ranges[ip_position],
+        lambda: _solve_flop_node(
+            board_cards=board_cards,
+            situation=situation,
+            oop_position=oop_position,
+            ip_position=ip_position,
             pot=path_scenario.pot,
             effective_stack_bb=effective_stack_bb,
-            positions=(oop_position, ip_position),
-            iterations=cfg.PATH_QUERY_ITERATIONS,
+            warm=warm,
+            warm_store=warm_store,
         ),
     )
 
@@ -2340,6 +2401,75 @@ def _row_is_the_prior(row: dict) -> bool:
     """
     values = list(row.values())
     return len(values) > 1 and max(values) - min(values) < 1e-9
+
+
+def _ensure_flop_multiway_node_trained(result, node, board_cards, hero_combo=None) -> bool:
+    """Solve ONE multiway flop node's subtree on demand. Returns whether
+    it did any work.
+
+    M163, and the postflop sibling of `_ensure_preflop_node_trained`.
+    M150 fixed deep PREFLOP nodes returning the uniform prior; three
+    120-hand sessions found the same defect one street later, where a
+    six-handed flop decision returned `fold 0.3333 / call 0.3333 /
+    all-in 0.3333` while the response called itself high confidence.
+
+    F47 makes that response tell the truth. This tries to make it
+    unnecessary — labelling a guess is worth less than computing an
+    answer.
+
+    Affordable only because of M162: a whole 200-iteration multiway flop
+    solve now costs ~0.19s where it cost ~5.3s, so training one subtree
+    is a fraction of a second. The same work was not worth doing before.
+
+    **The reach is uniform, and that is an assumption, not a
+    derivation** - the same one M150 states. The ranges reaching an
+    unlearned node are exactly what is not known. This replaces "never
+    computed" with "computed against a stated prior".
+
+    **It does NOT fix F46.** Multiway flop strategies are noise-dominated
+    at every budget measured, including twenty times this one. A node
+    that was the bare prior is strictly better off; a node that already
+    had an answer is left alone.
+    """
+    strategy = result.strategy_at(node)
+    if not strategy:
+        return False
+    trained = result.trained_hands(node)
+    hero_row = strategy.get(hero_combo) if hero_combo is not None else None
+    # Same scope as M150: fire on the user-visible defect only. Firing
+    # whenever ANY row is uniform would trigger on most nodes and buy
+    # nothing for the hand actually being asked about.
+    needs_work = (
+        (hero_row is not None and _row_is_the_prior(hero_row))
+        or not any(trained.values())
+    )
+    if not needs_work:
+        return False
+
+    hands = list(result.hands)
+    live = tuple(p for p in result.config.positions if p not in node.folded)
+    if len(live) < 2:
+        return False
+
+    equity_cache = NwayBoardEquityCache(tuple(board_cards), hands)
+    reach = {position: np.ones(len(hands)) for position in live}
+    with _flop_multiway_path_cache.lock:
+        # Re-check under the lock: a concurrent request may have trained
+        # this node already, and the solve is not free.
+        if hero_row is not None and not _row_is_the_prior(
+            result.strategy_at(node).get(hero_combo, hero_row)
+        ):
+            return False
+        node_data = mccfr_solve(
+            node, hands, live, equity_cache,
+            iterations=cfg.MULTIWAY_FLOP_NODE_TRAIN_ITERATIONS,
+            seed=1, initial_reach=reach,
+        )
+        # Merge, never replace — the subtree's nodes are the SAME objects
+        # the parent solve already knows about, so this overwrites
+        # exactly the rows it just improved.
+        result.node_data.update(node_data)
+    return True
 
 
 def _ensure_preflop_node_trained(result, node, players: int, hero_key=None) -> bool:

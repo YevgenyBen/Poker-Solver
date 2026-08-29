@@ -594,6 +594,97 @@ requests now reject unknown fields by name rather than ignoring them.
   the cold budget, since a caller may ask for fewer iterations than the
   warm setting.
 
+- **The MID-flop node now solves like its street's opening decision, and
+  was 29x slower because it did not (M163).** M88 split this cell off the
+  turn's solve so that both flop decisions model the same game. It then
+  passed neither `equity_samples` nor `equity_table_fn`, so it built its
+  equity table at `board_equity`'s own default of **200 samples,
+  sequentially**, while the opening decision on the same board built one
+  at `PATH_QUERY_EQUITY_SAMPLES` (30) through the parallel builder. M131
+  and M132 each fixed exactly this for the canonical-library path and
+  **neither reached here**. Equity precision is part of the game being
+  modelled, so this was F12's inconsistency in a field M88 never checked.
+  Measured through `/advise` on one board: **35.08s -> 1.22s** cold, and
+  **34.55s -> 0.84s** for a second hero, against the opening decision's
+  0.89s.
+  A `_flop_node_warm_starts` store (M158's pattern) is keyed on
+  everything that changes the ranges but NOT on hero, because
+  `_flop_node_cache`'s own key must keep hero (M76) and therefore misses
+  almost always. **Only cold solves are stored**, so refinements never
+  compound.
+  Validated rather than assumed: dropping to 30 samples moves the answer
+  **less than a different equity seed does** (p90 0.088/0.052 against
+  0.103/0.085 on two boards), and warm-starting moves it p90 0.0003 with
+  zero entries over 0.05.
+
+- **F47 (M163): an UNTRAINED uniform row was served as "high"
+  confidence.** M149 built `_hero_row_is_the_prior` and gated it on
+  `trained is True`, reasoning that a false `trained` "already fires a
+  louder hero-specific warning". It does — in the `hero.trained` FIELD,
+  which `solver_confidence` never read. So the headline signal still said
+  "high" over a row that is purely the prior. This is F41's shape (a
+  signal vouching for something never computed) one layer further down.
+  Found by running **three** 120-hand sessions instead of one: a
+  six-handed flop decision returned `fold 0.3333 / call 0.3333 / all-in
+  0.3333` at high confidence. The guard is now structural (is the row the
+  prior?) and `_solver_confidence` picks the reason, because "reached but
+  never formed a preference" and "never reached at all" are different
+  news a user can act on.
+
+- **Multiway FLOP nodes are trained on demand (M163)** —
+  `_ensure_flop_multiway_node_trained`, the postflop sibling of M150's
+  preflop trainer, at `MULTIWAY_FLOP_NODE_TRAIN_ITERATIONS = 400`.
+  Affordable only because M162 made multiway equity ~28x cheaper. Same
+  scope and same caveat as M150: it fires only when hero's row IS the
+  prior or nothing at the node is trained, and **the reach it assumes is
+  uniform**, so it replaces "never computed" with "computed against a
+  stated prior". **It does not fix F46.**
+  The defect it addresses is rare — one occurrence in 837 decisions — so
+  it cannot be reproduced through `/advise` on demand, and the mechanism
+  and the wiring are therefore tested separately. Worth knowing for any
+  future test here: **a preflop path that folds down to two live players
+  takes the HEADS-UP flop cell**, not the multiway one; a first version
+  of the wiring test asserted against a code path it never reached.
+
+- **F46 deepened (M163): NO affordable setting converges the multiway
+  flop solve, and there are TWO independent noise sources.** R4 set out
+  to build a converged reference and could not, which is the useful
+  result.
+  | budget | 200 | 1,000 | 4,000 | 12,000 | 30,000 |
+  |---|---|---|---|---|---|
+  | seed spread p90 | 0.462 | 0.295 | 0.333 | 0.308 | **0.240** |
+  Still 0.240 at **150x the shipped budget**, non-monotone, worst case
+  ~1.0 throughout. A same-seed comparison across budgets DOES converge
+  (0.0118 at 12k vs 30k) - so the solve settles to a **seed-dependent**
+  answer, not to one answer.
+  Splitting the two sources at 200 / 4k / 12k iterations:
+  **MCCFR traversal seed 0.467 / 0.357 / 0.328; equity seed 0.321 /
+  0.231 / 0.205.** The sampling noise is the LARGER term, not the equity
+  noise - the opposite of what M98's preflop finding suggested, and it
+  was checked rather than assumed.
+  More equity samples help, partially and unevenly: 9.4x the samples
+  (320 -> 3,000) moves the equity-seed spread 0.212 -> 0.170 on one board
+  and 0.295 -> 0.136 on another, 2.4x the cost. **Not adopted**, because
+  it leaves the dominant term untouched and there is no reference to
+  score "better" against - which is exactly what this exercise failed to
+  build.
+  **A single sweep produced 0.045 at 3,000 samples and it was one seed
+  pair's luck** - the other three pairs gave 0.20 / 0.17 / 0.17.
+  Replicate across pairs before believing any number here.
+  **Do not raise `DEFAULT_FLOP_MULTIWAY_ITERATIONS` on stability
+  evidence.** Nothing measured shows more budget produces a better
+  answer, only a differently-noisy one.
+
+- **Any quality claim from a play session needs THREE runs, not one
+  (M163).** Timing is reproducible enough to measure once - across three
+  120-hand sessions the median decision varied 0.81-0.90s and the
+  heads-up flop median 1.15-1.17s. **Defect counts are not**: uniform
+  rows came in at 0/3/2, stack-commits at 20/12/10, and the single
+  flagged defect (F47) appeared in **one run of three**. Every earlier
+  session in this project was a single run reporting "0 defects", which
+  on this evidence is roughly what you would expect two times in three
+  even with that defect present. Cost is ~45 minutes.
+
 - **The multiway flop solve SHARES its board runouts, and is ~28x faster
   (M162).** Anatomy first, per M67: a real 3-way flop solve is **99%
   equity lookups** - 427 of them at 12.7ms - against a tree of only 42
