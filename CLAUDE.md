@@ -631,28 +631,35 @@ requests now reject unknown fields by name rather than ignoring them.
   never formed a preference" and "never reached at all" are different
   news a user can act on.
 
-- **Postflop accuracy splits sharply by HAND STRENGTH, and the response
-  now says which band it is in (M166).** Measured over **27 flop spots
-  drawn from real play** (two studies, spots sampled not chosen), against
-  a solve at ~5x the range and 5x the iterations, every reference solved
-  twice under different randomness with unstable ones discarded:
-  | band (percentile) | spots | mean error | worst | over 0.10 |
+- **Postflop error does NOT split by hand strength — M166 claimed it did
+  and M167 withdrew it.** Pooled over **44 flop spots drawn from real
+  play** across three studies, the correlation between strength
+  percentile and error is **-0.130**:
+  | band | n | mean err | worst | over 0.10 |
   |---|---|---|---|---|
-  | strong >= 0.85 | 5 | 0.0237 | 0.057 | **0** |
-  | medium 0.55-0.85 | 5 | 0.0025 | 0.008 | **0** |
-  | weak < 0.55 | 4 | **0.2785** | **0.903** | **2** |
-  Nothing in the upper two bands exceeded 0.10 and half the weak band
-  did, which is where `UNRELIABLE_HAND_STRENGTH_PERCENTILE = 0.55` comes
-  from - a measured boundary, not a round number.
+  | 0.00-0.20 | 10 | 0.0510 | 0.182 | 3 |
+  | 0.20-0.40 | 10 | 0.2686 | 0.993 | 4 |
+  | 0.40-0.55 | 7 | 0.0745 | 0.270 | 2 |
+  | 0.55-0.75 | 8 | 0.1252 | 0.990 | 1 |
+  | 0.75-0.90 | 7 | 0.0079 | 0.023 | **0** |
+  | 0.90-1.01 | 2 | 0.0374 | 0.057 | **0** |
+  Errors occur at every band below 0.65, **including one at 0.64 that
+  M166's threshold called reliable**. M166's split came from 27 spots and
+  the next 18 broke it — the third time in this project that a
+  conclusion from too few points was overturned by more of them.
+  **What survives is one-sided and that is all that is claimed**: nothing
+  at or above **0.75** exceeded 0.10 error (9 spots, mean 0.0144, worst
+  0.0571). Below it, 10 of 35 spots are off by more than 0.10 and
+  strength cannot say which. So `/advise` CERTIFIES reliability above the
+  threshold and reports it as **not known** below — it does not assert
+  that weak hands are the unreliable ones.
   `poker_solver/hand_strength.py` ranks hero against **every** hand that
-  can coexist with the board, deliberately NOT against the modelled
-  range: a range-relative measure would inherit whatever is wrong with
-  the range, which is the thing being warned about. 2.4ms, all three
-  streets (the turn's six cards are scored as the best of their six
-  five-card subsets).
-  **This does not fix the error - it discloses it.** The advice on weak
-  hands is exactly as wrong as before; a player is now told when they are
-  holding one.
+  can coexist with the board, not against the modelled range: a
+  range-relative measure would inherit whatever is wrong with the range.
+  2.4ms, all three streets (the turn's six cards are scored as the best
+  of their six five-card subsets).
+  **The threshold is measured on FLOP spots only** and fires on turn and
+  river too — validating it there is open work.
 
 - **A TENTH range-composition fix is measured and dead (M166): including
   hero's whole CLASS instead of bolting hero on as one combo.** The

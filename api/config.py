@@ -1174,44 +1174,54 @@ MULTIWAY_STACK_BUCKET_BB = 5.0
 POSTFLOP_FOLD_ERROR_MEAN = 0.1870
 POSTFLOP_FOLD_ERROR_WORST = 0.8017
 
-# M166: postflop accuracy depends sharply on how strong hero's hand is,
-# so the response says which band this answer is in instead of labelling
-# every answer the same way. Measured over 27 flop spots drawn from real
-# play (not chosen), against a solve at ~5x the range and 5x the
-# iterations, with every reference checked twice under different
-# randomness and unstable ones discarded:
+# M167 CORRECTS M166. M166 shipped a threshold of 0.55 on the claim that
+# postflop error splits by hand strength - weak hands unreliable, stronger
+# hands fine. Pooling every spot measured (44, three studies, all drawn
+# from real play) does not support it:
 #
-#   band (percentile)   spots   mean error   worst   over 0.10
-#   strong  >= 0.85         5       0.0237   0.057      0
-#   medium  0.55-0.85       5       0.0025   0.008      0
-#   weak    < 0.55          4       0.2785   0.903      2
+#   correlation between strength percentile and error: -0.130
 #
-# The threshold is the band boundary, not a round number: nothing above
-# it exceeded 0.10 and half of what fell below it did.
+#   band        n   mean err   worst   over 0.10
+#   0.00-0.20  10     0.0510   0.182       3
+#   0.20-0.40  10     0.2686   0.993       4
+#   0.40-0.55   7     0.0745   0.270       2
+#   0.55-0.75   8     0.1252   0.990       1     <- "reliable" under M166
+#   0.75-0.90   7     0.0079   0.023       0
+#   0.90-1.01   2     0.0374   0.057       0
 #
-# This does NOT fix the underlying error - ten separate attempts at that
-# are recorded as dead (M130-M141, plus M166's own hero-class variant).
-# It tells a player which answers to act on, which is the part that was
-# missing.
-UNRELIABLE_HAND_STRENGTH_PERCENTILE = 0.55
+# Errors occur at every band below 0.65, including one at 0.64 that M166
+# would have called reliable. M166's own numbers came from 27 spots and
+# were, in part, sampling luck - the pattern broke on the next 18.
+#
+# What DOES hold, and all that is now claimed: **the top of the range is
+# clean.** Nine spots at or above 0.75, none over 0.10, mean 0.014, worst
+# 0.057. Below that, 10 of 35 spots are off by more than 0.10 and hand
+# strength cannot say which - so the signal certifies reliability where it
+# was measured and stays silent otherwise, rather than asserting a
+# split that does not exist.
+#
+# The firing rate falls out of that rather than being chosen: the strong
+# note lands on the minority of hands that earned it, instead of the 52%
+# of postflop decisions M166's weak warning reached.
+RELIABLE_HAND_STRENGTH_PERCENTILE = 0.75
 
-WEAK_HAND_ERROR_MEAN = 0.2785
-WEAK_HAND_ERROR_WORST = 0.9033
+RELIABLE_HAND_ERROR_MEAN = 0.0144
 RELIABLE_HAND_ERROR_WORST = 0.0571
-
-WEAK_HAND_RELIABILITY_NOTE = (
-    "YOUR HAND IS IN THE BAND WHERE THIS ADVICE IS LEAST RELIABLE. Measured against "
-    "a much larger solve, hands this weak had their betting frequency off by 28 "
-    "percentage points on average and by 90 at worst, in both directions - it both "
-    "bets hands that should be checked and checks hands that should be bet. Use the "
-    "action here as a rough suggestion only, and do not commit a large part of your "
-    "stack on it. "
-)
+UNCERTAIN_SHARE_OVER_TEN_POINTS = 0.29
 
 RELIABLE_HAND_NOTE = (
-    "Your hand is in the band where this advice measured reliable: against a much "
-    "larger solve, hands of this strength were off by at most 6 percentage points, "
-    "and none exceeded 10. "
+    "Your hand is in the range where this advice measured reliable: across every "
+    "spot tested at this strength the betting frequency was off by at most 6 "
+    "percentage points, and none by more than 10. "
+)
+
+UNCERTAIN_HAND_NOTE = (
+    "HOW RELIABLE THIS PARTICULAR ANSWER IS, IS NOT KNOWN. Across spots at this "
+    "hand strength, about one in four had its betting frequency off by more than 10 "
+    "percentage points, and the worst by 99 - in both directions, so the error "
+    "cannot be corrected for. Hand strength does not identify which answers are "
+    "affected. Treat the action as a suggestion and avoid committing a large part "
+    "of your stack on it alone. "
 )
 
 POSTFLOP_AGGRESSION_ERROR_MEAN = 0.1394

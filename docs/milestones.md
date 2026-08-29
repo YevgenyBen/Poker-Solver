@@ -8419,3 +8419,34 @@ entry's own corrections before trusting its conclusions.
     board entirely. The code was right; the guess was not.
   - Fourteen new tests, suite 1,023 -> 1,039. Six mutations attempted,
     five caught immediately and the sixth after the test was rewritten.
+
+- **M167 - the calibration M166 shipped was not supported, and this
+  withdraws it.** Five confirmation games (600 hands, 1,407 decisions)
+  showed the signal working exactly as built: a percentile on 807/807
+  postflop decisions, every warned hand below the threshold and every
+  unwarned one above, no boundary violations, speed and defect counts
+  unchanged. Then it fired on **52% of postflop decisions**, which is a
+  warning a player stops reading, so the next question was whether error
+  is graded inside the weak band.
+  - **It is not, and the control band was worse than the band it
+    controlled for.** Sub-banding gave 0.0606 / 0.0058 / 0.0628 across
+    0-0.20 / 0.20-0.40 / 0.40-0.55, and **0.2495 for the 0.55-0.75
+    "reliable" control**, whose worst spot missed by 0.9903.
+  - **Pooled over 44 spots from three studies, strength and error
+    correlate at -0.130.** Errors appear at every band below 0.65,
+    including one at 0.64 that M166 would have certified. M166's split
+    rested on 27 spots and the next 18 broke it.
+  - **What survives is one-sided**: 0 of 9 spots at or above 0.75
+    exceeded 0.10 error (mean 0.0144, worst 0.0571); below it, 10 of 35
+    did, worst 0.99.
+  - **The claim is inverted rather than retuned.** `/advise` now
+    certifies reliability where it was measured and says reliability is
+    NOT KNOWN elsewhere, quoting the rate ("about one in four... the
+    worst by 99") instead of a verdict on the hand in front of the
+    player. Tightening 0.55 to 0.75 would have kept an unsupported claim
+    and merely moved its boundary.
+  - The 52% firing problem is fixed as a CONSEQUENCE, not a goal: the
+    certifying note lands on the minority that earned it. Adjusting a
+    threshold because a rate felt high would have been the same error as
+    judging the big blind against a remembered chart.
+  - Suite green at 1,039.

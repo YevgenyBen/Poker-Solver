@@ -1497,10 +1497,15 @@ def _aggression_reason(raw: dict, hero: dict | None = None) -> str:
     reason = cfg.POSTFLOP_AGGRESSION_CAVEAT_REASON
     percentile = _hand_strength_percentile(raw, hero)
     if percentile is not None:
-        if percentile < cfg.UNRELIABLE_HAND_STRENGTH_PERCENTILE:
-            reason = cfg.WEAK_HAND_RELIABILITY_NOTE + reason
-        else:
+        # M167: certify where reliability was MEASURED, and say "not known"
+        # elsewhere. M166 had this the other way round - it asserted that
+        # weak hands specifically were unreliable, and pooling 44 spots
+        # gave a strength/error correlation of -0.130. The one thing that
+        # held was the top of the range being clean.
+        if percentile >= cfg.RELIABLE_HAND_STRENGTH_PERCENTILE:
             reason = cfg.RELIABLE_HAND_NOTE + reason
+        else:
+            reason = cfg.UNCERTAIN_HAND_NOTE + reason
     if _has_no_intermediate_bet_size(raw):
         reason += cfg.BET_SIZING_COVERAGE_NOTE
     return reason

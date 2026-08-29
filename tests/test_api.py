@@ -5556,20 +5556,31 @@ def test_the_exact_node_trainer_leaves_a_differentiated_node_alone():
 # ---------------------------------------------------------------------------
 
 
-def test_a_weak_hand_gets_the_unreliable_band_warning(client):
-    """The case the signal exists for. Nine-high on an ace-high board sits
-    in the band where measured error averaged 28 points and reached 90."""
+def test_a_hand_outside_the_measured_range_is_told_reliability_is_unknown(client):
+    """M167, correcting M166.
+
+    M166 asserted that WEAK hands specifically were unreliable and stronger
+    ones fine. Pooling 44 spots across three studies gave a correlation
+    between strength and error of -0.130, with errors at every band below
+    0.65 — including one at 0.64 that M166 called reliable. The split does
+    not exist.
+
+    What held is narrower: the top of the range is clean. So the response
+    certifies reliability where it was measured and says "not known"
+    elsewhere, rather than claiming a pattern the data denies.
+    """
     response = client.post("/advise", json={
         "hero_cards": "9s8s", "board": "As7d2h", "players": 2, "stack_bb": 100.0,
         "preflop_action_path": ["raise", "call_or_check"],
     })
     assert response.status_code == 200, response.json()
     body = response.json()
-    assert body["hand_strength_percentile"] < api_config.UNRELIABLE_HAND_STRENGTH_PERCENTILE
+    assert body["hand_strength_percentile"] < api_config.RELIABLE_HAND_STRENGTH_PERCENTILE
     reason = body["aggression_confidence_reason"]
-    assert reason.startswith(api_config.WEAK_HAND_RELIABILITY_NOTE), reason[:120]
-    # It must say the thing a player can act on, not merely "low confidence".
-    assert "do not commit a large part of your stack" in reason
+    assert reason.startswith(api_config.UNCERTAIN_HAND_NOTE), reason[:120]
+    # It must say what is actually known — a rate, not a verdict on this hand.
+    assert "one in four" in reason
+    assert "does not identify which" in reason
 
 
 def test_a_strong_hand_is_told_the_advice_measured_reliable(client):
@@ -5581,10 +5592,10 @@ def test_a_strong_hand_is_told_the_advice_measured_reliable(client):
     })
     assert response.status_code == 200, response.json()
     body = response.json()
-    assert body["hand_strength_percentile"] >= api_config.UNRELIABLE_HAND_STRENGTH_PERCENTILE
+    assert body["hand_strength_percentile"] >= api_config.RELIABLE_HAND_STRENGTH_PERCENTILE
     reason = body["aggression_confidence_reason"]
     assert reason.startswith(api_config.RELIABLE_HAND_NOTE), reason[:120]
-    assert not reason.startswith(api_config.WEAK_HAND_RELIABILITY_NOTE)
+    assert not reason.startswith(api_config.UNCERTAIN_HAND_NOTE)
 
 
 def test_the_two_bands_actually_differ_on_one_board(client):
@@ -5600,13 +5611,14 @@ def test_the_two_bands_actually_differ_on_one_board(client):
 
 
 def test_the_band_note_quotes_its_own_measurement():
-    """M140's rule, applied here: copy that states a number must state the
-    number that was measured, so the two cannot drift apart."""
-    weak = api_config.WEAK_HAND_RELIABILITY_NOTE
-    assert str(round(api_config.WEAK_HAND_ERROR_MEAN * 100)) in weak
-    assert str(round(api_config.WEAK_HAND_ERROR_WORST * 100)) in weak
+    """M140's rule: copy that states a number must state the number that
+    was measured, so the two cannot drift apart."""
     reliable = api_config.RELIABLE_HAND_NOTE
     assert str(round(api_config.RELIABLE_HAND_ERROR_WORST * 100)) in reliable
+    uncertain = api_config.UNCERTAIN_HAND_NOTE
+    # ~29% is "about one in four"; the worst measured is 0.99.
+    assert 0.20 <= api_config.UNCERTAIN_SHARE_OVER_TEN_POINTS <= 0.35
+    assert "99" in uncertain
 
 
 def test_preflop_has_no_hand_strength_reading(client):
