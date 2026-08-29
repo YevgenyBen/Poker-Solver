@@ -594,6 +594,72 @@ requests now reject unknown fields by name rather than ignoring them.
   the cold budget, since a caller may ask for fewer iterations than the
   warm setting.
 
+- **The exact solver propagates an N-VECTOR, not an N x N matrix
+  (M161) — 13.1x on a production-sized flop pool.** M160 named this as
+  the remaining fix and estimated 3-5x; measured, it is larger, and the
+  win grows with the pool exactly as the O(N^2) -> O(N) argument
+  predicts:
+  | combos | 9 | 33 | 66 | 164 | 321 |
+  |---|---|---|---|---|---|
+  | speedup | 1.15x | 1.28x | 1.77x | **7.56x** | **13.07x** |
+  Production flop pools are ~300-330 combos. **Never slower at any size
+  measured**, so there is no small-N case to guard. `_solve_recurse` now
+  pushes the opponent's reach DOWN the tree and returns
+  `sum_j reach_opp[j] * value(i, j)`; the step that makes it work is that
+  at a node where the OPPONENT acts the branches **sum** rather than
+  average, because that player's action probability is already inside the
+  child's reach.
+  **The replaced implementation is kept and still runnable** as
+  `_solve_recurse_matrix`, with `solve(_recurse=...)` to drive it, because
+  the equivalence tests are worth more than the dead weight. Don't delete
+  it.
+  **Equivalence is exact in float64 (1e-9 to 4.8e-15) and NOT exact in
+  float32 — that is chaos, not error.** The two do the same arithmetic in
+  a different order, and CFR amplifies a rounding difference through
+  M74's bang-bang behaviour. Controls, all measured: each arm is
+  bit-deterministic against itself (0.0); the gap grows from 0 with
+  iteration count; and it collapses by ~1e9 when the same comparison runs
+  in float64. Against M155's yardstick it is inside the solver's own
+  noise - at the production seed over four boards, the implementation gap
+  is p90 <=0.003 with 8 strategy entries over 0.05, where re-running one
+  implementation under a different equity seed gives p90 0.078-0.123 and
+  637-874 such entries. **The 0.194 worst case is one seed's draw** (seeds
+  1-4 give <=0.001 on the same board); seed 42 is the shipped one, so it
+  is quoted rather than the flattering figure.
+
+- **F45 (M161): the solver values the second position as MINUS the
+  first's payoff, and that is NOT that player's payoff once a chance node
+  chains streets.** `node.pot` includes dead money carried in from
+  earlier streets, so a terminal's two payoffs sum to the DEAD POT, not
+  to zero - `value_a + value_b == pot - invested_a - invested_b`. Within
+  a single street that offset is identical at every terminal and cancels
+  out of every regret DIFFERENCE, which is why it has never mattered and
+  why `solve_flop` is unaffected. Across a chance node into a street
+  whose starting pot depends on how much was bet to reach it, the offset
+  varies by terminal and stops cancelling. **Measured: computing the
+  second player's true payoff instead moves strategies by 0.97 on a
+  flop->turn tree, identically in float32 and float64** - dtype
+  independence is what separates this from the rounding chaos above.
+  Found because M161's first draft did compute the true payoff, and the
+  chance-node equivalence test caught it.
+  **Which convention is correct is NOT established, and the obvious
+  answer is not safe.** The true payoff is the textbook utility, but the
+  street-relative accounting has a matching gap on the FIRST player too:
+  a turn subtree's terminals do not subtract that player's flop
+  investment either, so switching one side alone would trade a known
+  asymmetry for an unknown one. Adjudicating needs a converged
+  multi-street reference, and M156 measured that turn references cost
+  what flop ones do.
+  **Deliberately reproduced, not fixed, in M161** (`_terminal_value_
+  vector` computes in the first position's terms and negates): a
+  performance rewrite that also silently changed every multi-street solve
+  would make its own speedup unmeasurable and every reference solve
+  incomparable. Affects `solve_flop_turn` / `solve_flop_to_river`, i.e.
+  turn and river advice. Pinned by
+  `test_the_vector_terminal_reproduces_the_matrix_dead_pot_convention`,
+  which asserts the convention itself so a future correction has to be
+  deliberate.
+
 - **The flop solve runs in FLOAT32, and is memory-bound on N x N
   matrices (M160).** Anatomy of a real flop solve: 318 combos but only
   **16 decision nodes and 29 terminals**, 11.2ms per iteration, ~700us
@@ -608,12 +674,10 @@ requests now reject unknown fields by name rather than ignoring them.
   (`InfoSetTable`): regret sums build across hundreds of iterations,
   which is where precision matters, and they are `num_hands x
   num_actions`, tiny beside the transients.
-  **The remaining inefficiency is algorithmic and NOT fixed**: every node
-  materialises N x N and multiplies it by strategy, so cost is
-  depth x actions x N^2, where standard vector CFR reduces each terminal
-  to an N-vector and stays O(N) above it. Estimated 3-5x, but it rewrites
-  the solver the library, the references and 999 tests depend on - its
-  own milestone, with equivalence validation.
+  **The algorithmic inefficiency M160 named here was FIXED in M161** -
+  every node materialised N x N, making cost depth x actions x N^2. M160
+  estimated the vector rewrite at 3-5x; it measured 13.07x at a
+  production-sized pool. See M161's entry above.
 
 - **The flop request's cost is 86% CFR SOLVE, not the equity table
   (M155).** M132's "the table is 41% of a flop request" is stale - its

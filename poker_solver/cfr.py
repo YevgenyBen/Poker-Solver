@@ -324,7 +324,7 @@ def _terminal_value_matrix(
     return equity_table * node.pot - node.invested[position_a]
 
 
-def _solve_recurse(
+def _solve_recurse_matrix(
     node,
     reach_a: np.ndarray,
     reach_b: np.ndarray,
@@ -338,6 +338,15 @@ def _solve_recurse(
     strategy_weight: float = 1.0,
 ) -> np.ndarray:
     """Returns this node's value matrix (`position_a`'s payoff, shape NxN).
+
+    M161: this is NO LONGER the shipped recursion — `_solve_recurse` is,
+    and it propagates an N-vector instead of this N x N matrix. This one
+    is kept, deliberately and with a caller, as the REFERENCE the rewrite
+    is validated against: `test_the_vector_recursion_matches_the_matrix_
+    one` runs both through `solve()` over whole trees and asserts the
+    resulting strategies agree. A rewrite of the solver every reference
+    solve and the canonical library depend on is worth the dead weight of
+    keeping the thing it replaced runnable.
 
     `chance_fn`/`chance_data` (M12): if `chance_fn` is set, a
     showdown-eligible `TerminalNode` (`is_showdown`, i.e. capped action
@@ -360,7 +369,7 @@ def _solve_recurse(
     """
     if isinstance(node, ChanceNode):
         branch_values = [
-            _solve_recurse(
+            _solve_recurse_matrix(
                 branch.root, reach_a, reach_b, updating_player, node_data,
                 branch.equity_table, position_a, position_b,
                 chance_fn=branch.chance_fn, chance_data=chance_data,
@@ -376,7 +385,7 @@ def _solve_recurse(
             if chance_node is None:
                 chance_node = chance_fn(node)
                 chance_data[id(node)] = chance_node
-            return _solve_recurse(
+            return _solve_recurse_matrix(
                 chance_node, reach_a, reach_b, updating_player, node_data,
                 equity_table, position_a, position_b, chance_fn, chance_data,
                 strategy_weight,
@@ -393,13 +402,13 @@ def _solve_recurse(
     for a_idx, action in enumerate(actions):
         child = node.children[action]
         if acting_is_a:
-            child_value = _solve_recurse(
+            child_value = _solve_recurse_matrix(
                 child, reach_a * strategy[:, a_idx], reach_b, updating_player,
                 node_data, equity_table, position_a, position_b, chance_fn, chance_data,
                 strategy_weight,
             )
         else:
-            child_value = _solve_recurse(
+            child_value = _solve_recurse_matrix(
                 child, reach_a, reach_b * strategy[:, a_idx], updating_player,
                 node_data, equity_table, position_a, position_b, chance_fn, chance_data,
                 strategy_weight,
@@ -457,6 +466,233 @@ def _solve_recurse(
     return node_value
 
 
+def _terminal_value_vector(
+    node: TerminalNode,
+    equity_table: np.ndarray,
+    position_a: str,
+    position_b: str,
+    traverser_is_a: bool,
+    reach_opp: np.ndarray,
+) -> np.ndarray:
+    """The traverser's counterfactual value VECTOR at a leaf, length num_hands.
+
+    Exactly `_terminal_value_matrix(...) @ reach_opp` when the traverser
+    is `position_a`, and exactly `(-_terminal_value_matrix(...)).T @
+    reach_opp` when it is `position_b` — the two expressions the matrix
+    recursion used to build, without ever materialising the N x N matrix
+    it built them from. That matters because the matrix version allocates
+    a fresh `equity_table * pot - invested` at every showdown terminal on
+    every iteration; this reads the shared table once and writes an
+    N-vector.
+
+    **Everything here is expressed in `position_a`'s payoff and negated
+    for `position_b`, deliberately, because that is what the matrix
+    version does — and it is NOT the same as computing `position_b`'s own
+    payoff.** `node.pot` includes dead money carried in from earlier
+    streets, so `value_a + value_b == pot - invested_a - invested_b`,
+    which is the dead pot, not zero. Valuing b as `-value_a` therefore
+    offsets b's counterfactual values by that dead pot. Within a single
+    street the offset is identical at every terminal and cancels out of
+    every regret difference, so it is invisible. Across a chance node
+    into a new street it does not cancel, because the new street's dead
+    pot depends on how much was bet to reach it — measured at 0.97 of
+    absolute strategy difference on a flop->turn tree, dtype-independent.
+
+    Reproducing the offset rather than removing it is intentional: this
+    milestone is a performance rewrite, and silently changing what the
+    solver computes on every multi-street solve would make its own
+    speedup unmeasurable and every reference solve incomparable. See
+    F45 in CLAUDE.md for the finding and what adjudicating it needs.
+
+    Blocked hand pairs are NOT excluded, matching the matrix version:
+    `solver.solve_flop` replaces the equity table's NaNs with 0.5 before
+    solving, so every (i, j) pair is treated as reachable.
+    """
+    num_hands = equity_table.shape[0]
+    opp_mass = reach_opp.sum()
+    invested_a = node.invested[position_a]
+
+    constant = None
+    if position_a in node.folded:
+        constant = -invested_a
+    elif position_b in node.folded:
+        constant = node.pot - invested_a
+    if constant is not None:
+        total = constant * opp_mass
+        return np.full(
+            num_hands, total if traverser_is_a else -total, dtype=reach_opp.dtype
+        )
+
+    if traverser_is_a:
+        return (equity_table @ reach_opp) * node.pot - invested_a * opp_mass
+    # The table is indexed [a_hand, b_hand], so b's own axis is the
+    # column — hence the transpose, matching the matrix version's `.T`.
+    return invested_a * opp_mass - (equity_table.T @ reach_opp) * node.pot
+
+
+def _vector_recurse(
+    node,
+    reach_trav: np.ndarray,
+    reach_opp: np.ndarray,
+    traverser: str,
+    position_a: str,
+    position_b: str,
+    traverser_is_a: bool,
+    node_data: dict,
+    equity_table: np.ndarray,
+    chance_fn: Optional[Callable],
+    chance_data: Optional[dict],
+    strategy_weight: float,
+) -> np.ndarray:
+    """Returns the traverser's counterfactual value VECTOR at `node`.
+
+    Entry `i` is `sum_j reach_opp(node)[j] * value(i, j)` where
+    `reach_opp(node)` is the opponent's probability of reaching this node
+    holding hand `j`. The matrix recursion this replaces returned the
+    whole `value(i, j)` and multiplied by the opponent's reach only at
+    the ancestor that needed it; pushing the reach DOWN instead makes
+    every node's return O(N) rather than O(N^2).
+
+    The two are algebraically identical, and the step that makes it work
+    is worth stating because it is not the obvious one. At a node where
+    the OPPONENT acts, the matrix version weights each child matrix by
+    the opponent's action probability along the column axis. Here that
+    probability is instead folded into the child's own `reach_opp`, so
+    the branches **sum** rather than average or re-weight:
+
+        u_h[i] = sum_j reach_opp(h)[j] * sum_a sigma[j,a] * V_{h.a}[i,j]
+               = sum_a sum_j reach_opp(h.a)[j] * V_{h.a}[i,j]
+               = sum_a u_{h.a}[i]
+
+    At a node where the TRAVERSER acts the opponent's reach is unchanged,
+    so each child's returned vector IS that action's counterfactual value
+    — the quantity the matrix version had to compute as
+    `child_value @ opponent_reach`. Regret is then a subtraction of
+    vectors rather than a stack of matrix-vector products.
+
+    `chance_fn`/`chance_data` behave exactly as in the matrix version,
+    including recursing each branch with `branch.chance_fn` rather than
+    the ambient one — see `_solve_recurse_matrix`'s docstring for why
+    that per-branch switch is the correct design.
+    """
+    if isinstance(node, ChanceNode):
+        branch_values = [
+            _vector_recurse(
+                branch.root, reach_trav, reach_opp, traverser, position_a,
+                position_b, traverser_is_a, node_data, branch.equity_table,
+                branch.chance_fn, chance_data, strategy_weight,
+            )
+            for branch in node.branches.values()
+        ]
+        return sum(branch_values) / len(branch_values)
+
+    if isinstance(node, TerminalNode):
+        if chance_fn is not None and node.is_showdown:
+            chance_node = chance_data.get(id(node))
+            if chance_node is None:
+                chance_node = chance_fn(node)
+                chance_data[id(node)] = chance_node
+            return _vector_recurse(
+                chance_node, reach_trav, reach_opp, traverser, position_a,
+                position_b, traverser_is_a, node_data, equity_table, chance_fn,
+                chance_data, strategy_weight,
+            )
+        return _terminal_value_vector(
+            node, equity_table, position_a, position_b, traverser_is_a, reach_opp
+        )
+
+    num_hands = equity_table.shape[0]
+    actions = node.legal_actions
+    table = node_data.setdefault(id(node), InfoSetTable.zeros(num_hands, len(actions)))
+    strategy = table.current_strategy()
+    acting_is_traverser = node.player_to_act == traverser
+
+    # M160 kept the value path in the equity table's precision; the reach
+    # vectors have to follow it or `equity_table @ reach_opp` at every
+    # terminal upcasts the SHARED table to float64 and undoes the halved
+    # memory traffic that change bought. `current_strategy()` reads off
+    # float64 accumulators, so the cast is here rather than there —
+    # accumulation stays in double, propagation does not.
+    reach_strategy = strategy.astype(reach_opp.dtype, copy=False)
+
+    child_values = []
+    for a_idx, action in enumerate(actions):
+        child = node.children[action]
+        if acting_is_traverser:
+            child_values.append(_vector_recurse(
+                child, reach_trav * reach_strategy[:, a_idx], reach_opp,
+                traverser, position_a, position_b, traverser_is_a, node_data,
+                equity_table, chance_fn, chance_data, strategy_weight,
+            ))
+        else:
+            child_values.append(_vector_recurse(
+                child, reach_trav, reach_opp * reach_strategy[:, a_idx],
+                traverser, position_a, position_b, traverser_is_a, node_data,
+                equity_table, chance_fn, chance_data, strategy_weight,
+            ))
+
+    if not acting_is_traverser:
+        # See the docstring: the opponent's action probability is already
+        # inside each child's reach_opp, so this is a plain sum.
+        return sum(child_values)
+
+    cf_action_values = np.stack(child_values, axis=1)
+    node_value = (cf_action_values * reach_strategy).sum(axis=1)
+
+    regret = cf_action_values - node_value[:, None]
+    table.regret_sum = np.maximum(table.regret_sum + regret, 0.0)  # CFR+: floor at 0
+    # M71: weight this iteration's contribution to the time-average by
+    # `strategy_weight` — see `_solve_recurse_matrix` for what an
+    # unweighted average cost on a toy game that was being used as ground
+    # truth. `strategy` (float64), not `reach_strategy`, on purpose: this
+    # is an accumulator.
+    table.strategy_sum += strategy_weight * reach_trav[:, None] * strategy
+
+    return node_value
+
+
+def _solve_recurse(
+    node,
+    reach_a: np.ndarray,
+    reach_b: np.ndarray,
+    updating_player: str,
+    node_data: dict,
+    equity_table: np.ndarray,
+    position_a: str,
+    position_b: str,
+    chance_fn: Optional[Callable] = None,
+    chance_data: Optional[dict] = None,
+    strategy_weight: float = 1.0,
+) -> np.ndarray:
+    """Vector CFR (M161). Signature-compatible with `_solve_recurse_matrix`.
+
+    Keeps the (reach_a, reach_b, position_a, position_b) calling
+    convention so the two are drop-in swappable from `solve()`, which is
+    what lets the equivalence test run whole trees through both. The
+    traverser-relative view the vector recursion actually needs is
+    derived here, once, rather than threaded through every call site.
+
+    Returns the updating player's counterfactual value VECTOR, not
+    `position_a`'s payoff matrix. Nothing outside this module consumed
+    the return value — `solve()` discards it — so the change is internal.
+    """
+    traverser_is_a = updating_player == position_a
+    return _vector_recurse(
+        node,
+        reach_a if traverser_is_a else reach_b,
+        reach_b if traverser_is_a else reach_a,
+        updating_player,
+        position_a,
+        position_b,
+        traverser_is_a,
+        node_data,
+        equity_table,
+        chance_fn,
+        chance_data,
+        strategy_weight,
+    )
+
+
 def solve(
     root: DecisionNode,
     hands: list,
@@ -468,6 +704,7 @@ def solve(
     chance_data: Optional[dict] = None,
     linear_averaging: bool = True,
     initial_node_data: Optional[dict] = None,
+    _recurse: Optional[Callable] = None,
 ) -> dict:
     """Run `iterations` of CFR+ over `root`, for the given `hands`.
 
@@ -576,9 +813,16 @@ def solve(
                 f"but this solve has {len(hands)} hands — re-shape the tables "
                 "onto the new pool before warm-starting"
             )
+    # M161: `_recurse` is private and exists for one reason — so
+    # `test_the_vector_recursion_matches_the_matrix_one` can drive the
+    # replaced implementation through this exact loop rather than a
+    # re-implementation of it in the test, which could drift from this
+    # one and quietly stop comparing what ships. Production never passes
+    # it; the default IS the shipped recursion.
+    recurse = _recurse or _solve_recurse
     for iteration in range(iterations):
         updating_player = position_a if iteration % 2 == 0 else position_b
-        _solve_recurse(
+        recurse(
             root, reach_a.copy(), reach_b.copy(), updating_player,
             node_data, equity_table, position_a, position_b,
             chance_fn, chance_data,
