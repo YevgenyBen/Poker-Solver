@@ -5,17 +5,25 @@ accuracy depends sharply on this quantity, so the API uses it to say
 which of its own answers are reliable rather than labelling all of them
 the same way.
 
-Measured over 27 flop spots drawn from real play, against a solve with
-roughly five times the range and five times the iterations:
+Measured over 44 flop spots drawn from real play across three studies:
 
-    band (percentile)   spots   mean error   worst   over 0.10
-    strong  >= 0.85         5       0.0237   0.057      0
-    medium  0.55-0.85       5       0.0025   0.008      0
-    weak    < 0.55          4       0.2785   0.903      2
+    band          n   mean error   worst   over 0.10
+    0.00-0.20    10       0.0510   0.182       3
+    0.20-0.40    10       0.2686   0.993       4
+    0.40-0.55     7       0.0745   0.270       2
+    0.55-0.75     8       0.1252   0.990       1
+    0.75-0.90     7       0.0079   0.023       0
+    0.90-1.01     2       0.0374   0.057       0
 
-The split is the point: nothing in the upper two bands exceeded 0.10,
-and half the weak band did. See api/config.py's
-UNRELIABLE_HAND_STRENGTH_PERCENTILE for how that threshold is used.
+**Strength does NOT predict error** — the correlation is -0.130, and
+errors appear at every band below 0.65. An earlier version of this
+module claimed a weak/strong split on 27 spots; the next 18 broke it
+(M166 asserted it, M167 withdrew it).
+
+What survives is one-sided: the top of the range is clean. Nothing at or
+above 0.75 exceeded 0.10 error. So the API certifies reliability there
+and reports it as unknown below, rather than claiming a split that is
+not in the data. See api/config.py's RELIABLE_HAND_STRENGTH_PERCENTILE.
 
 Deliberately ranks against EVERY two-card combination that can coexist
 with the board, not against a modelled range. A range-relative measure
