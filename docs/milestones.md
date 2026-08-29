@@ -8133,3 +8133,52 @@ entry's own corrections before trusting its conclusions.
     Estimated 3-5x. Not attempted here: it rewrites the solver the
     canonical library, every reference solve and 999 tests depend on.
   - 999 backend tests pass.
+
+- **M161 - the exact solver propagates a VECTOR, and a real defect
+  surfaced on the way.** M160 named the algorithmic rewrite as the whole
+  remaining flop-latency fix and estimated 3-5x. Measured, it is 13.07x
+  at 321 combos.
+  - **The change.** `_solve_recurse` returned a `num_hands x num_hands`
+    matrix from every node; the ancestor that needed it multiplied by the
+    opponent's reach. Pushing that reach DOWN instead makes every node
+    return an N-vector, `u_h[i] = sum_j reach_opp(h)[j] * value(i, j)`.
+    The non-obvious step: at a node where the OPPONENT acts the branches
+    **sum** rather than average or re-weight, because that player's
+    action probability is already folded into the child's own reach.
+  - **Speedup scales with the pool, as the O(N^2) -> O(N) argument
+    says it must**: 1.15x / 1.28x / 1.77x / 7.56x / 13.07x at 9 / 33 /
+    66 / 164 / 321 combos, interleaved A/B in one process per M70's rule.
+    Never slower at any measured size.
+  - **Equivalence is exact in float64 and deliberately not asserted in
+    float32.** Whole trees through `solve()` with each recursion agree to
+    1e-9 (single street) and 4.8e-15 (across chance nodes). In float32
+    they do not, and three controls establish that this is chaos rather
+    than error: each arm is bit-deterministic against itself; the gap
+    grows from exactly 0 with iteration count; and it collapses by ~1e9
+    at double precision. Against M155's yardstick the gap is inside the
+    solver's own noise - at the production seed over four boards, p90
+    <=0.003 and 8 entries over 0.05, against seed-only noise of p90
+    0.078-0.123 and 637-874 such entries.
+  - **The 0.194 worst case is reported rather than the flattering
+    number.** On seed 42 - the shipped default - one board's worst entry
+    moves 0.194; seeds 1, 2, 3 and 4 give <=0.001 on that same board. An
+    earlier harness that happened to pass `equity_seed=1` made the change
+    look clean, and the discrepancy was chased down rather than taken.
+  - **F45, found by the rewrite.** The first draft computed the second
+    player's TRUE payoff at a terminal instead of minus the first's, and
+    the chance-node equivalence check moved by 0.97 - identically in
+    float32 and float64, which is what proved it was logic and not
+    rounding. Cause: `node.pot` carries dead money from earlier streets,
+    so the two payoffs sum to that dead pot rather than zero. The offset
+    cancels out of every regret difference within one street and does not
+    cancel across a chance node into a street whose starting pot depends
+    on prior betting. **Reproduced, not fixed** - see CLAUDE.md's F45 for
+    why the obvious correction is not safe on its own, and why a
+    performance milestone is the wrong place to change what every
+    multi-street solve computes.
+  - `_solve_recurse_matrix` is kept runnable, with a private
+    `solve(_recurse=...)` hook, so the equivalence tests drive the real
+    loop rather than a re-implementation of it that could drift.
+  - Five new tests, and all four attempted mutations of the new logic are
+    caught by them - including the exact dead-pot error above. Full suite
+    green at 1,004.

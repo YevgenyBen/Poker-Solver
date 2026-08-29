@@ -3,6 +3,7 @@ import random
 import numpy as np
 import pytest
 
+from poker_solver import cfr
 from poker_solver.cards import Card
 from poker_solver.cfr import (
     InfoSetTable,
@@ -1628,3 +1629,188 @@ def test_continuation_leaves_a_folded_player_untouched():
     value = _mccfr_terminal_value(node, "BTN", {"BB": "x"}, 2, _FixedEquity([0.9, 0.1]),
                                   continuation=1.0, stack_bb=100.0)
     assert np.allclose(value, [-10.0, -10.0])
+
+
+# ---------------------------------------------------------------------------
+# M161: vector CFR. `_solve_recurse` propagates an N-vector where
+# `_solve_recurse_matrix` propagated an N x N matrix. The rewrite is a
+# performance change and must not be a behaviour change, so the incumbent
+# is kept runnable and these drive both through solve() itself.
+# ---------------------------------------------------------------------------
+
+
+def _equivalence_tree(num_hands=6, seed=11):
+    """A real multi-level street tree plus a deterministic equity table."""
+    rng = np.random.default_rng(seed)
+    upper = rng.random((num_hands, num_hands))
+    equity_table = (upper + (1.0 - upper.T)) / 2.0  # E[i,j] + E[j,i] == 1
+    config = StreetConfig(
+        positions=("OOP", "IP"), pot=6.0, stack_bb=20.0,
+        raise_sizes=(2.5, 3.0), max_raises=3,
+    )
+    root = build_street_tree(config)
+    hands = list(range(num_hands))
+    weights = np.linspace(0.4, 1.0, num_hands)
+    reach = {"OOP": weights, "IP": weights}
+    return root, hands, equity_table, reach
+
+
+def _worst_strategy_gap(node_data_a, node_data_b, root):
+    """Compared over the nodes of `root`'s own tree, which both arms share.
+
+    Not over the raw dicts: a chance_fn builds a fresh branch subtree per
+    solve, so those nodes have different `id()`s in each arm and the key
+    sets legitimately differ. The flop tree is the same object in both.
+    """
+    from poker_solver.game_tree import walk
+
+    keys = [id(n) for n in walk(root) if id(n) in node_data_a]
+    assert keys, "no shared decision nodes to compare"
+    assert all(k in node_data_b for k in keys)
+    return max(
+        float(np.abs(node_data_a[k].average_strategy()
+                     - node_data_b[k].average_strategy()).max())
+        for k in keys
+    )
+
+
+def test_the_vector_recursion_matches_the_matrix_one():
+    # The rewrite's whole claim. Run in float64 deliberately: the two
+    # implementations do the same arithmetic in a different ORDER, and CFR
+    # amplifies a rounding difference (M74's bang-bang behaviour swings a
+    # near-tied node wholesale), so float32 measures chaos rather than
+    # correctness. At double precision the gap is machine epsilon.
+    root, hands, equity_table, reach = _equivalence_tree()
+    common = dict(iterations=120, positions=("OOP", "IP"), initial_reach=reach)
+    matrix = solve(root, hands, equity_table,
+                   _recurse=cfr._solve_recurse_matrix, **common)
+    vector = solve(root, hands, equity_table, **common)
+    assert _worst_strategy_gap(matrix, vector, root) < 1e-9
+
+
+def _chance_equivalence_tree(num_hands=4, seed=5):
+    """A tree whose showdown terminals chain into a further street.
+
+    The point is that the branch streets start from DIFFERENT pots
+    (each terminal carries its own), so the dead money at a leaf varies
+    across the tree — the condition under which the two recursions can
+    disagree at all. See `_terminal_value_vector` for why.
+    """
+    rng = np.random.default_rng(seed)
+    upper = rng.random((num_hands, num_hands))
+    equity_table = (upper + (1.0 - upper.T)) / 2.0
+    config = StreetConfig(
+        positions=("OOP", "IP"), pot=6.0, stack_bb=12.0,
+        raise_sizes=(2.5,), max_raises=2,
+    )
+    root = build_street_tree(config)
+
+    def chance_fn(terminal):
+        behind = 12.0 - max(terminal.invested.values())
+        branches = {}
+        for i, rank in enumerate(("2", "7")):
+            card = Card(rank, "c")
+            sub = StreetConfig(
+                positions=("OOP", "IP"), pot=terminal.pot,
+                stack_bb=max(behind, 1.0), raise_sizes=(2.5,), max_raises=2,
+            )
+            shifted = np.clip(equity_table + (0.05 * (i + 1)), 0.0, 1.0)
+            branches[card] = ChanceBranch(
+                card=card, equity_table=shifted, root=build_street_tree(sub)
+            )
+        return ChanceNode(pot=terminal.pot, invested=dict(terminal.invested),
+                          branches=branches)
+
+    hands = list(range(num_hands))
+    weights = np.linspace(0.5, 1.0, num_hands)
+    return root, hands, equity_table, {"OOP": weights, "IP": weights}, chance_fn
+
+
+def test_the_vector_recursion_matches_the_matrix_one_across_a_chance_node():
+    # The case a single-street check cannot see, and the one that caught a
+    # real error in this rewrite before it shipped.
+    #
+    # `node.pot` includes dead money carried in from earlier streets, so a
+    # terminal's two payoffs sum to that dead pot rather than to zero. The
+    # matrix recursion values the second position as MINUS the first's,
+    # which offsets it by exactly that dead pot. Within one street the
+    # offset is the same at every terminal and cancels out of every regret
+    # difference. Across a chance node into a street whose starting pot
+    # depends on how much was bet to reach it, it does not cancel — a
+    # first version of this rewrite computed the second player's true
+    # payoff instead and moved strategies by 0.97, dtype-independent.
+    root, hands, equity_table, reach, chance_fn = _chance_equivalence_tree()
+    common = dict(iterations=60, positions=("OOP", "IP"), initial_reach=reach)
+    matrix = solve(root, hands, equity_table, chance_fn=chance_fn, chance_data={},
+                   _recurse=cfr._solve_recurse_matrix, **common)
+    vector = solve(root, hands, equity_table, chance_fn=chance_fn, chance_data={},
+                   **common)
+    assert _worst_strategy_gap(matrix, vector, root) < 1e-9
+
+
+def test_the_vector_terminal_reproduces_the_matrix_dead_pot_convention():
+    # Pins the convention itself rather than its downstream effect, for
+    # both traversers, at a terminal with real dead money (pot 10 against
+    # 2 + 2 invested, so 6 is carried in). Asserting equality with the
+    # matrix expression is the point: the second position's value here is
+    # NOT that player's own payoff, and a future change that "corrects"
+    # it should have to delete this test on purpose.
+    equity_table = np.array([[0.25, 0.75], [0.5, 0.5]])
+    reach_opp = np.array([0.6, 0.9])
+    showdown = TerminalNode(pot=10.0, invested={"OOP": 2.0, "IP": 2.0},
+                            folded=frozenset())
+    folded = TerminalNode(pot=8.0, invested={"OOP": 2.0, "IP": 0.0},
+                          folded=frozenset({"IP"}))
+    for node in (showdown, folded):
+        matrix = cfr._terminal_value_matrix(node, equity_table, "OOP", "IP")
+        as_a = cfr._terminal_value_vector(node, equity_table, "OOP", "IP", True,
+                                          reach_opp)
+        as_b = cfr._terminal_value_vector(node, equity_table, "OOP", "IP", False,
+                                          reach_opp)
+        assert np.allclose(as_a, matrix @ reach_opp)
+        assert np.allclose(as_b, (-matrix).T @ reach_opp)
+
+    # And the property that makes the convention worth pinning: the two
+    # do not sum to zero, they sum to the dead pot.
+    a_payoff = equity_table * showdown.pot - showdown.invested["OOP"]
+    b_payoff = (1.0 - equity_table) * showdown.pot - showdown.invested["IP"]
+    assert np.allclose(a_payoff + b_payoff, 6.0)
+
+
+def test_the_vector_recursion_returns_a_vector_not_a_matrix():
+    # The rewrite's reason for existing: cost per node drops from O(N^2)
+    # to O(N). If this ever returns a square array again the speedup is
+    # gone whatever the timings say.
+    root, hands, equity_table, reach = _equivalence_tree(num_hands=5)
+    node_data = {}
+    returned = cfr._solve_recurse(
+        root, reach["OOP"].copy(), reach["IP"].copy(), "OOP", node_data,
+        equity_table, "OOP", "IP",
+    )
+    assert returned.shape == (5,)
+    matrix_returned = cfr._solve_recurse_matrix(
+        root, reach["OOP"].copy(), reach["IP"].copy(), "OOP", {},
+        equity_table, "OOP", "IP",
+    )
+    assert matrix_returned.shape == (5, 5)
+
+
+def test_solve_uses_the_vector_recursion_by_default():
+    # `_recurse` exists only so the equivalence tests can drive the
+    # replaced implementation through the real loop. Production must not
+    # be getting the old one by accident.
+    calls = []
+    original = cfr._solve_recurse
+
+    def spy(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    root, hands, equity_table, reach = _equivalence_tree(num_hands=3)
+    cfr._solve_recurse = spy
+    try:
+        solve(root, hands, equity_table, iterations=4, positions=("OOP", "IP"),
+              initial_reach=reach)
+    finally:
+        cfr._solve_recurse = original
+    assert len(calls) == 4
