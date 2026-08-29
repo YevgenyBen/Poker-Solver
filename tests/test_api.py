@@ -5419,3 +5419,128 @@ def test_the_multiway_flop_trainer_fires_on_a_uniform_hero_row():
     assert after != before or any(result.trained_hands(target).values()), (
         "the trainer claimed to work but the node is unchanged"
     )
+
+
+# ---------------------------------------------------------------------------
+# M165: the heads-up river node, repaired on demand.
+#
+# Different cause from M163/M164's multiway case, which is why it needed
+# its own fix: the exact solver VISITS every hand at every node, so these
+# rows are `trained: true` and still exactly uniform — every regret stayed
+# <= 0 through the chained solve's small iteration budget.
+# ---------------------------------------------------------------------------
+
+
+def _river_branch_fixture():
+    """A real flop->turn->river solve, plus one river branch off it."""
+    from poker_solver.cards import Card
+    from poker_solver.combos import range_from_class_frequencies
+    from poker_solver.game_tree import TerminalNode as _Terminal
+    from poker_solver.solver import solve_flop_to_river
+    from poker_solver.starting_hands import all_starting_hands
+
+    board = tuple(Card.from_str(c) for c in ("3d", "Kc", "4h"))
+    hands = all_starting_hands()
+    rng = range_from_class_frequencies({h: 1.0 for h in hands[:4]},
+                                       exclude=frozenset(board))
+    result = solve_flop_to_river(
+        board=board, hero_range=rng, villain_range=rng, pot=6.0,
+        effective_stack_bb=12.0, iterations=2,
+        raise_sizes=(), max_raises=1,
+    )
+    for chance_node in result.chance_data.values():
+        for branch in chance_node.branches.values():
+            if not isinstance(branch.root, _Terminal) and hasattr(
+                    branch.root, "player_to_act"):
+                return result, branch
+    return result, None
+
+
+def test_the_exact_node_trainer_repairs_a_uniform_river_row():
+    """M165. Measured on a real request before this existed: 10 of 19
+    hands at one river node read as the bare prior, hero among them —
+    `check 0.5 / all-in 0.5` holding jack-high, which is a stack-losing
+    recommendation. Re-solving that subtree alone fixes it.
+    """
+    result, branch = _river_branch_fixture()
+    if branch is None:
+        pytest.skip("fixture produced no non-terminal river branch")
+
+    strategy = result.strategy_at(branch.root)
+    uniform_keys = [k for k, row in strategy.items()
+                    if len(row) > 1 and max(row.values()) - min(row.values()) < 1e-9]
+    if not uniform_keys:
+        pytest.skip("fixture produced no uniform river row to repair")
+
+    key = uniform_keys[0]
+    did_work = api_solving._ensure_exact_node_trained(
+        result, branch.root, branch.equity_table, key)
+    assert did_work is True
+    after = result.strategy_at(branch.root)[key]
+    assert max(after.values()) - min(after.values()) > 1e-9, (
+        "the row is still exactly the prior after training"
+    )
+
+
+def test_the_river_trainer_is_given_that_rivers_own_equity_table(client, monkeypatch):
+    """M165. The mistake that would be easiest to make here and hardest
+    to see: passing the FLOP's equity table would value every hand on the
+    wrong board and still return a confident-looking answer.
+
+    Also pins the key type, for the reason M164 exists.
+    """
+    seen = []
+    real = api_solving._ensure_exact_node_trained
+
+    def spy(result, node, equity_table, hero_key=None):
+        seen.append({"table": equity_table, "hero_key": hero_key,
+                     "hands": len(result.hands)})
+        return real(result, node, equity_table, hero_key)
+
+    monkeypatch.setattr(api_solving, "_ensure_exact_node_trained", spy)
+    response = client.post("/advise", json={
+        "hero_cards": "9cJc", "board": "3dKc4h", "players": 2, "stack_bb": 20.0,
+        "preflop_action_path": ["raise", "call_or_check"],
+        "flop_action_path": ["call_or_check", "call_or_check"],
+        "turn_card": "4s", "turn_action_path": ["call_or_check", "call_or_check"],
+        "river_card": "8c",
+    })
+    assert response.status_code == 200, response.json()
+    assert seen, "the river cell never reached the trainer"
+    entry = seen[0]
+    assert isinstance(entry["hero_key"], str), (
+        "hero key must be a string — strategy_at() keys by str(hand), see M164"
+    )
+    # A river table is square over the combo pool, and is the branch's own:
+    # the flop table for the same pool is a different object.
+    assert entry["table"] is not None
+    assert entry["table"].shape == (entry["hands"], entry["hands"])
+
+
+def test_the_exact_node_trainer_leaves_a_differentiated_node_alone():
+    """M165. Scope. Firing on every node would re-solve subtrees on every
+    request and overwrite answers derived from real ranges with ones
+    derived from a uniform assumption.
+    """
+    result, branch = _river_branch_fixture()
+    if branch is None:
+        pytest.skip("fixture produced no non-terminal river branch")
+    strategy = result.strategy_at(branch.root)
+    uniform_keys = [k for k, row in strategy.items()
+                    if len(row) > 1 and max(row.values()) - min(row.values()) < 1e-9]
+    if not uniform_keys:
+        pytest.skip("fixture produced no uniform row")
+    key = uniform_keys[0]
+
+    # Train once — at this fixture's tiny budget every row starts uniform,
+    # so a differentiated row has to be produced rather than found.
+    assert api_solving._ensure_exact_node_trained(
+        result, branch.root, branch.equity_table, key) is True
+    trained_row = dict(result.strategy_at(branch.root)[key])
+    assert max(trained_row.values()) - min(trained_row.values()) > 1e-9
+
+    # Asking again must be a no-op. This is also what stops a refinement
+    # becoming the base of the next one on every subsequent request.
+    assert api_solving._ensure_exact_node_trained(
+        result, branch.root, branch.equity_table, key) is False
+    assert result.strategy_at(branch.root)[key] == trained_row

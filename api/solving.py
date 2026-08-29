@@ -25,7 +25,7 @@ import numpy as np
 from starlette.concurrency import run_in_threadpool  # noqa: F401  (re-exported for callers)
 
 from poker_solver.canonicalize import canonical_stack_depth, canonicalize_board
-from poker_solver.cfr import mccfr_solve
+from poker_solver.cfr import mccfr_solve, solve
 from poker_solver.cards import parse_cards
 from poker_solver.combos import combo_class, HandCombo, range_from_class_frequencies
 from poker_solver.equity import MultiwayEquityCache
@@ -1680,6 +1680,23 @@ def _query_turn_from_path(
             )
         remaining_stack = effective_stack_bb - max(turn_node.invested.values())
 
+    # M165: the TURN is deliberately NOT wired to _ensure_exact_node_trained,
+    # and the reason is that it would never fire. Hero is force-included
+    # into the derived range (M51/M76), so hero's own row here is always
+    # trained and differentiated; the uniform rows at a turn node belong
+    # to OTHER hands, which no user ever sees. Measured by A/B on one
+    # request with the trainer toggled and hero held fixed: **0 firings
+    # across five different heroes** (top set, middle set, top pair,
+    # gutshot, air), strategies byte-identical either way. Consistent
+    # with three 120-hand sessions, which produced uniform rows on the
+    # flop and river and NONE on the turn.
+    #
+    # An earlier version of this comment claimed the turn "inverts" when
+    # repaired, with a table of frequencies. That was withdrawn: those
+    # rows came from asking as a DIFFERENT hero each time, and hero
+    # force-inclusion changes the range and therefore the solve, so the
+    # table compared five different solves rather than one node with and
+    # without training.
     strategy = result.strategy_at(turn_node)
     trained = result.trained_hands(turn_node)
     return {
@@ -2258,6 +2275,12 @@ def _query_river_from_path(
             )
         remaining_stack_after_turn = remaining_stack_after_turn - max(river_node.invested.values())
 
+    # M165: repair this node if it came back as the bare prior. The
+    # equity table is the RIVER branch's own, not the flop's.
+    _ensure_exact_node_trained(
+        result, river_node, river_chance_node.branches[river_card].equity_table,
+        None if hero_combo is None else str(hero_combo))
+
     strategy = result.strategy_at(river_node)
     trained = result.trained_hands(river_node)
     return {
@@ -2405,6 +2428,71 @@ def _row_is_the_prior(row: dict) -> bool:
     """
     values = list(row.values())
     return len(values) > 1 and max(values) - min(values) < 1e-9
+
+
+def _ensure_exact_node_trained(result, node, equity_table, hero_key=None) -> bool:
+    """Solve ONE exact-solver subtree on demand. Returns whether it did work.
+
+    M165, and the heads-up sibling of `_ensure_flop_multiway_node_trained`
+    (M163/M164) and `_ensure_preflop_node_trained` (M150). The cause here
+    is different from both, which is why it needed its own fix rather
+    than a wider trigger on an existing one.
+
+    The exact solver enumerates every hand at every node, so a uniform row
+    does NOT mean the node went unvisited - `trained` is true. It means
+    every regret at that row is still <= 0, so `current_strategy()`
+    returned the uniform prior on every iteration and the average never
+    left it. That is F43's mechanism (visited is not learned) in the
+    exact solver, and it happens because a river node reached through the
+    flop->turn->river chain sees very little of that chain's own 20
+    iterations. Measured on a real request: **10 of 19 hands** at one
+    river node, hero among them, returning `check 0.5 / all-in 0.5` with
+    jack-high - a stack-losing recommendation.
+
+    Re-solving that subtree alone fixes it and converges fast: 0.5/0.5 ->
+    **0.9992/0.0008 at 50 iterations**, 1.0/0.0001 at 200.
+
+    **The reach is uniform, and that is an assumption**, the same one
+    M150 and M163 state. The ranges arriving at the node are not carried
+    on the result, and the rows that need repair are precisely the ones
+    the parent solve failed to differentiate.
+
+    `equity_table` must be the table for THIS node's board - for a river
+    node that is its own `ChanceBranch.equity_table`, not the flop's.
+    Passing the wrong one would value the hand on the wrong board.
+    """
+    if node is None or isinstance(node, TerminalNode):
+        return False
+    strategy = result.strategy_at(node)
+    if not strategy:
+        return False
+    trained = result.trained_hands(node)
+    # `hero_key` is a STRING: strategy_at keys by str(hand). M164 records
+    # what happens when an object is passed here instead - the lookup
+    # silently never matches and the trigger cannot fire.
+    hero_row = strategy.get(hero_key) if hero_key else None
+    needs_work = (
+        (hero_row is not None and _row_is_the_prior(hero_row))
+        or not any(trained.values())
+    )
+    if not needs_work:
+        return False
+
+    hands = list(result.hands)
+    positions = tuple(result.config.positions)
+    if len(positions) != 2:
+        return False
+    reach = {position: np.ones(len(hands)) for position in positions}
+    node_data = solve(
+        node, hands, equity_table,
+        iterations=cfg.RIVER_NODE_TRAIN_ITERATIONS,
+        positions=positions, initial_reach=reach,
+    )
+    # Merge, never replace: the subtree's nodes are the same objects the
+    # parent solve knows about, so this overwrites exactly the rows it
+    # just improved.
+    result.node_data.update(node_data)
+    return True
 
 
 def _ensure_flop_multiway_node_trained(result, node, board_cards, hero_key=None) -> bool:
