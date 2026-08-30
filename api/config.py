@@ -492,7 +492,44 @@ FLOP_QUERY_ITERATIONS = DEFAULT_FLOP_ITERATIONS
 # M131 raised this 10 -> 26, and cut PATH_QUERY_EQUITY_SAMPLES and
 # PATH_QUERY_ITERATIONS to pay for it. The three move together and the
 # reason is one measurement — see PATH_QUERY_EQUITY_SAMPLES below.
-MAX_PATH_QUERY_CLASSES_PER_SIDE = 26
+# M172: raised 26 -> 100, and this is the first widening in this
+# project's history that IMPROVED accuracy rather than redistributing it.
+#
+# Why every previous attempt failed, and why this one does not. The cap
+# is a coverage problem, and coverage was never measured until now: the
+# derived opponent range has all 169 classes nonzero, and the top 26
+# carry a median of only **28% of its mass** (worst 15%). The solve was
+# reasoning about a quarter of what the opponent can hold.
+#
+#   cap   mass kept   error vs the uncapped reference   solve cost
+#    26        28%                            0.2005         0.33s
+#    44        38%                            0.2169         0.79s
+#    60        66%                            0.2685         1.38s
+#   100        95%                            **0.1065**     4.03s
+#   140        99%                            0.0956         6.63s
+#
+# Error gets WORSE from 26 to 60 - M141's conservation law, faithfully -
+# and then halves at 100. Every earlier widening (M137 to 60, M141 to 44)
+# stopped inside the redistribution regime, where all that can happen is
+# error moving between hand types. M137's "width stops paying at 26" was
+# true of what it tested and false as a general claim.
+#
+# Measured on 12 flop spots drawn from real play against the UNCAPPED
+# 169-class solve at 200 samples / 2,500 iterations (~65s per solve, run
+# twice per spot, drifting references discarded). Better on 8 of 12
+# spots, worse on 3; spots over 0.10 error fall from 4/12 to 2/12; worst
+# case 0.9904 -> 0.5924.
+#
+# **Conservation has not been repealed, only outweighed**: strong hands
+# get slightly worse (0.0054 -> 0.0335, both far under 0.10) while
+# middling and weak hands improve several-fold.
+#
+# FLOP ONLY. The turn and river have their own caps
+# (MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE,
+# RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE) and their own cost curves; this
+# result was measured on flop spots and must not be assumed to transfer -
+# M168 is what happens when a flop measurement is applied to the turn.
+MAX_PATH_QUERY_CLASSES_PER_SIDE = 100
 MAX_PATH_LENGTH = 20
 # Flop-stage iterations, fixed — not exposed, unlike the preflop-stage
 # iterations request field below. This part of the pipeline sits behind
@@ -535,7 +572,14 @@ MAX_PATH_LENGTH = 20
 # than the cheapest setting that looked fine.
 PATH_QUERY_WARM_ITERATIONS = 50
 
-PATH_QUERY_ITERATIONS = 500
+# M172: lowered 500 -> 250 alongside the cap rise. Once the range is
+# actually covered, iterations stop mattering much - cap 100 scores
+# 0.1065 at 500 iterations and 0.1090 at 250, a difference well inside
+# the noise - so half of them are bought back to offset the cap's cost.
+# Coverage is doing the work, which is what the mass measurement
+# predicted and the reason M131's three-way budget split needed
+# revisiting rather than rebalancing.
+PATH_QUERY_ITERATIONS = 250
 
 # Fixed server-side constants, not query params — same reasoning
 # DEMO_FLOP_HERO_/VILLAIN_CLASSES already establish (letting a client

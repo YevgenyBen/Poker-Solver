@@ -1578,6 +1578,8 @@ def solve_flop_to_river(
     iterations: int = None,
     equity_seed: int = DEFAULT_EQUITY_SEED,
     equity_batch_fn=None,
+    river_raise_sizes: tuple | None = None,
+    river_max_raises: int | None = None,
 ) -> StrategyResult:
     """Solve a flop betting round that chains all the way to a real river
     showdown — flop->turn via a real chance node (see solve_flop_turn),
@@ -1639,6 +1641,7 @@ def solve_flop_to_river(
             terminal, board=board, combos=combos, positions=positions,
             effective_stack_bb=effective_stack_bb, raise_sizes=raise_sizes, max_raises=max_raises,
             chain_to_river=True, equity_table_cache=equity_table_cache,
+            river_raise_sizes=river_raise_sizes, river_max_raises=river_max_raises,
             equity_batch_fn=equity_batch_fn,
         )
 

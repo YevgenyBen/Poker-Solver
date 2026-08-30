@@ -1116,6 +1116,44 @@ requests now reject unknown fields by name rather than ignoring them.
   `spawn` re-imports `__main__`, which fails from stdin), and the
   fallback was correct but printed 34 tracebacks per request.
 
+- **The flop range cap is 100 classes, and widening it FINALLY worked
+  (M172) — the eleven failures before it all stopped short of coverage.**
+  The cap was never a selection problem, it was a coverage problem, and
+  coverage was never measured until now: the derived opponent range has
+  all 169 classes nonzero and the top 26 carry a **median 28% of its
+  mass** (worst 15%). The solve was reasoning about a quarter of the
+  opponent's range.
+  | cap | mass kept | error vs uncapped | solve cost |
+  |---|---|---|---|
+  | 26 | 28% | 0.2005 | 0.33s |
+  | 44 | 38% | 0.2169 | 0.79s |
+  | 60 | 66% | 0.2685 | 1.38s |
+  | **100** | **95%** | **0.1065** | 4.03s |
+  | 140 | 99% | 0.0956 | 6.63s |
+  Error rises from 26 to 60 — M141's conservation law, exactly — and then
+  HALVES at 100. **M137's "width stops paying at 26" was true of what it
+  tested and false as a general claim**; it stopped at 60, inside the
+  redistribution regime.
+  12 flop spots from real play against the uncapped 169-class solve at
+  200 samples/2,500 iterations (~65s each, run twice, drifting references
+  discarded). Better on 8/12, worse on 3; spots over 0.10 error 4/12 ->
+  2/12; worst case 0.9904 -> 0.5924.
+  **Conservation is outweighed, not repealed**: strong hands get slightly
+  worse (0.0054 -> 0.0335) while middling and weak improve several-fold.
+  **There is no middle setting.** Cap 60 is worse than cap 26, so the
+  choice is 26 or 100+; half the accuracy cannot be bought for half the
+  latency.
+  **The real cost is 6.2x, not the 4x the isolated solve suggested** —
+  measured end to end over five sessions, the heads-up flop goes
+  **1.02s -> 6.37s**. Turn and river are unaffected (1.02-1.04x); they
+  have their own caps and their own cost curves. Decisions inside 5s fall
+  86% -> 65%; inside 10s stays ~100%; worst 9.17s -> 10.20s; zero defects
+  across 1,325 decisions.
+  `PATH_QUERY_ITERATIONS` dropped 500 -> 250 alongside: once the range is
+  covered, iterations barely matter (0.1065 at 500 vs 0.1090 at 250).
+  **FLOP ONLY** — do not assume this transfers to the turn or river
+  (M168 is what that mistake looks like).
+
 - **The postflop budget is split three ways and the three move together
   (M131).** `MAX_PATH_QUERY_CLASSES_PER_SIDE` (26),
   `PATH_QUERY_EQUITY_SAMPLES` (30) and `PATH_QUERY_ITERATIONS` (500)

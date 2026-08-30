@@ -101,6 +101,8 @@ def build_chance_node(
     raise_sizes: tuple = (2.5, 3.0, 2.2),
     max_raises: int = 4,
     chain_to_river: bool = False,
+    river_raise_sizes: tuple | None = None,
+    river_max_raises: int | None = None,
     equity_table_cache: dict | None = None,
     equity_batch_fn=None,
 ) -> ChanceNode:
@@ -217,13 +219,25 @@ def build_chance_node(
             root = terminal
             chance_fn = None
         else:
+            # M171: the RIVER may be sized separately from the streets
+            # before it. `next_board` having five cards means the tree
+            # being built here is the river's own. Widening every street
+            # of this chain costs 3.9x (measured); widening only the last
+            # one is the targeted version of the same fix.
+            is_river = len(next_board) == 5
+            street_sizes = (river_raise_sizes
+                            if is_river and river_raise_sizes is not None
+                            else raise_sizes)
+            street_max_raises = (river_max_raises
+                                 if is_river and river_max_raises is not None
+                                 else max_raises)
             root = build_street_tree(
                 StreetConfig(
                     positions=positions,
                     pot=terminal.pot,
                     stack_bb=remaining_stack,
-                    raise_sizes=raise_sizes,
-                    max_raises=max_raises,
+                    raise_sizes=street_sizes,
+                    max_raises=street_max_raises,
                 )
             )
             if chain_to_river and len(next_board) < 5:
@@ -240,6 +254,8 @@ def build_chance_node(
                     effective_stack_bb=_s, raise_sizes=raise_sizes, max_raises=max_raises,
                     chain_to_river=True, equity_table_cache=equity_table_cache,
                     equity_batch_fn=equity_batch_fn,
+                    river_raise_sizes=river_raise_sizes,
+                    river_max_raises=river_max_raises,
                 )
             else:
                 chance_fn = None

@@ -8559,3 +8559,42 @@ entry's own corrections before trusting its conclusions.
     flop and turn again - and that chain's cost has not been re-measured
     since M161/M162. Same question, same method, not assumed to transfer.
   - Suite green at 1,048.
+
+- **M172 - the range cap works at 100 classes, and the eleven failures
+  before it were all measuring the wrong regime.** The largest accuracy
+  improvement this project has made, and it came from a measurement
+  nobody had taken.
+  - **The question that unlocked it**: how much of the opponent's range
+    does the cap actually KEEP? Never measured in eleven attempts.
+    Answer: the derived range has all 169 classes nonzero and the top 26
+    carry a **median 28% of the mass**, worst 15%. Every selection rule
+    ever tried was choosing which quarter to keep.
+  - **The frontier**: error 0.2005 / 0.2169 / 0.2685 / **0.1065** /
+    0.0956 at caps 26 / 44 / 60 / 100 / 140. Error RISES to 60 -
+    M141's conservation law, faithfully reproduced - then halves at 100,
+    where coverage reaches 95%. M137 stopped at 60 and concluded width
+    stops paying; true of what it tested, false generally.
+  - Measured against the UNCAPPED 169-class solve at 200 samples and
+    2,500 iterations, ~65s per solve, two per spot, drifting references
+    discarded. Better on 8 of 12 spots, worse on 3; over-0.10 spots
+    4/12 -> 2/12; worst 0.9904 -> 0.5924.
+  - **Iterations barely matter once covered** (0.1065 at 500 vs 0.1090
+    at 250), so half of them are bought back to offset the cost. M131's
+    three-way budget needed revisiting, not rebalancing.
+  - **Cost, measured end to end and NOT from the solve in isolation**:
+    heads-up flop 1.02s -> 6.37s, **6.2x**, where the isolated solve
+    predicted ~4x. Third time this session a lab measurement
+    under-predicted the request (M170 was 1.13x -> 1.36x). Turn and river
+    unaffected at 1.02-1.04x.
+  - Five sessions, 1,325 decisions: inside 5s 86% -> 65%, inside 10s
+    ~100%, worst 9.17s -> 10.20s, **zero defects and zero uniform rows**.
+  - **No middle ground exists.** Cap 60 is worse than 26, so the choice
+    is 26 or 100+. That is a property of the threshold, not of tuning.
+  - The byte-ceiling guard fired for the second milestone running:
+    `canonical_warm_starts` entries grew to 1.23 MB against a 168 MB
+    budget, so its ceiling dropped 256 -> 128.
+  - **This also answers the data-versus-compute question.** The engine's
+    central defect was reachable by compute; the ranges were not wrong,
+    only unexamined. A hand-history layer would have been solving a
+    problem we did not have.
+  - Suite green at 1,048.
