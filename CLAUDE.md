@@ -658,8 +658,24 @@ requests now reject unknown fields by name rather than ignoring them.
   range-relative measure would inherit whatever is wrong with the range.
   2.4ms, all three streets (the turn's six cards are scored as the best
   of their six five-card subsets).
-  **The threshold is measured on FLOP spots only** and fires on turn and
-  river too — validating it there is open work.
+  **The certification is FLOP-ONLY (M168), because the turn INVERTS it.**
+  M167 applied the flop threshold to every street without checking.
+  Measured on eight turn spots from real play:
+  | band | n | mean err | worst | over 0.10 |
+  |---|---|---|---|---|
+  | not known (<0.75) | 4 | 0.0728 | 0.138 | 1 |
+  | **certified (>=0.75)** | 4 | **0.2960** | **0.588** | **3** |
+  On the turn the band being certified is the WORSE one — a hand at
+  percentile 0.977 was off by 0.588 while being told the advice measured
+  reliable. `CERTIFY_RELIABILITY_ON_STREETS = ("flop",)`; turn and river
+  get `UNMEASURED_STREET_NOTE`, which says accuracy there is unmeasured
+  AND that strength does not carry over.
+  **The asymmetry that decided the scope**: certifying reliability needs
+  positive evidence for that street; withdrawing a certification needs
+  only its absence. Four spots per band is too thin to CONCLUDE from and
+  ample to STOP claiming on. The river is uncertified for the same
+  reason — after the turn inverted, assuming it behaves like the flop
+  would repeat the mistake.
 
 - **A TENTH range-composition fix is measured and dead (M166): including
   hero's whole CLASS instead of bolting hero on as one combo.** The

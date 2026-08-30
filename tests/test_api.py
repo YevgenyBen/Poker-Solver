@@ -5632,3 +5632,82 @@ def test_preflop_has_no_hand_strength_reading(client):
     body = response.json()
     assert body["hand_strength_percentile"] is None
     assert body["aggression_confidence_reason"] is None
+
+
+def test_reliability_is_only_certified_on_the_street_where_it_was_measured(client):
+    """M168. The correction M167 needed and did not have evidence for.
+
+    M167 measured the reliability threshold on FLOP spots and applied it
+    to every street because that was cheaper than checking. Checked on
+    eight turn spots, the relationship inverts: the band being certified
+    was the worst one — three of four spots off by more than 0.10, worst
+    0.588, on a hand at percentile 0.977.
+
+    So a strong hand on the turn must NOT be told the advice measured
+    reliable. It gets told reliability is not known, which is true.
+    """
+    strong_turn = client.post("/advise", json={
+        "hero_cards": "AhAd", "board": "As7d2h", "players": 2, "stack_bb": 100.0,
+        "preflop_action_path": ["raise", "call_or_check"],
+        "flop_action_path": ["call_or_check", "call_or_check"],
+        "turn_card": "9c",
+    })
+    assert strong_turn.status_code == 200, strong_turn.json()
+    body = strong_turn.json()
+    # The hand really is strong — this is not passing by accident.
+    assert body["hand_strength_percentile"] >= api_config.RELIABLE_HAND_STRENGTH_PERCENTILE
+    reason = body["aggression_confidence_reason"]
+    assert reason.startswith(api_config.UNMEASURED_STREET_NOTE), reason[:120]
+    assert not reason.startswith(api_config.RELIABLE_HAND_NOTE), (
+        "a strong TURN hand is still being certified as reliable — the turn "
+        "measurement says that band is the least accurate one"
+    )
+
+
+def test_the_flop_still_certifies_a_strong_hand(client):
+    """The other half: restricting to the flop must not silence the signal
+    where it WAS measured, or M167's work is undone rather than scoped."""
+    response = client.post("/advise", json={
+        "hero_cards": "AhAd", "board": "As7d2h", "players": 2, "stack_bb": 100.0,
+        "preflop_action_path": ["raise", "call_or_check"],
+    })
+    assert response.status_code == 200, response.json()
+    reason = response.json()["aggression_confidence_reason"]
+    assert reason.startswith(api_config.RELIABLE_HAND_NOTE), reason[:120]
+
+
+def test_the_unmeasured_street_note_says_why_rather_than_only_that(client):
+    """A caveat that says "unknown" teaches nothing. This one has to carry
+    the reason, because the reason is actionable: strength is not a guide
+    on this street, and specifically inverts on the turn."""
+    note = api_config.UNMEASURED_STREET_NOTE.lower()
+    assert "has not been measured" in note
+    assert "does not carry over" in note
+    assert "least accurate" in note
+
+
+def test_every_postflop_street_gets_some_reliability_statement(client):
+    """No street may fall through with nothing said about reliability."""
+    common = {"hero_cards": "AhAd", "board": "As7d2h", "players": 2,
+              "stack_bb": 100.0, "preflop_action_path": ["raise", "call_or_check"]}
+    cases = [
+        ("flop", {}),
+        ("turn", {"flop_action_path": ["call_or_check", "call_or_check"],
+                  "turn_card": "9c"}),
+        ("river", {"flop_action_path": ["call_or_check", "call_or_check"],
+                   "turn_card": "9c",
+                   "turn_action_path": ["call_or_check", "call_or_check"],
+                   "river_card": "4s"}),
+    ]
+    seen = {}
+    for street, extra in cases:
+        response = client.post("/advise", json={**common, **extra})
+        assert response.status_code == 200, (street, response.json())
+        reason = response.json()["aggression_confidence_reason"]
+        assert reason, f"{street} carried no reliability statement at all"
+        seen[street] = reason
+    # The flop's statement must differ from the later streets': the whole
+    # point is that only one of them was measured.
+    assert seen["flop"] != seen["turn"]
+    assert seen["turn"].startswith(api_config.UNMEASURED_STREET_NOTE)
+    assert seen["river"].startswith(api_config.UNMEASURED_STREET_NOTE)
