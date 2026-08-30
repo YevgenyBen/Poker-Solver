@@ -408,31 +408,37 @@ requests now reject unknown fields by name rather than ignoring them.
   solve is already cached, so this is a tree walk" — true for the second
   caller, wrong for the first, who is the one waiting. Pinned by a test
   that counts SOLVES, not seconds.
-- **F38's worst cases have a STRUCTURAL cause on the turn: the tree
-  cannot express a sized re-raise (M156).** `FLOP_TURN_RAISE_SIZES=(2.5,)`
-  with `FLOP_TURN_MAX_RAISES=2` gives ONE size for the first raise, so
-  facing a bet the only aggressive action left is a 97.5bb shove -
-  measured actions are exactly `fold / call_or_check / all_in`. The flop
-  does NOT have this problem (its tree runs `(2.5, 3.0, 2.2)` at
-  max_raises 4 and offers `raise:37.50` facing a bet), which is why F38's
-  turn and river cases are the severe ones. **A hand that wants to raise
-  a third of the pot has no such button, so the solver puts weight on the
-  only one there is.**
-  Adding a sized re-raise (two sizes, max_raises 3) was measured:
-  | hand | shipped | with a sized re-raise |
-  |---|---|---|
-  | middle pair | **shove 1.000** | sized 0.576, shove 0.424 |
-  | top pair | call 0.866, shove 0.134 | sized 0.348, **shove 0.475** |
-  | open-ender | fold 0.996 | fold 0.996 |
-  | cost | 18-20s | 28-32s (**1.5x**) |
-  **Not adopted.** It fixes the indefensible case (stacking off with
-  middle pair facing one bet) and worsens top pair, which is M141's
-  conservation pattern on a third axis; adjudicating needs a converged
-  TURN reference, and turn references are as expensive as flop ones.
-  Latency is already the top complaint (M155), so paying 1.5x for an
-  unmeasured accuracy change is the trade M151 declined. **The node type
-  is already disclosed** - `modelled_bet_sizes` reports `[97.5]` and the
-  caveat says the missing size distorts the play in both directions.
+- **F38's structural turn cause is FIXED (M156 diagnosed, M170 shipped).**
+  The turn now runs `FLOP_TURN_RAISE_SIZES = (2.5, 2.0)` at
+  `FLOP_TURN_MAX_RAISES = 3`, so a hand facing a bet has a sized re-raise
+  and not only a ~97.5bb shove. **M156 built this and declined it on two
+  premises that both expired**: latency was the top complaint (M162/M163
+  fixed it) and adjudicating needed a converged turn reference that did
+  not exist (M168 built one). Re-measured on 14 turn spots from real
+  play, scoring how often the advice commits the whole stack facing a bet:
+  mean error **0.1471 -> 0.1069**, better on **12 of 14**. And the cost
+  premise inverted - M156 measured 1.5x, the same comparison now measures
+  **1.43s -> 1.62s (1.13x)**, because M161/M162 changed the solver
+  underneath. One consequence worth knowing: a wider tree is a bigger
+  cache entry (`turn_path` 7.59 -> 11.01 MB), so `_turn_path_cache`'s
+  ceiling dropped 20 -> 14.
+  **The history, which is now history and not a current claim.** The flop
+  never had this problem (its tree runs `(2.5, 3.0, 2.2)` at max_raises 4
+  and offers `raise:37.50` facing a bet), which is why F38's turn and
+  river cases were the severe ones. M156 measured the change on three
+  hands at the time - middle pair shove 1.000 -> sized 0.576, top pair
+  call 0.866 -> sized 0.348, open-ender unchanged at fold 0.996 - and
+  declined it because it "worsened top pair", at a measured 1.5x cost,
+  with no reference to adjudicate against. **M170 adjudicated it on the
+  axis that costs money** (how often the advice commits the whole stack
+  facing a bet) against a stability-checked reference, over 14 spots
+  rather than 3, and the change wins 12 of 14.
+  **The RIVER still has the original problem** -
+  `FLOP_TO_RIVER_RAISE_SIZES = ()` at max_raises 1, so check-or-shove is
+  the whole menu there (F40). M170 did not touch it: `solve_flop_to_river`
+  takes ONE `raise_sizes` for all three streets, so widening the river
+  widens the flop and turn again, and that chain's cost was never
+  re-measured after M161/M162. Worth revisiting with the same method.
 
 - **F38 (M142): the fold-versus-play call is NOT the sound half, and the
   caveat used to tell users it was.** Every measurement behind that claim
