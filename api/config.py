@@ -689,6 +689,55 @@ MAX_FLOP_TO_RIVER_ITERATIONS = DEFAULT_FLOP_TO_RIVER_ITERATIONS
 # So M54's "no headroom here" conclusion is obsolete: cap=4 now costs
 # LESS (25.04s) than cap=2 did before (32.77s). Raised 2 -> 4 — double
 # the range fidelity AND faster than the old setting.
+# M173: the turn is solved as a STANDALONE street rather than chained
+# from the flop, and this is why.
+#
+# The turn was the worst-covered decision in the product. Chaining
+# flop->turn through chance nodes makes cost explode with range width, so
+# the cap sat at 4 classes - which keeps a **median 4.6% of the
+# opponent's range mass** (worst 1.8%), against the flop's 95% after
+# M172. It was simultaneously the slowest decision (8.19s median across
+# ten games), 57.7% of all postflop advice, and never validated.
+#
+# Widening the chain is not available: cap 8 costs 3.3x, cap 14 8.8x, and
+# cap 26 **40x (66 seconds)**. Coverage is unreachable by that route.
+#
+# `solve_flop` already solves ONE street with remaining runouts averaged
+# at the terminal, and nothing in it assumes three board cards - a
+# four-card board is resolved EXACTLY by build_board_equity_table
+# (remaining_needed == 1, M154). Solving the turn that way is **47x
+# cheaper at equal coverage** (cap 26: 1.40s standalone vs 66.46s
+# chained).
+#
+# Measured on 10 turn spots from real play against a full-range
+# standalone reference, arms at 250 iterations:
+#
+#   coverage   mean err   median   over 0.10   solve
+#   cap 4          0.3601   0.3274      7/10    0.07s   <- shipped
+#   cap 14         0.1836   0.0427      4/10    0.33s
+#   cap 26         0.1361   0.0399      3/10    0.28s   <- adopted
+#   cap 44         0.4102   0.2474      5/10    0.71s
+#   cap 60         0.2492   0.0311      4/10    1.24s
+#
+# Non-monotone past 26 - M141's conservation law, not the flop's clean
+# threshold - but the shipped setting is the worst arm tested. Against
+# it, cap 26 standalone is **2.6x more accurate and 6x cheaper**.
+#
+# **The unresolved part, stated rather than buried.** The reference is a
+# standalone full-range solve, so this measures "does standalone converge
+# as coverage rises", NOT "is standalone right versus chained". That
+# comparison cannot be run: at the only coverage where chained is
+# affordable (cap 14) both arms are unstable, and they agreed on 6 of 8
+# spots there while disagreeing on 2 in OPPOSITE directions - which reads
+# as noise, not as the chain carrying information. What standalone gives
+# up is the flop betting round's influence on the turn strategy.
+#
+# `TURN_SOLVE_STANDALONE = False` restores the chained path exactly. The
+# flag exists because the chain question is genuinely open, not as a
+# migration aid.
+TURN_SOLVE_STANDALONE = True
+TURN_STANDALONE_CLASSES_PER_SIDE = 26
+
 MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE = 4
 
 # /solve_river_from_path's (M46) own cost controls — capped by COMBO
