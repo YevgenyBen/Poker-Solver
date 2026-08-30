@@ -347,7 +347,12 @@ class _MappingSolveCache(_SolveCache):
 # An entry holds a combo list plus one InfoSetTable per decision node,
 # the same order of size as the library entry it accompanies, so it takes
 # the library's own ceiling rather than a larger one.
-_canonical_warm_starts = _MappingSolveCache("canonical_warm_starts", maxsize=256)
+# M172 lowered this from 256. Raising the flop cap 26 -> 100 grew a
+# warm-start entry to 1.23 MB (it holds one InfoSetTable per node over
+# a ~3x larger combo pool), and 256 of those is 316 MB against a 168 MB
+# budget. Caught by the byte-ceiling test, which is the second config
+# change in two milestones to trip it — a wider tree is a bigger entry.
+_canonical_warm_starts = _MappingSolveCache("canonical_warm_starts", maxsize=128)
 
 # M163: the same idea for the MID-flop node, which cannot use the one
 # above. That store is keyed on the CANONICAL board (so one entry serves
