@@ -2397,21 +2397,35 @@ def test_solve_turn_from_path_reuses_the_same_cache_entry_across_turn_cards_and_
     first = client.post("/solve_turn_from_path", json=base).json()
     assert len(api_main._turn_path_cache) == 1
 
+    # M173 CHANGED THIS. The chained solve built every turn card's branch
+    # in one pass, so all of them shared a single cache entry. Solving the
+    # turn as its own street means one solve per turn BOARD, so a
+    # different card is a different entry.
+    #
+    # That is a real trade and it is worth stating: chained amortised
+    # 1.67s across all 45 cards, standalone pays 0.28s per card, so
+    # standalone is cheaper until roughly the sixth card asked about on
+    # one flop line. A player asks about the card that actually came, so
+    # it wins in practice — but a caller sweeping turn cards would not
+    # want this.
     different_turn_card = client.post("/solve_turn_from_path", json={**base, "turn_card": "4c"}).json()
-    assert len(api_main._turn_path_cache) == 1
+    assert len(api_main._turn_path_cache) == 2
     assert different_turn_card["turn_card"] != first["turn_card"]
 
     already_all_in = client.post(
         "/solve_turn_from_path", json={**base, "flop_action_path": ["all_in", "call_or_check"]}
     ).json()
-    assert len(api_main._turn_path_cache) == 1
+    # No solve at all: the flop action left nothing behind, so this returns
+    # a terminal without touching the cache.
+    assert len(api_main._turn_path_cache) == 2
     assert already_all_in["is_terminal"] is True
     assert already_all_in["strategy"] == {}
     assert already_all_in["trained"] == {}
     assert already_all_in["effective_stack_bb"] == pytest.approx(0.0)
 
     fold_out = client.post("/solve_turn_from_path", json={**base, "flop_action_path": ["all_in", "fold"]}).json()
-    assert len(api_main._turn_path_cache) == 1
+    # Also no solve: a fold ends the hand, so nothing is cached here either.
+    assert len(api_main._turn_path_cache) == 2
     assert fold_out["is_terminal"] is True
     assert fold_out["strategy"] == {}
     assert fold_out["trained"] == {}
@@ -5711,3 +5725,54 @@ def test_every_postflop_street_gets_some_reliability_statement(client):
     assert seen["flop"] != seen["turn"]
     assert seen["turn"].startswith(api_config.UNMEASURED_STREET_NOTE)
     assert seen["river"].startswith(api_config.UNMEASURED_STREET_NOTE)
+
+
+def test_the_standalone_turn_solves_at_the_wider_coverage(client):
+    """M173. The mutation that nothing caught until this existed.
+
+    The entire point of solving the turn standalone is that it can afford
+    range coverage the chained solve could not: the chained cap of 4 kept
+    a median 4.6% of the opponent's range mass, against 28.2% at cap 26.
+    Reverting the cap silently undoes the milestone while every other
+    turn test still passes — the answers change, but nothing asserts they
+    should not.
+
+    Asserts the WIRING rather than a frequency, because the suite's
+    fixtures shrink budgets and a threshold on hand counts would be
+    measuring the fixture. Paired with the flag check so that turning
+    standalone off is caught too.
+    """
+    import inspect
+
+    source = inspect.getsource(api_solving._query_turn_from_path)
+    assert "TURN_STANDALONE_CLASSES_PER_SIDE" in source, (
+        "the turn is no longer deriving its ranges at the standalone cap — "
+        "coverage silently reverts to 4.6% of the opponent's range"
+    )
+    assert api_config.TURN_STANDALONE_CLASSES_PER_SIDE >         api_config.MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE
+
+    # And the solve itself must be the standalone street solve, not the
+    # flop->turn chain.
+    standalone = inspect.getsource(api_solving._query_turn_standalone)
+    assert "solve_flop(" in standalone
+    assert "solve_flop_turn(" not in standalone
+
+
+def test_the_standalone_turn_still_refuses_an_impossible_board(client):
+    """M173. The chained path got this for free — a card already on the
+    board simply had no chance branch to look up. Standalone has no branch
+    list, so without an explicit check it answered with a confident
+    strategy for a board that cannot exist.
+
+    The behavioural guard is
+    `test_solve_turn_from_path_rejects_an_illegal_turn_card`, which is what
+    caught the regression; this pins the check itself so it cannot be
+    removed while that test passes for some other reason (through
+    /advise, a duplicate card is refused earlier still, by the
+    request-level "a card can only be in one place" validation).
+    """
+    import inspect
+
+    source = inspect.getsource(api_solving._query_turn_standalone)
+    assert "not a legal turn card" in source
+    assert "if turn_card in board_cards:" in source

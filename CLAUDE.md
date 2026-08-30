@@ -440,6 +440,52 @@ requests now reject unknown fields by name rather than ignoring them.
   widens the flop and turn again, and that chain's cost was never
   re-measured after M161/M162. Worth revisiting with the same method.
 
+- **The TURN is solved as its OWN street, not chained from the flop
+  (M173).** It was the worst decision in the product on every axis at
+  once: slowest (7.94s median against the flop's 6.38s), thinnest (a cap
+  of 4 classes keeping a median **4.6% of the opponent's range mass**,
+  against the flop's 95% after M172), **57.7% of all postflop advice**,
+  and never validated against a reference.
+  Chaining is what made it thin - `solve_flop_turn` solves the flop AND
+  the turn through chance nodes, so cost explodes with width: cap 8 is
+  3.3x, cap 14 8.8x, **cap 26 40x (66 seconds)**. `solve_flop` already
+  solves ONE street with runouts averaged at the terminal, and a
+  four-card board is resolved EXACTLY (`remaining_needed == 1`, M154), so
+  the turn that way is **47x cheaper at equal coverage**.
+  10 turn spots from real play against a full-range standalone reference:
+  mean error **0.3601 -> 0.1361**, spots over 0.10 error **7/10 -> 3/10**,
+  solve 1.67s -> 0.28s. Non-monotone past cap 26 (M141's conservation law
+  again, not the flop's clean threshold) - but the shipped setting was the
+  worst arm tested.
+  Validated over three 120-hand sessions, 837 decisions: **turn median
+  7.94s -> 0.87s (9.1x), max 9.68s -> 1.41s**, decisions over 8s 9.3% ->
+  3.1%, zero defects, zero uniform rows, flop and river unchanged.
+  **The isolated solve figure predicted 1.2x end to end and the real gain
+  is 9.1x** - the chained request was also paying for a flop solve that
+  standalone skips. Isolated arms and requests do not measure the same
+  work, in both directions (M170 and M172 each UNDER-quoted).
+  **The flop tree is built but never solved**: the terminal's pot, who
+  folded and each player's investment are structural, and
+  `build_street_tree` builds children lazily, so walking one path
+  materialises only that path.
+  **What is NOT established: whether standalone is RIGHT versus chained**,
+  as opposed to better-converged. The reference is itself standalone, and
+  the comparison cannot be run - at the only coverage where chained is
+  affordable (cap 14) both arms are unstable, agreeing on 6 of 8 spots and
+  disagreeing on 2 in OPPOSITE directions. What standalone gives up is the
+  flop betting round's influence on the turn. `TURN_SOLVE_STANDALONE =
+  False` restores the chained path exactly; the flag exists because that
+  question is open, not as a migration aid.
+  Turn strategies got more decisive and it is convergence, not collapse:
+  mixed (top action < 0.9) falls 37.3% -> 22.1%, but the genuinely
+  indifferent band (0.40-0.60) is UNCHANGED (7.8% -> 8.6%) while the
+  half-resolved middle (0.60-0.90) drops 28.5% -> 13.6%. A degenerate
+  solve flattens the indifferent spots too.
+  Guarded by `test_the_standalone_turn_solves_at_the_wider_coverage`,
+  which exists because mutation testing showed reverting the cap to 4
+  broke **nothing** - every other turn test checks structure, none checked
+  coverage.
+
 - **F38 (M142): the fold-versus-play call is NOT the sound half, and the
   caveat used to tell users it was.** Every measurement behind that claim
   was taken at a street's OPENING decision — where folding is not a legal

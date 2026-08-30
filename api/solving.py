@@ -33,8 +33,10 @@ from poker_solver.game_tree import (
     CALL_OR_CHECK,
     DecisionNode,
     GameConfig,
+    StreetConfig,
     TerminalNode,
     build_game_tree,
+    build_street_tree,
     postflop_action_order,
     resolve_action,
 )
@@ -1507,6 +1509,143 @@ def _query_flop_node_from_path(
     }
 
 
+def _query_turn_standalone(*, situation, board_cards, turn_card,
+                           flop_action_kinds, turn_action_kinds,
+                           preflop_action_kinds, stack_bb, players,
+                           iterations, turn_iterations, hero_combo,
+                           response_base=None) -> dict:
+    """The turn solved as its OWN street, not chained from the flop.
+
+    M173. See cfg.TURN_SOLVE_STANDALONE for the measurements. In short:
+    chaining made range coverage unaffordable (the turn saw 4.6% of the
+    opponent's range at a cap of 4, and cap 26 chained costs 66s), while
+    solving the turn as a single street with runouts averaged at the
+    terminal is 47x cheaper at equal coverage and 2.6x more accurate than
+    what shipped.
+
+    **The flop tree is built but never solved.** Everything this needs
+    from the flop - the terminal's pot, who folded, and how much each
+    player invested - is structural, fixed by the tree's shape rather
+    than by any strategy. `build_street_tree` builds children lazily, so
+    walking one action path materialises only that path.
+    """
+    oop_position, ip_position = situation.postflop_positions
+    effective_stack_bb = situation.effective_stack_bb
+    path_scenario = situation.path_scenario
+
+    response = {
+        "board": "".join(str(c) for c in board_cards),
+        "turn_card": str(turn_card),
+        "preflop_action_path": list(preflop_action_kinds),
+        "flop_action_path": list(flop_action_kinds),
+        "stack_bb": stack_bb,
+        "position": oop_position,
+        "positions": [oop_position, ip_position],
+        "players": players,
+        "hero_in_range": situation.hero_in_range,
+        "range_confidence": situation.range_confidence,
+        "hero_range_trained": situation.hero_range_trained,
+    }
+
+    flop_root = build_street_tree(StreetConfig(
+        positions=(oop_position, ip_position),
+        pot=path_scenario.pot,
+        stack_bb=effective_stack_bb,
+        raise_sizes=cfg.FLOP_TURN_RAISE_SIZES,
+        max_raises=cfg.FLOP_TURN_MAX_RAISES,
+    ))
+    _flop_actions, flop_node = _resolve_action_path(flop_root, flop_action_kinds)
+    if not isinstance(flop_node, TerminalNode):
+        raise ValueError(
+            "flop_action_path does not close the flop's betting, so no turn card can be "
+            "dealt yet. Two different questions share this shape: to ask about a TURN "
+            "decision, flop_action_path must run to the end of the flop's action; to ask "
+            "about a later FLOP decision instead, send the same partial path WITHOUT a "
+            "turn_card."
+        )
+
+    # M173: the chained path got this check for free — a card already on
+    # the board simply had no chance branch. Solving the turn standalone
+    # has no branch list to fail against, so the same request would have
+    # been answered with a confident strategy for an impossible board.
+    if turn_card in board_cards:
+        raise ValueError(
+            f"{turn_card} is not a legal turn card here (already on the board, or "
+            "already dealt)"
+        )
+
+    remaining_stack = effective_stack_bb - max(flop_node.invested.values())
+    turn_entry_stack = remaining_stack
+
+    if flop_node.folded or remaining_stack <= 0:
+        # Somebody folded, or the flop action put a player all in — either
+        # way there is no turn decision to advise. The chained path
+        # expressed the same two cases as "no chance branch" and "the
+        # branch root is itself a terminal".
+        return {
+            **response,
+            "elapsed_seconds": 0.0,
+            "is_terminal": True,
+            "player_to_act": None,
+            "strategy": {},
+            "trained": {},
+            "pot": flop_node.pot,
+            "effective_stack_bb": remaining_stack,
+            "max_affordable_bb": turn_entry_stack,
+        }
+
+    turn_board = tuple(board_cards) + (turn_card,)
+    solve_key = (
+        tuple(preflop_action_kinds), tuple(flop_action_kinds), round(stack_bb),
+        iterations, turn_board, turn_iterations, players,
+        _hero_cache_component(hero_combo, situation.hero_in_range),
+    )
+    result = _turn_path_cache.get_or_compute(
+        solve_key,
+        lambda: solve_flop(
+            board=turn_board,
+            hero_range=situation.position_ranges[oop_position],
+            villain_range=situation.position_ranges[ip_position],
+            pot=flop_node.pot,
+            effective_stack_bb=remaining_stack,
+            positions=(oop_position, ip_position),
+            raise_sizes=cfg.FLOP_TURN_RAISE_SIZES,
+            max_raises=cfg.FLOP_TURN_MAX_RAISES,
+            iterations=cfg.PATH_QUERY_ITERATIONS,
+            equity_samples=cfg.PATH_QUERY_EQUITY_SAMPLES,
+            equity_table_fn=parallel_board_equity_table,
+        ),
+    )
+    response["elapsed_seconds"] = result.elapsed_seconds
+
+    turn_node = result.root
+    if turn_action_kinds:
+        _turn_actions, turn_node = _resolve_action_path(turn_node, turn_action_kinds)
+        if isinstance(turn_node, TerminalNode):
+            raise ValueError(
+                "turn_action_path reaches a terminal — the turn's action has closed, so "
+                "there is no turn decision left to advise. Supply a river_card for river "
+                "advice."
+            )
+        remaining_stack = turn_entry_stack - max(turn_node.invested.values())
+
+    return {
+        **response,
+        "turn_action_path": list(turn_action_kinds or []),
+        "is_terminal": False,
+        "player_to_act": turn_node.player_to_act,
+        "position": turn_node.player_to_act,
+        "strategy": result.strategy_at(turn_node),
+        "trained": result.trained_hands(turn_node),
+        "pot": turn_node.pot,
+        "effective_stack_bb": remaining_stack,
+        # M143/F39: the stack entering THIS street, which is what the tree
+        # quotes its sizes against.
+        "max_affordable_bb": turn_entry_stack,
+        "street": "turn",
+    }
+
+
 def _query_turn_from_path(
     preflop_action_kinds: list,
     flop_action_kinds: list,
@@ -1544,7 +1683,11 @@ def _query_turn_from_path(
         players=players,
         multiway=False,
         sibling_endpoint="/solve_turn_multiway_from_path",
-        max_classes_per_position=cfg.MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE,
+        # M173: standalone affords far more of the opponent's range than
+        # the chained solve could — 28% against 4.6%.
+        max_classes_per_position=(cfg.TURN_STANDALONE_CLASSES_PER_SIDE
+                                  if cfg.TURN_SOLVE_STANDALONE
+                                  else cfg.MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE),
         path_field_name="preflop_action_path",
         hero_combo=hero_combo,
     )
@@ -1563,6 +1706,15 @@ def _query_turn_from_path(
         players,
         _hero_cache_component(hero_combo, situation.hero_in_range),
     )
+    if cfg.TURN_SOLVE_STANDALONE:
+        return _query_turn_standalone(
+            situation=situation, board_cards=board_cards, turn_card=turn_card,
+            flop_action_kinds=flop_action_kinds, turn_action_kinds=turn_action_kinds,
+            preflop_action_kinds=preflop_action_kinds, stack_bb=stack_bb,
+            players=players, iterations=iterations, turn_iterations=turn_iterations,
+            hero_combo=hero_combo, response_base=None,
+        )
+
     # M92: single-flight. This exact call was measured running 8 full
     # solves for 8 concurrent requests that shared one key (223s); the
     # same 8 sequentially ran 0. See _SolveCache.get_or_compute.
