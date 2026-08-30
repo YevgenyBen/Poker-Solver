@@ -566,8 +566,30 @@ PATH_QUERY_ITERATIONS = 500
 # BET_SIZING_COVERAGE_NOTE report it per response, derived from the
 # actions the tree really offered rather than from these constants, so
 # they stay true if these change.
-FLOP_TURN_MAX_RAISES = 2
-FLOP_TURN_RAISE_SIZES = (2.5,)
+# M170: the turn now offers a SIZED RE-RAISE. Until here it had one raise
+# size at a two-raise cap, so facing a bet the only aggressive action left
+# was a ~97.5bb shove - a hand that wanted to raise a third of the pot had
+# no such button, and the solver put weight on the only one there was
+# (F38; M156 measured middle pair shoving 1.000).
+#
+# M156 BUILT this exact change and declined it, on two premises that have
+# both since expired: "latency is already the top complaint" and
+# "adjudicating needs a converged TURN reference" that did not exist.
+# M162/M163 fixed the latency; M168 built the turn reference and showed it
+# holds still.
+#
+# Measured on 14 turn spots drawn from real play, against a wide-range
+# reference on the richer tree, scoring how often the advice COMMITS THE
+# WHOLE STACK facing a bet - F38's actual symptom:
+#
+#   mean error   shipped 0.1471   richer 0.1069
+#   better on    shipped 2 of 14  richer 12 of 14
+#
+# And the cost premise inverted too. M156 measured 1.5x; the solver
+# changed underneath it, and the same comparison now measures
+# **1.43s -> 1.62s, 1.13x**.
+FLOP_TURN_MAX_RAISES = 3
+FLOP_TURN_RAISE_SIZES = (2.5, 2.0)
 FLOP_TO_RIVER_MAX_RAISES = 1
 FLOP_TO_RIVER_RAISE_SIZES = ()
 

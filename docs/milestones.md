@@ -8518,3 +8518,44 @@ entry's own corrections before trusting its conclusions.
     calls and asserts both vary.
   - Five new tests, suite 1,043 -> 1,047 (plus one rewritten). Five
     mutations, all caught after the rewrites.
+
+- **M170 - the turn gets a sized re-raise, reversing M156 on both of its
+  own premises.** Item 5 of the recommendation list, and the first change
+  in this pass that is an accuracy improvement rather than a correction or
+  a measured "no".
+  - **The defect (F38, diagnosed by M156):** `FLOP_TURN_RAISE_SIZES=(2.5,)`
+    at `FLOP_TURN_MAX_RAISES=2` gave the turn one raise size, so facing a
+    bet the only aggressive action left was a ~97.5bb shove. A hand that
+    wanted to raise a third of the pot had no button for it and the
+    solver put weight on the only one there was.
+  - **M156 built this exact change and declined it**, for two stated
+    reasons: latency was the top complaint, and adjudicating needed a
+    converged turn reference that did not exist. **Both expired.**
+    M162/M163 cut turn latency (the worst decision in 1,200 hands is now
+    15.7s); M168 built a turn reference and showed it holds still.
+  - **Re-measured on the axis that costs money** - how often the advice
+    commits the whole stack facing a bet, which is F38's actual symptom -
+    over 14 turn spots drawn from real play, against a wide-range
+    reference on the richer tree, every reference stability-checked:
+    **mean error 0.1471 -> 0.1069, better on 12 of 14.**
+  - **The cost premise inverted too.** M156 measured 18-20s -> 28-32s
+    (1.5x). The solver changed underneath it, and the same comparison now
+    measures **1.43s -> 1.62s (1.13x)**. A turn decision goes from ~5.0s
+    to ~5.2s end to end.
+  - **M156's decision was right on its evidence and wrong on today's.**
+    It judged three hands and saw "fixes middle pair, worsens top pair" -
+    M141's conservation pattern. Scoring 14 spots on the commit axis
+    against a reference gives a different and clearer answer.
+  - **Two guards fired, both correctly.** `test_docs` caught CLAUDE.md
+    still claiming `FLOP_TURN_MAX_RAISES = 2`. M127's byte-ceiling test
+    caught the cache: a wider tree is a bigger entry, `turn_path` went
+    7.59 -> 11.01 MB, and 20 of those is 220 MB against a 168 MB budget,
+    so the ceiling dropped 20 -> 14. That is the first time a config
+    change has tripped it.
+  - **The RIVER still has the original problem and was deliberately not
+    touched.** `FLOP_TO_RIVER_RAISE_SIZES = ()` leaves check-or-shove as
+    the whole menu (F40), but `solve_flop_to_river` takes one
+    `raise_sizes` for all three streets, so widening the river widens the
+    flop and turn again - and that chain's cost has not been re-measured
+    since M161/M162. Same question, same method, not assumed to transfer.
+  - Suite green at 1,048.

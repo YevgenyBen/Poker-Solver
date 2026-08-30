@@ -451,7 +451,13 @@ _path_query_libraries = _SolveCache("path_query_libraries", maxsize=256)
 # whole solve) — not query_strategy's atomic whole-call lock, since
 # this isn't going through that primitive.
 # M127: 20, not 128. A turn entry measures 7.95 MB, so 128 was ~1.0 GB.
-_turn_path_cache = _SolveCache("turn_path", maxsize=20)
+# M170 lowered this from 20. Giving the turn a sized re-raise grew an
+# entry from 7.59 MB to 11.01 MB, and 20 of those is 220 MB against a
+# 168 MB budget — caught by
+# test_cache_ceilings_are_sized_against_what_an_entry_actually_costs,
+# which is exactly the failure M127 built it for: a wider tree is a
+# bigger entry, and a ceiling on entry COUNT is not a ceiling on memory.
+_turn_path_cache = _SolveCache("turn_path", maxsize=14)
 
 # M46's own plain-dict cache for solve_flop_to_river results — same
 # shape/reasoning as _turn_path_cache above (keyed on what the solve
