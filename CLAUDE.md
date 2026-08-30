@@ -756,6 +756,35 @@ requests now reject unknown fields by name rather than ignoring them.
   takes the HEADS-UP flop cell**, not the multiway one; a first version
   of the wiring test asserted against a code path it never reached.
 
+- **F46: seed-AVERAGING was built, measured, and left OFF (M169).**
+  Averaging independent solves is the standard answer to sampling
+  variance and had never been tried. It does reduce the spread, and the
+  ensemble converges on a stable centre rather than blending distinct
+  equilibria — two disjoint ensembles agree better as K grows, at or
+  beyond 1/sqrt(K). It still does not earn its cost:
+  | K | reduction (2 boards) | cost/solve | worst case |
+  |---|---|---|---|
+  | 1 | 1.00x | 0.18-0.20s | 0.97-1.00 |
+  | 2 | 1.12-1.15x | 0.35-0.37s | 0.98-1.00 |
+  | 4 | 1.42-1.61x | 0.73-0.81s | 0.98 |
+  | 8 | 1.74-1.85x | 1.46-3.16s | 0.88-0.98 |
+  **The worst case never improves at any K** — the extreme disagreements
+  a player would actually notice survive averaging; only the middle
+  tightens. It is also 4x latency on the street M162/M163 made fast
+  (measured live: multiway flop 0.8s -> 3.2s), for something more
+  REPRODUCIBLE rather than more CORRECT, with still no converged multiway
+  reference to check correctness against.
+  **A prototype claimed 2.3-2.5x and was wrong**: it meaned
+  `average_strategy()`, which returns the uniform prior for untrained
+  rows, and 47% of rows are untrained — blending toward a uniform that is
+  identical across runs flatters the number. The shipped form adds
+  strategy SUMS so an untrained row stays at zero and `trained_mask`
+  keeps working (F41/F43/F47 depend on it), and it averages less as a
+  result.
+  `solve_flop_multiway(ensemble=K)` exists; `DEFAULT_MULTIWAY_ENSEMBLE_RUNS
+  = 1`. **Don't turn it on without a latency budget and a correctness
+  reference.**
+
 - **F46 deepened (M163): NO affordable setting converges the multiway
   flop solve, and there are TWO independent noise sources.** R4 set out
   to build a converged reference and could not, which is the useful

@@ -3,6 +3,8 @@ import random
 import numpy as np
 import pytest
 
+from poker_solver import solver
+
 from poker_solver.abstraction import BucketedPool, HandBucket, build_hand_buckets
 from poker_solver.cards import Card, remaining_deck
 from poker_solver.cfr import InfoSetTable
@@ -2510,3 +2512,152 @@ def test_derived_weights_are_never_negative():
         negatives = {hand: weight for hand, weight in weights.items() if weight < 0}
         assert not negatives, f"{position} has negative reach weights: {negatives}"
         assert sum(weights.values()) > 0, f"{position}'s derived range is entirely empty"
+
+
+# ---------------------------------------------------------------------------
+# M169: seed-averaging for the multiway flop — built, measured, left OFF.
+# ---------------------------------------------------------------------------
+
+
+def _multiway_ensemble_fixture():
+    from poker_solver.cards import Card
+    from poker_solver.combos import range_from_class_frequencies
+    from poker_solver.starting_hands import all_starting_hands
+
+    board = tuple(Card.from_str(c) for c in ("Jh", "7d", "2c"))
+    hands = all_starting_hands()
+    positions = ("OOP", "MID", "IP")
+    ranges = {p: range_from_class_frequencies(
+        {h: 1.0 for h in hands[i * 2:i * 2 + 3]}, exclude=frozenset(board))
+        for i, p in enumerate(positions)}
+    return board, ranges, positions
+
+
+def test_the_multiway_ensemble_is_off_by_default():
+    """M169's finding, pinned as a value.
+
+    Averaging independent solves does reduce the seed-to-seed spread
+    (1.4-1.6x at four runs), and it is off because it costs 4x latency
+    while the WORST case — the disagreement a player would actually
+    notice — does not improve at any ensemble size, and nothing shows the
+    averaged answer is more correct rather than merely more reproducible.
+
+    If this ever becomes 4 by default it should be because a measurement
+    changed, not because the knob looked unused.
+    """
+    assert solver.DEFAULT_MULTIWAY_ENSEMBLE_RUNS == 1
+
+
+def test_the_ensemble_averages_when_asked():
+    """The capability has to actually work, or leaving it off is
+    meaningless. Four runs must differ from one, on the same seed."""
+    board, ranges, positions = _multiway_ensemble_fixture()
+    common = dict(board=board, position_ranges=ranges, pot=6.0,
+                  effective_stack_bb=20.0, positions=positions,
+                  raise_sizes=(2.5,), max_raises=2, iterations=30, seed=1)
+    single = solver.solve_flop_multiway(**common, ensemble=1)
+    averaged = solver.solve_flop_multiway(**common, ensemble=4)
+
+    single_row = single.strategy_at(single.root)
+    averaged_row = averaged.strategy_at(averaged.root)
+    assert set(single_row) == set(averaged_row)
+    assert single_row != averaged_row, (
+        "ensemble=4 produced the identical answer to ensemble=1 — it is not averaging"
+    )
+
+
+def test_the_ensemble_keeps_untrained_rows_untrained():
+    """The property that forced the shipped implementation.
+
+    A prototype meaned `average_strategy()`, which returns the uniform
+    prior for a row nothing ever reached — so averaging turned "never
+    computed" into a row that sums to 1 and looks trained, silently
+    defeating `trained_mask` and every signal built on it (F41, F43, F47).
+    Adding strategy SUMS keeps such a row at zero.
+    """
+    board, ranges, positions = _multiway_ensemble_fixture()
+    common = dict(board=board, position_ranges=ranges, pot=6.0,
+                  effective_stack_bb=20.0, positions=positions,
+                  raise_sizes=(2.5,), max_raises=2, iterations=60, seed=1)
+
+    # Enough iterations that every run reaches the SAME nodes. A first
+    # version used one iteration, where runs touch mostly disjoint nodes,
+    # so the merge branch barely fired — and the test passed even with the
+    # merge replaced by the very averaging it exists to forbid.
+    single = solver.solve_flop_multiway(**common, ensemble=1)
+    averaged = solver.solve_flop_multiway(**common, ensemble=4)
+
+    # Keyed by ACTION PATH, not id(node): each call builds its own tree, so
+    # the two results share no object identities at all.
+    from poker_solver.warmstart import index_by_path
+
+    single_by_path = index_by_path(single.root, single.node_data)
+    averaged_by_path = index_by_path(averaged.root, averaged.node_data)
+    shared = set(single_by_path) & set(averaged_by_path)
+    assert shared, "no node reached by both arms — fixture too small to test the merge"
+
+    def untrained_count(by_path, keys):
+        total = untrained = 0
+        for key in keys:
+            mask = by_path[key].trained_mask()
+            total += mask.size
+            untrained += int((~mask).sum())
+        return untrained, total
+
+    single_untrained, total = untrained_count(single_by_path, shared)
+    merged_untrained, _ = untrained_count(averaged_by_path, shared)
+    assert total, "fixture produced no rows"
+    assert single_untrained > 0, "fixture has no untrained rows to preserve"
+    assert merged_untrained > 0, (
+        "every row reads as trained after averaging — the merge is meaning "
+        "averaged strategies instead of adding sums, which fabricates training"
+    )
+
+
+def test_the_ensemble_still_returns_a_valid_strategy():
+    """Averaging two strategies need not give a strategy in general, so the
+    basic contract is checked rather than assumed."""
+    import numpy as np
+
+    board, ranges, positions = _multiway_ensemble_fixture()
+    averaged = solver.solve_flop_multiway(
+        board=board, position_ranges=ranges, pot=6.0, effective_stack_bb=20.0,
+        positions=positions, raise_sizes=(2.5,), max_raises=2,
+        iterations=30, seed=1, ensemble=4)
+    for row in averaged.strategy_at(averaged.root).values():
+        assert abs(sum(row.values()) - 1.0) < 1e-9
+        assert all(v >= 0.0 for v in row.values())
+
+
+def test_every_ensemble_run_uses_a_different_seed():
+    """M169. Averaging identical runs reduces nothing.
+
+    Checked by inspecting the calls rather than the output: a mutation
+    that varied only the equity seed and reused one traversal seed still
+    produced a different answer from a single solve, so an output-level
+    assertion could not see it. Both sources have to vary — M166 measured
+    the traversal seed as the LARGER of the two.
+    """
+    from poker_solver import solver as solver_module
+
+    board, ranges, positions = _multiway_ensemble_fixture()
+    seeds, caches = [], []
+    real = solver_module.mccfr_solve
+
+    def spy(root, combos, positions_, equity_cache, **kwargs):
+        seeds.append(kwargs.get("seed"))
+        caches.append(id(equity_cache))
+        return real(root, combos, positions_, equity_cache, **kwargs)
+
+    solver_module.mccfr_solve = spy
+    try:
+        solver_module.solve_flop_multiway(
+            board=board, position_ranges=ranges, pot=6.0, effective_stack_bb=20.0,
+            positions=positions, raise_sizes=(2.5,), max_raises=2,
+            iterations=20, seed=1, ensemble=4)
+    finally:
+        solver_module.mccfr_solve = real
+
+    assert len(seeds) == 4, seeds
+    assert len(set(seeds)) == 4, f"traversal seeds repeat across runs: {seeds}"
+    assert len(set(caches)) == 4, "every run reused the same equity cache"
