@@ -1496,7 +1496,14 @@ def _aggression_reason(raw: dict, hero: dict | None = None) -> str:
     """
     reason = cfg.POSTFLOP_AGGRESSION_CAVEAT_REASON
     percentile = _hand_strength_percentile(raw, hero)
-    if percentile is not None:
+    # M168: certification is FLOP-ONLY. The threshold was measured on flop
+    # spots and M167 applied it to every street; on the turn the
+    # relationship INVERTS, and the band being certified was the worst one
+    # (3 of 4 spots over 0.10, worst 0.588). Certifying reliability needs
+    # positive evidence for the street in question.
+    if raw.get("street") not in cfg.CERTIFY_RELIABILITY_ON_STREETS:
+        reason = cfg.UNMEASURED_STREET_NOTE + reason
+    elif percentile is not None:
         # M167: certify where reliability was MEASURED, and say "not known"
         # elsewhere. M166 had this the other way round - it asserted that
         # weak hands specifically were unreliable, and pooling 44 spots

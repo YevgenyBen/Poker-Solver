@@ -8450,3 +8450,34 @@ entry's own corrections before trusting its conclusions.
     threshold because a rate felt high would have been the same error as
     judging the big blind against a remembered chart.
   - Suite green at 1,039.
+
+- **M168 - the reliability certification was false on the turn, and is
+  now flop-only.** M167 measured its threshold on flop spots and applied
+  it to all three streets because checking the others was expensive.
+  Checked, on eight turn spots drawn from real play, the relationship
+  **inverts**:
+  | band | n | mean err | worst | over 0.10 |
+  |---|---|---|---|---|
+  | not known (<0.75) | 4 | 0.0728 | 0.138 | 1 |
+  | certified (>=0.75) | 4 | **0.2960** | **0.588** | **3** |
+  A hand at percentile 0.977 (Qs2s on 3s2dQh/5h) was off by **0.588**
+  while the response told the player the advice measured reliable. That
+  is worse than saying nothing.
+  - **Certification is now flop-only.** Turn and river get a note that
+    says accuracy there is unmeasured *and why that matters* - strength
+    does not carry over, and on the turn the hands this would certify
+    were the least accurate tested.
+  - **The asymmetry that decided it**: certifying reliability needs
+    positive evidence for the street; withdrawing a certification needs
+    only the absence of it, and here the evidence actively contradicts.
+    Four spots per band is a thin sample to conclude from and an ample
+    one to stop claiming on.
+  - **The river is uncertified without being measured.** After the turn
+    inverted, assuming the river resembles the flop would be the same
+    mistake a second time.
+  - Third correction to this feature in three milestones (M166 claimed a
+    strength split, M167 withdrew it and kept a one-sided claim, M168
+    scoped that claim to one street). Every correction came from a
+    measurement, and every claim was shipped one measurement ahead of its
+    evidence - the lesson is the publishing order, not the analysis.
+  - Four new tests, suite 1,039 -> 1,043. Three mutations, all caught.

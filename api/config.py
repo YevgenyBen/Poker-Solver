@@ -1203,6 +1203,39 @@ POSTFLOP_FOLD_ERROR_WORST = 0.8017
 # The firing rate falls out of that rather than being chosen: the strong
 # note lands on the minority of hands that earned it, instead of the 52%
 # of postflop decisions M166's weak warning reached.
+# M168: the certification above is FLOP-ONLY, and this is the measurement
+# that forced it. M167 applied the threshold on all three streets because
+# it was cheaper than checking. Checked, on eight turn spots drawn from
+# real play:
+#
+#   band                     n   mean err   worst   over 0.10
+#   not known (<0.75)        4     0.0728   0.138       1
+#   reliable   (>=0.75)      4     0.2960   0.588       3
+#
+# **The relationship inverts.** On the turn the band the product was
+# certifying is the WORSE one - three of four spots over 0.10, worst
+# 0.588, on a hand at percentile 0.977. A player holding a strong turn
+# hand was being told the advice measured reliable while it was off by
+# more than half.
+#
+# The asymmetry that decides this: certifying reliability needs positive
+# evidence, withdrawing a certification needs only the absence of it -
+# and here the evidence actively contradicts. Four spots per band is a
+# thin sample to CONCLUDE from and an ample one to STOP claiming on.
+#
+# The river is unmeasured and therefore also uncertified: after the turn
+# inverted, assuming the river behaves like the flop would be the same
+# mistake twice.
+CERTIFY_RELIABILITY_ON_STREETS = ("flop",)
+
+UNMEASURED_STREET_NOTE = (
+    "HOW RELIABLE THIS PARTICULAR ANSWER IS, IS NOT KNOWN. Accuracy on this street "
+    "has not been measured against a larger solve the way the flop has, and what was "
+    "measured does not carry over: on the turn, hands this advice would otherwise "
+    "call reliable were the LEAST accurate ones tested. Treat the action as a "
+    "suggestion and avoid committing a large part of your stack on it alone. "
+)
+
 RELIABLE_HAND_STRENGTH_PERCENTILE = 0.75
 
 RELIABLE_HAND_ERROR_MEAN = 0.0144
