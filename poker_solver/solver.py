@@ -685,6 +685,94 @@ def solve_flop(
 DEFAULT_FLOP_MULTIWAY_ITERATIONS = 200
 
 
+# M169: how many independent solves are averaged for one multiway answer.
+# **Defaults to 1 — averaging is OFF — and that is the milestone's
+# finding, not a placeholder.**
+#
+# F46 measured this solve as noise-dominated: two runs differing only in
+# seed disagree by p90 ~0.47, and neither more iterations (150x the
+# budget bought 1.9x) nor more equity samples fixed it. Averaging
+# independent runs is the standard answer to sampling variance and had
+# never been tried. It works, and it does not earn its cost:
+#
+#   K   reduction (2 boards)   cost/solve   worst case
+#   1   1.00x                  0.18-0.20s   0.97-1.00
+#   2   1.12-1.15x             0.35-0.37s   0.98-1.00
+#   4   1.42-1.61x             0.73-0.81s   0.98
+#   8   1.74-1.85x             1.46-3.16s   0.88-0.98
+#
+# Three things decided against shipping it on:
+#   * **The worst case never improves at any K.** The extreme
+#     disagreements - the ones a player would actually notice - survive
+#     averaging. Only the middle of the distribution tightens.
+#   * The gain is sub-sqrt(K): four runs buy 1.4-1.6x where independent
+#     averaging would predict 2x, because partially-trained rows get
+#     little averaging.
+#   * It is 4x latency on the street type M162 and M163 made fast -
+#     measured live through /advise, a multiway flop goes 0.8s -> 3.2s -
+#     with no evidence the averaged answer is more CORRECT, only more
+#     reproducible. M162's own F46 note warns against adopting on
+#     stability evidence alone, and there is still no converged multiway
+#     reference to score correctness against.
+#
+# A PROTOTYPE reported 2.3-2.5x and was wrong: it meaned `average_
+# strategy()`, which returns the uniform prior for untrained rows, and
+# 47% of rows here are untrained. Blending real strategies toward a
+# uniform that is identical across runs flatters the number. The shipped
+# form adds strategy SUMS, which keeps an untrained row at zero and keeps
+# `trained_mask` working (F41/F43/F47 all depend on it) - and averages
+# less as a result.
+#
+# Kept as a parameter because the capability is real and the measurement
+# closes "averaging will fix F46" as an idea. Set `ensemble=4` to enable.
+DEFAULT_MULTIWAY_ENSEMBLE_RUNS = 1
+
+_SUPERSEDED_ENSEMBLE_DEFAULT = 4  # what a latency budget would buy, if one appeared
+
+
+
+
+def _mccfr_ensemble(root, combos, positions, equity_cache, *, iterations, seed,
+                    initial_reach, runs, board, equity_kwargs):
+    """Average `runs` independent MCCFR solves into one node_data.
+
+    Strategy sums are ADDED rather than the averaged strategies being
+    meaned, and that choice is load-bearing: `average_strategy()` returns
+    the uniform prior for a row with no accumulated sum, so meaning the
+    averaged strategies would turn "never reached in any run" into a row
+    that looks trained and sums to 1 - silently defeating `trained_mask`
+    and every signal built on it (F41, F43, F47). Adding the sums keeps an
+    untrained row at zero, and the result is the runs' strategies weighted
+    by how much each actually accumulated.
+
+    Each run varies BOTH the traversal seed and the equity seed. M166
+    measured those as separate noise sources, the traversal being the
+    larger, so varying only one would leave half the variance in place.
+    """
+    if runs <= 1:
+        return mccfr_solve(root, combos, positions, equity_cache,
+                           iterations=iterations, seed=seed,
+                           initial_reach=initial_reach)
+
+    merged: dict = {}
+    for index in range(runs):
+        cache = equity_cache if index == 0 else NwayBoardEquityCache(
+            board, combos,
+            **{**equity_kwargs,
+               "seed": equity_kwargs.get("seed", DEFAULT_EQUITY_SEED) + index})
+        node_data = mccfr_solve(root, combos, positions, cache,
+                                iterations=iterations, seed=seed + index,
+                                initial_reach=initial_reach)
+        for key, table in node_data.items():
+            existing = merged.get(key)
+            if existing is None:
+                merged[key] = table
+            else:
+                existing.strategy_sum = existing.strategy_sum + table.strategy_sum
+                existing.regret_sum = existing.regret_sum + table.regret_sum
+    return merged
+
+
 def solve_flop_multiway(
     board: tuple,
     position_ranges: dict,
@@ -697,6 +785,7 @@ def solve_flop_multiway(
     equity_samples: int = None,
     equity_seed: int = DEFAULT_EQUITY_SEED,
     seed: int = 0,
+    ensemble: int | None = None,
 ) -> StrategyResult:
     """Solve a single flop betting round for 2+ live positions and return
     its strategy — the direct N-position generalization of `solve_flop`
@@ -773,14 +862,11 @@ def solve_flop_multiway(
 
     actual_iterations = iterations if iterations is not None else DEFAULT_FLOP_MULTIWAY_ITERATIONS
     start = time.perf_counter()
-    node_data = mccfr_solve(
-        root,
-        combos,
-        positions,
-        equity_cache,
-        iterations=actual_iterations,
-        seed=seed,
-        initial_reach=initial_reach,
+    node_data = _mccfr_ensemble(
+        root, combos, positions, equity_cache,
+        iterations=actual_iterations, seed=seed, initial_reach=initial_reach,
+        runs=ensemble if ensemble is not None else DEFAULT_MULTIWAY_ENSEMBLE_RUNS,
+        board=board, equity_kwargs=equity_kwargs,
     )
     elapsed = time.perf_counter() - start
 

@@ -8481,3 +8481,40 @@ entry's own corrections before trusting its conclusions.
     measurement, and every claim was shipped one measurement ahead of its
     evidence - the lesson is the publishing order, not the analysis.
   - Four new tests, suite 1,039 -> 1,043. Three mutations, all caught.
+
+- **M169 - seed-averaging for F46: built, measured, left off.** Working
+  the recommendation list in order. Items 1-3 first:
+  - **Item 1 (confirm the calibration) closed by M167/M168.**
+  - **Item 3 was WITHDRAWN as a mistake of mine.** The ten-game report
+    criticised the product for labelling all 2,733 answers "high
+    confidence". That was `solver_confidence`, which reports whether the
+    solve RAN. `aggression_confidence` was separately reporting **low on
+    every postflop decision** the whole time, and the caveat below it now
+    distinguishes all three cases. Two different axes, both correct; I
+    conflated them. Nothing to implement.
+  - **Item 4, F46's instability.** Averaging independent solves is the
+    textbook answer to sampling variance and was untried. It works in the
+    sense that matters most for trusting it: the spread keeps shrinking
+    with K at or beyond 1/sqrt(K) (0.450/0.250/0.202/0.119 at K=1/2/4/8),
+    so the runs scatter around a stable centre rather than landing on
+    different equilibria.
+  - **And it is off by default anyway**, on three measurements: the worst
+    case does not improve at ANY K (0.88-1.00 throughout) so the
+    disagreements a player notices survive; the gain is sub-sqrt(K)
+    (1.42-1.61x at four runs); and it costs 4x latency on the street
+    M162/M163 made fast - live, a multiway flop goes 0.8s -> 3.2s - while
+    making the answer more reproducible rather than more correct.
+  - **A prototype of mine reported 2.3-2.5x and was inflated.** It meaned
+    `average_strategy()`, which returns the uniform prior for untrained
+    rows; 47% of rows are untrained, so it was averaging real strategies
+    toward something identical in every run. The shipped form adds
+    strategy sums, keeps untrained rows at zero, and measures lower.
+  - **Two guards initially could not fail, and both were rewritten.** The
+    untrained-row test used one iteration, where runs touch mostly
+    disjoint nodes, so the merge branch barely fired; it now uses 60 and
+    compares by ACTION PATH, since each solve builds its own tree. The
+    independence test passed under a mutation that reused one traversal
+    seed, because the equity seed still varied - it now inspects the
+    calls and asserts both vary.
+  - Five new tests, suite 1,043 -> 1,047 (plus one rewritten). Five
+    mutations, all caught after the rewrites.
