@@ -1704,4 +1704,40 @@ POSTFLOP_AGGRESSION_CAVEAT_REASON = (
 # cost more time. This point was chosen deliberately as the knee, giving
 # up the last 0.012 of mean error to avoid handing back all of M129's
 # speed work.
+# M176: build the heads-up board equity table by ranking each combo ONCE
+# per runout, rather than redrawing runouts for every pair.
+#
+# The flop anatomy is why. Measured through /advise at cap 100, a cold
+# flop request is 8.62s of which the equity table is **7.71s (89.5%)**
+# and the CFR solve is **0.41s (4.8%)** - the exact inverse of M155's
+# 14/86, because M161 made CFR O(N) and M172 tripled the combo count the
+# O(N^2) table build scales with. CLAUDE.md said "anything aimed at flop
+# latency must attack the CFR solve"; that is now 4.8% of the cost.
+#
+# This is M162's trick applied to the heads-up path, and it wins on every
+# axis measured (interleaved in one process, M70):
+#
+#   cap  26 ( 164 combos)   1.28s ->  0.23s    5.6x
+#   cap  60 ( 417 combos)   8.49s ->  0.78s   10.9x
+#   cap 100 ( 708 combos)  25.44s ->  1.68s   15.1x
+#
+# ACCURACY, against a 4,000-sample truth on Th5s7c - it is not merely
+# faster, because 320 shared samples net more usable runouts than 30
+# per-pair ones:
+#
+#   per-pair s30 vs truth   mean 0.0496  worst 0.3373
+#   shared   s320 vs truth  mean 0.0166  worst 0.1067
+#   per-pair vs ITSELF      mean 0.0679  worst 0.4333   <- shipped noise
+#   shared   vs ITSELF      mean 0.0214  worst 0.1208
+#
+# The per-pair builder disagrees with itself under a different seed by
+# MORE than shared disagrees with the truth, so this change sits inside
+# the noise it replaces while shrinking it 3x.
+#
+# Correctness is checked where it can be EXACT: on turn and river boards
+# both builders enumerate, so dropping collisions leaves precisely the
+# deck the per-pair form walks, and they agree to the digit (0.0 over
+# 8,460 cells across two boards).
+SHARED_RUNOUT_FLOP_TABLE = True
+
 PATH_QUERY_EQUITY_SAMPLES = 30

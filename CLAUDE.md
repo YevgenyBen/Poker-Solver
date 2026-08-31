@@ -1054,8 +1054,28 @@ requests now reject unknown fields by name rather than ignoring them.
   estimated the vector rewrite at 3-5x; it measured 13.07x at a
   production-sized pool. See M161's entry above.
 
-- **The flop request's cost is 86% CFR SOLVE, not the equity table
-  (M155).** M132's "the table is 41% of a flop request" is stale - its
+- **The flop request's cost is now 89.5% EQUITY TABLE, not the CFR solve
+  — M155's finding is INVERTED and was corrected in M176.** M155 measured
+  14% table / 86% solve and concluded "anything aimed at flop latency
+  must attack the CFR solve; caching or extending the equity table caps
+  out at 14%". That was true then. **M161** made CFR O(N) instead of
+  O(N^2) (13.07x) and **M172** tripled the combo count the O(N^2) table
+  build scales with, and the two together swapped the dominant cost for
+  the negligible one. Measured on the shipped path at cap 100: table
+  **7.71s of 8.62s (89.5%)**, CFR **0.41s (4.8%)**.
+  M176 then applied M162's shared-runout trick to the heads-up builder —
+  a combo's rank on a runout does not depend on who it is compared
+  against — for **41.6x on the table at cap 100** and **8.62s -> 3.24s**
+  end to end (a different hero on a solved spot, the common case,
+  7.17s -> 1.75s). After it the anatomy is table 48% / CFR 19% / other
+  33%, so the next attempt should re-measure rather than assume either.
+  **Any latency claim here must be instrumented on the production path**:
+  `library.py` binds `solve_flop` at IMPORT time, so patching
+  `solver.solve_flop` alone reports 0.0s of solve for a 10s request.
+  The old finding, kept because it is what the numbers above replace:
+
+- **(SUPERSEDED, M176) The flop request's cost is 86% CFR SOLVE, not the
+  equity table (M155).** M132's "the table is 41% of a flop request" is stale - its
   own 4.79x table speedup shrank the share. Measured on four random
   boards at production settings: table **14%**, solve **86%**, ~8.9s
   total for the solve leg. Through `/advise` end to end a flop request is
