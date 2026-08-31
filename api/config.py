@@ -1343,13 +1343,44 @@ POSTFLOP_FOLD_ERROR_WORST = 0.8017
 # mistake twice.
 CERTIFY_RELIABILITY_ON_STREETS = ("flop",)
 
+# M175 corrected the second sentence. It used to say that on the turn the
+# hands this advice would call reliable "were the LEAST accurate ones
+# tested" — M168's inversion. Re-measured against the M173 standalone
+# solve over 24 spots (12 per band), that is false: the certified band
+# means 0.0954 against the weak band's 0.1032, and the strength/error
+# correlation is +0.057. Strength does not invert on the turn; it carries
+# no signal there at all. Both statements refuse certification, but only
+# the true one stops a reader concluding that WEAK turn hands are the
+# safe ones — 2 of 12 of those exceed 0.10 error too.
 UNMEASURED_STREET_NOTE = (
     "HOW RELIABLE THIS PARTICULAR ANSWER IS, IS NOT KNOWN. Accuracy on this street "
-    "has not been measured against a larger solve the way the flop has, and what was "
-    "measured does not carry over: on the turn, hands this advice would otherwise "
-    "call reliable were the LEAST accurate ones tested. Treat the action as a "
-    "suggestion and avoid committing a large part of your stack on it alone. "
+    "has not been measured against a larger solve the way the flop has, and hand "
+    "strength does not substitute for it: on the turn, where this was tested "
+    "directly, the advice was off by more than 0.30 at BOTH ends of the strength "
+    "range, and how strong your hand is did not predict which answers were the "
+    "accurate ones. Treat the action as a suggestion and avoid committing a large "
+    "part of your stack on it alone. "
 )
+
+# M175's measurement, recorded so the note above cannot drift from it.
+# 24 turn spots from real play, 12 per strength band, each scored against
+# a full-range (169-class) standalone reference solved twice — every
+# reference held to drift 0.0, so none was discarded.
+#
+#   band                    n     mean   median    worst   over .10
+#   below 0.75             12   0.1032   0.0141   0.5541          2
+#   at or above 0.75       12   0.0954   0.0533   0.3038          4
+#
+# The flop's certificate rests on 9 spots at or above the threshold with
+# a worst of 0.0571 and NONE over 0.10. The turn misses that bar in the
+# certified band specifically, which is the band a certificate would
+# vouch for.
+TURN_CERTIFIED_BAND_WORST_ERROR = 0.3038
+TURN_CERTIFIED_BAND_SPOTS_OVER_TENTH = 4
+TURN_RELIABILITY_SPOTS_PER_BAND = 12
+# Rounded DOWN for the user-facing note: quoting a number the measurement
+# does not reach would overstate it.
+TURN_RELIABILITY_QUOTED_WORST = 0.30
 
 RELIABLE_HAND_STRENGTH_PERCENTILE = 0.75
 
