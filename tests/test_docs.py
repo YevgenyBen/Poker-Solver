@@ -85,3 +85,34 @@ def test_claude_md_does_not_still_advertise_a_withdrawn_speedup():
     assert shared_board, "the shared-board speedup note is gone entirely — was that intended?"
     context = text[text.index(shared_board[0]) : text.index(shared_board[0]) + 600]
     assert "6.06x" in context, "quote M70's interleaved 6.06x, not M68's withdrawn number"
+
+
+def test_the_product_aim_is_stated_and_its_measure_still_exists():
+    """M184. CLAUDE.md opens with what the product is FOR — helping a
+    player make money — because that decides what counts as evidence
+    everywhere below it.
+
+    This is a light guard, and deliberately so: it does not police the
+    prose. It checks that the section exists, that it names expected
+    value rather than a frequency distance as the measure, and that the
+    module it points at is real. A governing definition that references a
+    deleted module is worse than none.
+    """
+    text = _CLAUDE_MD.read_text(encoding="utf-8")
+    assert "## What this product is for" in text, (
+        "the product aim section is gone; it decides what counts as "
+        "evidence for every claim below it")
+
+    aim = text.split("## Current state")[0].lower()
+    assert "make money" in aim
+    assert "big blinds per hand" in aim, (
+        "the aim must name the UNIT of success — frequency distance is a "
+        "convergence measure and was measured as a weak predictor of cost "
+        "(M183)")
+
+    # The module the aim points at has to exist and expose the primitive.
+    from poker_solver import ev
+
+    assert hasattr(ev, "ev_loss") and hasattr(ev, "action_values"), (
+        "CLAUDE.md tells the reader to price decisions with poker_solver.ev; "
+        "that module no longer provides the primitives it names")
