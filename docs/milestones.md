@@ -9389,3 +9389,76 @@ M143's trap exactly, and its own guard does the same thing.
 Two mutations caught: the standalone river ignoring `river_action_path`
 (collapsing every river request back to the opening decision), and the
 turn accepting an unclosed street before dealing a river card.
+
+## M182 — pricing advice in chips, and what it says about every number before it
+
+Every accuracy figure in this project is a FREQUENCY distance. That is a
+convergence measure and a poor quality measure, for a reason worth
+stating plainly: **a frequency gap costs nothing when the actions it
+splits between are worth the same** — and solvers mix precisely when
+actions are near-indifferent, so large frequency errors live exactly
+where they are cheapest.
+
+`poker_solver/ev.py` prices the difference instead: `EV(reference row) -
+EV(shipped row)`, with everything else held identical — same opponent
+strategy, same continuation below the node, same range. Only hero's mix
+at the one decision changes.
+
+### Applied to M180's certification failures, it inverts them
+
+The 28 strong-band flop spots M180 withdrew the certificate on:
+
+| group | n | mean loss | worst | mean value spread |
+|---|---|---|---|---|
+| **failed** the 0.10 frequency test | 11 | **0.0424 bb** | 0.1655 | 1.71 |
+| **passed** it | 17 | **0.5351 bb** | **3.1608** | 10.29 |
+
+**The spots that passed cost 12x more than the ones that failed.**
+
+    correlation(aggression error, EV loss) = -0.248
+    correlation(TVD, EV loss)              = +0.459
+
+The aggression metric is not merely imperfect — on this set it is
+**anti-correlated** with what the advice costs. The five costliest spots
+have aggression error 0.0001-0.0055 and TVD 0.26-0.72: they match on
+TOTAL aggression while differing on WHICH SIZE, at nodes where actions
+are worth 5-14bb apart.
+
+    6c7h on 6dKdKh  aggr_err 0.0055  tvd 0.4637  LOSS 3.16 bb
+    3hTc on AhAsTd  aggr_err 0.0001  tvd 0.2554  LOSS 0.97 bb
+
+So EV loss is roughly **frequency difference x value spread**, and
+aggression error drops the spread entirely.
+
+### What this does and does not change
+
+**M180's withdrawal stands, and is stronger than it was argued.** The
+whole strong band means **0.3415 bb** of loss with a worst of 3.16 bb;
+that is expensive advice whichever spots the frequency test flagged. What
+is now clear is that the test was selecting the wrong ones.
+
+**It does not retroactively invalidate M177 or M179.** Both compared arms
+on the SAME spots with the same metric, so their paired comparisons
+remain valid as convergence measurements. What they cannot claim is that
+those differences were worth what they implied in chips — and M179's
+adoption of turn cap 140 rested substantially on the FOLD axis, a
+composition measure rather than a total, so it sits closer to TVD than to
+aggression.
+
+### Limitations, stated rather than buried
+
+The opponent's range is **uniform** over the reference's hands, not the
+derived range a real request would face; the opponent plays the reference
+strategy; the stack is fixed at 97bb; 28 spots. These bound how far the
+absolute bb figures generalise. The RANKING between metrics — which is
+the finding — is robust to all of them, since every spot is scored the
+same way.
+
+### A control that corrected the module, not the code
+
+The first test asserted a 0% equity hand prefers checking to betting. It
+failed: against a UNIFORM opponent both price at exactly -5.0, because a
+uniform opponent folds to the all-in half the time and that fold equity
+exactly offsets having no showdown equity. The code was right and the
+test's intuition was wrong; bluffing is only unprofitable when nobody
+folds, so the control now uses an opponent who never folds.
