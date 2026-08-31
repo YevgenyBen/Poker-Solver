@@ -1594,6 +1594,42 @@ RIVER_MEASURED_NOTE = (
     "accurate. "
 )
 
+# M185: where the measured cost of this advice actually is.
+#
+# M183 priced 48 real decisions in chips instead of frequency distance.
+# The cost is concentrated by NODE TYPE, and separably so:
+#
+#   facing a bet   n=24  mean |loss| 0.3107 bb   median 0.0235
+#   opening        n=24  mean |loss| 0.0569 bb   median 0.0126
+#   delta +0.2538 +/- 0.0983 (2.58 sigma); permutation p = 0.0054
+#
+# 5.5x, and it holds on every street (flop 19.5x, turn 6.7x, river 1.8x).
+# Facing-a-bet nodes are half the decisions and carry **85% of all loss**.
+#
+# **This is a COARSE signal and is described as one.** A finer runtime
+# detector was looked for and does not exist: the best runtime-visible
+# predictor of |loss| is the action count at +0.237 (itself a proxy for
+# this same split), against +0.562 for TVD and +0.772 for TVD x spread —
+# both of which need a reference solve and cannot be computed live.
+# Value spread, entropy, all-in mass, max probability and hand strength
+# were all measured and are all weak; spread in particular adds NOTHING
+# over this flag, since facing-a-bet nodes simply ARE the high-spread
+# ones (corr within facing nodes: -0.109).
+#
+# The note is careful not to overstate: the MEDIAN facing-a-bet decision
+# costs 0.0235 bb, which is nearly as cheap as an opening one. It is the
+# tail that differs, so the wording says the cost concentrates here rather
+# than that this answer is probably wrong.
+FACING_A_BET_COST_NOTE = (
+    "THIS IS THE KIND OF DECISION THIS ADVICE GETS WRONG MOST EXPENSIVELY. Priced "
+    "against a fuller solve over 48 real spots, decisions facing a bet carried about "
+    "85% of everything the advice cost, averaging 5.5 times more than decisions where "
+    "you act first. Most individual answers here are still accurate — it is the "
+    "occasional bad one that is costly, and folding being available is what makes it "
+    "possible to lose a lot. Weigh this one more carefully than its confidence label "
+    "alone suggests. "
+)
+
 RELIABLE_HAND_STRENGTH_PERCENTILE = 0.75
 
 RELIABLE_HAND_ERROR_MEAN = 0.0144

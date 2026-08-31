@@ -5912,6 +5912,72 @@ def test_the_unmeasured_street_note_says_why_rather_than_only_that(client):
     assert "least accurate" not in note
 
 
+def test_facing_a_bet_is_flagged_as_where_the_cost_is(client, monkeypatch):
+    """M185. M183 priced 48 real decisions in chips and found the cost
+    concentrated by NODE TYPE: facing a bet means mean |loss| 0.3107 bb
+    against 0.0569 when acting first — 5.5x, separable at 2.58 sigma with
+    a permutation p of 0.0054, and 85% of all measured loss.
+
+    That is the only runtime-visible signal worth surfacing. A finer one
+    was looked for and does not exist: the best runtime feature is the
+    action count at +0.237, against +0.772 for TVD x spread, which needs
+    a reference solve.
+
+    The flag is derived from the ROWS — folding is legal only when facing
+    a bet — so it survives changes to path shapes and size menus, the same
+    reason M144 built the sizing note that way.
+    """
+    monkeypatch.setattr(api_config, "FLOP_TURN_RAISE_SIZES", (2.5,))
+    monkeypatch.setattr(api_config, "FLOP_TURN_MAX_RAISES", 2)
+    base = {"stack_bb": 100.0, "preflop_action_path": ["raise", "call_or_check"],
+            "players": 2, "hero_cards": "5c4d", "board": "Kd7c2h"}
+
+    opening = client.post("/advise", json=base).json()
+    facing = client.post("/advise", json={**base, "flop_action_path": ["raise"]}).json()
+
+    assert api_config.FACING_A_BET_COST_NOTE not in opening["aggression_confidence_reason"], (
+        "the cost note fired on an opening decision, where folding is not even "
+        "legal — it would then be attached to every answer and mean nothing")
+    assert api_config.FACING_A_BET_COST_NOTE in facing["aggression_confidence_reason"]
+
+    # It must not overstate: the MEDIAN facing decision costs 0.0235 bb,
+    # nearly as cheap as an opening one. It is the tail that differs.
+    note = api_config.FACING_A_BET_COST_NOTE.lower()
+    assert "most individual answers here are still accurate" in note, (
+        "the note must not imply this particular answer is probably wrong; "
+        "the median facing-a-bet decision is nearly as cheap as any other")
+
+
+def test_the_cost_flag_follows_the_rows_not_the_request(client, monkeypatch):
+    """M185. Reading the flag off `flop_action_path` would look equivalent
+    and is not: the request says what was ASKED, the rows say what the
+    tree actually OFFERED. Those diverge whenever a path resolves to a
+    node that cannot fold — and the note would then fire on decisions
+    where folding is not an option, which is exactly what makes it
+    meaningless.
+    """
+    import inspect
+
+    source = inspect.getsource(api_main._is_facing_a_bet)
+    assert "strategy" in source and "fold" in source
+    assert "action_path" not in source, (
+        "the flag is being read from the request rather than the rows")
+
+    monkeypatch.setattr(api_config, "FLOP_TURN_RAISE_SIZES", (2.5,))
+    monkeypatch.setattr(api_config, "FLOP_TURN_MAX_RAISES", 2)
+    facing = client.post("/advise", json={
+        "stack_bb": 100.0, "preflop_action_path": ["raise", "call_or_check"],
+        "players": 2, "hero_cards": "5c4d", "board": "Kd7c2h",
+        "flop_action_path": ["raise"]}).json()
+    rows = list(facing["strategy"].values())
+    assert any("fold" in row for row in rows), (
+        "this fixture is supposed to reach a node that can fold")
+    assert api_main._is_facing_a_bet(
+        {"strategy": facing["strategy"]}) is True
+    assert api_main._is_facing_a_bet(
+        {"strategy": {"AhAd": {"call_or_check": 0.5, "all_in:97.50": 0.5}}}) is False
+
+
 def test_a_facing_a_bet_node_is_answerable_on_every_postflop_street(client, monkeypatch):
     """M181. Every postflop accuracy study in this project measured each
     street's OPENING decision until M177, and the reason was not an
