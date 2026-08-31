@@ -8963,3 +8963,35 @@ where both builders agree exactly by construction — so disabling the flag
 entirely still matched. It needs a FLOP board to distinguish them. Four
 mutations now caught: ignoring the flag, forwarding the per-pair sample
 count, dropping the collision mask, and failing to NaN blocked pairs.
+
+### Validated in play — three sessions, 866 decisions
+
+M163's rule: timing replicates in one run, defect counts do not. All
+three, with the flop, turn and river medians reproducing to the
+hundredth:
+
+| | before M176 | after |
+|---|---|---|
+| flop median | 6.71s | **1.51 / 1.59 / 1.54s** |
+| turn median | 0.87s | **0.15s** in all three |
+| river median | 4.66s | **0.12 / 0.12 / 0.11s** |
+| within 2s | 61.6% | **99.3%** |
+| within 5s | 77.3% | **100%** |
+| worst decision | 10.09s | **2.22s** |
+| defects / uniform rows | 0 | **0 / 0** |
+
+**An effect that was not predicted, and it is the best kind.** The turn
+and river got faster too, though M176 targeted the flop table. Those
+streets solve on four- and five-card boards where `remaining_needed <= 1`
+and BOTH builders enumerate rather than sample — and enumeration is
+exactly the case the two agree on at 0.00e+00. So **turn and river
+strategies are byte-identical to before, computed 5.8x and 39x faster**;
+only flop values change at all.
+
+Attribution, kept straight: flop 6.71 -> 1.51 and turn 0.87 -> 0.15 are
+M176 alone. River 4.66 -> 0.12 is M174 (12.18 -> 0.65s) and then M176
+(0.65 -> 0.12).
+
+**The flop is no longer the slow street, and no street is.** The
+ten-game benchmark opened with 11.8% of decisions over 8s; there are now
+none over 2.22s.
