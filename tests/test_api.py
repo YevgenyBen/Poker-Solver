@@ -5912,6 +5912,86 @@ def test_the_unmeasured_street_note_says_why_rather_than_only_that(client):
     assert "least accurate" not in note
 
 
+def test_a_facing_a_bet_node_is_answerable_on_every_postflop_street(client, monkeypatch):
+    """M181. Every postflop accuracy study in this project measured each
+    street's OPENING decision until M177, and the reason was not an
+    oversight in the studies — **the play harness never generated any
+    other kind of node.** All 368 river spots across ten benchmark
+    sessions were opening decisions.
+
+    That is the blind spot F38 was eventually found through: with
+    nine-high FACING A BET the product recommended shoving 97.5bb 0.567
+    of the time where the correct play is to fold 0.987. Folding is not
+    even a legal action at a street's opening decision, so no amount of
+    measuring there could see it. M177 then measured the river properly
+    and found facing-a-bet cells up to 6x worse than opening ones.
+
+    This pins the API capability the studies depend on: a facing-a-bet
+    node must be reachable and answerable on all three streets, and must
+    actually offer `fold` — which is what makes it a different question.
+    """
+    # The suite fixture zeroes FLOP_TURN_RAISE_SIZES for speed, so under it
+    # the turn and river trees offer only check and all-in and a
+    # facing-a-BET node cannot exist — M143's trap, and the same reason its
+    # own guard restores a real size. Restoring one is what makes the node
+    # (and therefore this property) testable at all.
+    monkeypatch.setattr(api_config, "FLOP_TURN_RAISE_SIZES", (2.5,))
+    monkeypatch.setattr(api_config, "FLOP_TURN_MAX_RAISES", 2)
+    monkeypatch.setattr(api_config, "RIVER_STANDALONE_RAISE_SIZES", (2.5,))
+    monkeypatch.setattr(api_config, "RIVER_STANDALONE_MAX_RAISES", 2)
+
+    base = {"stack_bb": 100.0, "preflop_action_path": ["raise", "call_or_check"],
+            "players": 2, "hero_cards": "5c4d", "board": "Kd7c2h"}
+    closed = ["call_or_check", "call_or_check"]
+    cases = {
+        "flop": {**base, "flop_action_path": ["raise"]},
+        "turn": {**base, "flop_action_path": closed, "turn_card": "Ts",
+                 "turn_action_path": ["raise"]},
+        "river": {**base, "flop_action_path": closed, "turn_card": "Ts",
+                  "turn_action_path": closed, "river_card": "4c",
+                  "river_action_path": ["raise"]},
+    }
+    for street, body in cases.items():
+        response = client.post("/advise", json=body)
+        assert response.status_code == 200, (street, response.json())
+        payload = response.json()
+        assert payload["street"] == street
+        hero_row = (payload["strategy"].get("5c4d")
+                    or payload["strategy"].get("4d5c"))
+        assert hero_row, (street, sorted(payload["strategy"])[:5])
+        assert "fold" in hero_row, (
+            f"{street}: a facing-a-bet node must offer fold — without it this "
+            f"is the opening decision again, got {sorted(hero_row)}")
+        assert sum(hero_row.values()) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_closing_a_street_is_required_before_the_next_card(client, monkeypatch):
+    """M181, the wrinkle that makes the harness fix non-trivial: a turn
+    path handed to a RIVER request has to CLOSE the turn's betting. A bare
+    ["raise"] leaves the turn open, and the API correctly refuses to deal
+    a river card rather than inventing one.
+
+    Guarding it because the natural way to add facing-a-bet coverage —
+    reusing the street's own path downstream — produces exactly this
+    error, silently turning river coverage into 422s.
+    """
+    monkeypatch.setattr(api_config, "FLOP_TURN_RAISE_SIZES", (2.5,))
+    monkeypatch.setattr(api_config, "FLOP_TURN_MAX_RAISES", 2)
+    base = {"stack_bb": 100.0, "preflop_action_path": ["raise", "call_or_check"],
+            "players": 2, "hero_cards": "5c4d", "board": "Kd7c2h",
+            "flop_action_path": ["call_or_check", "call_or_check"],
+            "turn_card": "Ts", "river_card": "4c"}
+
+    unclosed = client.post("/advise", json={**base, "turn_action_path": ["raise"]})
+    assert unclosed.status_code == 422, unclosed.json()
+    assert "does not close" in str(unclosed.json()["detail"]).lower()
+
+    closed = client.post("/advise", json={
+        **base, "turn_action_path": ["raise", "call_or_check"]})
+    assert closed.status_code == 200, closed.json()
+    assert closed.json()["street"] == "river"
+
+
 def test_no_street_claims_certified_reliability_any_more(client):
     """M180. The flop's certificate was granted by M167 on **9 spots**
     (mean 0.0144, worst 0.0571, zero over 0.10) at cap 26 / 500

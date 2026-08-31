@@ -9324,3 +9324,68 @@ flat, and the conclusion inverts.
 **This is the FOURTH claim in this project overturned by measuring more
 of the same thing** — M166 (27 -> 45 spots), M168 (4 -> 12 per band),
 M110's positional read, and now M167's certificate at 9 -> 28.
+
+## M181 — the benchmark harness could not produce a facing-a-bet node
+
+Benchmark recommendation 4, and the gap is worse than the report stated.
+It said the harness does not RECORD facing-a-bet on the turn and river.
+In fact it never GENERATED those nodes at all: **all 368 river spots
+across ten benchmark sessions were opening decisions.**
+
+The `facing_bet` flag was never wrong — it is `"fold" in strategy`, which
+is exactly right, since folding is not a legal action at a street's
+opening decision. There was simply nothing to flag.
+
+The cause, in the session driver: the flop already drew a randomised
+action path (`rng.choice([[], [], ["raise"]])`, hence the 33% facing-a-bet
+rate seen on that street), while the turn and river **hardcoded
+checked-through paths and passed no action path of their own**. Both now
+draw the same way.
+
+Measured on a 40-hand probe after the fix:
+
+| street | facing a bet |
+|---|---|
+| flop | 5/19 (26.3%) |
+| **turn** | **4/15 (26.7%)** |
+| **river** | **6/13 (46.2%)** |
+
+Zero defects, zero uniform rows.
+
+### Why this mattered more than a missing field
+
+**F38 lives on this axis.** With nine-high facing a bet the product
+recommended shoving 97.5bb 0.567 of the time where the correct play is to
+fold 0.987 — and it went unfound for many milestones because folding is
+not a legal action at an opening decision, so no amount of measuring
+there could ever see it. M177 then measured the river properly and found
+facing-a-bet cells up to **6x worse** than opening ones on the same
+street (fa/weak 0.0555 against op/weak 0.0425; fa/strong 0.3411 against
+op/strong 0.1812).
+
+**Two whole benchmarks ran inside that blind spot** — the ten-game
+original and its re-run — and both reported postflop coverage that
+excluded the harder half of every later street.
+
+### Pinned in the repo, because the harness is not
+
+The session driver lives in scratch tooling, so the durable half is a
+test: `test_a_facing_a_bet_node_is_answerable_on_every_postflop_street`
+asserts such a node is reachable and answered on all three streets AND
+that it actually offers `fold` — which is what makes it a different
+question from the opening decision.
+
+The second guard is the wrinkle that makes the harness fix non-trivial:
+**a turn path handed to a RIVER request must CLOSE the turn's betting.**
+A bare `["raise"]` leaves it open and the API correctly refuses to deal a
+river card. Reusing a street's own path downstream — the obvious way to
+add this coverage — turns river coverage silently into 422s.
+
+Both tests restore a real `FLOP_TURN_RAISE_SIZES` by monkeypatch: the
+suite fixture zeroes it for speed, so under the suite the turn and river
+offer only check and all-in and a facing-a-BET node cannot exist. That is
+M143's trap exactly, and its own guard does the same thing.
+
+Two mutations caught: the standalone river ignoring `river_action_path`
+(collapsing every river request back to the opening decision), and the
+turn accepting an unclosed street before dealing a river card.
