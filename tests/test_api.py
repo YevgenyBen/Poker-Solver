@@ -5906,12 +5906,57 @@ def test_the_flop_still_certifies_a_strong_hand(client):
 
 def test_the_unmeasured_street_note_says_why_rather_than_only_that(client):
     """A caveat that says "unknown" teaches nothing. This one has to carry
-    the reason, because the reason is actionable: strength is not a guide
-    on this street, and specifically inverts on the turn."""
+    the reason, because the reason is actionable: on this street hand
+    strength does not tell you which answers to trust.
+
+    M175: this used to assert the word "least accurate", pinning M168's
+    claim that the reliable-looking band was the WORST one on the turn.
+    Re-measured over 24 spots that is false — the two bands are
+    indistinguishable — so the note must not say it, and must equally not
+    let a reader infer that weak turn hands are the safe ones.
+    """
     note = api_config.UNMEASURED_STREET_NOTE.lower()
     assert "has not been measured" in note
-    assert "does not carry over" in note
-    assert "least accurate" in note
+    assert "does not substitute" in note
+    # The measured fact that replaces the withdrawn one: error is large at
+    # BOTH ends, so neither band is the safe one.
+    assert "both ends" in note
+    assert "least accurate" not in note
+
+
+def test_the_unmeasured_street_note_quotes_its_own_measurement(client):
+    """M175, mirroring `test_the_aggression_caveat_quotes_its_own_
+    measurement`. The note tells a player the turn was off by more than
+    0.30; that number has to be one the measurement actually reached, and
+    has to stay attached to it if either moves.
+
+    The failure this prevents is the one M140 found in the aggression
+    caveat, which understated its own worst case fivefold.
+    """
+    quoted = api_config.TURN_RELIABILITY_QUOTED_WORST
+    measured = api_config.TURN_CERTIFIED_BAND_WORST_ERROR
+    assert quoted <= measured, (
+        f"the note quotes {quoted}, which the measurement ({measured}) does not reach")
+    assert f"{quoted:.2f}" in api_config.UNMEASURED_STREET_NOTE
+
+    # And the refusal has to rest on the certified band specifically —
+    # that is the band a certificate would vouch for.
+    assert api_config.TURN_CERTIFIED_BAND_SPOTS_OVER_TENTH > 0
+    assert "turn" not in api_config.CERTIFY_RELIABILITY_ON_STREETS
+
+
+def test_certification_is_refused_on_evidence_not_by_omission(client):
+    """M175. The turn is uncertified, and it would be easy for a later
+    change to certify it by simply not looking — the flop was certified on
+    9 spots, and 4 thin spots per band is what M168 had.
+
+    So the refusal is pinned to a spot count large enough to have been a
+    real test. If someone re-measures the turn and it passes, this fails
+    and they must update the constants deliberately.
+    """
+    assert api_config.TURN_RELIABILITY_SPOTS_PER_BAND >= 10, (
+        "a band this thin cannot support certifying OR refusing with confidence")
+    assert api_config.CERTIFY_RELIABILITY_ON_STREETS == ("flop",)
 
 
 def test_every_postflop_street_gets_some_reliability_statement(client):

@@ -8795,3 +8795,71 @@ branch. The second checked behaviour but still missed "delete the
 dispatch entirely" - which falls through to the chained path and also
 returns 200. It now identifies the standalone path by a sized raise the
 chained path cannot offer. Three mutations, all caught.
+
+## M175 — the turn re-measured: still uncertified, for a corrected reason
+
+M173 made the turn 9x faster and 2.6x more accurate. The obvious next
+question is whether it is now accurate enough to CERTIFY — to tell a
+player, as `/advise` does on the flop, that this particular answer was
+measured reliable. That is 28.9% of all postflop advice.
+
+Two things made M168's refusal worth re-testing rather than trusting:
+the ARM it judged saw 4 classes per side (a median 4.6% of the
+opponent's range mass, M173's worst measured configuration), and the
+REFERENCE it judged against was itself capped, at 14 classes chained.
+Neither side of that comparison exists any more.
+
+**The answer is still no, and the rule was fixed before the data
+arrived**: certify only if ZERO spots at or above percentile 0.75 exceed
+0.10 error, which is the bar the flop cleared (9 spots, worst 0.0571).
+
+24 turn spots from real play, 12 per band, each against a full-range
+169-class standalone reference solved twice. **Every reference held at
+drift 0.0** — none discarded.
+
+| band | n | mean | median | worst | over .10 |
+|---|---|---|---|---|---|
+| below 0.75 | 12 | 0.1032 | 0.0141 | 0.5541 | 2 |
+| **at or above 0.75** | 12 | **0.0954** | 0.0533 | **0.3038** | **4** |
+
+4 of 12 in the band a certificate would vouch for, worst 0.3038 at
+percentile 0.884. Refused.
+
+### What changed is the REASON, and it is user-visible
+
+M168 reported an INVERSION — the reliable-looking band was the worst one,
+3 of 4 spots over 0.10, worst 0.588 — and `UNMEASURED_STREET_NOTE` told
+players so. At 12 spots per band that is false. The two bands are
+indistinguishable (0.0954 against 0.1032) and the strength/error
+correlation is **+0.057**, against the flop's -0.130. Strength does not
+invert on the turn; it carries **no signal there at all**.
+
+Both statements refuse certification, so this changes no behaviour — but
+only the true one stops a reader concluding that WEAK turn hands are the
+safe ones, and 2 of 12 of those exceed 0.10 error too. The note now says
+the advice was off by more than 0.30 at BOTH ends of the strength range.
+
+This is M166's error in miniature, one more time: a claim about how error
+splits by hand strength, drawn from 4 spots per band, that did not
+survive 12. That is now the **fourth** finding in this project overturned
+by measuring more of the same thing.
+
+### Recorded and pinned
+
+`TURN_CERTIFIED_BAND_WORST_ERROR`, `TURN_CERTIFIED_BAND_SPOTS_OVER_TENTH`
+and `TURN_RELIABILITY_SPOTS_PER_BAND` record the measurement;
+`TURN_RELIABILITY_QUOTED_WORST` is rounded DOWN so the user-facing number
+is one the measurement actually reached. Two guards, four mutations, all
+caught: certifying the turn without evidence, overstating the quoted
+worst, thinning the evidence back to 4 spots per band, and restoring the
+withdrawn inversion wording.
+
+### The hypothesis this leaves
+
+The flop's error only halved once coverage reached 95%; below that, more
+width made it worse (M141's conservation law, M172's frontier). The turn
+is at 28%. So "the turn needs the flop's coverage, not merely more than
+it had" is the natural next test — and it is now cheap to run, since a
+turn solve costs 0.28s. Not attempted here: this milestone answers the
+certification question it set out to answer, and adopting a wider turn
+cap needs its own frontier and its own latency budget.
