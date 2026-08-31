@@ -9462,3 +9462,100 @@ uniform opponent folds to the all-in half the time and that fold equity
 exactly offsets having no showdown equity. The code was right and the
 test's intuition was wrong; bluffing is only unprofitable when nobody
 folds, so the control now uses an opponent who never folds.
+
+## M183 — the accuracy studies re-run in chips, and a correction to M182
+
+M182 built the EV-loss primitive. This re-runs the accuracy question with
+it across all three streets and both node types, structured around the
+goal that matters: **helping a player win over time**, which makes the
+unit bb per decision and requires weighting spots by how often they
+actually occur.
+
+Two corrections over M182's first pass, both material:
+
+* **The opponent's reach is the reference's own range weights**, not a
+  uniform vector. Pricing against an opponent holding every hand equally
+  overstates bluff-catches and understates value.
+* **Pot and stack come from `/advise` per spot**, so the tree being
+  priced is the one a player faces. That is the error M182's first pass
+  made — and the second time this session a hardcoded stack changed a
+  conclusion.
+
+### What the advice costs
+
+48 spots, 8 per cell across {flop, turn, river} x {opening, facing a bet}:
+
+| cell | n | mean | median | worst | spread |
+|---|---|---|---|---|---|
+| flop / opening | 8 | 0.0294 | 0.0163 | 0.0837 | 1.74 |
+| **flop / facing** | 8 | **0.3823** | -0.0021 | **1.3779** | 7.03 |
+| turn / opening | 8 | 0.0224 | 0.0069 | 0.1193 | 1.52 |
+| turn / facing | 8 | -0.0431 | -0.0003 | 0.2896 | 9.19 |
+| river / opening | 8 | 0.1190 | 0.0654 | 0.3658 | 1.45 |
+| river / facing | 8 | -0.1817 | 0.0027 | 0.0743 | 10.06 |
+
+Weighted by observed occurrence (street mix from the ten-game benchmark,
+facing-a-bet share from the post-M181 sessions):
+
+    COST OF THE ADVICE: 0.0472 bb per postflop decision
+                      ~ 4.7 bb per 100 postflop decisions
+                      ~ 6.6 bb per 100 hands (1.39 postflop decisions/hand)
+
+### The distribution matters more than the mean
+
+| | |
+|---|---|
+| median loss | **+0.0071 bb** — effectively free |
+| spots costing <= 0.01 bb | **27/48 = 56%** |
+| spots costing > 0.10 bb | 10/48 = 21% |
+| top 5 spots as a share of all loss | **79%** |
+
+So the advice is **mostly free and occasionally expensive**, which is a
+far more actionable shape than any mean error this project has reported.
+Improving the average is the wrong target; finding the tail is the right
+one.
+
+### Where the money is, and what predicts it
+
+**Facing-a-bet nodes carry 85% of all loss** while being half the spots —
+mean |loss| 0.3107 bb against 0.0569 at opening decisions, a 5.5x gap.
+That is precisely the axis no study could see before M177 and the harness
+could not even generate before M181.
+
+| predictor of \|loss\| | correlation |
+|---|---|
+| aggression error | +0.141 |
+| value spread alone | +0.209 |
+| TVD | +0.562 |
+| **TVD x value spread** | **+0.772** |
+
+12 of 48 spots have `TVD x spread > 1.0` and carry **82% of all loss**.
+
+### CORRECTION to M182
+
+M182 reported `correlation(aggression error, EV loss) = -0.248` and
+called the metric **anti-correlated** with cost. **That does not
+replicate.** Under this setup it is **+0.232** over all 48 spots and
+**+0.140** on the flop alone. M182's negative sign was an artifact of its
+narrower configuration — flop strong band only, uniform opponent reach,
+fixed 97bb stack.
+
+What survives both measurements, and what M182 should have said: **frequency
+distance is a WEAK predictor of EV loss** — |r| <= 0.46 in every
+configuration tried — not a reliably inverted one. The reason stands
+unchanged: EV loss is approximately frequency-difference x value-spread,
+and a frequency metric drops the spread.
+
+M182's conclusions that do NOT depend on the sign are unaffected: M180's
+withdrawal still stands, and pricing in chips still reveals costs that
+frequency distance cannot rank.
+
+### What this suggests next, stated but not built
+
+`TVD x spread` needs a reference and so cannot be computed live — but
+**value spread alone can be**, from the shipped solve, and facing-a-bet
+is known from the request. A runtime signal along "this decision has a
+lot at stake and is the kind we are least accurate on" is therefore
+cheap and would target the 15% of decisions carrying 85% of the cost.
+Not built here: it needs its own measurement showing the runtime-visible
+half predicts well enough to be worth surfacing.

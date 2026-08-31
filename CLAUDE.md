@@ -744,6 +744,32 @@ requests now reject unknown fields by name rather than ignoring them.
   never formed a preference" and "never reached at all" are different
   news a user can act on.
 
+- **ACCURACY IS NOW MEASURED IN CHIPS, and the advice costs ~4.7 bb per
+  100 postflop decisions (M183).** `poker_solver/ev.py` prices
+  `EV(reference row) - EV(shipped row)` with the opponent, continuation
+  and range held fixed. 48 spots, 8 per cell across {flop, turn, river} x
+  {opening, facing a bet}, weighted by observed occurrence:
+  **0.0472 bb per postflop decision ~ 6.6 bb/100 hands.**
+  **The distribution is what matters**: median loss **+0.0071 bb**, 56% of
+  decisions effectively free (<=0.01 bb), and the **top 5 spots carry 79%
+  of all loss**. The advice is mostly free and occasionally expensive, so
+  improving the AVERAGE is the wrong target.
+  **Facing-a-bet nodes carry 85% of the loss** at half the spots (mean
+  |loss| 0.3107 vs 0.0569) — the axis invisible before M177 and
+  ungeneratable before M181.
+  **`TVD x value spread` predicts |loss| at +0.772**; aggression error
+  manages +0.141. 12 of 48 spots exceed a product of 1.0 and carry 82% of
+  all loss.
+  **CORRECTION to M182**: it reported aggression error as
+  ANTI-correlated with cost (-0.248). That does not replicate — it is
+  **+0.232** here (+0.140 flop-only), and M182's sign was an artifact of
+  a uniform opponent reach and a fixed stack. The surviving claim is that
+  frequency distance is a **weak** predictor (|r| <= 0.46 everywhere),
+  not an inverted one.
+  **Every EV measurement must take pot AND stack from `/advise`** and use
+  the reference's range weights as the opponent's reach; a uniform reach
+  and a hardcoded stack each changed a conclusion this session.
+
 - **NO STREET IS CERTIFIED ANY MORE — the flop's certificate was
   withdrawn (M180).** M167 granted it on **9 spots** at percentile >=
   0.75 (mean 0.0144, worst 0.0571, ZERO over 0.10), measured at **cap 26
