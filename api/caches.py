@@ -472,4 +472,10 @@ _turn_path_cache = _SolveCache("turn_path", maxsize=14)
 # tree afterward instead of re-solving).
 # M127: 4, not 128. A river entry measures 38.45 MB — 180x a preflop
 # one — so 128 of them was a 4.9 GB cache. See MAX_CACHE_BYTES_PER_CACHE.
-_river_path_cache = _SolveCache("river_path", maxsize=4)
+# M174: a standalone river entry is ONE street on a complete board and
+# measures 0.42 MB, against the chained three-street solve's 38.45 MB
+# — 92x smaller. Standalone loses the chained solve's reuse across
+# runouts (it keys per board rather than serving every turn/river card
+# from one entry), and this is what more than repays it: 256 boards
+# held instead of 4, at 107 MB against the 168 MB per-cache budget.
+_river_path_cache = _SolveCache("river_path", maxsize=256)

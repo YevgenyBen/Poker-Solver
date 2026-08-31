@@ -440,6 +440,41 @@ requests now reject unknown fields by name rather than ignoring them.
   widens the flop and turn again, and that chain's cost was never
   re-measured after M161/M162. Worth revisiting with the same method.
 
+- **The RIVER is solved as its OWN street too (M174), and it repaired the
+  worst defect found in this project.** The chained river recommended
+  **committing the whole stack into a 2-5bb pot on 4 of 12 real spots, at
+  27-58% frequency** - `6hAc` shoved 17.5bb into a 5bb pot 53% of the
+  time where the correct play is to check 0.9999.
+  It carried the tightest budget in the product (**9 COMBOS** per side,
+  against the flop's 100 classes and the turn's 26) and modelled no bet
+  size at all (F40), both from one cause: `solve_flop_to_river` takes ONE
+  `raise_sizes` for all three streets, so widening the river widened
+  everything. Solved alone it is the CHEAPEST street - the board is
+  complete, so equity is **exact** (`remaining_needed == 0`, M154).
+  Interleaved A/B through `/advise`, one flag apart, 12 real spots each
+  against a full-range reference built at **that request's own pot and
+  stack**: mean error **0.1948 -> 0.0626**, spots over 0.10 **7/12 ->
+  3/12**, latency **12.18s -> 0.65s**, better on 10 of 12.
+  **Coverage did the work; the SIZES are a wash and are labelled as one**
+  - paired delta +0.0093 +/- 0.0181 (sem), 3 better / 2 worse / 7 tied.
+  They are adopted because they close F40 at no measured cost, not
+  because they measured better. `BET_SIZING_COVERAGE_NOTE` stopped firing
+  on its own, because M144 derived it from the response's rows rather
+  than from the constants.
+  **The tradeoff, paid for by measurement**: standalone keys its cache
+  PER BOARD, so the chained solve's reuse across every runout is gone. An
+  entry costs **0.42 MB against 38.45 MB**, so the ceiling went **4 ->
+  256** - 64x more boards for two thirds of the memory.
+  **Three harness errors nearly became findings here, and each is the
+  same lesson**: the first "shipped" arm was a reconstruction, not the
+  shipped path (it disagreed with production on 2 of 3 spots, M164's
+  failure again); the size question was asked on a set that was 11/12
+  check-spots against a reference that could not size either; and the A/B
+  read the request's card spelling rather than the canonical one. **Any
+  measurement here must come from `/advise` and be scored at the
+  request's own pot and stack.**
+  `RIVER_SOLVE_STANDALONE = False` restores the chained path.
+
 - **The TURN is solved as its OWN street, not chained from the flop
   (M173).** It was the worst decision in the product on every axis at
   once: slowest (7.94s median against the flop's 6.38s), thinnest (a cap

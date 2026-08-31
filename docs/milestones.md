@@ -8701,6 +8701,101 @@ Illegal turn cards needed an explicit check for the first time: the
 chained path got that free, since a card already on the board simply had
 no chance branch to look up. Standalone has no branch list.
 
+## M174 — the river solved as its own street
+
+The sibling of M173, one street further, and the defect it repairs is the
+worst one found in this project: **the chained river recommended
+committing the whole stack into a 2-5bb pot on 4 of 12 real spots, at
+27-58% frequency.** `6hAc` on Qs5c4h/3h/9c shoved 17.5bb into a 5bb pot
+**53% of the time** where the correct play is to check 0.9999.
+
+The river carried the tightest budget in the product - **9 COMBOS** per
+side, against the flop's 100 classes and the turn's 26 - and was the only
+street modelling no bet size at all (F40). Both come from one cause: it
+was the third leg of a chained solve, and `solve_flop_to_river` takes ONE
+`raise_sizes` for all three streets, so widening the river widened
+everything.
+
+Solved on its own it is the CHEAPEST street, not the most constrained:
+the board is complete, so `build_board_equity_table` takes its
+`remaining_needed == 0` branch and equity is **exact** - no Monte Carlo,
+`equity_samples` ignored entirely (M154).
+
+### Measured as an interleaved A/B through /advise, one flag apart
+
+12 real river spots, each scored against a full-range 169-class reference
+built at **that request's own pot and stack**, solved twice.
+
+| arm | strong | weak | ALL | over .10 | latency |
+|---|---|---|---|---|---|
+| chained (was shipped) | 0.2550 | 0.1347 | 0.1948 | 7/12 | 12.18s |
+| **standalone cap26 + sizes** | **0.1214** | **0.0038** | **0.0626** | **3/12** | **0.65s** |
+| standalone cap26 no sizes | 0.1046 | 0.0020 | 0.0533 | 2/12 | 0.50s |
+
+**3.1x more accurate and 19x faster**, better on 10 of 12 spots.
+
+### Coverage did the work; the sizes are a WASH and are labelled as one
+
+Varying them independently, the sizes are not separable at this sample:
+paired delta **+0.0093 +/- 0.0181 (sem)**, better on 3 spots, worse on 2,
+tied on 7. They are adopted because they close **F40** - the river could
+not answer "how much should I bet" - at no measured accuracy cost and
++0.15s. `RIVER_STANDALONE_RAISE_SIZES` says so in the config, so nobody
+later reads them as the improvement. What fixed the accuracy was
+coverage: 9 combos -> 26 classes.
+
+M144's own test anticipated this exactly, saying "if intermediate sizes
+now exist this test should be revisited rather than deleted, and the
+disclosure below relaxed". The `BET_SIZING_COVERAGE_NOTE` stopped firing
+**on its own**, because M144 derived it from the response's own rows
+rather than from the config constants.
+
+### A real tradeoff, paid for by a measurement
+
+Standalone keys its cache **per board**, so the chained solve's reuse
+across every turn and river card off one tree is genuinely gone. What
+repays it: a chained entry cost **38.45 MB** and a standalone one costs
+**0.42 MB** - 92x smaller - so the ceiling went **4 -> 256**. The cache
+holds 64x more boards for two thirds of the memory, and each solve is
+~19x cheaper to recompute anyway.
+
+### Three harness errors, all caught before they became findings
+
+Worth recording because each one nearly produced a published number:
+
+1. **The first study's "shipped" arm was not the shipped path.** It used
+   `solve_flop` at cap 3 on a fixed pot=18/stack=85; shipped is a chained
+   3-street solve at 9 combos and ~20 iterations, and the real requests
+   are at 20/50/100bb with their own pots. Checked against production,
+   the proxy disagreed on **2 of 3 spots** - it shoved 0.9986 where
+   production checks 0.906 and 0.842. This is M164's failure exactly, and
+   the claim built on it ("shipped shoves 99.9% with strong hands") was
+   withdrawn.
+2. **The size question was asked on a set where the answer is "check".**
+   11 of 12 spots had reference betting below 0.05, and the reference
+   itself had no sizes - so it said "check" even at percentile 0.79. An
+   aggregate "betting frequency shift" over that set cannot show
+   anything. Found by reading the rows, which showed the sized bet
+   replacing the shove entirely while the total barely moved.
+3. **The A/B first read the wrong dict.** `strategy` is the whole node
+   keyed by HAND; hero's row is one entry in it, under the CANONICAL
+   combo spelling ("Kh6h", not the request's "6hKh"). Both mistakes
+   returned "no answer" for real answers.
+
+### The guard, and the mutation that survived its first version
+
+`_query_river_standalone` omitted `river_iterations`, which `/advise`
+reads - and the KeyError is caught and reported as **"unsupported
+street/table-size combination"**, pointing at the table size when the
+cause is a missing field. Every standalone river request 422'd.
+
+The first guard checked for the string in the source and **the mutation
+survived**, because the same literal appears in the helper's terminal
+branch. The second checked behaviour but still missed "delete the
+dispatch entirely" - which falls through to the chained path and also
+returns 200. It now identifies the standalone path by a sized raise the
+chained path cannot offer. Three mutations, all caught.
+
 ## M175 — the turn re-measured: still uncertified, for a corrected reason
 
 M173 made the turn 9x faster and 2.6x more accurate. The obvious next
