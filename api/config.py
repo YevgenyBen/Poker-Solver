@@ -1620,14 +1620,20 @@ RIVER_MEASURED_NOTE = (
 # costs 0.0235 bb, which is nearly as cheap as an opening one. It is the
 # tail that differs, so the wording says the cost concentrates here rather
 # than that this answer is probably wrong.
+# M186 re-measured this at 144 spots (24 per cell, from 48). The split
+# got STRONGER, not weaker: 5.5x -> 14.8x, and the share of cost carried
+# rose 85% -> 94%. The n=48 figures in M185 understated it because three
+# cells had negative means at 8 spots each, which more spots showed to be
+# noise.
 FACING_A_BET_COST_NOTE = (
     "THIS IS THE KIND OF DECISION THIS ADVICE GETS WRONG MOST EXPENSIVELY. Priced "
-    "against a fuller solve over 48 real spots, decisions facing a bet carried about "
-    "85% of everything the advice cost, averaging 5.5 times more than decisions where "
-    "you act first. Most individual answers here are still accurate — it is the "
-    "occasional bad one that is costly, and folding being available is what makes it "
-    "possible to lose a lot. Weigh this one more carefully than its confidence label "
-    "alone suggests. "
+    "against a fuller solve over 144 real spots, decisions facing a bet carried "
+    "about 94% of everything the advice cost, averaging roughly 15 times more than "
+    "decisions where you act first. Most individual answers here are still accurate "
+    "— the median one costs almost nothing — but 8% of decisions cost more than a "
+    "big blind, and nearly all of those are here, because folding being available is "
+    "what makes it possible to lose a lot. Weigh this one more carefully than its "
+    "confidence label alone suggests. "
 )
 
 RELIABLE_HAND_STRENGTH_PERCENTILE = 0.75

@@ -5943,6 +5943,9 @@ def test_facing_a_bet_is_flagged_as_where_the_cost_is(client, monkeypatch):
     # It must not overstate: the MEDIAN facing decision costs 0.0235 bb,
     # nearly as cheap as an opening one. It is the tail that differs.
     note = api_config.FACING_A_BET_COST_NOTE.lower()
+    assert "median one costs almost nothing" in note, (
+        "the note must say the typical decision here is cheap; M186 measured "
+        "the median facing-a-bet loss at 0.0096 bb")
     assert "most individual answers here are still accurate" in note, (
         "the note must not imply this particular answer is probably wrong; "
         "the median facing-a-bet decision is nearly as cheap as any other")

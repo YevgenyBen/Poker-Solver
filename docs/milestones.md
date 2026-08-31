@@ -9656,3 +9656,71 @@ finer-grained rule was looked for first.
 
 Four mutations caught: the note never firing, firing on every decision,
 being read from the request instead of the rows, and dropping the hedge.
+
+## M186 — the cost measured at 144 spots, and 20 sessions to weight it
+
+M183 priced 48 spots and put the cost at 8.6 bb/100 hands with a 2-sem
+range of **-2.1 to +19.3** — an interval spanning zero, which is not an
+answer. M185 then shipped a user-facing note built on those figures.
+This tripled the sample and re-weighted it against 20 fresh sessions.
+
+### The estimate doubled and became real
+
+| | 48 spots | **144 spots** |
+|---|---|---|
+| cost per postflop decision | +0.0696 bb | **+0.1400 bb** |
+| per 100 hands | +8.6 | **+17.2** |
+| 95% interval | -2.1 to +19.3 | **+4.5 to +29.9** |
+
+**Why it moved**: at 8 spots per cell, three of six cells had NEGATIVE
+mean cost (turn/facing -0.0431, river/facing -0.1817). At 24 they are
++0.1834 and +0.3565. The negatives were noise, and they had been
+suppressing the total. This is the fourth time in this project a
+conclusion moved substantially when the sample grew, so 144 is the
+current best estimate and not a settled one.
+
+### The shape is the finding
+
+| | |
+|---|---|
+| median decision | **+0.0034 bb** |
+| costing <= 0.01 bb | **52%** |
+| costing > 1 bb | **8%** |
+| top 10 of 144 spots | **78% of all loss** |
+
+The product is almost always right and occasionally very expensive.
+**Every accuracy study before this optimised mean frequency error**,
+which on this evidence is close to the wrong objective — the average
+decision is already free.
+
+### Facing a bet: stronger than M185 shipped
+
+| | M185 (n=48) | **M186 (n=144)** |
+|---|---|---|
+| mean cost, facing | 0.3107 bb | **0.5168 bb** |
+| mean cost, opening | 0.0569 bb | 0.0348 bb |
+| ratio | 5.5x | **14.8x** |
+| share of all cost | 85% | **94%** |
+| separability | 2.58 sigma | **3.06 sigma** |
+
+The split got STRONGER with more data. `FACING_A_BET_COST_NOTE` is
+corrected accordingly, and now also states that 8% of decisions cost more
+than a big blind and nearly all of those are here — the concrete fact
+behind the warning.
+
+### 20 sessions: speed settled, and the real cell mix
+
+5,352 decisions over 2,400 hands. Median **0.11s**, p90 1.56s, worst
+**2.17s**, 99.7% inside two seconds. **Zero defects and zero uniform rows
+in all twenty sessions**; per-session medians varied 0.09-0.12s.
+
+The sessions also supply the weighting, and it differs from what M183
+assumed: facing-a-bet is more common on the flop and turn (32.3% / 33.7%
+against 26.3% / 26.7%) and much rarer on the river (31.8% against 46.2%).
+Since facing-a-bet carries 94% of the cost, using the observed mix rather
+than the assumed one matters.
+
+The harness now records an `ev_cell` per decision — street x node type —
+because it previously recorded latency, defects and confidence and
+NOTHING about money, so a session could report "clean" while saying
+nothing about whether the advice helps a player win.

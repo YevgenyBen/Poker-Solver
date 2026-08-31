@@ -784,6 +784,28 @@ requests now reject unknown fields by name rather than ignoring them.
   never formed a preference" and "never reached at all" are different
   news a user can act on.
 
+- **The advice costs ~17 bb/100 hands, and 94% of that is decisions
+  FACING A BET (M186).** 144 spots priced in chips, weighted by the cell
+  mix from 20 fresh sessions (5,352 decisions):
+  **+0.1400 bb per postflop decision, 95% interval +4.5 to +29.9
+  bb/100.**
+  **The shape is the finding**: median decision +0.0034 bb, **52% cost
+  under 0.01 bb**, 8% cost over 1 bb, and the **top 10 of 144 spots carry
+  78% of all loss**. The product is almost always right and occasionally
+  very expensive, so **optimising mean frequency error — what every
+  accuracy study before this did — is close to the wrong objective.**
+  **Facing a bet: 0.5168 bb against 0.0348 acting first, 14.8x, 3.06
+  sigma, 94% of all cost at 50% of decisions.** M185 shipped 5.5x/85%
+  from 48 spots; the split got STRONGER with more data, and the
+  user-facing note is corrected.
+  **The estimate DOUBLED between 48 and 144 spots** (8.6 -> 17.2),
+  because three cells had negative means at n=8 that were noise. Fourth
+  conclusion in this project to move with a bigger sample — treat 17.2 as
+  current best, not settled.
+  It is distance from a fuller solve of the SAME model, so shared model
+  error is invisible: a **lower bound** on distance from correct play,
+  and not what a human forfeits against a real opponent.
+
 - **ACCURACY IS NOW MEASURED IN CHIPS, and the advice costs ~4.7 bb per
   100 postflop decisions (M183).** `poker_solver/ev.py` prices
   `EV(reference row) - EV(shipped row)` with the opponent, continuation
