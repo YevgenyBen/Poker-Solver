@@ -47,6 +47,171 @@ _SUIT_INDEX = {suit: i for i, suit in enumerate(SUITS)}
 _EMPTY_RUNOUT = np.empty((1, 0), dtype=np.int64)
 
 
+SHARED_RUNOUT_FLOP_SAMPLES = 320
+"""Runouts drawn per BOARD for `build_shared_runout_equity_table` (M176).
+
+Higher than the per-pair builder's default because shared runouts cannot
+exclude each pair's hole cards and colliding draws are DROPPED instead —
+rejection sampling, which gives exactly the conditional distribution the
+per-pair form enumerates but costs effective sample count. Same reasoning
+and same number as `multiway_board_equity.SHARED_RUNOUT_SAMPLES` (M162).
+**Do not lower this to the per-pair default thinking it matches.**
+"""
+
+
+def build_shared_runout_equity_table(
+    board: tuple,
+    combos: list,
+    samples: int = SHARED_RUNOUT_FLOP_SAMPLES,
+    rng: random.Random | None = None,
+) -> np.ndarray:
+    """The same table as `build_board_equity_table`, built by ranking each
+    combo ONCE per runout instead of once per pair.
+
+    M176, and the heads-up sibling of M162's `SharedRunoutRanks`. The
+    per-pair builder draws fresh runouts for every (i, j) and ranks both
+    hands on them, but **a combo's rank on a runout does not depend on who
+    it is compared against — only the comparison does**. So the work is
+    O(N x samples) rankings plus O(N^2) integer comparisons, where the
+    per-pair form is O(N^2 x samples) rankings.
+
+    Why this mattered enough to build: the equity table measured **89.5%**
+    of a cold flop request (8.62s cold, 7.71s table, 0.41s CFR) — the
+    inverse of M155's 14/86, because M161 made CFR O(N) and M172 tripled
+    the combo count the O(N^2) table scales with.
+
+    Measured, interleaved in one process (M70), against the per-pair
+    builder at its shipped 30 samples:
+
+        cap  26 ( 164 combos)   1.28s ->  0.23s    5.6x
+        cap  60 ( 417 combos)   8.49s ->  0.78s   10.9x
+        cap 100 ( 708 combos)  25.44s ->  1.68s   15.1x
+
+    The win grows with pool size, as O(N^2) -> O(N) predicts.
+
+    **It is also more accurate, not merely faster**, because 320 shared
+    samples net more usable runouts than 30 per-pair ones. Against a
+    4,000-sample truth on Th5s7c: per-pair mean 0.0496 / worst 0.3373;
+    shared mean 0.0166 / worst 0.1067. The per-pair builder disagrees with
+    ITSELF under a different seed by more (0.0679) than shared disagrees
+    with truth.
+
+    **Collisions are DROPPED, not excluded.** A runout sharing a card with
+    either combo cannot be used for that pair, so it is masked out — which
+    is rejection sampling from the larger deck and therefore exactly the
+    conditional distribution of the smaller one. On TURN and RIVER boards
+    both builders enumerate, so dropping collisions leaves precisely the
+    deck the per-pair form walks and the two agree **to the digit** (4,422
+    cells, 0.0 difference) — that equivalence is the correctness evidence,
+    and `tests/test_board_equity.py` pins it.
+
+    A pair whose every shared runout collides is left NaN, exactly as a
+    pair sharing a card is: the caller's `nan_to_num` contract is
+    unchanged.
+    """
+    rng = rng if rng is not None else random.Random(DEFAULT_SEED)
+    board_cards = tuple(board)
+    board_set = frozenset(board_cards)
+    remaining_needed = 5 - len(board_cards)
+    if remaining_needed < 0:
+        raise ValueError("board cannot hold more than five cards")
+
+    size = len(combos)
+    table = np.full((size, size), np.nan, dtype=np.float64)
+    valid = [(i, combo) for i, combo in enumerate(combos) if not combo.blocks(board_set)]
+    if not valid:
+        return table
+
+    deck = remaining_deck(board_set)
+    np_rng = np.random.default_rng(rng.getrandbits(63))
+    if remaining_needed == 0:
+        runouts = [()]
+    elif remaining_needed == 1:
+        # Exactly one card left — enumerate, never sample. `samples` is
+        # ignored here for the same reason it is in the per-pair builder
+        # (M154), which is what makes turn/river boards exactly comparable.
+        runouts = [(card,) for card in deck]
+    else:
+        keys = np_rng.random((samples, len(deck)))
+        idx = np.argpartition(keys, remaining_needed - 1, axis=1)[:, :remaining_needed]
+        runouts = [tuple(deck[k] for k in row) for row in idx]
+
+    n_runouts = len(runouts)
+    n_valid = len(valid)
+    board_values = [card.value for card in board_cards]
+    board_suits = [_SUIT_INDEX[card.suit] for card in board_cards]
+
+    # --- rank every combo on every runout, exactly once ----------------
+    # Laid out with broadcasting rather than a per-(combo, runout) Python
+    # loop: at cap 100 that loop is ~300k iterations and was most of what
+    # this function still cost after the algorithmic win.
+    combo_values = np.array([[c.card_a.value, c.card_b.value] for _i, c in valid],
+                            dtype=np.int64)
+    combo_suits = np.array([[_SUIT_INDEX[c.card_a.suit], _SUIT_INDEX[c.card_b.suit]]
+                            for _i, c in valid], dtype=np.int64)
+    run_values = np.array([[card.value for card in run] for run in runouts],
+                          dtype=np.int64).reshape(n_runouts, remaining_needed if remaining_needed > 0 else 0)
+    run_suits = np.array([[_SUIT_INDEX[card.suit] for card in run] for run in runouts],
+                         dtype=np.int64).reshape(n_runouts, remaining_needed if remaining_needed > 0 else 0)
+
+    values = np.empty((n_valid, n_runouts, 7), dtype=np.int64)
+    suits = np.empty((n_valid, n_runouts, 7), dtype=np.int64)
+    values[:, :, 0:2] = combo_values[:, None, :]
+    suits[:, :, 0:2] = combo_suits[:, None, :]
+    n_board = len(board_cards)
+    values[:, :, 2:2 + n_board] = np.array(board_values, dtype=np.int64)[None, None, :]
+    suits[:, :, 2:2 + n_board] = np.array(board_suits, dtype=np.int64)[None, None, :]
+    if remaining_needed > 0:
+        values[:, :, 2 + n_board:] = run_values[None, :, :]
+        suits[:, :, 2 + n_board:] = run_suits[None, :, :]
+    ranks = best_hand_rank_batch(values.reshape(-1, 7),
+                                 suits.reshape(-1, 7)).reshape(n_valid, n_runouts)
+
+    # --- card-membership matrices, so no pair is examined in Python ----
+    # A card index is 4 * value + suit; two hands "block" each other when
+    # they share any card, and a runout is unusable for a combo on the
+    # same test. Both reduce to one boolean matrix product each.
+    def _card_bits(values_arr, suits_arr):
+        bits = np.zeros((values_arr.shape[0], 52 * 4), dtype=bool)
+        idx = values_arr * 4 + suits_arr
+        for col in range(idx.shape[1]):
+            bits[np.arange(idx.shape[0]), idx[:, col]] = True
+        return bits
+
+    combo_bits = _card_bits(combo_values, combo_suits)
+    if remaining_needed > 0:
+        run_bits = _card_bits(run_values, run_suits)
+        collides = (combo_bits.astype(np.int8) @ run_bits.astype(np.int8).T) > 0
+    else:
+        collides = np.zeros((n_valid, n_runouts), dtype=bool)
+    usable = ~collides
+    blocked = (combo_bits.astype(np.int8) @ combo_bits.astype(np.int8).T) > 0
+
+    # --- every pair is now integer comparisons over the shared runouts --
+    # One vectorised pass per ROW against all later rows, rather than a
+    # Python iteration per PAIR (~450k of them at cap 100).
+    usable_i8 = usable.astype(np.int8)
+    for a_pos in range(n_valid - 1):
+        i, _combo_i = valid[a_pos]
+        rank_i = ranks[a_pos]
+        rest_ranks = ranks[a_pos + 1:]
+        mask = usable[a_pos] & usable[a_pos + 1:]
+        drawn = mask.sum(axis=1)
+        wins = np.count_nonzero((rank_i > rest_ranks) & mask, axis=1)
+        ties = np.count_nonzero((rank_i == rest_ranks) & mask, axis=1)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            equity = (wins + 0.5 * ties) / drawn
+        # A pair sharing a card is an impossible matchup, and a pair whose
+        # every shared runout collided has nothing to average — both stay
+        # NaN, which is the contract the caller's nan_to_num expects.
+        equity[drawn == 0] = np.nan
+        equity[blocked[a_pos, a_pos + 1:]] = np.nan
+        cols = np.array([j for j, _c in valid[a_pos + 1:]], dtype=np.int64)
+        table[i, cols] = equity
+        table[cols, i] = 1.0 - equity
+    return table
+
+
 def build_board_equity_table(
     board: tuple,
     combos: list,

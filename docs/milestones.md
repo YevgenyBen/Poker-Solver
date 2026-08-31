@@ -8863,3 +8863,135 @@ it had" is the natural next test — and it is now cheap to run, since a
 turn solve costs 0.28s. Not attempted here: this milestone answers the
 certification question it set out to answer, and adopting a wider turn
 cap needs its own frontier and its own latency budget.
+
+## M176 — shared runouts for the heads-up equity table
+
+Recommendation 3 of the ten-game benchmark was "attack flop latency":
+after M173 and M174 removed the turn and river from the slow population,
+the flop was **42% of postflop advice, 6.71s median, and 100% of every
+decision over 8s**.
+
+### The anatomy inverted, and the documented constraint was backwards
+
+Measured through `/advise` at cap 100, instrumented on the shipped path
+rather than a reconstruction:
+
+| | M155 (stale) | measured now |
+|---|---|---|
+| equity table | 14% | **89.5%** (7.71s of 8.62s) |
+| CFR solve | 86% | **4.8%** (0.41s) |
+
+CLAUDE.md said "anything aimed at flop latency must attack the CFR
+solve; caching or extending the equity table caps out at 14%." That was
+true when M155 measured it and is now the opposite of true — **M161**
+made CFR O(N) instead of O(N^2) (13.07x) and **M172** tripled the combo
+count the O(N^2) table build scales with. Two changes pushing the same
+way turned the dominant cost into the negligible one. The constraint is
+corrected in this milestone; left alone it would have sent the next
+attempt at 4.8% of the cost.
+
+### The fix is M162's, applied to a path it never reached
+
+`build_board_equity_table` drew FRESH runouts for every (i, j) pair and
+ranked both hands on them. **A combo's rank on a runout does not depend
+on who it is compared against — only the comparison does.** M162 removed
+exactly this from the multiway path for 26-31x and nobody carried it
+across. `build_shared_runout_equity_table` draws runouts once per BOARD,
+ranks each combo once, and reduces every pair to integer comparisons.
+
+Interleaved in one process (M70), against the per-pair builder at its
+shipped 30 samples:
+
+| cap | combos | per-pair | shared | |
+|---|---|---|---|---|
+| 26 | 164 | 1.25s | 0.13s | 9.3x |
+| 100 | 708 | 53.87s | **1.30s** | **41.6x** |
+
+End to end through `/advise`, median of 10 real flop spots:
+
+| | before | after | |
+|---|---|---|---|
+| cold request | 8.62s | **3.24s** | 2.7x |
+| different hero, same spot | 7.17s | **1.75s** | 4.1x |
+| equity table | 7.71s (89.5%) | 1.56s (48.1%) | 4.9x |
+
+### It is more ACCURATE as well as faster, on all three boards
+
+320 shared samples net more usable runouts than 30 per-pair ones. Against
+a 4,000-sample truth:
+
+| board | per-pair s30 | **shared s320** | per-pair vs ITSELF |
+|---|---|---|---|
+| Th5s7c | 0.0496 | **0.0166** | 0.0679 |
+| KsKcQh | 0.0481 | **0.0130** | 0.0677 |
+| 2h6d9c | 0.0473 | **0.0173** | 0.0658 |
+
+**The shipped builder disagrees with itself under a different seed by
+more than the new one disagrees with the truth**, so this change sits
+inside the noise it replaces while cutting that noise ~3x.
+
+### Correctness is checked where it can be EXACT
+
+Shared runouts cannot exclude a pair's hole cards, so colliding draws are
+DROPPED — rejection sampling, which yields exactly the conditional
+distribution the per-pair builder enumerates. On TURN and RIVER boards
+both forms enumerate (`remaining_needed <= 1`, M154), so there is nothing
+left to differ: **8,460 cells across two boards agree at 0.00e+00**, NaN
+contract included. On flop boards the two can only agree within Monte
+Carlo error, so agreement there would prove nothing — which is why the
+enumerated case is the evidence.
+
+`SHARED_RUNOUT_FLOP_SAMPLES = 320`, not the caller's per-pair 30.
+Forwarding 30 would still build a table, still be deterministic, and
+still pass every other test while being ~10x noisier than intended, so it
+has its own guard.
+
+### Two process notes
+
+**The isolated number over-promised, for the fourth time this session.**
+The first shared build measured 15.59x isolated and **1.29x end to end**,
+because production was already getting M132's 4.79x from parallelism — so
+the real comparison was parallel-per-pair against sequential-shared. What
+closed the gap was vectorising the remaining Python pair loop (~450k
+iterations at cap 100) and the per-(combo, runout) layout loop (~300k):
+41.6x isolated, 2.7x real. The algorithmic win was never the whole story;
+the Python overhead around it was.
+
+**A guard passed while its mutation survived.** `test_the_shared_runout_
+path_is_what_the_flop_actually_uses` was first written on a TURN board —
+where both builders agree exactly by construction — so disabling the flag
+entirely still matched. It needs a FLOP board to distinguish them. Four
+mutations now caught: ignoring the flag, forwarding the per-pair sample
+count, dropping the collision mask, and failing to NaN blocked pairs.
+
+### Validated in play — three sessions, 866 decisions
+
+M163's rule: timing replicates in one run, defect counts do not. All
+three, with the flop, turn and river medians reproducing to the
+hundredth:
+
+| | before M176 | after |
+|---|---|---|
+| flop median | 6.71s | **1.51 / 1.59 / 1.54s** |
+| turn median | 0.87s | **0.15s** in all three |
+| river median | 4.66s | **0.12 / 0.12 / 0.11s** |
+| within 2s | 61.6% | **99.3%** |
+| within 5s | 77.3% | **100%** |
+| worst decision | 10.09s | **2.22s** |
+| defects / uniform rows | 0 | **0 / 0** |
+
+**An effect that was not predicted, and it is the best kind.** The turn
+and river got faster too, though M176 targeted the flop table. Those
+streets solve on four- and five-card boards where `remaining_needed <= 1`
+and BOTH builders enumerate rather than sample — and enumeration is
+exactly the case the two agree on at 0.00e+00. So **turn and river
+strategies are byte-identical to before, computed 5.8x and 39x faster**;
+only flop values change at all.
+
+Attribution, kept straight: flop 6.71 -> 1.51 and turn 0.87 -> 0.15 are
+M176 alone. River 4.66 -> 0.12 is M174 (12.18 -> 0.65s) and then M176
+(0.65 -> 0.12).
+
+**The flop is no longer the slow street, and no street is.** The
+ten-game benchmark opened with 11.8% of decisions over 8s; there are now
+none over 2.22s.

@@ -243,7 +243,12 @@ def parallel_board_equity_table(board, combos, samples=None, seed=None):
     import numpy as np
 
     from poker_solver.board_equity import (DEFAULT_BOARD_EQUITY_SAMPLES,
-                                           DEFAULT_SEED, build_board_equity_table)
+                                           DEFAULT_SEED,
+                                           SHARED_RUNOUT_FLOP_SAMPLES,
+                                           build_board_equity_table,
+                                           build_shared_runout_equity_table)
+
+    from api import config as cfg
 
     actual_samples = DEFAULT_BOARD_EQUITY_SAMPLES if samples is None else samples
     actual_seed = DEFAULT_SEED if seed is None else seed
@@ -251,6 +256,22 @@ def parallel_board_equity_table(board, combos, samples=None, seed=None):
     def _sequential():
         return build_board_equity_table(board, combos, samples=actual_samples,
                                         rng=random.Random(actual_seed))
+
+    if cfg.SHARED_RUNOUT_FLOP_TABLE:
+        # M176. Ranking each combo ONCE per runout beats banding the
+        # per-pair build across processes by more than the pool ever won:
+        # sequential shared is ~15x the sequential per-pair build at cap
+        # 100, against M132's 4.79x from parallelism. It also sidesteps
+        # the process pool entirely, which on Windows `spawn` re-imports
+        # `__main__` and has its own failure mode (M132).
+        #
+        # `samples` is deliberately NOT forwarded: it is the PER-PAIR
+        # sample count, and shared runouts need more of them because
+        # colliding draws are dropped. Passing 30 here would quietly make
+        # the table ten times noisier than the constant intends.
+        return build_shared_runout_equity_table(
+            board, combos, samples=SHARED_RUNOUT_FLOP_SAMPLES,
+            rng=random.Random(actual_seed))
 
     if len(combos) < MIN_COMBOS_FOR_SPLIT:
         return _sequential()

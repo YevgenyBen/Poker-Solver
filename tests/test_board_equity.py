@@ -196,3 +196,100 @@ def test_only_the_flop_table_is_sampled_which_is_why_chance_nodes_take_no_sample
         "a RIVER board table now depends on sampling, though a complete "
         "board has nothing left to draw"
     )
+
+
+def test_shared_runouts_agree_EXACTLY_where_both_builders_enumerate():
+    """M176. The shared-runout builder ranks each combo once per runout
+    instead of once per pair, and drops runouts that collide with a pair's
+    hole cards rather than excluding them up front.
+
+    Dropping is rejection sampling, so the surviving draws are exactly the
+    conditional distribution the per-pair builder enumerates — and on TURN
+    and RIVER boards both builders enumerate rather than sample
+    (`remaining_needed <= 1`, M154), so there is nothing left to differ.
+    They must agree to the digit.
+
+    This is the correctness evidence for the whole change. On FLOP boards
+    the two can only agree within Monte Carlo error, so agreement there
+    would prove nothing; here it proves the comparison logic, the
+    collision handling and the NaN contract all match.
+    """
+    from poker_solver.board_equity import build_shared_runout_equity_table
+    from poker_solver.combos import range_from_class_frequencies
+    from poker_solver.starting_hands import all_starting_hands
+
+    for cards in (("Kd", "7c", "2h", "Ts"), ("Kd", "7c", "2h", "Ts", "4c")):
+        board = tuple(Card.from_str(c) for c in cards)
+        combos = sorted(
+            range_from_class_frequencies({h: 1.0 for h in all_starting_hands()[:14]},
+                                         exclude=frozenset(board)),
+            key=str)
+        per_pair = build_board_equity_table(board, combos)
+        shared = build_shared_runout_equity_table(board, combos)
+
+        # The NaN contract must match exactly: a pair sharing a card is an
+        # impossible matchup in both, and nothing else may be undefined.
+        assert np.array_equal(np.isnan(per_pair), np.isnan(shared)), (
+            f"{''.join(cards)}: the two builders disagree about which cells are defined")
+        both = ~np.isnan(per_pair)
+        assert both.any(), "no defined cells — the fixture stopped exercising anything"
+        worst = float(np.abs(per_pair[both] - shared[both]).max())
+        assert worst == 0.0, (
+            f"{''.join(cards)}: enumerated boards must agree exactly, worst {worst:.2e}")
+
+
+def test_the_shared_runout_table_is_a_valid_equity_table():
+    """M176. The structural contract, on a FLOP board where the values are
+    sampled and so cannot be compared cell by cell against anything.
+    """
+    from poker_solver.board_equity import build_shared_runout_equity_table
+    from poker_solver.combos import range_from_class_frequencies
+    from poker_solver.starting_hands import all_starting_hands
+
+    board = tuple(Card.from_str(c) for c in ("Th", "5s", "7c"))
+    combos = sorted(
+        range_from_class_frequencies({h: 1.0 for h in all_starting_hands()[:10]},
+                                     exclude=frozenset(board)),
+        key=str)
+    table = build_shared_runout_equity_table(board, combos, samples=64)
+
+    defined = ~np.isnan(table)
+    assert defined.any()
+    assert np.all(table[defined] >= 0.0) and np.all(table[defined] <= 1.0)
+    # Zero-sum: hero's equity against villain is one minus the reverse.
+    pairs = defined & defined.T
+    assert np.allclose(table[pairs] + table.T[pairs], 1.0, atol=1e-9)
+    # A combo has no equity against itself, and none against a hand it blocks.
+    assert np.all(np.isnan(np.diag(table)))
+    for i, a in enumerate(combos):
+        for j, b in enumerate(combos):
+            if i != j and a.blocks(b.cards):
+                assert np.isnan(table[i, j]), f"{a} blocks {b} but the cell is defined"
+
+
+def test_shared_runouts_are_deterministic_for_a_given_seed():
+    """M176. Same seed in, same table out — the property M153/F44 exists to
+    protect, since a seed that cannot be varied makes every
+    seed-variation convergence check vacuous.
+    """
+    import random
+
+    from poker_solver.board_equity import build_shared_runout_equity_table
+    from poker_solver.combos import range_from_class_frequencies
+    from poker_solver.starting_hands import all_starting_hands
+
+    board = tuple(Card.from_str(c) for c in ("Th", "5s", "7c"))
+    combos = sorted(
+        range_from_class_frequencies({h: 1.0 for h in all_starting_hands()[:8]},
+                                     exclude=frozenset(board)),
+        key=str)
+    a = build_shared_runout_equity_table(board, combos, samples=48, rng=random.Random(7))
+    b = build_shared_runout_equity_table(board, combos, samples=48, rng=random.Random(7))
+    assert np.array_equal(np.isnan(a), np.isnan(b))
+    both = ~np.isnan(a)
+    assert np.array_equal(a[both], b[both]), "same seed produced a different table"
+
+    c = build_shared_runout_equity_table(board, combos, samples=48, rng=random.Random(99))
+    assert not np.array_equal(a[both], c[both]), (
+        "a different seed produced an identical table — the seed is being dropped, "
+        "which is exactly F44")

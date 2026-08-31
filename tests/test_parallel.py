@@ -178,3 +178,83 @@ def test_row_bands_split_the_work_not_the_row_count():
     # the first band must cover FEWER rows than the last, since its rows
     # are the expensive ones
     assert (bands[0][1] - bands[0][0]) < (bands[-1][1] - bands[-1][0])
+
+
+def test_the_shared_runout_table_is_not_given_the_per_pair_sample_count():
+    """M176. `PATH_QUERY_EQUITY_SAMPLES` is 30 — a PER-PAIR count, where
+    every pair draws its own runouts. Shared runouts are drawn once per
+    BOARD and colliding draws are dropped, so they need far more of them;
+    `SHARED_RUNOUT_FLOP_SAMPLES` is 320 for the same reason M162's
+    multiway constant is.
+
+    Forwarding the caller's 30 here would still produce a table, still be
+    deterministic, and still pass every other test — while making it
+    roughly ten times noisier than the constant intends. That is a silent
+    failure, so it gets an explicit guard.
+    """
+    import inspect
+
+    from api import config as cfg
+    from api import parallel as parallel_mod
+    from poker_solver.board_equity import SHARED_RUNOUT_FLOP_SAMPLES
+
+    assert SHARED_RUNOUT_FLOP_SAMPLES > cfg.PATH_QUERY_EQUITY_SAMPLES * 4, (
+        "shared runouts need materially more samples than the per-pair count; "
+        "if these have converged, re-measure rather than assuming they match")
+
+    source = inspect.getsource(parallel_mod.parallel_board_equity_table)
+    shared_call = source[source.index("build_shared_runout_equity_table("):]
+    assert "samples=SHARED_RUNOUT_FLOP_SAMPLES" in shared_call, (
+        "the shared builder must be given its own constant, not the caller's "
+        "per-pair `samples`")
+    assert "samples=actual_samples" not in shared_call.split(")")[0], (
+        "the per-pair sample count is being forwarded to the shared builder")
+
+
+def test_the_shared_runout_path_is_what_the_flop_actually_uses():
+    """M176. The flag has to be read at call time and actually change which
+    builder runs — a config constant nothing consults is worse than none,
+    because it reads as a working switch.
+    """
+    import random
+
+    from api import config as cfg
+    from api.parallel import parallel_board_equity_table
+    from poker_solver.cards import Card
+    from poker_solver.combos import range_from_class_frequencies
+    from poker_solver.starting_hands import all_starting_hands
+
+    assert cfg.SHARED_RUNOUT_FLOP_TABLE is True, (
+        "M176 ships this on; flipping it off is a deliberate act that should "
+        "update this test and the measurements in api/config.py")
+
+    import numpy as np
+
+    from poker_solver.board_equity import (build_board_equity_table,
+                                           build_shared_runout_equity_table)
+
+    # A FLOP board on purpose. On a turn board both builders enumerate and
+    # agree exactly, so a fallback to the per-pair path would still match
+    # and this test would pass while the flag did nothing — the first
+    # version of it did exactly that, and the mutation survived.
+    board = tuple(Card.from_str(c) for c in ("Th", "5s", "7c"))
+    combos = sorted(
+        range_from_class_frequencies({h: 1.0 for h in all_starting_hands()[:10]},
+                                     exclude=frozenset(board)),
+        key=str)
+
+    through_api = parallel_board_equity_table(board, combos, samples=30, seed=42)
+    shared = build_shared_runout_equity_table(board, combos, rng=random.Random(42))
+    both = ~np.isnan(through_api) & ~np.isnan(shared)
+    assert both.any()
+    assert np.array_equal(through_api[both], shared[both]), (
+        "the production path is not producing the shared-runout table")
+
+    # And it is genuinely NOT the per-pair table: on a flop board the two
+    # sample differently, so matching it would mean the flag is dead.
+    per_pair = build_board_equity_table(board, combos, samples=30,
+                                        rng=random.Random(42))
+    defined = both & ~np.isnan(per_pair)
+    assert not np.array_equal(through_api[defined], per_pair[defined]), (
+        "the production path returned the per-pair table — the flag is not "
+        "being consulted")
