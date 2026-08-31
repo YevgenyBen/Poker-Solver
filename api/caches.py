@@ -455,14 +455,34 @@ _path_query_libraries = _SolveCache("path_query_libraries", maxsize=256)
 # turn's own looser discipline (around the dict access only, not the
 # whole solve) — not query_strategy's atomic whole-call lock, since
 # this isn't going through that primitive.
-# M127: 20, not 128. A turn entry measures 7.95 MB, so 128 was ~1.0 GB.
-# M170 lowered this from 20. Giving the turn a sized re-raise grew an
-# entry from 7.59 MB to 11.01 MB, and 20 of those is 220 MB against a
-# 168 MB budget — caught by
-# test_cache_ceilings_are_sized_against_what_an_entry_actually_costs,
-# which is exactly the failure M127 built it for: a wider tree is a
-# bigger entry, and a ceiling on entry COUNT is not a ceiling on memory.
-_turn_path_cache = _SolveCache("turn_path", maxsize=14)
+# M178 raised this from 14, because the number it was derived from no
+# longer exists.
+#
+# The history, which is the point: M127 set 20 (from 128) when a turn
+# entry measured 7.95 MB, and M170 lowered it to 14 when a sized
+# re-raise grew the entry to 11.01 MB — 20 of those being 220 MB against
+# a 168 MB budget. Both were correct derivations from a real
+# measurement.
+#
+# **M173 then replaced the chained three-street solve with a standalone
+# one-street solve, and nobody re-derived this.** A turn entry now
+# measures **0.22 MB** — 50x smaller — so 14 entries occupy 3 MB of a
+# 168 MB budget. The ceiling was not wrong, it was STALE: sized against
+# an entry the product stopped producing.
+#
+# 192 is chosen to survive the change most likely to land next. Measured
+# entry cost by range cap (M178):
+#
+#   cap  26 (shipped)  0.22 MB   192 entries =  42 MB
+#   cap  60            0.45 MB               =  86 MB
+#   cap 100            0.77 MB               = 148 MB   <- still under
+#   cap 140            1.07 MB               = 205 MB   <- would FAIL
+#
+# So adopting a wider turn cap up to 100 keeps this valid, and going to
+# 140 forces a deliberate re-derivation rather than a silent overrun —
+# which is what `test_cache_ceilings_are_sized_against_what_an_entry_
+# actually_costs` is for.
+_turn_path_cache = _SolveCache("turn_path", maxsize=192)
 
 # M46's own plain-dict cache for solve_flop_to_river results — same
 # shape/reasoning as _turn_path_cache above (keyed on what the solve

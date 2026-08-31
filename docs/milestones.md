@@ -9071,3 +9071,47 @@ checking the two action menus matched before running anything.
 Four mutations caught: the river falling back to the unmeasured note,
 certifying the river anyway, dropping the direction from the note, and
 thinning the evidence back to M168's 4 per cell.
+
+## M178 — the turn cache ceiling was stale, not wrong
+
+Found incidentally while measuring what a wider turn range would cost.
+
+`_turn_path_cache` sat at **maxsize 14**. That number was derived twice,
+correctly both times: M127 set 20 when a turn entry measured 7.95 MB, and
+M170 lowered it to 14 when giving the turn a sized re-raise grew entries
+to 11.01 MB (20 of those being 220 MB against a 168 MB budget).
+
+**Then M173 replaced the chained three-street solve with a standalone
+one-street solve, and nobody re-derived it.** A turn entry now measures
+**0.22 MB** — 50x smaller — so 14 entries occupied **3 MB of a 168 MB
+budget** while turn requests missed the cache.
+
+Raised to **192**, sized against the change most likely to land next
+rather than against the maximum the budget allows (~772):
+
+| turn range cap | entry | 192 entries | |
+|---|---|---|---|
+| 26 (shipped) | 0.22 MB | 42 MB | |
+| 60 | 0.45 MB | 86 MB | |
+| 100 | 0.77 MB | 148 MB | still valid |
+| 140 | 1.07 MB | 205 MB | would fail, deliberately |
+
+So adopting a wider turn cap up to 100 keeps this valid, and 140 forces a
+deliberate re-derivation instead of a silent overrun.
+
+### The safety net had a one-sided hole
+
+`test_cache_ceilings_are_sized_against_what_an_entry_actually_costs`
+(M127) catches a ceiling that is too HIGH — it measures a real entry and
+asserts the budget. It cannot catch one left far too LOW, because nothing
+overruns. **That is exactly how 14 survived M173**: the entry got 50x
+cheaper, no test had anything to say, and the cache quietly stopped
+being useful.
+
+`test_the_turn_cache_ceiling_matches_what_a_turn_entry_now_costs`
+asserts the other direction — the ceiling must be within a tenth of what
+the budget affords for a real measured entry. Both mutations caught:
+reverting to 14, and raising past the budget.
+
+No accuracy tradeoff and no latency cost; the cache simply holds a
+session's worth of turn boards instead of fourteen.

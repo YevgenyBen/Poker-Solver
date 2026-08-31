@@ -361,3 +361,47 @@ def test_cache_ceilings_are_sized_against_what_an_entry_actually_costs():
         f"{caches_module.MAX_CACHE_BYTES_PER_CACHE / 1e6:.0f} MB: {over_budget}. "
         "Lower the maxsize — a ceiling on entry COUNT is not a ceiling on memory."
     )
+
+
+def test_the_turn_cache_ceiling_matches_what_a_turn_entry_now_costs():
+    """M178. `_turn_path_cache` sat at 14 for a reason that stopped being
+    true: it was derived when a turn entry was 11.01 MB (M170, a chained
+    three-street solve). M173 replaced that with a standalone one-street
+    solve and the entry is now ~0.22 MB, so 14 entries used 3 MB of a
+    168 MB budget while turn requests missed the cache.
+
+    The ceiling was never WRONG — it was STALE, sized against an entry the
+    product no longer produces. `test_cache_ceilings_are_sized_against_
+    what_an_entry_actually_costs` catches a ceiling that is too HIGH; it
+    cannot catch one left far too low, because nothing overruns.
+
+    This asserts the other direction: the ceiling must be within reach of
+    what the budget actually affords for a real entry. It fails loudly if
+    the entry grows (a wider cap, a wider tree) without the ceiling being
+    re-derived, and equally if the entry shrinks again and nobody notices.
+    """
+    from api import caches as caches_module
+    from api import main as api_main
+
+    caches_module._SolveCache.clear_all()
+    body = {"stack_bb": 100.0, "preflop_action_path": ["raise", "call_or_check"],
+            "players": 2, "hero_cards": "AsKs", "board": "3d7s2c",
+            "flop_action_path": ["call_or_check", "call_or_check"], "turn_card": "Kd"}
+    with TestClient(api_main.app) as client:
+        response = client.post("/advise", json=body)
+        assert response.status_code == 200, response.json()
+
+    cache = caches_module._turn_path_cache
+    assert cache.entries, "the turn request populated no turn cache entry"
+    entry_bytes = _deep_size(next(iter(cache.entries.values())))
+    affordable = caches_module.MAX_CACHE_BYTES_PER_CACHE // entry_bytes
+
+    assert cache.maxsize * entry_bytes <= caches_module.MAX_CACHE_BYTES_PER_CACHE, (
+        f"turn_path: {entry_bytes / 1e6:.2f} MB/entry x {cache.maxsize} exceeds budget")
+    # And it must not be left absurdly below what the budget affords —
+    # the staleness this milestone fixed. A tenth is generous latitude.
+    assert cache.maxsize >= affordable // 10, (
+        f"turn_path holds {cache.maxsize} entries where the byte budget affords "
+        f"{affordable} at {entry_bytes / 1e6:.2f} MB each — the ceiling looks stale "
+        "against what an entry now costs, which is how it sat at 14 after M173 made "
+        "entries 50x smaller")
