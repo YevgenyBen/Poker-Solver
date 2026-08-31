@@ -1434,7 +1434,77 @@ POSTFLOP_FOLD_ERROR_WORST = 0.8017
 # The river is unmeasured and therefore also uncertified: after the turn
 # inverted, assuming the river behaves like the flop would be the same
 # mistake twice.
-CERTIFY_RELIABILITY_ON_STREETS = ("flop",)
+# M180 WITHDREW the flop's certification, leaving no street certified.
+#
+# M167 granted it on **9 spots** at percentile >= 0.75: mean 0.0144,
+# worst 0.0571, ZERO over 0.10 — measured at cap 26 with 500 iterations.
+# M172 then changed both (cap 100, iterations 250) and it was never
+# re-run.
+#
+# Re-measured on **28 strong-band spots** across four cells
+# ({opening, facing a bet} x {strong, weak}), against a full-range
+# 169-class reference at s200/i2500 built at each request's own pot and
+# stack:
+#
+#   arm                        mean    worst   over 0.10
+#   cap 100 (shipped)        0.1004   0.9535        6/28
+#   opening decisions only   0.1480   0.9535        4/14
+#
+# **It is not coverage**: the strong band fails at cap 100, 140 AND 169
+# (uncapped) — 6, 7 and 9 spots over 0.10. **It is not precision**:
+# holding the cap and varying iterations 250 / 500 / 2500 gives 6, 6 and
+# 5 over 0.10, flat, consistent with M152's finding that precision is a
+# dead axis here.
+#
+# The worst case is what a certificate should never cover: **Kc8c on
+# 7h9hKd at percentile 0.913 — top pair on a two-flush board. The
+# reference bets 0.9987; the product bets 0.045** and told the user the
+# answer measured reliable. Its reference drifted 0.0003 between seeds,
+# so that is not a reference artifact.
+#
+# **No threshold rescues it** — the failures include percentiles 0.913
+# and 0.978, so raising the bar does not find a clean band.
+#
+# This is the FOURTH claim in this project overturned by measuring more
+# of the same thing (M166 at 27->45 spots, M168 at 4->12 per band, M110's
+# positional read, and now this). The asymmetry that governs the action
+# is already recorded: certifying needs positive evidence FOR a street;
+# withdrawing needs only its absence — and here there is positive
+# evidence AGAINST.
+#
+# Restoring a certificate needs a fresh study at >= 28 spots per band
+# with a stability-checked reference, not a re-run of M167's nine.
+CERTIFY_RELIABILITY_ON_STREETS = ()
+
+# M180: recorded so the copy above cannot drift from the measurement.
+FLOP_MEASURED_SPOTS = 56
+FLOP_MEASURED_FAILURES = 8
+
+# M180. The flop can no longer use UNMEASURED_STREET_NOTE — that note
+# says accuracy "has not been measured against a larger solve the way the
+# flop has", which is self-contradictory when shown ON the flop. The flop
+# HAS been measured, more than any other street; the result is that its
+# advice cannot be certified.
+#
+# **Deliberately claims no direction.** Neither split is separable at 56
+# spots: strong vs weak is 1.32 sigma (0.1004 vs 0.0381) and opening vs
+# facing-a-bet is 1.83 sigma (0.1118 vs 0.0267). M166 asserted exactly
+# this kind of split from a smaller sample and M167 had to withdraw it,
+# so the note says the error is NOT predictable rather than inventing a
+# rule the measurement does not support.
+FLOP_MEASURED_NOTE = (
+    "RELIABILITY ON THE FLOP HAS BEEN MEASURED, AND IT IS NOT GOOD ENOUGH TO "
+    "CERTIFY. Against a fuller solve over 56 flop spots, about one answer in "
+    "seven was off by more than 0.10 in how often it bets or folds — and neither "
+    "how strong your hand is nor whether you are facing a bet predicts which "
+    "answers those are. The worst case measured was a top pair that a fuller "
+    "solve bets almost always, where this advice checks. Treat the action as a "
+    "suggestion rather than a solved answer. "
+)
+
+FLOP_CERTIFICATION_SPOTS = 28
+FLOP_CERTIFICATION_FAILURES = 6
+FLOP_CERTIFICATION_WORST_ERROR = 0.9535
 
 # M175 corrected the second sentence. It used to say that on the turn the
 # hands this advice would call reliable "were the LEAST accurate ones
