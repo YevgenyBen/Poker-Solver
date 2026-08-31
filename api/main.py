@@ -1507,8 +1507,16 @@ def _aggression_reason(raw: dict, hero: dict | None = None) -> str:
     # 0.884. So strength carries no signal on the turn rather than an
     # inverted one. Certifying needs positive evidence for the street;
     # there is none here, in either direction.
-    if raw.get("street") not in cfg.CERTIFY_RELIABILITY_ON_STREETS:
-        reason = cfg.UNMEASURED_STREET_NOTE + reason
+    street = raw.get("street")
+    if street not in cfg.CERTIFY_RELIABILITY_ON_STREETS:
+        # M177: the river is no longer UNMEASURED — it was measured over 56
+        # spots and certification was refused, with error concentrated in
+        # the band a certificate would vouch for. Telling a river player
+        # "accuracy here has not been measured" is now false, and it buries
+        # the one thing that IS known and actionable: strong hands are the
+        # unreliable ones there, and they err toward committing chips.
+        reason = (cfg.RIVER_MEASURED_NOTE if street == "river"
+                  else cfg.UNMEASURED_STREET_NOTE) + reason
     elif percentile is not None:
         # M167: certify where reliability was MEASURED, and say "not known"
         # elsewhere. M166 had this the other way round - it asserted that

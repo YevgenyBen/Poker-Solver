@@ -718,6 +718,43 @@ requests now reject unknown fields by name rather than ignoring them.
   never formed a preference" and "never reached at all" are different
   news a user can act on.
 
+- **On the RIVER it DOES split by hand strength, and the flop's rule
+  points the WRONG WAY there (M177).** The river was measured for the
+  first time — 56 spots, four cells, against a full-range 169-class
+  reference with a real size menu built at the request's own OPENING pot:
+  | cell | n | mean | worst | over .10 |
+  |---|---|---|---|---|
+  | opening / strong | 14 | 0.1812 | 0.5082 | **6** |
+  | opening / weak | 14 | 0.0425 | 0.4971 | 1 |
+  | facing / strong | 14 | **0.3411** | 0.9993 | **8** |
+  | facing / weak | 14 | 0.0555 | 0.2864 | 2 |
+  **Certification REFUSED** against a rule fixed before the data (zero
+  strong-band spots over 0.10). Strong hands fail **50%** against weak
+  hands' **11%**, and the mechanism is consistent: the river
+  **over-commits with strong-but-not-nutted hands** — Kc8s at percentile
+  0.921 commits the stack 1.0 where the reference checks 0.995.
+  `RIVER_MEASURED_NOTE` replaces `UNMEASURED_STREET_NOTE` there, because
+  that note is now false twice over. **The turn keeps the old note** — its
+  correlation is +0.057 (M175), so the two are uncertified for different
+  reasons and must not share a sentence.
+  **Held to a bar this project has failed twice**: M168 claimed this shape
+  for the turn from 4 spots/band and M175 withdrew it at 12; this ran 8,
+  saw it, and extended to 14 per cell before writing anything user-facing,
+  where the gap GREW.
+
+- **FACING A BET had never been measured on any street, and the harness
+  cannot produce those nodes (M177).** All **368** river spots across ten
+  benchmark sessions are OPENING decisions — not merely unrecorded,
+  never generated. They must be constructed (`river_action_path=
+  ["raise"]`). Those cells are the worse ones on both bands, and F38 is
+  what that blind spot cost last time. **Any postflop accuracy study must
+  build them explicitly.**
+  **And a facing-a-bet reference must start from the street's OPENING
+  pot**, not the node's: the tree sizes bets off the pot it is built with,
+  so building at the post-bet pot and betting again models a much larger
+  bet (`raise:87.50` where production offers `raise:25.00`) and scores two
+  different situations against each other.
+
 - **Postflop error does NOT split by hand strength — M166 claimed it did
   and M167 withdrew it.** Pooled over **44 flop spots drawn from real
   play** across three studies, the correlation between strength
