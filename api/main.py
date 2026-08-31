@@ -1515,8 +1515,14 @@ def _aggression_reason(raw: dict, hero: dict | None = None) -> str:
         # "accuracy here has not been measured" is now false, and it buries
         # the one thing that IS known and actionable: strong hands are the
         # unreliable ones there, and they err toward committing chips.
-        reason = (cfg.RIVER_MEASURED_NOTE if street == "river"
-                  else cfg.UNMEASURED_STREET_NOTE) + reason
+        # M180: three streets, three evidential positions, three notes.
+        # The flop is MEASURED and refused (so the "not measured the way
+        # the flop has" wording is self-contradictory there); the river is
+        # measured with a one-sided strength signal; the turn is measured
+        # with no usable signal at all.
+        reason = ({"flop": cfg.FLOP_MEASURED_NOTE,
+                   "river": cfg.RIVER_MEASURED_NOTE}.get(
+                      street, cfg.UNMEASURED_STREET_NOTE)) + reason
     elif percentile is not None:
         # M167: certify where reliability was MEASURED, and say "not known"
         # elsewhere. M166 had this the other way round - it asserted that

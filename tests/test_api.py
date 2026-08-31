@@ -5784,56 +5784,31 @@ def test_the_exact_node_trainer_leaves_a_differentiated_node_alone():
 # ---------------------------------------------------------------------------
 
 
-def test_a_hand_outside_the_measured_range_is_told_reliability_is_unknown(client):
-    """M167, correcting M166.
+def test_the_per_hand_certification_machinery_still_works_when_a_street_qualifies(client, monkeypatch):
+    """M167's two-band mechanism, kept alive though no street currently
+    qualifies for it (M180 withdrew the flop's certificate).
 
-    M166 asserted that WEAK hands specifically were unreliable and stronger
-    ones fine. Pooling 44 spots across three studies gave a correlation
-    between strength and error of -0.130, with errors at every band below
-    0.65 — including one at 0.64 that M166 called reliable. The split does
-    not exist.
+    The machinery is deliberately retained rather than deleted: restoring
+    a certificate is a stated possibility, needing a fresh study at >= 28
+    spots per band. Untested dormant code would rot, so this exercises it
+    by certifying the flop for the duration of the test only.
 
-    What held is narrower: the top of the range is clean. So the response
-    certifies reliability where it was measured and says "not known"
-    elsewhere, rather than claiming a pattern the data denies.
+    What it guards is the property a constant-returning implementation
+    would break: same board, same action, two hands, two different
+    verdicts, split at the strength threshold.
     """
-    response = client.post("/advise", json={
-        "hero_cards": "9s8s", "board": "As7d2h", "players": 2, "stack_bb": 100.0,
-        "preflop_action_path": ["raise", "call_or_check"],
-    })
-    assert response.status_code == 200, response.json()
-    body = response.json()
-    assert body["hand_strength_percentile"] < api_config.RELIABLE_HAND_STRENGTH_PERCENTILE
-    reason = body["aggression_confidence_reason"]
-    assert reason.startswith(api_config.UNCERTAIN_HAND_NOTE), reason[:120]
-    # It must say what is actually known — a rate, not a verdict on this hand.
-    assert "one in four" in reason
-    assert "does not identify which" in reason
-
-
-def test_a_strong_hand_is_told_the_advice_measured_reliable(client):
-    """The other half, and the half that makes the warning worth reading: a
-    caveat attached to every answer is one a player learns to ignore."""
-    response = client.post("/advise", json={
-        "hero_cards": "AhAd", "board": "As7d2h", "players": 2, "stack_bb": 100.0,
-        "preflop_action_path": ["raise", "call_or_check"],
-    })
-    assert response.status_code == 200, response.json()
-    body = response.json()
-    assert body["hand_strength_percentile"] >= api_config.RELIABLE_HAND_STRENGTH_PERCENTILE
-    reason = body["aggression_confidence_reason"]
-    assert reason.startswith(api_config.RELIABLE_HAND_NOTE), reason[:120]
-    assert not reason.startswith(api_config.UNCERTAIN_HAND_NOTE)
-
-
-def test_the_two_bands_actually_differ_on_one_board(client):
-    """Guards the thing a constant-returning implementation would break:
-    the same board, the same action, two hands, two different verdicts."""
+    monkeypatch.setattr(api_config, "CERTIFY_RELIABILITY_ON_STREETS", ("flop",))
     base = {"board": "As7d2h", "players": 2, "stack_bb": 100.0,
             "preflop_action_path": ["raise", "call_or_check"]}
-    strong = client.post("/advise", json={**base, "hero_cards": "AhAd"}).json()
+
     weak = client.post("/advise", json={**base, "hero_cards": "9s8s"}).json()
-    assert strong["hand_strength_percentile"] > weak["hand_strength_percentile"]
+    assert weak["hand_strength_percentile"] < api_config.RELIABLE_HAND_STRENGTH_PERCENTILE
+    assert weak["aggression_confidence_reason"].startswith(api_config.UNCERTAIN_HAND_NOTE)
+
+    strong = client.post("/advise", json={**base, "hero_cards": "AhAd"}).json()
+    assert strong["hand_strength_percentile"] >= api_config.RELIABLE_HAND_STRENGTH_PERCENTILE
+    assert strong["aggression_confidence_reason"].startswith(api_config.RELIABLE_HAND_NOTE)
+
     assert (strong["aggression_confidence_reason"]
             != weak["aggression_confidence_reason"])
 
@@ -5892,16 +5867,29 @@ def test_reliability_is_only_certified_on_the_street_where_it_was_measured(clien
     )
 
 
-def test_the_flop_still_certifies_a_strong_hand(client):
-    """The other half: restricting to the flop must not silence the signal
-    where it WAS measured, or M167's work is undone rather than scoped."""
+def test_the_flop_no_longer_certifies_a_strong_hand(client):
+    """M180 replaces M168's "the flop still certifies" guard.
+
+    M167 certified the flop on 9 spots at cap 26 / 500 iterations. M172
+    changed both and it was never re-run; at 28 strong-band spots the
+    certificate fails 6 times, worst 0.9535 — a top pair the reference
+    bets 0.9987 where the product bets 0.045.
+
+    A strong flop hand must now get the measured-and-refused note, not a
+    reliability claim.
+    """
     response = client.post("/advise", json={
         "hero_cards": "AhAd", "board": "As7d2h", "players": 2, "stack_bb": 100.0,
         "preflop_action_path": ["raise", "call_or_check"],
     })
     assert response.status_code == 200, response.json()
-    reason = response.json()["aggression_confidence_reason"]
-    assert reason.startswith(api_config.RELIABLE_HAND_NOTE), reason[:120]
+    body = response.json()
+    assert body["hand_strength_percentile"] >= api_config.RELIABLE_HAND_STRENGTH_PERCENTILE
+    reason = body["aggression_confidence_reason"]
+    assert reason.startswith(api_config.FLOP_MEASURED_NOTE), reason[:120]
+    assert not reason.startswith(api_config.RELIABLE_HAND_NOTE), (
+        "a strong flop hand is being told the advice measured reliable; that "
+        "claim was withdrawn in M180 on 28 spots")
 
 
 def test_the_unmeasured_street_note_says_why_rather_than_only_that(client):
@@ -5922,6 +5910,77 @@ def test_the_unmeasured_street_note_says_why_rather_than_only_that(client):
     # BOTH ends, so neither band is the safe one.
     assert "both ends" in note
     assert "least accurate" not in note
+
+
+def test_no_street_claims_certified_reliability_any_more(client):
+    """M180. The flop's certificate was granted by M167 on **9 spots**
+    (mean 0.0144, worst 0.0571, zero over 0.10) at cap 26 / 500
+    iterations. M172 changed both and it was never re-run.
+
+    Re-measured on 28 strong-band spots: **6 over 0.10, worst 0.9535** —
+    a top pair the reference bets 0.9987 where the product bets 0.045.
+    Not coverage (it fails at cap 100, 140 and uncapped) and not precision
+    (flat at 250 / 500 / 2500 iterations). No threshold rescues it; the
+    failures include percentiles 0.913 and 0.978.
+
+    Certifying needs positive evidence FOR a street. Here there is
+    positive evidence AGAINST, so the claim is withdrawn rather than
+    merely unsupported.
+    """
+    assert api_config.CERTIFY_RELIABILITY_ON_STREETS == (), (
+        "a street is certified again; restoring one needs a fresh study at "
+        ">= 28 spots per band with a stability-checked reference, not a "
+        "re-run of M167's nine")
+    assert api_config.FLOP_CERTIFICATION_FAILURES > 0
+    assert api_config.FLOP_CERTIFICATION_SPOTS >= 28
+
+
+def test_the_flop_note_says_measured_and_refuses_to_name_a_direction(client):
+    """M180. The flop cannot use the unmeasured-street note — that note
+    says accuracy "has not been measured against a larger solve the way
+    the flop has", which contradicts itself when shown on the flop.
+
+    And the flop note must NOT claim which hands are unreliable: at 56
+    spots, strong-vs-weak is 1.32 sigma and opening-vs-facing is 1.83
+    sigma. Neither is separable. M166 asserted exactly this kind of split
+    from a smaller sample and M167 withdrew it.
+    """
+    body = _advise_body(
+        preflop_action_path=["raise", "call_or_check"],
+        hero_cards="KcTs", board="ThTd6d", players=2, stack_bb=100.0,
+    )
+    payload = client.post("/advise", json=body).json()
+    assert payload["street"] == "flop"
+    reason = payload["aggression_confidence_reason"]
+
+    assert reason.startswith(api_config.FLOP_MEASURED_NOTE), reason[:160]
+    assert "has not been measured" not in reason, (
+        "the flop has been measured more than any other street; saying "
+        "otherwise is false, and self-contradictory in this note's own wording")
+    lowered = reason.lower()
+    # It must say the error is NOT predictable, not invent a rule.
+    assert "neither" in lowered and "predicts" in lowered, (
+        "the note must say hand strength does not predict the error — "
+        "claiming a direction is what M166 did and M167 had to withdraw")
+
+
+def test_every_street_note_is_distinct_and_matches_its_evidence(client):
+    """M180. Three streets now sit in three different evidential
+    positions, and collapsing any two into one sentence would misstate at
+    least one of them:
+
+      flop  — measured, refused, no usable direction (neither split separable)
+      turn  — measured, refused, correlation +0.057 (no signal at all)
+      river — measured, refused, strongly one-sided (strong hands worse)
+    """
+    notes = {api_config.FLOP_MEASURED_NOTE,
+             api_config.UNMEASURED_STREET_NOTE,
+             api_config.RIVER_MEASURED_NOTE}
+    assert len(notes) == 3, "two streets are sharing a reliability statement"
+    # The river names a direction because its split IS separable; the flop
+    # must not, because its is not.
+    assert "worse for strong hands" in api_config.RIVER_MEASURED_NOTE.lower()
+    assert "worse for strong hands" not in api_config.FLOP_MEASURED_NOTE.lower()
 
 
 def test_the_river_says_it_was_measured_and_which_hands_to_distrust(client):
@@ -6030,7 +6089,8 @@ def test_certification_is_refused_on_evidence_not_by_omission(client):
     """
     assert api_config.TURN_RELIABILITY_SPOTS_PER_BAND >= 10, (
         "a band this thin cannot support certifying OR refusing with confidence")
-    assert api_config.CERTIFY_RELIABILITY_ON_STREETS == ("flop",)
+    # M180 withdrew the flop's certificate too, so no street is certified.
+    assert api_config.CERTIFY_RELIABILITY_ON_STREETS == ()
 
 
 def test_every_postflop_street_gets_some_reliability_statement(client):

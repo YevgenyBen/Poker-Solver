@@ -744,6 +744,36 @@ requests now reject unknown fields by name rather than ignoring them.
   never formed a preference" and "never reached at all" are different
   news a user can act on.
 
+- **NO STREET IS CERTIFIED ANY MORE — the flop's certificate was
+  withdrawn (M180).** M167 granted it on **9 spots** at percentile >=
+  0.75 (mean 0.0144, worst 0.0571, ZERO over 0.10), measured at **cap 26
+  with 500 iterations**. **M172 changed both and it was never re-run.**
+  Re-measured on **28** strong-band spots against a full-range reference
+  built at each request's own pot and stack: **mean 0.1004, worst 0.9535,
+  6 over 0.10.**
+  **Not coverage** (fails at cap 100/140/169 — 6/7/9 spots) and **not
+  precision** (flat at 250/500/2500 iterations — 6/6/5, matching M152's
+  dead-axis finding). **No threshold rescues it**: failures include
+  percentiles 0.913 and 0.978.
+  Worst case: **Kc8c on 7h9hKd, top pair — reference bets 0.9987, the
+  product bets 0.045**, reference drift 0.0003.
+  `CERTIFY_RELIABILITY_ON_STREETS = ()`. The two-band machinery is KEPT
+  and still tested via monkeypatch, because restoring a certificate is
+  possible — but it needs a fresh study at **>= 28 spots per band**, not
+  a re-run of M167's nine.
+
+- **The FLOP CAP STAYS AT 100 — M172's cap-140 result does not replicate
+  (M180).** 56 spots, four cells: cap 100 -> 140 is **0.97 sigma** on
+  aggression and 1.85 on fold, and the wider caps make **more spots worse
+  (28) than better (17)** while the mean improves. Over-0.10 count RISES
+  8 -> 9. **Coverage beyond 100 buys nothing** — uncapped at production
+  precision is 0.0458 against cap 140's 0.0468, so the residual is
+  **precision-bound, not coverage-bound**.
+  **Every accuracy arm here must use the spot's own pot AND stack.**
+  Hardcoding `effective_stack_bb=97.0` against references built at the
+  real stack (47.5bb for one spot) produced a wrong "iterations are the
+  cause" reading that inverted when corrected.
+
 - **On the RIVER it DOES split by hand strength, and the flop's rule
   points the WRONG WAY there (M177).** The river was measured for the
   first time — 56 spots, four cells, against a full-range 169-class

@@ -9233,3 +9233,94 @@ with no mixing**, which is M74's bang-bang behaviour. One occurrence in
 decisions.** It surfaced because seeds 131-133 had never been run —
 which is the case for running new seeds rather than re-running known-good
 ones, and the reason defect counts get three sessions instead of one.
+
+## M180 — the flop cap holds, and the flop's certification does not
+
+Benchmark recommendation 3: revisit the flop cap now that latency is not
+the constraint. M172 raised it 26 -> 100 and measured cap **140 as more
+accurate** (0.0956 against 0.1065), rejecting it on cost at 6.63s. After
+M176 a flop reference costs 5.74s where M172 paid ~65s, so the cost
+argument was gone.
+
+### The cap stays at 100 — M172's cap-140 result does not replicate
+
+56 spots, four cells ({opening, facing a bet} x {strong, weak}), against
+a full-range 169-class reference at s200/i2500 built at each request's
+own pot and stack:
+
+| cap | ALL | op/str | op/weak | fa/str | fa/weak | over .10 | solve |
+|---|---|---|---|---|---|---|---|
+| **100 (shipped)** | 0.0693 | 0.1480 | 0.0756 | 0.0528 | 0.0006 | 8 | 1.13s |
+| 140 | 0.0468 | 0.0976 | 0.0561 | 0.0322 | 0.0013 | 9 | 1.62s |
+| 169 | 0.0458 | 0.1217 | 0.0051 | 0.0560 | 0.0005 | 9 | 2.03s |
+
+Nothing is separable — cap 100 -> 140 is 0.97 sigma on aggression and
+1.85 on fold — and on aggression the wider caps make **more spots worse
+(28) than better (17)** while the mean improves, which is a few large
+gains masking many small regressions. The over-0.10 count RISES, 8 -> 9.
+
+**Coverage beyond 100 buys nothing**: uncapped at production precision is
+0.0458 against cap 140's 0.0468. The flop's residual error is
+precision-bound, not coverage-bound.
+
+### What the study actually found: the certificate fails
+
+The flop was the only street carrying a reliability guarantee. M167
+granted it on **9 spots** at percentile >= 0.75 — mean 0.0144, worst
+0.0571, **zero over 0.10** — measured at **cap 26 with 500 iterations**.
+M172 changed both and **it was never re-run**.
+
+| | M167 granted on | measured now |
+|---|---|---|
+| spots | 9 | **28** |
+| mean | 0.0144 | **0.1004** |
+| worst | 0.0571 | **0.9535** |
+| over 0.10 | **0** | **6** |
+
+**Not coverage**: the strong band fails at cap 100, 140 and 169
+(uncapped) — 6, 7, 9 spots over 0.10. **Not precision**: holding the cap
+and varying iterations 250 / 500 / 2500 gives 6, 6, 5 — flat, consistent
+with M152's finding that precision is a dead axis here. **No threshold
+rescues it**: the failures include percentiles 0.913 and 0.978.
+
+The worst case is what a certificate should never cover: **Kc8c on
+7h9hKd, percentile 0.913 — top pair on a two-flush board. The reference
+bets 0.9987; the product bets 0.045.** Its reference drifted 0.0003
+between seeds, so it is not a reference artifact.
+
+`CERTIFY_RELIABILITY_ON_STREETS = ()`. **No street is certified.**
+
+### The flop gets its own note, and it names no direction
+
+`UNMEASURED_STREET_NOTE` says accuracy "has not been measured against a
+larger solve the way the flop has" — self-contradictory on the flop,
+which has been measured more than any other street.
+
+`FLOP_MEASURED_NOTE` says it was measured and refused, and **deliberately
+claims no direction**: at 56 spots strong-vs-weak is **1.32 sigma** and
+opening-vs-facing is **1.83 sigma**, neither separable. M166 asserted
+exactly this kind of split from a smaller sample and M167 withdrew it.
+The river's note DOES name a direction because the river's split is
+separable; pinned by
+`test_every_street_note_is_distinct_and_matches_its_evidence`.
+
+### The dormant machinery is kept and still tested
+
+The two-band mechanism now fires for no street. Rather than delete it
+(restoring a certificate is a stated possibility) or leave it untested
+(dormant code rots), one test certifies the flop by monkeypatch for its
+own duration and checks both bands still split at the threshold.
+
+### Two process notes
+
+**A methodological error caught in my own follow-up**: the first
+precision test hardcoded `effective_stack_bb=97.0` where the references
+had been built at each spot's real stack (47.5bb for one). It produced a
+wrong "iterations are the cause" reading — i250/i500/i2500 as
+0.1649/0.1091/0.1005, suggesting the M172 iteration cut was the
+regression. Re-run with matched pot AND stack it is 0.1004/0.0924/0.1003,
+flat, and the conclusion inverts.
+
+**This is the FOURTH claim in this project overturned by measuring more
+of the same thing** — M166 (27 -> 45 spots), M168 (4 -> 12 per band),
+M110's positional read, and now M167's certificate at 9 -> 28.
