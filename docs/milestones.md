@@ -9595,3 +9595,64 @@ distance as the measure, and that `poker_solver.ev` still provides the
 primitives it points at — because a governing definition referencing a
 deleted module is worse than none. Both mutations caught: deleting the
 section, and reverting the unit to a frequency distance.
+
+## M185 — the runtime signal: coarse, real, and the only one that exists
+
+M183 recommended a runtime signal targeting the 15% of decisions carrying
+85% of the cost, and said it needed its own measurement first. It got
+one, and the measurement changed what got built.
+
+### The fine-grained signal does not exist
+
+`TVD x value spread` predicts |EV loss| at **+0.772**, but TVD needs a
+reference solve and cannot be computed live. Every runtime-visible
+feature was measured on the same 48 spots:
+
+| runtime feature | corr with \|loss\| |
+|---|---|
+| action count | +0.237 |
+| entropy of the recommendation | +0.215 |
+| max probability | -0.141 |
+| hand strength | +0.112 |
+| **value spread (shipped solve)** | **+0.071** |
+| all-in mass | -0.005 |
+
+Value spread was the obvious candidate and **adds nothing**: every
+spread-threshold rule flags the same decisions as "facing a bet", because
+facing-a-bet nodes ARE the high-spread ones (mean 8.76 against 1.57), and
+WITHIN facing nodes the correlation is **-0.109**. The action count, the
+best of them, is itself a proxy for the same split — 4 actions with fold
+against 3 without.
+
+### The coarse signal is real and separable
+
+| node type | n | mean \|loss\| | median |
+|---|---|---|---|
+| facing a bet | 24 | **0.3107 bb** | 0.0235 |
+| acting first | 24 | 0.0569 bb | 0.0126 |
+
+**5.5x**, delta +0.2538 +/- 0.0983 (**2.58 sigma**), permutation
+**p = 0.0054** over 20,000 shuffles — used because the distribution is
+heavy-tailed enough that the t-style error bar is not trustworthy alone.
+It holds on every street: flop 19.5x, turn 6.7x, river 1.8x. These
+decisions are half of all postflop advice and carry **85% of the cost**.
+
+`FACING_A_BET_COST_NOTE` fires on them, and is **derived from the rows**
+— folding is legal only when facing a bet — so it survives changes to
+path shapes and size menus, the same reason M144 built the sizing note
+that way. Reading it off `flop_action_path` would look equivalent and is
+not: the request says what was ASKED, the rows say what the tree
+OFFERED.
+
+### What the note deliberately does not say
+
+The MEDIAN facing-a-bet decision costs **0.0235 bb** — nearly as cheap as
+an opening one. It is the tail that differs. So the note says the cost
+concentrates here and that "most individual answers here are still
+accurate", rather than implying this particular answer is likely wrong.
+A signal that overstates on half of all decisions is one a player learns
+to ignore, which is the failure M167 recorded and the reason a
+finer-grained rule was looked for first.
+
+Four mutations caught: the note never firing, firing on every decision,
+being read from the request instead of the rows, and dropping the hedge.

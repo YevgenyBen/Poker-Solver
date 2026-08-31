@@ -1441,6 +1441,24 @@ def _modelled_bet_sizes(raw: dict) -> list:
     return sorted(sizes)
 
 
+def _is_facing_a_bet(raw: dict) -> bool:
+    """True when hero can fold here — i.e. is facing a bet.
+
+    M185. Derived from the response's own rows, not from the request's
+    action path, for the reason M144 built `_has_no_intermediate_bet_size`
+    the same way: the rows are what the tree actually offered, so this
+    stays true if the path shapes or the size menus change. Folding is
+    only ever legal facing a bet — checking is free otherwise — so its
+    presence IS the signal.
+    """
+    rows = list((raw.get("strategy") or {}).values())
+    hero = raw.get("hero") or {}
+    if isinstance(hero, dict) and hero.get("strategy"):
+        rows.append(hero["strategy"])
+    return any(action == "fold" or action.startswith("fold")
+               for row in rows for action in row)
+
+
 def _has_no_intermediate_bet_size(raw: dict) -> bool:
     """True when the only way to put money in here is all-in."""
     rows = list((raw.get("strategy") or {}).values())
@@ -1535,6 +1553,12 @@ def _aggression_reason(raw: dict, hero: dict | None = None) -> str:
             reason = cfg.UNCERTAIN_HAND_NOTE + reason
     if _has_no_intermediate_bet_size(raw):
         reason += cfg.BET_SIZING_COVERAGE_NOTE
+    # M185: where the measured cost actually is. Appended LAST because it
+    # is the part a player can act on immediately — the notes before it
+    # describe what is known about the street, this describes what is
+    # known about this decision.
+    if _is_facing_a_bet(raw):
+        reason += cfg.FACING_A_BET_COST_NOTE
     return reason
 
 
