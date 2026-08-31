@@ -1,5 +1,45 @@
 # Poker Solver
 
+## What this product is for
+
+**The aim is to help a player make money.** Not to be close to GTO, not
+to converge, not to answer quickly — those are means. The product
+succeeds when a player consulting it during a hand makes more money over
+many hands than they would have without it, and fails when it does not,
+however good its other numbers look.
+
+That is a statement about the unit of success, and it decides what counts
+as evidence:
+
+- **The measure is expected value in big blinds per hand**, not distance
+  from a reference strategy. A frequency error costs nothing when the
+  actions it splits between are worth the same, and solvers mix precisely
+  when actions are near-indifferent — so the largest frequency errors
+  live where they are cheapest. `poker_solver/ev.py` prices decisions in
+  chips; **prefer it to any frequency distance when the question is
+  whether the advice is good** (M182/M183).
+- **Weight by how often a spot actually occurs.** A 3bb error in a spot
+  arising once per 500 hands costs less than a 0.05bb error in one
+  arising every hand. A balanced spot set is unrepresentative by
+  construction and must be re-weighted before any per-hand claim.
+- **The tail is the target, not the average.** Measured over 48 real
+  spots, the median decision costs **0.0071 bb** and 56% cost under
+  0.01 bb, while **the five worst carry 79% of all loss** (M183).
+  Improving mean error is close to worthless here; finding and flagging
+  the expensive minority is the work.
+- **Long-run money is a per-decision claim, not a per-hand one.** A hand
+  contains ~1.4 postflop decisions; the product is consulted at each. The
+  current cost is **~4.7 bb per 100 postflop decisions, ~6.6 bb/100
+  hands** (M183) — measured against a fuller solve of the same model, and
+  therefore a LOWER BOUND on the distance from correct play.
+- **Honesty is part of the product, not a caveat on it.** A player who
+  cannot tell which advice to trust cannot use it to make money. That is
+  why `trained`, `range_confidence`, `solver_confidence`,
+  `sizing_confidence`, `aggression_confidence`, `max_affordable_bb` and
+  `modelled_bet_sizes` exist, and why no street currently claims a
+  reliability certificate (M180) — every one this product carried failed
+  when measured at a larger sample.
+
 ## Current state (read this first)
 
 A Texas Hold'em GTO solver engine plus a web UI for exploring it. The

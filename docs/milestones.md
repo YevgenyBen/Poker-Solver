@@ -9559,3 +9559,39 @@ lot at stake and is the kind we are least accurate on" is therefore
 cheap and would target the 15% of decisions carrying 85% of the cost.
 Not built here: it needs its own measurement showing the runtime-visible
 half predicts well enough to be worth surfacing.
+
+## M184 — the product aim, written down where it governs
+
+CLAUDE.md now opens with what the product is FOR, before what it is:
+
+> **The aim is to help a player make money.** Not to be close to GTO, not
+> to converge, not to answer quickly — those are means.
+
+This is not decoration. Placed above `## Current state`, it decides what
+counts as evidence for every claim below it, and this session showed
+repeatedly that the default answer was wrong:
+
+* **The unit is bb per hand, not distance from a reference.** M182/M183
+  measured that a frequency error costs nothing when the actions it
+  splits between are worth the same — and solvers mix precisely when
+  actions are near-indifferent, so the largest frequency errors live
+  where they are cheapest.
+* **Weight by occurrence.** A balanced spot set is unrepresentative by
+  construction; every per-hand claim has to be re-weighted before it
+  means anything.
+* **The tail is the target, not the average.** Median decision costs
+  0.0071 bb, 56% cost under 0.01 bb, and the five worst carry 79% of all
+  loss. Optimising the mean — which is what every accuracy study in this
+  project did until M183 — is close to worthless.
+* **Honesty is part of the product.** A player who cannot tell which
+  advice to trust cannot use it to make money, which is why the
+  confidence signals exist and why no street currently claims a
+  certificate (M180).
+
+Guarded by `test_the_product_aim_is_stated_and_its_measure_still_exists`,
+which is deliberately light: it does not police the prose. It checks the
+section exists, that it names expected value rather than a frequency
+distance as the measure, and that `poker_solver.ev` still provides the
+primitives it points at — because a governing definition referencing a
+deleted module is worse than none. Both mutations caught: deleting the
+section, and reverting the unit to a frequency distance.
