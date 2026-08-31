@@ -1496,11 +1496,17 @@ def _aggression_reason(raw: dict, hero: dict | None = None) -> str:
     """
     reason = cfg.POSTFLOP_AGGRESSION_CAVEAT_REASON
     percentile = _hand_strength_percentile(raw, hero)
-    # M168: certification is FLOP-ONLY. The threshold was measured on flop
-    # spots and M167 applied it to every street; on the turn the
-    # relationship INVERTS, and the band being certified was the worst one
-    # (3 of 4 spots over 0.10, worst 0.588). Certifying reliability needs
-    # positive evidence for the street in question.
+    # Certification is FLOP-ONLY. M167 measured the threshold on flop spots
+    # and applied it to every street; M168 checked the turn and refused it
+    # there. M175 re-checked the turn against the M173 standalone solve,
+    # 24 spots against 8, and it is STILL refused — but for a corrected
+    # reason. M168 found an inversion (the certified band worse, 3 of 4
+    # over 0.10); at 12 spots per band the two bands are indistinguishable
+    # (certified mean 0.0954, weak 0.1032, correlation +0.057) and 4 of 12
+    # certified-band spots still exceed 0.10, worst 0.3038 at percentile
+    # 0.884. So strength carries no signal on the turn rather than an
+    # inverted one. Certifying needs positive evidence for the street;
+    # there is none here, in either direction.
     if raw.get("street") not in cfg.CERTIFY_RELIABILITY_ON_STREETS:
         reason = cfg.UNMEASURED_STREET_NOTE + reason
     elif percentile is not None:
