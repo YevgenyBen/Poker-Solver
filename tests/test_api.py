@@ -6118,6 +6118,43 @@ def test_the_standalone_river_answers_rather_than_422ing(client, monkeypatch):
         "not the standalone one")
 
 
+def test_the_turn_cap_is_the_one_its_measurement_justifies(client):
+    """M179. The turn range cap went 26 -> 140 on separability, not on a
+    mean: paired over 56 spots, only 140 clears two standard errors
+    against 26 on aggression (2.4 sigma), and on the FOLD axis it is
+    2.9 sigma with 17 spots better and 2 worse.
+
+    Cap 100's aggression gain does NOT clear that bar (1.6 sigma), which
+    is why it was not adopted despite being the flop's setting and a third
+    of the cost. M141 and M166 were both nearly adopted on exactly that
+    kind of non-separable mean, so the distinction is worth pinning.
+
+    This asserts the shipped value and that it is NOT silently lowered to
+    a setting the measurement does not support.
+    """
+    assert api_config.TURN_STANDALONE_CLASSES_PER_SIDE == 140, (
+        "the turn cap moved; if that is deliberate, re-run the 56-spot "
+        "frontier — 26, 60 and 100 were all measured and only 140 was "
+        "separably better than the incumbent")
+    # The turn is still solved standalone; the cap only means anything there.
+    assert api_config.TURN_SOLVE_STANDALONE is True
+
+
+def test_the_turn_is_still_refused_certification_at_every_measured_cap(client):
+    """M179. Coverage does NOT make the turn certifiable — 12 to 14 of 28
+    strong-band spots exceed 0.10 at caps 26, 60, 100 AND 140. The turn's
+    refusal is structural, not a coverage budget.
+
+    That retires the hypothesis this project's own benchmark report
+    proposed ("the turn needs the flop's coverage"), and it must not be
+    quietly re-adopted by a later change that widens the cap again and
+    assumes certification follows.
+    """
+    assert "turn" not in api_config.CERTIFY_RELIABILITY_ON_STREETS, (
+        "the turn was certified without new evidence; widening the range "
+        "was measured at four settings and never got the strong band clean")
+
+
 def test_the_standalone_turn_solves_at_the_wider_coverage(client):
     """M173. The mutation that nothing caught until this existed.
 
