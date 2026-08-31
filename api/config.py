@@ -771,6 +771,39 @@ MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE = 4
 # (M49's number) -> 17.18s; cap=9 -> 31.72s, still cheaper than cap=6
 # cost before. Raised 6 -> 9: 50% more combo fidelity, still faster than
 # the previous setting.
+# M174: the river solved as a STANDALONE street, the same treatment M173
+# gave the turn, one street further.
+#
+# The river carries the tightest budget in the product - 9 COMBOS per
+# side, against the flop's 100 classes and the turn's 26 - and is the
+# only street that models no bet size at all
+# (FLOP_TO_RIVER_RAISE_SIZES = () at max_raises 1, so check-or-shove is
+# the whole menu, F40).
+#
+# Both limitations have ONE cause: the river is the third leg of a
+# chained flop->turn->river solve, and `solve_flop_to_river` takes ONE
+# `raise_sizes` for all three streets. Giving the river a real size menu
+# widens the flop and turn too, which is the cost that forced the 9-combo
+# budget in the first place.
+#
+# Solved on its own the river should be the CHEAPEST street, not the most
+# constrained: the board is COMPLETE, so `build_board_equity_table` takes
+# its `remaining_needed == 0` branch and equity is EXACT - a direct
+# showdown comparison, no Monte Carlo, no `equity_samples` at all (M154).
+#
+# See docs/milestones.md M174 for the measured frontier. Constants below
+# are set from it, not assumed.
+RIVER_SOLVE_STANDALONE = False
+RIVER_STANDALONE_CLASSES_PER_SIDE = 26
+# The river's own size menu, which only a standalone solve can set
+# without widening the flop and turn. M151 measured that ONE normal size
+# changes the ACTION on the river, both ways - a top pair went from
+# checking 0.9941 to checking 0.6449, and nine-high went from jamming
+# ~0.988 to betting a third of the pot - but measured it inside the
+# chained tree, where affording it was the blocker.
+RIVER_STANDALONE_RAISE_SIZES = ()
+RIVER_STANDALONE_MAX_RAISES = 1
+
 RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE = 9
 
 # solve_flop_to_river's own cost still scales meaningfully with

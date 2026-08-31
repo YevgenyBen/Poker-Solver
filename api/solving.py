@@ -2192,6 +2192,181 @@ def _query_turn_multiway_from_path(
     }
 
 
+def _query_river_standalone(*, situation, board_cards, turn_card, river_card,
+                            preflop_action_kinds, flop_action_kinds,
+                            turn_action_kinds, river_action_kinds, stack_bb,
+                            players, iterations, river_iterations,
+                            hero_combo) -> dict:
+    """The river solved as its OWN street, not chained from the flop.
+
+    M174, the sibling of `_query_turn_standalone` (M173) one street
+    further. See cfg.RIVER_SOLVE_STANDALONE for the measurements.
+
+    **Two trees are built and neither is solved.** Everything this needs
+    from the flop and the turn - each terminal's pot, who folded, and how
+    much each player invested - is structural, fixed by the tree's shape
+    rather than by any strategy, and `build_street_tree` builds children
+    lazily so walking one action path materialises only that path. The
+    turn tree is built at the FLOP terminal's own pot and remaining
+    stack, which is what chains the accounting correctly without chaining
+    the solve.
+
+    **Equity here is EXACT.** The board is complete, so
+    `build_board_equity_table` takes its `remaining_needed == 0` branch
+    and compares showdowns directly - `equity_samples` is ignored
+    entirely (M154), which is why this is the cheapest street to solve
+    rather than the most expensive.
+    """
+    oop_position, ip_position = situation.postflop_positions
+    effective_stack_bb = situation.effective_stack_bb
+    path_scenario = situation.path_scenario
+
+    response = {
+        "board": "".join(str(c) for c in board_cards),
+        "turn_card": str(turn_card),
+        "river_card": str(river_card),
+        "preflop_action_path": list(preflop_action_kinds),
+        "flop_action_path": list(flop_action_kinds),
+        "turn_action_path": list(turn_action_kinds or []),
+        "stack_bb": stack_bb,
+        "position": oop_position,
+        "positions": [oop_position, ip_position],
+        "players": players,
+        "hero_in_range": situation.hero_in_range,
+        "range_confidence": situation.range_confidence,
+        "hero_range_trained": situation.hero_range_trained,
+    }
+
+    def terminal_response(pot, remaining, entry_stack):
+        return {
+            **response, "elapsed_seconds": 0.0, "is_terminal": True,
+            "player_to_act": None, "strategy": {}, "trained": {},
+            "pot": pot, "effective_stack_bb": remaining,
+            # M143/F39: the stack entering THIS street, which is what the
+            # tree quotes its sizes against.
+            "max_affordable_bb": entry_stack,
+        }
+
+    # --- the flop, built and walked but never solved -------------------
+    flop_root = build_street_tree(StreetConfig(
+        positions=(oop_position, ip_position),
+        pot=path_scenario.pot,
+        stack_bb=effective_stack_bb,
+        raise_sizes=cfg.FLOP_TURN_RAISE_SIZES,
+        max_raises=cfg.FLOP_TURN_MAX_RAISES,
+    ))
+    _flop_actions, flop_node = _resolve_action_path(flop_root, flop_action_kinds)
+    if not isinstance(flop_node, TerminalNode):
+        raise ValueError(
+            "flop_action_path does not close the flop's betting, so no turn card can be "
+            "dealt yet. Two different questions share this shape: to ask about a TURN "
+            "decision, flop_action_path must run to the end of the flop's action; to ask "
+            "about a later FLOP decision instead, send the same partial path WITHOUT a "
+            "turn_card."
+        )
+    stack_after_flop = effective_stack_bb - max(flop_node.invested.values())
+    if flop_node.folded or stack_after_flop <= 0:
+        return terminal_response(flop_node.pot, stack_after_flop, stack_after_flop)
+
+    if turn_card in board_cards:
+        raise ValueError(f"{turn_card} is not a legal turn card — it is already on the board.")
+
+    # --- the turn, likewise built at the flop terminal's own accounting -
+    turn_root = build_street_tree(StreetConfig(
+        positions=(oop_position, ip_position),
+        pot=flop_node.pot,
+        stack_bb=stack_after_flop,
+        raise_sizes=cfg.FLOP_TURN_RAISE_SIZES,
+        max_raises=cfg.FLOP_TURN_MAX_RAISES,
+    ))
+    _turn_actions, turn_node = _resolve_action_path(turn_root, turn_action_kinds or [])
+    if not isinstance(turn_node, TerminalNode):
+        raise ValueError(
+            "turn_action_path does not close the turn's betting, so no river card can be "
+            "dealt yet. To ask about a RIVER decision, turn_action_path must run to the end "
+            "of the turn's action; to ask about a later TURN decision instead, send the same "
+            "partial path WITHOUT a river_card."
+        )
+    river_entry_stack = stack_after_flop - max(turn_node.invested.values())
+    if turn_node.folded or river_entry_stack <= 0:
+        return terminal_response(turn_node.pot, river_entry_stack, river_entry_stack)
+
+    if river_card in board_cards or river_card == turn_card:
+        raise ValueError(f"{river_card} is not a legal river card — it is already in play.")
+
+    # --- the river, solved as one street on a COMPLETE board -----------
+    river_board = tuple(board_cards) + (turn_card, river_card)
+    solve_key = (
+        tuple(preflop_action_kinds), tuple(flop_action_kinds),
+        tuple(turn_action_kinds or []), round(stack_bb), iterations,
+        river_board, river_iterations, players,
+        _hero_cache_component(hero_combo, situation.hero_in_range),
+    )
+
+    captured = {}
+
+    def capture_table(board, combos, samples, seed=None):
+        # The M165 repair needs the very table the solve used, and
+        # solve_flop does not return it. Convert here exactly as
+        # solve_flop does; doing it twice is a no-op.
+        table = parallel_board_equity_table(board, combos, samples, seed=seed)
+        table = np.nan_to_num(table, nan=0.5).astype(np.float32)
+        captured["table"] = table
+        return table
+
+    result = _river_path_cache.get_or_compute(
+        solve_key,
+        lambda: solve_flop(
+            board=river_board,
+            hero_range=situation.position_ranges[oop_position],
+            villain_range=situation.position_ranges[ip_position],
+            pot=turn_node.pot,
+            effective_stack_bb=river_entry_stack,
+            positions=(oop_position, ip_position),
+            raise_sizes=cfg.RIVER_STANDALONE_RAISE_SIZES,
+            max_raises=cfg.RIVER_STANDALONE_MAX_RAISES,
+            iterations=cfg.PATH_QUERY_ITERATIONS,
+            equity_table_fn=capture_table,
+        ),
+    )
+    response["elapsed_seconds"] = result.elapsed_seconds
+
+    river_node = result.root
+    remaining_stack = river_entry_stack
+    if river_action_kinds:
+        _river_actions, river_node = _resolve_action_path(river_node, river_action_kinds)
+        if isinstance(river_node, TerminalNode):
+            raise ValueError(
+                "river_action_path reaches a terminal — the hand is over, so there is no "
+                "river decision left to advise."
+            )
+        remaining_stack = river_entry_stack - max(river_node.invested.values())
+
+    # M165: repair this node if it came back as the bare prior. The table
+    # is this river board's own — valuing the hand on a different board
+    # would still return a confident answer. On a cache hit `captured` is
+    # empty, and the repair is skipped because a cached result was
+    # already repaired when it was computed.
+    if "table" in captured:
+        _ensure_exact_node_trained(
+            result, river_node, captured["table"],
+            None if hero_combo is None else str(hero_combo))
+
+    return {
+        **response,
+        "river_action_path": list(river_action_kinds or []),
+        "is_terminal": False,
+        "player_to_act": river_node.player_to_act,
+        "position": river_node.player_to_act,
+        "strategy": result.strategy_at(river_node),
+        "trained": result.trained_hands(river_node),
+        "pot": river_node.pot,
+        "effective_stack_bb": remaining_stack,
+        "max_affordable_bb": river_entry_stack,
+        "street": "river",
+    }
+
+
 def _query_river_from_path(
     preflop_action_kinds: list,
     flop_action_kinds: list,
@@ -2236,7 +2411,12 @@ def _query_river_from_path(
         players=players,
         multiway=False,
         sibling_endpoint="/solve_turn_multiway_from_path",
-        max_combos_per_position=cfg.RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE,
+        # M174: standalone affords the class-level lever every other
+        # street uses; chained needs the finer combo one.
+        max_classes_per_position=(cfg.RIVER_STANDALONE_CLASSES_PER_SIDE
+                                  if cfg.RIVER_SOLVE_STANDALONE else None),
+        max_combos_per_position=(None if cfg.RIVER_SOLVE_STANDALONE
+                                 else cfg.RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE),
         path_field_name="preflop_action_path",
         hero_combo=hero_combo,
     )
@@ -2255,6 +2435,17 @@ def _query_river_from_path(
         players,
         _hero_cache_component(hero_combo, situation.hero_in_range),
     )
+    if cfg.RIVER_SOLVE_STANDALONE:
+        return _query_river_standalone(
+            situation=situation, board_cards=board_cards, turn_card=turn_card,
+            river_card=river_card, preflop_action_kinds=preflop_action_kinds,
+            flop_action_kinds=flop_action_kinds,
+            turn_action_kinds=turn_action_kinds,
+            river_action_kinds=river_action_kinds, stack_bb=stack_bb,
+            players=players, iterations=iterations,
+            river_iterations=river_iterations, hero_combo=hero_combo,
+        )
+
     result = _river_path_cache.get(river_solve_key)
     if result is None:
         result = solve_flop_to_river(
