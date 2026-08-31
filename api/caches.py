@@ -470,19 +470,28 @@ _path_query_libraries = _SolveCache("path_query_libraries", maxsize=256)
 # 168 MB budget. The ceiling was not wrong, it was STALE: sized against
 # an entry the product stopped producing.
 #
-# 192 is chosen to survive the change most likely to land next. Measured
-# entry cost by range cap (M178):
+# M178 set 192, sized so that a turn cap up to 100 stayed valid and 140
+# would force "a deliberate re-derivation rather than a silent overrun".
+# **M179 adopted cap 140, so this is that re-derivation** — the mechanism
+# worked exactly as intended, caught by measurement rather than by
+# anyone remembering.
 #
-#   cap  26 (shipped)  0.22 MB   192 entries =  42 MB
-#   cap  60            0.45 MB               =  86 MB
-#   cap 100            0.77 MB               = 148 MB   <- still under
-#   cap 140            1.07 MB               = 205 MB   <- would FAIL
+# Measured entry cost by range cap, through a real /advise request:
 #
-# So adopting a wider turn cap up to 100 keeps this valid, and going to
-# 140 forces a deliberate re-derivation rather than a silent overrun —
-# which is what `test_cache_ceilings_are_sized_against_what_an_entry_
-# actually_costs` is for.
-_turn_path_cache = _SolveCache("turn_path", maxsize=192)
+#   cap  26   0.22 MB    (M173-M178 setting)
+#   cap 100   0.77 MB
+#   cap 140   1.33 MB    <- shipped now; budget affords 126
+#
+# Note the cap-140 entry measures 1.33 MB through the API where an
+# isolated solve suggested 1.07 MB — the cached object carries more than
+# the solve's own arrays, which is why M127's rule is to measure a REAL
+# entry rather than reason about one.
+#
+# 96 keeps this at 128 MB of the 168 MB budget, with room for the entry
+# to grow a little without an overrun. It is still ~7x the ceiling this
+# cache carried before M178, and covers roughly two sessions' worth of
+# distinct turn boards (a 120-hand session produces ~50 turn decisions).
+_turn_path_cache = _SolveCache("turn_path", maxsize=96)
 
 # M46's own plain-dict cache for solve_flop_to_river results — same
 # shape/reasoning as _turn_path_cache above (keyed on what the solve

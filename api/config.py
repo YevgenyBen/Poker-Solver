@@ -736,7 +736,44 @@ MAX_FLOP_TO_RIVER_ITERATIONS = DEFAULT_FLOP_TO_RIVER_ITERATIONS
 # flag exists because the chain question is genuinely open, not as a
 # migration aid.
 TURN_SOLVE_STANDALONE = True
-TURN_STANDALONE_CLASSES_PER_SIDE = 26
+# M179 raised this from 26. M173 chose 26 from a frontier that tested
+# 4/14/26/44/60 and stopped there — it never tested the regime that
+# actually fixed the flop (M172: error ROSE from cap 26 to 60, then
+# HALVED at 100). The latency argument that closed that door is gone: a
+# turn solve was 1.67s when 26 was chosen and is 0.09s after M176.
+#
+# 56 spots from real play, FOUR cells — {opening, facing a bet} x {strong,
+# weak} — each against a full-range 169-class reference built at the
+# street's own opening pot and solved twice:
+#
+#   cap  aggression   fold   worst fold   solve (production path)
+#    26      0.1721  0.1034       0.9608    0.09s   <- was shipped
+#    60      0.1587  0.0773       0.9628    0.16s
+#   100      0.1281  0.0552       0.7591    0.31s
+#   140      0.0999  0.0309       0.5897    0.68s
+#
+# **Adopted on separability, not on the mean.** Paired against cap 26,
+# only 140 clears two standard errors on aggression (-0.0722 +/- 0.0296,
+# 2.4 sigma, 33 spots better / 19 worse). Cap 100's aggression gain does
+# NOT (1.6 sigma) — M141 and M166 were both nearly adopted on exactly
+# that kind of non-separable mean.
+#
+# **The FOLD axis is where it earns its cost, and every step is
+# separable there**: cap 26 -> 140 is -0.0725 +/- 0.0253 (2.9 sigma) with
+# **17 spots better and 2 worse**, and the worst case falls 0.9608 ->
+# 0.5897. That is F38's axis — a fold error near 1.0 means the advice
+# folds where a fuller solve calls, essentially always.
+#
+# **Certification is still REFUSED at every cap** (12-14 of 28
+# strong-band spots over 0.10 at 26/60/100/140). The turn's refusal is
+# STRUCTURAL, not a coverage budget — which retires the hypothesis that
+# it merely needed the flop's setting.
+#
+# Checked for stability rather than assumed: at n=28 the four cap means
+# were 0.1633 / 0.1429 / 0.1239 / 0.1036 and at n=56 they are 0.1721 /
+# 0.1587 / 0.1281 / 0.0999 — the ordering and magnitudes held, which is
+# what M166's split failed to do when its sample grew.
+TURN_STANDALONE_CLASSES_PER_SIDE = 140
 
 MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE = 4
 

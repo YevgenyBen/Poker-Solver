@@ -475,6 +475,32 @@ requests now reject unknown fields by name rather than ignoring them.
   request's own pot and stack.**
   `RIVER_SOLVE_STANDALONE = False` restores the chained path.
 
+- **The turn runs at cap 140 (M179), and coverage does NOT make it
+  certifiable.** M173 chose 26 from a frontier that stopped at 60, never
+  testing the regime that fixed the flop. 56 spots, four cells
+  ({opening, facing a bet} x {strong, weak}), full-range reference at the
+  street's own opening pot:
+  | cap | aggression | fold | worst fold | solve |
+  |---|---|---|---|---|
+  | 26 (was shipped) | 0.1721 | 0.1034 | 0.9608 | 0.09s |
+  | 100 | 0.1281 | 0.0552 | 0.7591 | 0.31s |
+  | **140** | **0.0999** | **0.0309** | **0.5897** | 0.68s |
+  **Certification REFUSED at every cap** — 12-14 of 28 strong-band spots
+  over 0.10 at 26/60/100/140. The turn's refusal is **structural, not a
+  coverage budget**; the "turn needs the flop's coverage" hypothesis is
+  retired.
+  **Adopted on separability, not the mean**: only 140 clears 2 sigma
+  against 26 on aggression (2.4 sigma, 33 better / 19 worse). **Cap 100
+  does NOT** (1.6 sigma) despite being the flop's setting at a third of
+  the cost. The FOLD axis is what pays for it — 2.9 sigma, **17 better /
+  2 worse**, worst case 0.96 -> 0.59 (F38's axis).
+  Stability was checked: n=28 gave 0.1633/0.1429/0.1239/0.1036 and n=56
+  gave 0.1721/0.1587/0.1281/0.0999 — ordering held, which M166's split
+  failed to do.
+  **The river's inversion does NOT generalise here** — facing-a-bet is
+  1.1x worse for strong turn hands and BETTER for weak (0.5x), against
+  the river's 1.9x.
+
 - **The TURN is solved as its OWN street, not chained from the flop
   (M173).** It was the worst decision in the product on every axis at
   once: slowest (7.94s median against the flop's 6.38s), thinnest (a cap

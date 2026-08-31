@@ -9115,3 +9115,121 @@ reverting to 14, and raising past the budget.
 
 No accuracy tradeoff and no latency cost; the cache simply holds a
 session's worth of turn boards instead of fourteen.
+
+## M179 — flop-level coverage for the turn: better advice, still uncertifiable
+
+Benchmark recommendation 2. The turn is 29% of postflop advice and the
+one street measured and REFUSED certification (M175). It ran at cap 26
+while the flop ran at 100 — and M173's frontier, which chose 26, tested
+4/14/26/44/60 and **never tested the regime that fixed the flop** (M172:
+error ROSE from 26 to 60, then HALVED at 100). The latency argument that
+closed that door was gone: a turn solve was 1.67s when 26 was chosen and
+0.09s after M176.
+
+56 spots from real play, **four cells** — {opening, facing a bet} x
+{strong, weak} — each against a full-range 169-class reference built at
+the street's own OPENING pot and solved twice.
+
+| cap | aggression | fold | worst fold | solve (production) |
+|---|---|---|---|---|
+| 26 (was shipped) | 0.1721 | 0.1034 | 0.9608 | 0.09s |
+| 60 | 0.1587 | 0.0773 | 0.9628 | 0.16s |
+| 100 | 0.1281 | 0.0552 | 0.7591 | 0.31s |
+| **140 (adopted)** | **0.0999** | **0.0309** | **0.5897** | 0.68s |
+
+### The primary answer is NO, and it retires a hypothesis
+
+**Coverage does not make the turn certifiable.** 12 to 14 of 28
+strong-band spots exceed 0.10 at every cap tested, non-monotone and never
+close to zero. The turn's refusal is **structural**, not a coverage
+budget — which retires the hypothesis this project's own benchmark report
+proposed ("the turn needs the flop's coverage, not merely more than it
+had"). Pinned by `test_the_turn_is_still_refused_certification_at_every_
+measured_cap`.
+
+### Adopted on SEPARABILITY, not on the mean
+
+Paired against cap 26 over 56 spots, only 140 clears two standard errors
+on aggression: **-0.0722 +/- 0.0296 (2.4 sigma), 33 spots better / 19
+worse**. **Cap 100's gain does NOT** (-0.0440 +/- 0.0280, 1.6 sigma)
+despite being the flop's own setting at a third of the cost — M141 and
+M166 were each nearly adopted on exactly that kind of non-separable mean,
+so it was left.
+
+**The FOLD axis is what earns the cost, and every step is separable
+there**: cap 26 -> 140 is **-0.0725 +/- 0.0253 (2.9 sigma) with 17 spots
+better and 2 worse**, worst case 0.9608 -> 0.5897. That is F38's axis; a
+fold error near 1.0 means the advice folds where a fuller solve calls,
+essentially always.
+
+### Stability checked, not assumed
+
+At n=28 the four cap means were 0.1633 / 0.1429 / 0.1239 / 0.1036; at
+n=56 they are 0.1721 / 0.1587 / 0.1281 / 0.0999. Ordering and magnitudes
+held. **That is exactly what M166's split failed to do when its sample
+grew**, and why the extension was run rather than adopting at n=28 where
+nothing was separable at all.
+
+### The river's inversion does NOT generalise to the turn
+
+Facing-a-bet is only 1.1x worse than opening for strong turn hands and
+BETTER for weak ones (0.5x), where the river was 1.9x worse (M177). So
+M175's opening-only turn figures understate it only slightly. Worth
+having checked: carrying the river's shape across would have been M110's
+over-generalisation again.
+
+### M178's mechanism fired exactly as designed
+
+M178 set the turn cache ceiling to 192, sized so a cap up to 100 stayed
+valid and 140 would "force a deliberate re-derivation rather than a
+silent overrun". Adopting 140 did exactly that. The real entry measures
+**1.33 MB** — not the 1.07 MB an isolated solve suggested, because the
+cached object carries more than the solve's arrays, which is why M127's
+rule is to measure a REAL entry — so the ceiling re-derived to **96**
+(128 MB of a 168 MB budget).
+
+Four mutations caught: reverting the cap to 26, adopting the
+non-separable cap 100, certifying the turn anyway, and leaving the cache
+ceiling over budget.
+
+### Validated in play, and the latency cost is fully absorbed
+
+Three sessions, 813 decisions:
+
+| | before M179 | after (131 / 132 / 133) |
+|---|---|---|
+| turn median | 0.16s | **0.84 / 0.80 / 0.79s** |
+| overall median | 0.12s | **0.11s** |
+| p90 | 1.63s | **1.55s** |
+| worst decision | 3.43s | **1.98s** |
+| within 5s | 100% | **100%** |
+
+The turn got 5x slower exactly as the isolated solve predicted (0.09s ->
+0.68s) and **no percentile a user experiences moved** — at 0.84s the turn
+is still well below the flop's 1.51s, so it never touches the p90 or the
+max, both of which are set by the flop and unchanged.
+
+### One defect, and it is NOT this milestone's
+
+Session 132 flagged `trash (84o) folds 0.002 facing action` — 3-handed,
+BB facing an SB raise at 50bb. Causation was tested rather than argued:
+the same request returns a **byte-identical** row at cap 140 and cap 26,
+so the turn cap has no effect on it.
+
+It is the multiway preflop fold/play boundary, which M98 explained (every
+terminal priced at raw showdown equity, so PLAYING is uniformly
+underpriced and the fold/play boundary cannot move correctly) and
+M110/M111 measured. Blocked on continuation values keyed by range
+strength — the item the benchmark report recommends leaving alone.
+
+Worth stating the severity accurately rather than by the flag's wording:
+BB closing the action needs ~28% equity and 84o has roughly 33%, so
+CALLING is defensible; what is wrong is that it is a **pure 0.998 call
+with no mixing**, which is M74's bang-bang behaviour. One occurrence in
+~5,000 decisions, on a response that already carries
+`sizing_confidence: low`.
+
+**It had never appeared in 4,481 prior benchmark and validation
+decisions.** It surfaced because seeds 131-133 had never been run —
+which is the case for running new seeds rather than re-running known-good
+ones, and the reason defect counts get three sessions instead of one.
