@@ -2619,30 +2619,256 @@ def test_solve_river_from_path_returns_a_real_non_uniform_river_strategy(client)
     assert body["river_iterations"] == _RIVER_PATH_ITERATIONS
 
 
-def test_solve_river_from_path_reuses_the_same_cache_entry_across_cards_and_action_lines(client):
-    # Same regression class as test_solve_turn_from_path_reuses_the_same_
-    # cache_entry_across_turn_cards_and_flop_lines — the cache key must
-    # not include flop_action_path/turn_card/turn_action_path/river_card,
-    # any of which are resolved by walking the already-solved tree, not
-    # by re-solving.
+def test_the_standalone_river_keys_its_cache_per_board_and_that_is_affordable(client):
+    """M174 CHANGED this deliberately, and the change is a real tradeoff.
+
+    The chained river solved flop->turn->river once and served every turn
+    and river card off that one tree, so the cache held a single entry for
+    a whole action line. The standalone river solves ONE street on a
+    COMPLETE board, so a different runout is a different solve and a
+    different entry — the reuse is genuinely gone.
+
+    What repays it, measured rather than assumed: a chained entry cost
+    **38.45 MB** and a standalone one costs **0.42 MB**, so the ceiling
+    went 4 -> 256. The cache holds 64x more boards for two thirds of the
+    memory, and each solve is ~24x cheaper to recompute anyway.
+
+    The property that must NOT change is that a repeat of the SAME
+    question is still served from cache.
+    """
     base = _river_body(
         ["raise", "call_or_check"], ["call_or_check", "call_or_check"], ["call_or_check", "call_or_check"]
     )
     first = client.post("/solve_river_from_path", json=base).json()
-    assert len(api_main._river_path_cache) == 1
+    before = len(api_main._river_path_cache)
+    assert before == 1
 
-    different_river_card = client.post("/solve_river_from_path", json={**base, "river_card": "5s"}).json()
-    assert len(api_main._river_path_cache) == 1
-    assert different_river_card["river_card"] != first["river_card"]
+    # The same question again must not re-solve.
+    client.post("/solve_river_from_path", json=base)
+    assert len(api_main._river_path_cache) == before, "a repeat question re-solved"
 
-    different_turn_card = client.post("/solve_river_from_path", json={**base, "turn_card": "4c"}).json()
-    assert len(api_main._river_path_cache) == 1
-    assert different_turn_card["turn_card"] != first["turn_card"]
+    # A different runout is a different board and so a different solve.
+    other = client.post("/solve_river_from_path", json={**base, "river_card": "5s"}).json()
+    assert other["river_card"] != first["river_card"]
+    assert len(api_main._river_path_cache) == before + 1
+
+    # And the ceiling has to be sized for that, or a player walking runouts
+    # would thrash a 4-entry cache.
+    assert api_main._river_path_cache.maxsize >= 64, (
+        "standalone keys per board, so the river cache must hold many boards")
+
+
+def test_solve_turn_from_path_partitions_different_preflop_legs_into_separate_cache_entries(client):
+    client.post(
+        "/solve_turn_from_path", json=_turn_body(["raise", "call_or_check"], ["call_or_check", "call_or_check"])
+    )
+    client.post(
+        "/solve_turn_from_path",
+        json=_turn_body(["call_or_check", "call_or_check"], ["call_or_check", "call_or_check"]),
+    )
+    assert len(api_main._turn_path_cache) == 2
+
+
+def test_solve_turn_from_path_rejects_an_illegal_turn_card(client):
+    # "9c" is already on the board (board="2h6d9c").
+    response = client.post(
+        "/solve_turn_from_path",
+        json=_turn_body(["raise", "call_or_check"], ["call_or_check", "call_or_check"], turn_card="9c"),
+    )
+    assert response.status_code == 422
+
+
+def test_solve_turn_from_path_rejects_a_malformed_turn_card(client):
+    response = client.post(
+        "/solve_turn_from_path",
+        json=_turn_body(["raise", "call_or_check"], ["call_or_check", "call_or_check"], turn_card="TsJd"),
+    )
+    assert response.status_code == 422
+
+
+def test_solve_turn_from_path_rejects_an_illegal_flop_action_kind(client):
+    response = client.post(
+        "/solve_turn_from_path", json=_turn_body(["raise", "call_or_check"], ["not_a_real_kind"])
+    )
+    assert response.status_code == 422
+
+
+def test_solve_turn_from_path_rejects_a_non_terminal_flop_path(client):
+    response = client.post(
+        "/solve_turn_from_path", json=_turn_body(["raise", "call_or_check"], ["call_or_check"])
+    )
+    assert response.status_code == 422
+
+
+def test_solve_turn_from_path_rejects_a_non_terminal_preflop_path(client):
+    # Mirrors test_solve_flop_from_path_rejects_a_non_terminal_path — the
+    # exact safety check a real early draft of this milestone silently
+    # dropped (see CLAUDE.md's M26 entry): library.query_strategy_from_
+    # path's own TerminalNode check, ported here explicitly since this
+    # endpoint deliberately bypasses that function.
+    response = client.post(
+        "/solve_turn_from_path", json=_turn_body(["raise"], ["call_or_check", "call_or_check"])
+    )
+    assert response.status_code == 422
+
+
+def test_solve_turn_from_path_rejects_a_too_long_flop_action_path(client):
+    too_long = ["call_or_check"] * (api_config.MAX_PATH_LENGTH + 1)
+    response = client.post("/solve_turn_from_path", json=_turn_body(["raise", "call_or_check"], too_long))
+    assert response.status_code == 422
+
+
+def test_solve_turn_from_path_rejects_a_too_long_preflop_action_path(client):
+    too_long = ["call_or_check"] * (api_config.MAX_PATH_LENGTH + 1)
+    response = client.post(
+        "/solve_turn_from_path", json=_turn_body(too_long, ["call_or_check", "call_or_check"])
+    )
+    assert response.status_code == 422
+
+
+def test_solve_turn_from_path_rejects_out_of_range_turn_iterations(client):
+    response = client.post(
+        "/solve_turn_from_path",
+        json=_turn_body(
+            ["raise", "call_or_check"], ["call_or_check", "call_or_check"],
+            turn_iterations=api_config.MAX_FLOP_TURN_ITERATIONS + 1,
+        ),
+    )
+    assert response.status_code == 422
+
+
+def test_solve_turn_from_path_accepts_a_multiway_origin_narrowed_to_two_survivors(client):
+    # BTN opens, SB folds, BB calls, closing a real 3-max preflop leg
+    # down to a heads-up flop+turn line — same check-check flop line
+    # the heads-up tests above already use.
+    response = client.post(
+        "/solve_turn_from_path",
+        json=_turn_body(["raise", "fold", "call_or_check"], ["call_or_check", "call_or_check"], players=3),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["players"] == 3
+    assert set(body["positions"]) == {"BTN", "BB"}
+    assert body["is_terminal"] is False
+    assert len(body["strategy"]) > 0
+
+
+def test_solve_turn_from_path_rejects_a_multiway_preflop_path_with_three_live_survivors(client):
+    response = client.post(
+        "/solve_turn_from_path",
+        json=_turn_body(
+            ["call_or_check", "call_or_check", "call_or_check"], ["call_or_check", "call_or_check"], players=3
+        ),
+    )
+    assert response.status_code == 422
+
+
+def test_solve_turn_from_path_players_2_and_3_do_not_share_a_cache_entry(client):
+    r2 = client.post(
+        "/solve_turn_from_path",
+        json=_turn_body(["raise", "call_or_check"], ["call_or_check", "call_or_check"], players=2),
+    )
+    r3 = client.post(
+        "/solve_turn_from_path",
+        json=_turn_body(["raise", "fold", "call_or_check"], ["call_or_check", "call_or_check"], players=3),
+    )
+    assert r2.status_code == 200
+    assert r3.status_code == 200
+    assert len(api_main._turn_path_cache) == 2
+
+
+# ---------------------------------------------------------------------------
+# M46: POST /solve_river_from_path — real river-level advice, one street
+# further than /solve_turn_from_path (M26), via poker_solver.solver.
+# solve_flop_to_river's own chance_data, read live, two hops deep.
+#
+# FLOP_TO_RIVER_MAX_RAISES=1/RAISE_SIZES=() are ALREADY at their minimal
+# production values (unlike FLOP_TURN_MAX_RAISES/RAISE_SIZES, which the
+# fixture patches down for the turn endpoint's own tests) — so only
+# fold/call_or_check/all_in exist at each street; the same real terminal
+# lines the turn-path section above already validated apply here too,
+# one street further.
+# ---------------------------------------------------------------------------
+
+_RIVER_PATH_ITERATIONS = 5  # within MAX_RIVER_PATH_QUERY_ITERATIONS's own zero-headroom cap (20)
+_RIVER_TURN_CARD = "Ts"  # doesn't collide with the default test board "2h6d9c"
+_RIVER_CARD = "4h"  # doesn't collide with the board or _RIVER_TURN_CARD
+
+
+def _river_body(
+    preflop_action_path,
+    flop_action_path,
+    turn_action_path,
+    turn_card=_RIVER_TURN_CARD,
+    river_card=_RIVER_CARD,
+    stack_bb=100.0,
+    board="2h6d9c",
+    iterations=_RIVER_PATH_ITERATIONS,
+    river_iterations=_RIVER_PATH_ITERATIONS,
+    players=2,
+):
+    return {
+        "stack_bb": stack_bb,
+        "preflop_action_path": preflop_action_path,
+        "board": board,
+        "flop_action_path": flop_action_path,
+        "turn_card": turn_card,
+        "turn_action_path": turn_action_path,
+        "river_card": river_card,
+        "iterations": iterations,
+        "river_iterations": river_iterations,
+        "players": players,
+    }
+
+
+def test_solve_river_from_path_returns_a_real_non_uniform_river_strategy(client):
+    response = client.post(
+        "/solve_river_from_path",
+        json=_river_body(
+            ["raise", "call_or_check"], ["call_or_check", "call_or_check"], ["call_or_check", "call_or_check"]
+        ),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["is_terminal"] is False
+    assert body["board"] == "2h6d9c"
+    assert body["turn_card"] == "Ts"
+    assert body["river_card"] == "4h"
+    assert body["player_to_act"] in ("BTN", "BB")
+    assert set(body["positions"]) == {"BTN", "BB"}
+    assert body["pot"] > 0
+    assert body["effective_stack_bb"] > 0
+    assert len(body["strategy"]) > 0
+    for freqs in body["strategy"].values():
+        assert sum(freqs.values()) == pytest.approx(1.0, abs=1e-6)
+    assert set(body["trained"].keys()) == set(body["strategy"].keys())
+    assert body["river_iterations"] == _RIVER_PATH_ITERATIONS
+
+
+def test_the_river_short_circuits_when_the_hand_is_already_decided(client):
+    """The terminal cases, kept from the test M174 replaced.
+
+    That test asserted the river cache stayed at ONE entry across every
+    turn card, river card and action line, because the chained solve
+    covered them all from a single tree. M174's standalone river keys per
+    board and that claim is deliberately no longer true — see
+    `test_the_standalone_river_keys_its_cache_per_board_and_that_is_
+    affordable`.
+
+    What is NOT about caching, and still has to hold: when the flop or
+    turn action already put a player all in or folded someone out, there
+    is no river decision to advise, and the response says so instead of
+    inventing a strategy. The standalone path expresses these through its
+    own `terminal_response`, so they are worth re-asserting against it
+    rather than dropping with the test they came from.
+    """
+    base = _river_body(
+        ["raise", "call_or_check"], ["call_or_check", "call_or_check"], ["call_or_check", "call_or_check"]
+    )
 
     already_all_in_flop = client.post(
         "/solve_river_from_path", json={**base, "flop_action_path": ["all_in", "call_or_check"]}
     ).json()
-    assert len(api_main._river_path_cache) == 1
     assert already_all_in_flop["is_terminal"] is True
     assert already_all_in_flop["strategy"] == {}
     assert already_all_in_flop["trained"] == {}
@@ -2650,21 +2876,18 @@ def test_solve_river_from_path_reuses_the_same_cache_entry_across_cards_and_acti
     fold_out_flop = client.post(
         "/solve_river_from_path", json={**base, "flop_action_path": ["all_in", "fold"]}
     ).json()
-    assert len(api_main._river_path_cache) == 1
     assert fold_out_flop["is_terminal"] is True
     assert fold_out_flop["player_to_act"] is None
 
     already_all_in_turn = client.post(
         "/solve_river_from_path", json={**base, "turn_action_path": ["all_in", "call_or_check"]}
     ).json()
-    assert len(api_main._river_path_cache) == 1
     assert already_all_in_turn["is_terminal"] is True
     assert already_all_in_turn["effective_stack_bb"] == pytest.approx(0.0)
 
     fold_out_turn = client.post(
         "/solve_river_from_path", json={**base, "turn_action_path": ["all_in", "fold"]}
     ).json()
-    assert len(api_main._river_path_cache) == 1
     assert fold_out_turn["is_terminal"] is True
     assert fold_out_turn["player_to_act"] is None
 
@@ -4570,25 +4793,25 @@ def test_the_caveat_warns_about_weak_hands_facing_a_bet():
     )
 
 
-def test_the_river_says_it_modelled_no_bet_sizes(client):
-    """M144 / F40. The river cannot answer "how much should I bet?", and
-    the response has to admit it.
+def test_the_river_now_models_a_real_bet_size(client):
+    """M174 closes F40 — and this test is the one M144 asked for.
 
-    `FLOP_TO_RIVER_RAISE_SIZES` is `()` at production settings, so a
-    river node's only actions are check/call and all-in. Measured at a
-    street's opening decision:
+    M144's version asserted `modelled_bet_sizes == [all_in]` and said in
+    its own failure message: "if intermediate sizes now exist this test
+    should be revisited rather than deleted, and the disclosure below
+    relaxed". That is exactly what happened.
 
-        flop   call_or_check, raise:12.50, all_in
-        turn   call_or_check, raise:12.50, all_in
-        river  call_or_check, all_in
+    The river was the only street that modelled no bet size at all,
+    because it was the third leg of a chained solve taking ONE
+    `raise_sizes` for all three streets — widening the river widened the
+    flop and turn, which was unaffordable. Solved as its own street it
+    sets its own menu, and `RIVER_STANDALONE_RAISE_SIZES` is real.
 
-    Without this note, `all_in: 0.11` on the river reads as "shoving beat
-    betting half the pot" — but half the pot was never a legal action in
-    the tree, so nothing was compared and nothing was rejected.
-
-    The signal is derived from the response's own rows rather than from
-    the config constants, so it keeps telling the truth if the constants
-    move.
+    **The sizes were adopted on a WASH, not an improvement** (paired delta
+    +0.0093 +/- 0.0181 sem against a full-range reference). They are here
+    because they answer a question the response previously had to decline,
+    at no measured accuracy cost. What actually fixed the river's accuracy
+    was coverage: 9 combos -> 26 classes, mean error 0.1948 -> 0.0626.
     """
     body = _advise_body(
         preflop_action_path=["raise", "call_or_check"],
@@ -4602,32 +4825,23 @@ def test_the_river_says_it_modelled_no_bet_sizes(client):
     sizes = payload["modelled_bet_sizes"]
     assert sizes, "the response should report which sizes the tree offered"
     bound = payload["max_affordable_bb"]
-    assert all(size <= bound + 1e-9 for size in sizes)
-    # All-in only: no intermediate size was ever legal here.
-    assert sizes == [pytest.approx(bound)], (
-        f"the river is expected to model all-in only, got {sizes} against a "
-        f"{bound}bb bound — if intermediate sizes now exist this test should be "
-        "revisited rather than deleted, and the disclosure below relaxed"
-    )
+    assert all(size <= bound + 1e-9 for size in sizes), (
+        f"M101/M143: every modelled size must be affordable, got {sizes} "
+        f"against {bound}bb")
+    # The point of the milestone: a size that is NOT the whole stack.
+    intermediate = [s for s in sizes if s < bound - 1e-9]
+    assert intermediate, (
+        f"the river should now model a real bet size, got {sizes} against a "
+        f"{bound}bb bound — if this regresses, F40 is back and the "
+        "BET_SIZING_COVERAGE_NOTE below must come back with it")
+
+    # And the F40 disclosure must NOT fire any more, because it is no
+    # longer true. It is derived from the response's own rows, so this
+    # follows automatically — which is the property M144 built it for.
     reason = payload["aggression_confidence_reason"]
-    assert "no intermediate bet size" in reason, (
-        "a river response offering only all-in must say so, or a low all-in "
-        "frequency reads as a comparison that never happened"
-    )
-    # M151: and it must say the missing size changes the PLAY, not only
-    # the size. Re-solving the same river spot with one normal size
-    # available moves a top pair from checking 0.9941 to checking 0.6449
-    # (betting 0.35), and a busted draw from moving all in ~0.988 of the
-    # time to betting a third of the pot. A player who reads only "we
-    # cannot tell you how much" will still check down value hands.
-    assert "distorts the play" in reason.lower(), (
-        "the note understates the defect: missing sizes change the action, "
-        "not just its magnitude"
-    )
-    assert "both directions" in reason.lower(), (
-        "the distortion runs both ways — value hands check, bluffs shove — "
-        "and naming only one would leave the other unflagged"
-    )
+    assert "no intermediate bet size" not in reason, (
+        "the river models an intermediate size now; still saying it does "
+        "not is a false disclosure")
 
 
 def test_an_earlier_street_does_not_carry_the_river_sizing_note(client):
@@ -5725,6 +5939,57 @@ def test_every_postflop_street_gets_some_reliability_statement(client):
     assert seen["flop"] != seen["turn"]
     assert seen["turn"].startswith(api_config.UNMEASURED_STREET_NOTE)
     assert seen["river"].startswith(api_config.UNMEASURED_STREET_NOTE)
+
+
+def test_the_standalone_river_answers_rather_than_422ing(client, monkeypatch):
+    """M174. `/advise` reads keys off whatever the street helper returns —
+    `raw["river_iterations"]` for the river. A standalone helper that omits
+    one does not fail loudly: the KeyError is caught and reported as
+    "unsupported street/table-size combination", which points at the table
+    size when the real cause is a missing field.
+
+    That is exactly what happened: EVERY standalone river request 422'd
+    with a message about table sizes.
+
+    This asserts the BEHAVIOUR (a real request answers) rather than the
+    presence of a string in the source. A source check passed while the
+    key was dropped, because the same literal appears in the helper's
+    terminal branch — the mutation survived and the test did not notice.
+    """
+    monkeypatch.setattr(api_config, "RIVER_SOLVE_STANDALONE", True)
+    monkeypatch.setattr(api_config, "RIVER_STANDALONE_CLASSES_PER_SIDE", 4)
+    # A size menu only the STANDALONE path can offer: the chained river
+    # runs FLOP_TO_RIVER_RAISE_SIZES, which is empty, so a sized raise in
+    # the answer proves which code path produced it. Without this, deleting
+    # the dispatch falls through to the chained path, which also returns
+    # 200 — a mutation that survived the first version of this test.
+    monkeypatch.setattr(api_config, "RIVER_STANDALONE_RAISE_SIZES", (2.5,))
+    monkeypatch.setattr(api_config, "RIVER_STANDALONE_MAX_RAISES", 2)
+    assert api_config.FLOP_TO_RIVER_RAISE_SIZES == (), (
+        "this test identifies the standalone path by a sized raise the "
+        "chained path cannot offer; that no longer holds")
+    response = client.post("/advise", json={
+        "stack_bb": 20.0,
+        "preflop_action_path": ["raise", "call_or_check"],
+        "players": 2,
+        "hero_cards": "6hKh",
+        "board": "9d6dKs",
+        "flop_action_path": ["call_or_check", "call_or_check"],
+        "turn_card": "As",
+        "turn_action_path": ["call_or_check", "call_or_check"],
+        "river_card": "Ts",
+    })
+    assert response.status_code == 200, response.json()
+    body = response.json()
+    assert body["street"] == "river"
+    assert body["strategy"], "a river decision must come back with a strategy"
+    # The key whose absence caused the 422 is what /advise reports here.
+    assert body["solve_iterations"] > 0
+    hero_row = body["strategy"].get("Kh6h") or body["strategy"].get("6hKh")
+    assert hero_row, body["strategy"].keys()
+    assert any(action.startswith("raise:") for action in hero_row), (
+        f"no sized raise in {sorted(hero_row)} — the chained path answered, "
+        "not the standalone one")
 
 
 def test_the_standalone_turn_solves_at_the_wider_coverage(client):

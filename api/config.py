@@ -791,9 +791,26 @@ MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE = 4
 # its `remaining_needed == 0` branch and equity is EXACT - a direct
 # showdown comparison, no Monte Carlo, no `equity_samples` at all (M154).
 #
-# See docs/milestones.md M174 for the measured frontier. Constants below
-# are set from it, not assumed.
-RIVER_SOLVE_STANDALONE = False
+# Measured as an interleaved A/B through /advise on 12 real river spots,
+# one flag apart, each scored against a full-range reference built at that
+# request's OWN pot and stack:
+#
+#   arm                        strong    weak     ALL   over .10   latency
+#   chained (was shipped)      0.2550  0.1347  0.1948       7/12    12.18s
+#   standalone cap26 + sizes   0.1214  0.0038  0.0626       3/12     0.65s
+#
+# 3.1x more accurate and 19x faster, better on 10 of 12 spots. The defect
+# it repairs is a real one: the chained river recommended committing the
+# whole stack into a 2-5bb pot on 4 of 12 spots at 27-58% frequency —
+# 6hAc shoved 17.5bb into a 5bb pot 53% of the time where the correct
+# play is to check 0.9999.
+#
+# CAUTION on the arm table above: an earlier version of this measurement
+# used solve_flop at cap 3 as a stand-in for the shipped river and it is
+# NOT one (shipped is a chained 3-street solve at 9 combos / ~20
+# iterations). The proxy disagreed with production on 2 of 3 spots. Every
+# number here comes from /advise itself.
+RIVER_SOLVE_STANDALONE = True
 RIVER_STANDALONE_CLASSES_PER_SIDE = 26
 # The river's own size menu, which only a standalone solve can set
 # without widening the flop and turn. M151 measured that ONE normal size
@@ -801,8 +818,14 @@ RIVER_STANDALONE_CLASSES_PER_SIDE = 26
 # checking 0.9941 to checking 0.6449, and nine-high went from jamming
 # ~0.988 to betting a third of the pot - but measured it inside the
 # chained tree, where affording it was the blocker.
-RIVER_STANDALONE_RAISE_SIZES = ()
-RIVER_STANDALONE_MAX_RAISES = 1
+# Measured through /advise against a reference built at each request's own
+# pot and stack: adding these is a WASH on accuracy, not an improvement —
+# paired delta +0.0093 +/- 0.0181 (sem), better on 3 spots, worse on 2,
+# tied on 7. They are adopted because they close F40 (the river could not
+# answer "how much should I bet") at no measurable accuracy cost and
+# +0.15s, NOT because they measured better. Coverage does the work here.
+RIVER_STANDALONE_RAISE_SIZES = (2.5, 2.0)
+RIVER_STANDALONE_MAX_RAISES = 3
 
 RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE = 9
 

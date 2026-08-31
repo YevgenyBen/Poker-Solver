@@ -2240,6 +2240,7 @@ def _query_river_standalone(*, situation, board_cards, turn_card, river_card,
     def terminal_response(pot, remaining, entry_stack):
         return {
             **response, "elapsed_seconds": 0.0, "is_terminal": True,
+            "river_iterations": river_iterations,
             "player_to_act": None, "strategy": {}, "trained": {},
             "pot": pot, "effective_stack_bb": remaining,
             # M143/F39: the stack entering THIS street, which is what the
@@ -2363,6 +2364,10 @@ def _query_river_standalone(*, situation, board_cards, turn_card, river_card,
         "pot": river_node.pot,
         "effective_stack_bb": remaining_stack,
         "max_affordable_bb": river_entry_stack,
+        # /advise reads this to report solve_iterations; the chained
+        # response carries it and so must this one. Omitting it turned a
+        # working answer into "unsupported street/table-size combination".
+        "river_iterations": river_iterations,
         "street": "river",
     }
 
