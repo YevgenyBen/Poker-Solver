@@ -1438,6 +1438,55 @@ TURN_RELIABILITY_SPOTS_PER_BAND = 12
 # does not reach would overstate it.
 TURN_RELIABILITY_QUOTED_WORST = 0.30
 
+# M177: the river HAS been measured now, and the note above is wrong for
+# it in two ways — so the river gets its own.
+#
+# 56 river spots from real play, four cells, each scored against a
+# full-range (169-class) reference WITH a real size menu, built at the
+# request's own OPENING pot and solved twice:
+#
+#   cell               n   mean    worst   over .10
+#   opening / strong  14  0.1812  0.5082      6/14
+#   opening / weak    14  0.0425  0.4971      1/14
+#   facing  / strong  14  0.3411  0.9993      8/14
+#   facing  / weak    14  0.0555  0.2864      2/14
+#
+# CERTIFICATION IS REFUSED: 14 of 28 strong-band spots exceed 0.10,
+# against a rule fixed before the data (zero, the bar the flop cleared).
+#
+# **The flop's threshold points the WRONG WAY here.** Error concentrates
+# in the band a certificate would vouch for — strong hands fail 50% of
+# the time, weak hands 11% — and the mechanism is consistent: the river
+# OVER-COMMITS with strong-but-not-nutted hands. Kc8s at percentile 0.921
+# commits the stack 1.0 where the reference checks 0.995; 8hJs at 0.895
+# shoves 0.97 where the reference checks 0.9988.
+#
+# Stated as measured, not as a law. M168 claimed this shape for the turn
+# from 4 spots per band and M175 withdrew it at 12. This is 14 per cell
+# across BOTH node types, the gap is 4-6x rather than marginal, and it
+# grew rather than shrank from n=8 — but it is still 56 spots.
+#
+# **Facing a bet is the worse node type and had never been measured on
+# any street.** All 368 river spots across ten benchmark sessions are
+# opening decisions, so the harness never produces one; these were
+# constructed. F38 is what that blind spot cost last time.
+RIVER_CERTIFICATION_REFUSED_SPOTS = 28
+RIVER_CERTIFICATION_FAILURES = 14
+RIVER_STRONG_BAND_MEAN_ERROR = 0.3411
+RIVER_WEAK_BAND_MEAN_ERROR = 0.0555
+RIVER_SPOTS_PER_CELL = 14
+
+RIVER_MEASURED_NOTE = (
+    "RELIABILITY ON THE RIVER HAS BEEN MEASURED, AND IT IS WORSE FOR STRONG HANDS. "
+    "Against a fuller solve over 56 river spots, advice for hands in the top quarter "
+    "by strength was wrong more than three times as often as advice for weak ones "
+    "(14 of 28 against 3 of 28), and it errs in one direction: it recommends putting "
+    "chips in more often than the fuller solve does. If you hold a strong but not "
+    "unbeatable hand here, especially facing a bet, treat a recommendation to commit "
+    "your stack with particular suspicion. Weak-hand advice on this street measured "
+    "accurate. "
+)
+
 RELIABLE_HAND_STRENGTH_PERCENTILE = 0.75
 
 RELIABLE_HAND_ERROR_MEAN = 0.0144

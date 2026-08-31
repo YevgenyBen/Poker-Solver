@@ -5924,6 +5924,80 @@ def test_the_unmeasured_street_note_says_why_rather_than_only_that(client):
     assert "least accurate" not in note
 
 
+def test_the_river_says_it_was_measured_and_which_hands_to_distrust(client):
+    """M177. The river was measured (56 spots, 4 cells) and certification
+    refused, so the blanket "accuracy on this street has not been
+    measured" is now FALSE there — and it buries the actionable half.
+
+    Error concentrates in the band a certificate would vouch for: strong
+    hands fail 14 of 28, weak hands 3 of 28, and the direction is
+    consistent (over-committing). A player holding a strong hand on the
+    river is exactly who needs telling.
+    """
+    body = _advise_body(
+        preflop_action_path=["raise", "call_or_check"],
+        flop_action_path=["call_or_check", "call_or_check"], turn_card="Ts",
+        turn_action_path=["call_or_check", "call_or_check"], river_card="4c",
+        hero_cards="5c4d", board="Kd7c2h", players=2, stack_bb=100.0,
+    )
+    payload = client.post("/advise", json=body).json()
+    assert payload["street"] == "river"
+    reason = payload["aggression_confidence_reason"]
+
+    assert reason.startswith(api_config.RIVER_MEASURED_NOTE), reason[:160]
+    # It must NOT claim the street is unmeasured any more.
+    assert "has not been measured" not in reason, (
+        "the river has been measured; saying otherwise is a false disclosure")
+    # And it must name the direction, or a player cannot act on it.
+    lowered = reason.lower()
+    assert "strong" in lowered and "worse" in lowered
+    assert "commit" in lowered, (
+        "the note must say which way the error runs — over-committing — "
+        "not merely that error exists")
+
+
+def test_the_turn_keeps_the_unmeasured_note_and_the_river_does_not(client):
+    """M177. Two streets are uncertified for DIFFERENT reasons and must not
+    share one sentence: the turn's strength/error relationship carries no
+    signal (M175, correlation +0.057), while the river's is strongly
+    one-sided. Collapsing them would restore exactly the over-generalising
+    M175 had to withdraw.
+    """
+    common = {"hero_cards": "AhAd", "board": "Kd7c2h", "players": 2, "stack_bb": 100.0,
+              "preflop_action_path": ["raise", "call_or_check"],
+              "flop_action_path": ["call_or_check", "call_or_check"]}
+    turn = client.post("/advise", json={**common, "turn_card": "Ts"}).json()
+    river = client.post("/advise", json={
+        **common, "turn_card": "Ts",
+        "turn_action_path": ["call_or_check", "call_or_check"], "river_card": "4c"}).json()
+
+    assert turn["street"] == "turn" and river["street"] == "river"
+    assert turn["aggression_confidence_reason"].startswith(api_config.UNMEASURED_STREET_NOTE)
+    assert river["aggression_confidence_reason"].startswith(api_config.RIVER_MEASURED_NOTE)
+    assert (turn["aggression_confidence_reason"]
+            != river["aggression_confidence_reason"])
+
+
+def test_the_river_note_quotes_its_own_measurement(client):
+    """M177, the same pin M140 and M175 use. The note tells a player strong
+    hands were wrong "more than three times as often"; the recorded
+    failure counts have to support that, and stay attached if either moves.
+    """
+    strong = api_config.RIVER_CERTIFICATION_FAILURES
+    total = api_config.RIVER_CERTIFICATION_REFUSED_SPOTS
+    weak = 3  # weak-band failures over the same 28 spots
+    assert strong > 0 and total >= 20
+    assert strong / weak >= 3.0, (
+        "the note claims strong hands fail more than 3x as often; the "
+        "recorded counts no longer support that")
+    assert f"{strong} of {total}" in api_config.RIVER_MEASURED_NOTE
+    # And the river must actually be refused certification.
+    assert "river" not in api_config.CERTIFY_RELIABILITY_ON_STREETS
+    assert api_config.RIVER_SPOTS_PER_CELL >= 12, (
+        "M175's lesson: a claimed strength/error split needs more than a "
+        "handful of spots per cell before it goes in front of a user")
+
+
 def test_the_unmeasured_street_note_quotes_its_own_measurement(client):
     """M175, mirroring `test_the_aggression_caveat_quotes_its_own_
     measurement`. The note tells a player the turn was off by more than
@@ -5979,11 +6053,18 @@ def test_every_postflop_street_gets_some_reliability_statement(client):
         reason = response.json()["aggression_confidence_reason"]
         assert reason, f"{street} carried no reliability statement at all"
         seen[street] = reason
-    # The flop's statement must differ from the later streets': the whole
-    # point is that only one of them was measured.
-    assert seen["flop"] != seen["turn"]
+    # M177: all three statements must DIFFER, because all three streets
+    # are now in different evidential positions — the flop is certified
+    # above a strength threshold, the turn was measured and carries no
+    # usable strength signal, and the river was measured and carries a
+    # strongly one-sided one. This used to assert the turn and river
+    # shared a sentence; collapsing them again would restore exactly the
+    # over-generalisation M175 withdrew.
+    assert len({seen["flop"], seen["turn"], seen["river"]}) == 3, (
+        "two streets are sharing a reliability statement despite resting on "
+        "different evidence")
     assert seen["turn"].startswith(api_config.UNMEASURED_STREET_NOTE)
-    assert seen["river"].startswith(api_config.UNMEASURED_STREET_NOTE)
+    assert seen["river"].startswith(api_config.RIVER_MEASURED_NOTE)
 
 
 def test_the_standalone_river_answers_rather_than_422ing(client, monkeypatch):

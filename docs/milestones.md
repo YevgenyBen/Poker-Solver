@@ -8995,3 +8995,79 @@ M176 alone. River 4.66 -> 0.12 is M174 (12.18 -> 0.65s) and then M176
 **The flop is no longer the slow street, and no street is.** The
 ten-game benchmark opened with 11.8% of decisions over 8s; there are now
 none over 2.22s.
+
+## M177 — the river measured: certification refused, and the flop's rule inverts
+
+Benchmark recommendation 1. The river had the lowest measured error of
+any street (0.0626, M174) and 29% of postflop advice, all of it disclosed
+as "accuracy on this street has not been measured". The turn was tested
+and genuinely failed (M175); the river had simply never been asked.
+
+**The rule was fixed before the data**: certify only if ZERO spots at
+percentile >= 0.75 exceed 0.10 aggression error — the bar the flop
+cleared (9 spots, worst 0.0571) — at BOTH node types, with fold error
+also under 0.10.
+
+56 spots from real play, four cells, each scored against a full-range
+169-class reference WITH a real size menu, solved twice:
+
+| cell | n | mean | worst | over .10 | fold worst |
+|---|---|---|---|---|---|
+| opening / strong | 14 | 0.1812 | 0.5082 | **6** | 0.0000 |
+| opening / weak | 14 | 0.0425 | 0.4971 | 1 | 0.0000 |
+| facing / strong | 14 | **0.3411** | 0.9993 | **8** | 0.5665 |
+| facing / weak | 14 | 0.0555 | 0.2864 | 2 | 0.5622 |
+
+**REFUSED**: 14 of 28 strong-band spots over 0.10.
+
+### The flop's threshold points the WRONG WAY on the river
+
+Error concentrates in the band a certificate would vouch for — strong
+hands fail **50%** of the time against the weak band's **11%** — and the
+mechanism is consistent in every worst case: **the river over-commits
+with strong-but-not-nutted hands.**
+
+    Kc8s  pct 0.921  facing   commits 1.0000   reference checks 0.995
+    8hJs  pct 0.895  facing   shoves  0.9707   reference checks 0.9988
+    KhTc  pct 0.835  facing   commits 1.0000   reference checks 0.9995
+    Qc5d  pct 0.780  facing   folds   0.1464   reference folds  0.7130
+
+So `UNMEASURED_STREET_NOTE` is now false for the river in two ways: the
+street HAS been measured, and hand strength DOES predict there — in the
+opposite direction to the flop. `RIVER_MEASURED_NOTE` replaces it and
+names which advice to distrust, which is the half a player can act on.
+The turn keeps the old note: M175 measured its strength/error
+correlation at **+0.057**, so the two streets are uncertified for
+genuinely different reasons and must not share a sentence.
+
+### Facing a bet had never been measured on any street, and it is worse
+
+**All 368 river spots across ten benchmark sessions are opening
+decisions** — the harness does not merely fail to RECORD facing-a-bet
+nodes, it never produces them. They were constructed here. Those cells
+are the worse ones on both bands (0.3411 against 0.1812 strong, 0.0555
+against 0.0425 weak), and F38 — the most severe defect ever found in this
+engine — is what that blind spot cost the last time.
+
+### Held to an evidence bar this project has failed twice before
+
+M168 claimed a strength/error inversion for the turn from **4** spots per
+band; M175 withdrew it at 12. This was run at 8 per cell, seen, and
+extended to **14 across both node types** before any of it went into a
+user-facing note — where the gap grew rather than evaporated (facing/
+strong 0.2416 -> 0.3411 while facing/weak stayed at 0.0585 -> 0.0555).
+Stated as measured over 56 spots, not as a law.
+
+### A reference built at the wrong pot, caught before it produced numbers
+
+The first version built the reference tree with the node's POST-BET pot
+as its starting pot and then bet again, offering `raise:87.50` where
+production offers `raise:25.00` — scoring hero-facing-a-43.75bb-bet
+against hero-facing-a-12.5bb-bet and calling the difference error. The
+tree sizes bets off the pot it is built with, so a facing-a-bet reference
+must start from the street's OPENING pot and walk down. Caught by
+checking the two action menus matched before running anything.
+
+Four mutations caught: the river falling back to the unmeasured note,
+certifying the river anyway, dropping the direction from the note, and
+thinning the evidence back to M168's 4 per cell.
