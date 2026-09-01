@@ -784,6 +784,29 @@ requests now reject unknown fields by name rather than ignoring them.
   never formed a preference" and "never reached at all" are different
   news a user can act on.
 
+- **THE COST IS NO LONGER MEASURABLE at the shipped config (M192).**
+  Measured directly (not extrapolated) at 144 spots weighted by the new
+  sessions' mix: **-7.16 bb/100, 95% interval -17.51 to +3.19**, against
+  the old config's **+15.26 (95% +4.73 to +25.79)**.
+  **The negative point estimate is NOT a finding** — every negative cell
+  has a sem as large as its value. The claim is "went from clearly
+  present to too small to detect", nothing stronger. Worst single
+  decision **73.25 -> 4.80 bb**, over-1bb decisions down to 7%, median
+  0.008 bb.
+  **Metric limitation worth knowing**: EV loss against a FIXED reference
+  opponent measures exploitation of THAT opponent, not correctness — a
+  row can beat the reference's own row against the reference's model
+  without being better in equilibrium. That is why negatives occur and
+  why ~0 must not be read as "correct".
+  **Paired speed** (8 sessions, alternating, same hands both arms):
+  median 0.11 -> 0.58s, **p90 1.59 -> 1.99s (1.25x), worst 2.39 -> 2.30s
+  (0.96x)**, flop 1.56 -> 1.93s, 100% inside 5s, zero defects.
+  **THREE earlier attempts to price this overstated it** — M190 claimed
+  flop 3.19s / median 1.03s against the paired 1.93s / 0.58s. One nearly
+  caused the change to be reverted. **Latency claims across machine
+  states are worthless here.**
+  10,607 decisions across both benchmarks, **zero defects**.
+
 - **RANGE CAPS ARE 140 EVERYWHERE (M190), adopted on MONEY after being
   rejected on frequency.** M180 rejected cap 140 for the flop at 0.97
   sigma on pooled frequency error. Re-scored on **EV loss over the 297
