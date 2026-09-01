@@ -1620,20 +1620,24 @@ RIVER_MEASURED_NOTE = (
 # costs 0.0235 bb, which is nearly as cheap as an opening one. It is the
 # tail that differs, so the wording says the cost concentrates here rather
 # than that this answer is probably wrong.
-# M186 re-measured this at 144 spots (24 per cell, from 48). The split
-# got STRONGER, not weaker: 5.5x -> 14.8x, and the share of cost carried
-# rose 85% -> 94%. The n=48 figures in M185 understated it because three
-# cells had negative means at 8 spots each, which more spots showed to be
-# noise.
+# M187 re-measured at 402 spots (67 per cell). The ratio has grown at
+# every sample size — 5.5x at 48, 14.8x at 144, **21.9x at 402** — and the
+# share of cost with it (85% -> 94% -> 96%), now at 5.64 sigma.
+#
+# **It is quoted as "at least 20 times" deliberately.** A figure that
+# rises monotonically with the sample is one whose extreme spots are
+# still being discovered: the worst single decision found went 4.96 bb ->
+# 8.17 -> 11.45 as the sample grew. So the ratio is a floor, not a point
+# estimate, and the note says so by understating it.
 FACING_A_BET_COST_NOTE = (
     "THIS IS THE KIND OF DECISION THIS ADVICE GETS WRONG MOST EXPENSIVELY. Priced "
-    "against a fuller solve over 144 real spots, decisions facing a bet carried "
-    "about 94% of everything the advice cost, averaging roughly 15 times more than "
+    "against a fuller solve over 402 real spots, decisions facing a bet carried "
+    "about 96% of everything the advice cost, averaging at least 20 times more than "
     "decisions where you act first. Most individual answers here are still accurate "
-    "— the median one costs almost nothing — but 8% of decisions cost more than a "
-    "big blind, and nearly all of those are here, because folding being available is "
-    "what makes it possible to lose a lot. Weigh this one more carefully than its "
-    "confidence label alone suggests. "
+    "— the median one costs almost nothing — but 9% of decisions cost more than a "
+    "big blind and 2% cost more than five, and nearly all of those are here, because "
+    "folding being available is what makes it possible to lose a lot. Weigh this one "
+    "more carefully than its confidence label alone suggests. "
 )
 
 RELIABLE_HAND_STRENGTH_PERCENTILE = 0.75
