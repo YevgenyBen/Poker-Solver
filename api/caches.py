@@ -352,7 +352,14 @@ class _MappingSolveCache(_SolveCache):
 # a ~3x larger combo pool), and 256 of those is 316 MB against a 168 MB
 # budget. Caught by the byte-ceiling test, which is the second config
 # change in two milestones to trip it — a wider tree is a bigger entry.
-_canonical_warm_starts = _MappingSolveCache("canonical_warm_starts", maxsize=128)
+# M190 lowered this again, 128 -> 96, when the flop cap went 100 -> 140:
+# an entry grew 1.23 -> 1.52 MB, and 128 of those is 195 MB. Third
+# consecutive milestone to trip this test, and worth noting why —
+# widening ONE range cap moved THREE separate ceilings (river_path,
+# turn_path and this), none of them visible from the config change
+# itself. That is exactly why M127's test measures a real entry instead
+# of trusting the comment beside the number.
+_canonical_warm_starts = _MappingSolveCache("canonical_warm_starts", maxsize=96)
 
 # M163: the same idea for the MID-flop node, which cannot use the one
 # above. That store is keyed on the CANONICAL board (so one entry serves
@@ -507,4 +514,10 @@ _turn_path_cache = _SolveCache("turn_path", maxsize=96)
 # runouts (it keys per board rather than serving every turn/river card
 # from one entry), and this is what more than repays it: 256 boards
 # held instead of 4, at 107 MB against the 168 MB per-cache budget.
-_river_path_cache = _SolveCache("river_path", maxsize=256)
+# M190 re-derived this 256 -> 96. Widening the river range 26 -> 140 grew
+# an entry 0.42 MB -> 1.33 MB, and 256 of those is 340 MB against a
+# 168 MB budget. Caught by measurement, not by remembering — the same
+# mechanism M178 built and M179 first exercised.
+#
+# 96 x 1.33 MB = 128 MB, matching what the turn carries at the same cap.
+_river_path_cache = _SolveCache("river_path", maxsize=96)

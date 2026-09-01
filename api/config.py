@@ -529,7 +529,37 @@ FLOP_QUERY_ITERATIONS = DEFAULT_FLOP_ITERATIONS
 # RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE) and their own cost curves; this
 # result was measured on flop spots and must not be assumed to transfer -
 # M168 is what happens when a flop measurement is applied to the turn.
-MAX_PATH_QUERY_CLASSES_PER_SIDE = 100
+# M190 raised this 100 -> 140, reversing M180's rejection — because M180
+# adjudicated it on the WRONG METRIC.
+#
+# M180 measured cap 140 against cap 100 on pooled FREQUENCY error and
+# found 0.97 sigma, with more spots worse than better, and kept 100.
+# M183 then measured frequency distance to be a poor proxy for what the
+# advice costs, and M189 that 74% of the cost sits in 12% of decisions.
+# So M180's verdict was reached with a metric that does not track money,
+# over a population where 52% of decisions cost under 0.01 bb.
+#
+# Re-scored on EV LOSS over the 297 costly-band spots (facing a bet,
+# hand strength 0.55-0.90) that carry 79% of all facing cost:
+#
+#   arm       mean |loss|   paired delta      sigma
+#   shipped        1.8740             --         --
+#   cap 140        1.0489   -0.8250 +/- 0.1871   4.41   <- adopted
+#   iters 1000     1.9651   +0.0911 +/- 0.0632   1.44
+#
+# **44% less cost, 4.41 sigma, better on 124 spots and worse on 62** —
+# the same change frequency error rejected at 0.97.
+#
+# The confound was controlled rather than assumed: cap 140 sits closer to
+# the 169-class reference than cap 100 does, so it could score better by
+# resembling it. Two checks. (a) The `iters 1000` arm ALSO moves toward
+# the reference (250 -> 1000 against its 1500) and gains nothing, which a
+# pure-similarity effect could not produce. (b) The reference is
+# converged in iterations: 1500 vs 3000 moves it a mean of **0.0508 bb**,
+# **2.7%** of the 1.87 bb effect being measured.
+#
+# Cost: 1.06s -> 1.54s isolated (1.45x), flop median ~1.53s -> ~2.2s.
+MAX_PATH_QUERY_CLASSES_PER_SIDE = 140
 MAX_PATH_LENGTH = 20
 # Flop-stage iterations, fixed — not exposed, unlike the preflop-stage
 # iterations request field below. This part of the pipeline sits behind
@@ -848,7 +878,17 @@ MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE = 4
 # iterations). The proxy disagreed with production on 2 of 3 spots. Every
 # number here comes from /advise itself.
 RIVER_SOLVE_STANDALONE = True
-RIVER_STANDALONE_CLASSES_PER_SIDE = 26
+# M190 raised this 26 -> 140. The river was the largest single win in the
+# costly-band study: **3.4573 -> 1.5845 bb**, more than halved, in a cell
+# carrying 24.6% of all cost at 7.5% of decisions.
+#
+# M174 chose 26 from a frequency-error frontier where 26 was the best arm
+# tested and 44/60 were worse — a real measurement of the wrong quantity.
+# Nothing above 60 was tried, and the axis that matters was never scored.
+#
+# Cost: 0.07s -> 0.63s isolated (8.3x), river median ~0.11s -> ~0.67s —
+# still the second-cheapest street after preflop.
+RIVER_STANDALONE_CLASSES_PER_SIDE = 140
 # The river's own size menu, which only a standalone solve can set
 # without widening the flop and turn. M151 measured that ONE normal size
 # changes the ACTION on the river, both ways - a top pair went from

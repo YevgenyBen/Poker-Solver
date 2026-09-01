@@ -784,6 +784,26 @@ requests now reject unknown fields by name rather than ignoring them.
   never formed a preference" and "never reached at all" are different
   news a user can act on.
 
+- **RANGE CAPS ARE 140 EVERYWHERE (M190), adopted on MONEY after being
+  rejected on frequency.** M180 rejected cap 140 for the flop at 0.97
+  sigma on pooled frequency error. Re-scored on **EV loss over the 297
+  costly-band spots** (facing a bet, strength 0.55-0.90) that carry 79%
+  of facing cost: **1.8740 -> 1.0489 bb, paired -0.8250 +/- 0.1871, 4.41
+  sigma**, better on 124 / worse on 62. By street: flop 1.50 -> 0.81,
+  **river 3.46 -> 1.58** (its cap was 26), turn unchanged at 140.
+  **More iterations do NOT help** (1000 vs 250: +0.0911 +/- 0.0632, 1.44
+  sigma) — M152's dead-axis finding survives the metric change.
+  **The confound was controlled**: cap 140 sits closer to the 169-class
+  reference, so (a) the iters arm also moves toward it and gains nothing,
+  and (b) the reference is converged in iterations — 1500 vs 3000 moves
+  it 0.0508 bb, **2.7%** of the effect measured.
+  **PRICE**: median decision **0.11s -> 1.03s**, p90 1.56 -> 3.36s, worst
+  2.17 -> 3.65s, within-2s 99.7% -> 77.8%, all still inside 5s, zero
+  defects over 785 decisions. Estimated **~16 -> ~11 bb/100**.
+  Reversible per street in one constant, and the halves are independent.
+  **Widening one cap moved THREE cache ceilings** (`river_path` 256->96,
+  `canonical_warm_starts` 128->96) — none visible from the config change.
+
 - **The cost concentrates in a STRENGTH BAND, and it is the sharpest
   runtime signal available (M189).** Splitting M188's 801 facing spots by
   hand strength, the relationship is NON-MONOTONE — both the weakest and
