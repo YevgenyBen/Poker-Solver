@@ -2037,4 +2037,32 @@ POSTFLOP_AGGRESSION_CAVEAT_REASON = (
 # 8,460 cells across two boards).
 SHARED_RUNOUT_FLOP_TABLE = True
 
+# **INERT ON THE PRODUCTION FLOP PATH SINCE M176 — read this before
+# tuning it.** (F48, found M193.)
+#
+# `parallel_board_equity_table` is what production injects as
+# `equity_table_fn`, and with `SHARED_RUNOUT_FLOP_TABLE` on it calls
+# `build_shared_runout_equity_table(samples=SHARED_RUNOUT_FLOP_SAMPLES)`
+# — deliberately NOT forwarding the caller's `samples`, because 30 is a
+# PER-PAIR count and shared runouts need far more of them. That choice is
+# correct and documented in `api/parallel.py`; the consequence is that
+# this constant no longer changes anything there.
+#
+# Verified directly rather than reasoned about: `samples=30` and
+# `samples=200` on the same board and seed produce **byte-identical**
+# tables through the production path (max difference 0.0).
+#
+# Where it still does something: a direct `solve_flop` call with no
+# `equity_table_fn` (tests, standalone studies). On TURN and RIVER boards
+# it is ignored regardless, because those enumerate rather than sample
+# (M154).
+#
+# **Two claims this invalidates.** M131 described the postflop budget as
+# split three ways — classes, samples, iterations — that "move together";
+# samples has not moved anything on this path since M176. And any study
+# quoting a reference as "200 samples" was really running 320 shared
+# runouts, the same table the shipped solve gets — which is part of why
+# the measured gap between them is now so small (M192).
+#
+# To change the flop's equity precision, change SHARED_RUNOUT_FLOP_SAMPLES.
 PATH_QUERY_EQUITY_SAMPLES = 30
