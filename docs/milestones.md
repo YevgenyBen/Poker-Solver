@@ -10261,3 +10261,58 @@ the comment stops being true noisily rather than quietly.
 With samples inert and iterations already measured useless (M190), the
 only remaining measurable gap between shipped and reference is **the 29
 classes between cap 140 and the full 169**. Everything else the two share.
+
+## M194 — rec 1 completed: configuration is exhausted
+
+Benchmark recommendation 1 was to re-test the settings rejected on
+frequency error, since M190 had reversed one of them for the largest
+accuracy gain in the product's history. Completed, and the answer is that
+there is nothing left in configuration.
+
+### Every knob, now scored on money
+
+| knob | shipped | tested | result | separable |
+|---|---|---|---|---|
+| range cap | 26/100 | 140 | **-0.8250 +/- 0.1871, 4.41 sigma** | **YES (M190)** |
+| iterations | 250 | 1000 | +0.0911 +/- 0.0632, 1.44 sigma | no (M190) |
+| equity samples | 30 | 100 / 200 | **inert — byte-identical tables** | n/a (M193) |
+| range cap | 140 | 169 (all) | -0.1787 +/- 0.1136, 1.57 sigma | **no** |
+
+The cap-169 arm is better on 68 spots and worse on 59, a 16% mean
+reduction that does not clear two standard errors. By street it is flat
+on the flop (0.8138 -> 0.8009), slightly worse on the turn (0.7919 ->
+0.8144), and better only on the river (1.7101 -> 1.1644). Not adopted —
+and since it would cost latency for no measurable gain, declining is also
+the cheap choice.
+
+### What that means
+
+The shipped solve and the reference now share their equity tables
+entirely (F48), so the only differences left are iterations and 29
+classes — **and neither is worth anything measurable.** The residual
+**+3.44 bb/100 (95% -1.02 to +7.91)** is therefore not addressable by any
+setting this engine exposes.
+
+Two possibilities remain, and this measurement cannot distinguish them:
+
+1. **The residual is genuinely near zero** — the interval includes it.
+2. **It is structural**, in the model that the reference SHARES and
+   therefore cannot see: a handful of bet sizes rather than a continuum,
+   each street solved in isolation (measured at ~10pp of behaviour on its
+   own, M99), the dead-pot terminal convention (F45).
+
+**Either way, tuning is over.** Further gains need a better REFERENCE —
+one that models what both currently miss — not a better setting. That is
+a materially larger piece of work than anything in this sequence, and it
+is the honest next step rather than another sweep.
+
+### The sequence, end to end
+
+The benchmark's five recommendations are complete: rec 1 exhausted
+(here), rec 2 tightened the estimate to +/-4.47 (M193), rec 3 was a
+method change already applied throughout (paired latency measurement),
+and recs 4 and 5 were deliberate non-actions — record what the reference
+cannot see, and leave speed alone.
+
+Cost over the sequence: **15.26 -> 3.44 bb/100**, a 77% reduction, for a
+paired latency price of p90 1.25x and a worst case that did not move.

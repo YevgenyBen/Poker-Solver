@@ -784,6 +784,23 @@ requests now reject unknown fields by name rather than ignoring them.
   never formed a preference" and "never reached at all" are different
   news a user can act on.
 
+- **CONFIGURATION IS EXHAUSTED — every knob is now scored on money and
+  none is separable (M194).** Cost stands at **+3.44 bb/100 (95% -1.02
+  to +7.91)** after 399 facing spots (M193), down from 15.26.
+  | knob | tested | result | separable |
+  |---|---|---|---|
+  | range cap 26/100 -> 140 | M190 | -0.8250 +/- 0.1871, **4.41 sigma** | **YES** |
+  | iterations 250 -> 1000 | M190 | +0.0911 +/- 0.0632, 1.44 sigma | no |
+  | equity samples 30 -> 200 | M193 | **INERT** (F48) | n/a |
+  | range cap 140 -> 169 | M194 | -0.1787 +/- 0.1136, 1.57 sigma | no |
+  Shipped and reference now share their equity tables entirely, so only
+  iterations and 29 classes differ — **and neither is worth anything
+  measurable**. The residual is either genuinely near zero or STRUCTURAL,
+  in the model both share: the bet-size menu, street isolation (~10pp on
+  its own, M99), the dead-pot convention (F45).
+  **Further gains need a better REFERENCE, not a better setting.** Do not
+  run another configuration sweep expecting to find something.
+
 - **THE COST IS NO LONGER MEASURABLE at the shipped config (M192).**
   Measured directly (not extrapolated) at 144 spots weighted by the new
   sessions' mix: **-7.16 bb/100, 95% interval -17.51 to +3.19**, against
