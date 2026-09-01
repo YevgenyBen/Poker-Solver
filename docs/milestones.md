@@ -9799,3 +9799,78 @@ monotonically with the sample is one whose extreme spots are still being
 discovered, so `FACING_A_BET_COST_NOTE` now says **"at least 20 times"**
 rather than quoting 21.9 — deliberately understating a figure that is a
 floor rather than a point estimate.
+
+## M188 — 801 facing-a-bet spots: the interval closes, the tail does not
+
+M187 showed the three opening cells were settled and nearly free while
+the three facing cells carried 85% of the cost and essentially all the
+uncertainty, and recommended sampling facing cells only. This is that
+run: **267 spots per facing cell, 801 total**, no compute spent on
+openings (their means are reused).
+
+### The interval closed as predicted
+
+| | n=402 (all cells) | **n=801 facing** |
+|---|---|---|
+| cost | 15.26 bb/100 | **16.06 bb/100** |
+| 95% interval | +4.73 to +25.79 | **+8.42 to +23.69** |
+| half-width | 10.53 | **7.63** |
+
+Targeting the uncertain cells worked: 4x the facing spots cut the
+half-width by 28% while the level held (15.3 -> 16.1, well inside both
+intervals). **The cost is now established well clear of zero** — the
+lower bound is 8.4 bb/100.
+
+### Two corrections to what M187 shipped
+
+**86%, not 96%.** M187's note said facing-a-bet carries 96% of the cost.
+That was the share of raw |loss| within a **balanced 50/50 spot set**,
+which is not what a player meets. Weighted by how often each decision
+type actually occurs it is **86%**. The unweighted figure flattered it,
+and the note is corrected.
+
+Weighted contributions, which is the useful view:
+
+| cell | share of play | mean | contributes |
+|---|---|---|---|
+| **flop / facing** | 14.4% | +0.5352 | **59.2%** |
+| **river / facing** | 7.5% | +0.4300 | **24.6%** |
+| river / opening | 16.0% | +0.0663 | 8.1% |
+| flop / opening | 30.3% | +0.0145 | 3.4% |
+| turn / facing | 10.7% | +0.0295 | 2.4% |
+| turn / opening | 21.1% | +0.0148 | 2.4% |
+
+Two cells — flop and river facing a bet, together 22% of decisions —
+carry **84%** of the cost. The turn is now cheap on both node types.
+
+**The ratio is 27.4x** (7.17 sigma), up from 21.9x. Increments across the
+four samples are +9.3, +7.1, +5.5 — decelerating but not converged, so
+the note still says "at least 25 times", deliberately a floor.
+
+### The tail is NOT exhausted, and that bounds what this method can do
+
+The worst single decision found went **11.45 bb at 201 facing spots to
+73.25 bb at 801** — a river call/fold in a 30bb pot. **Verified real
+rather than assumed**: its action spread is 76.81, so the loss sits
+inside what the decision can physically swing, and all 801 spots pass
+that check (`|loss| <= spread`, zero violations).
+
+But it means the mean rests on very few decisions:
+
+    trim top 0%   mean |loss| 0.8754
+    trim top 1%   mean |loss| 0.6633
+    trim top 2%   mean |loss| 0.5853
+    trim top 5%   mean |loss| 0.4122
+
+**One spot in 267 moves its cell's mean by 0.27 bb.** The raw mean is the
+right statistic for a long-run money question — rare catastrophic losses
+count fully in an average — but the number rests on a handful of
+decisions, and each larger sample has found a worse one. Treat 16 bb/100
+as a well-established floor whose level is still tail-sensitive.
+
+### What this makes the highest-value work
+
+18% of facing-a-bet decisions cost more than a big blind and 5% cost more
+than five. **Characterising those specifically** — rather than reducing
+mean error anywhere — is now the only work with a measurable payoff, and
+it is concentrated in two cells covering 22% of play.

@@ -1620,24 +1620,34 @@ RIVER_MEASURED_NOTE = (
 # costs 0.0235 bb, which is nearly as cheap as an opening one. It is the
 # tail that differs, so the wording says the cost concentrates here rather
 # than that this answer is probably wrong.
-# M187 re-measured at 402 spots (67 per cell). The ratio has grown at
-# every sample size — 5.5x at 48, 14.8x at 144, **21.9x at 402** — and the
-# share of cost with it (85% -> 94% -> 96%), now at 5.64 sigma.
+# M188 re-measured at **801 facing-a-bet spots** (267 per cell), sampling
+# only the cells that carry the cost — M187 showed the three opening
+# cells were settled and nearly free.
 #
-# **It is quoted as "at least 20 times" deliberately.** A figure that
-# rises monotonically with the sample is one whose extreme spots are
-# still being discovered: the worst single decision found went 4.96 bb ->
-# 8.17 -> 11.45 as the sample grew. So the ratio is a floor, not a point
-# estimate, and the note says so by understating it.
+# TWO CORRECTIONS to what M187 shipped in this note:
+#
+# 1. **86%, not 96%.** The 96% was the share of raw |loss| within a
+#    BALANCED 50/50 spot set, which is not what a player meets. Weighted
+#    by how often each decision type actually occurs, facing-a-bet
+#    carries **86%** of the cost. The unweighted figure flattered it.
+# 2. The ratio is **27.4x** (5.64 -> 7.17 sigma), still rising but
+#    decelerating: +9.3, +7.1, +5.5 across the four sample sizes. Quoted
+#    as "at least 25 times" — still deliberately a floor.
+#
+# The tail is NOT exhausted. The worst single decision found went
+# 11.45 bb at 201 facing spots to **73.25 bb** at 801 — a river call/fold
+# in a 30bb pot, verified real (its action spread is 76.81, so the loss
+# is inside what the decision can physically swing, and all 801 spots
+# pass that check). One spot in 267 moves its cell's mean by 0.27 bb.
 FACING_A_BET_COST_NOTE = (
     "THIS IS THE KIND OF DECISION THIS ADVICE GETS WRONG MOST EXPENSIVELY. Priced "
-    "against a fuller solve over 402 real spots, decisions facing a bet carried "
-    "about 96% of everything the advice cost, averaging at least 20 times more than "
+    "against a fuller solve over 801 real spots facing a bet, these decisions carry "
+    "about 86% of everything the advice costs, averaging at least 25 times more than "
     "decisions where you act first. Most individual answers here are still accurate "
-    "— the median one costs almost nothing — but 9% of decisions cost more than a "
-    "big blind and 2% cost more than five, and nearly all of those are here, because "
-    "folding being available is what makes it possible to lose a lot. Weigh this one "
-    "more carefully than its confidence label alone suggests. "
+    "— the median one costs almost nothing — but 18% of them cost more than a big "
+    "blind and 5% cost more than five, because folding being available is what makes "
+    "it possible to lose a lot. Weigh this one more carefully than its confidence "
+    "label alone suggests. "
 )
 
 RELIABLE_HAND_STRENGTH_PERCENTILE = 0.75

@@ -784,8 +784,30 @@ requests now reject unknown fields by name rather than ignoring them.
   never formed a preference" and "never reached at all" are different
   news a user can act on.
 
-- **The advice costs ~15 bb/100 hands, and 96% of that is decisions
-  FACING A BET (M187, 402 spots).** The level is settled — 8.6 at 48
+- **The advice costs ~16 bb/100 hands and 86% of it is TWO CELLS (M188,
+  801 facing spots).** Sampling only the uncertain cells worked: the 95%
+  interval closed **+4.7..+25.8 -> +8.4..+23.7** (half-width 10.5 -> 7.6)
+  while the level held (15.3 -> 16.1). **The cost is established well
+  clear of zero.**
+  **86%, NOT the 96% M187 shipped** — that was the share of raw |loss| in
+  a BALANCED 50/50 spot set, which is not what a player meets. Weighted
+  by real occurrence it is 86%, and the note is corrected. **Weight
+  before quoting any share.**
+  **Flop/facing (59.2%) and river/facing (24.6%) carry 84% of the cost at
+  22% of decisions.** The turn is now cheap on both node types
+  (+0.0295 facing, +0.0148 opening).
+  Ratio **27.4x at 7.17 sigma**, still rising but decelerating (+9.3,
+  +7.1, +5.5), so the note says "at least 25 times" — a floor.
+  **The tail is NOT exhausted**: worst single decision 11.45 bb at 201
+  spots -> **73.25 bb at 801**, verified real (spread 76.81; all 801 pass
+  `|loss| <= spread`). Trimming the top 1% drops the facing mean 0.8754
+  -> 0.6633, and one spot in 267 moves its cell by 0.27 bb. **16 bb/100
+  is a well-established floor whose level stays tail-sensitive.**
+  **18% of facing decisions cost >1bb and 5% cost >5bb** — characterising
+  those is the only work with a measurable payoff.
+
+- **(SUPERSEDED by M188) ~15 bb/100 and 96% facing a bet (M187, 402
+  spots).** The level is settled — 8.6 at 48
   spots, 17.2 at 144, **15.3 at 402**, each inside the others' intervals
   after the n=48 noise correction. 95% interval **+4.7 to +25.8**.
   **The interval barely tightened when the sample tripled** (half-width
