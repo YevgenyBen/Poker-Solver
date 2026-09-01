@@ -1650,6 +1650,51 @@ FACING_A_BET_COST_NOTE = (
     "label alone suggests. "
 )
 
+# M189: the sharpest runtime signal available, and it is much sharper
+# than M185's.
+#
+# M185 flagged every facing-a-bet decision — 32.6% of postflop play,
+# catching 93% of the cost, lift 2.9x. A warning on a third of all
+# decisions is close to a warning on everything.
+#
+# Splitting those 801 spots by hand strength shows the cost is
+# concentrated in a BAND, and non-monotonically — both the weakest and
+# the strongest hands are cheap:
+#
+#   strength    % costing >1bb   mean |loss|
+#   0.00-0.20             4.1%        0.129
+#   0.20-0.40             4.9%        0.200
+#   0.40-0.55            12.3%        0.443
+#   0.55-0.75            29.0%        1.376
+#   0.75-0.90            43.8%        2.531
+#   0.90-1.01            11.5%        0.541
+#
+# That is the "is my top pair actually good?" decision: strong enough to
+# continue, not strong enough to be obvious. Facing a bet AND landing in
+# 0.55-0.90 **fires on 12.1% of postflop decisions and catches 74% of all
+# cost — lift 6.1x**, against M185's 2.9x.
+#
+# **Replicated before shipping**, because a band found by inspecting the
+# same data that suggested it is exactly how M166 went wrong. Split-half
+# on a random partition: in-band mean |loss| **1.874 in BOTH halves**,
+# out-of-band 0.267 and 0.307 — ratios 7.0x and 6.1x.
+#
+# The coarser note still fires outside the band, because out-of-band
+# facing decisions average 0.28-0.31 bb against an opening decision's
+# 0.032 — cheaper, not cheap.
+COSTLY_BAND_LOW = 0.55
+COSTLY_BAND_HIGH = 0.90
+
+COSTLY_BAND_NOTE = (
+    "AND YOUR HAND IS IN THE RANGE THIS ADVICE HANDLES WORST. Hands roughly between "
+    "the 55th and 90th percentile — good enough to continue, not good enough to be "
+    "obvious — are where the measured cost concentrates: facing a bet holding one, "
+    "44% of decisions were off by more than a big blind, against 4% for weak hands "
+    "and 12% for very strong ones. This combination is 12% of postflop decisions and "
+    "carries 74% of everything the advice costs. If you are going to override this "
+    "engine anywhere, here is where your own judgement is most likely to beat it. "
+)
+
 RELIABLE_HAND_STRENGTH_PERCENTILE = 0.75
 
 RELIABLE_HAND_ERROR_MEAN = 0.0144

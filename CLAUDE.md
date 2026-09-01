@@ -784,6 +784,30 @@ requests now reject unknown fields by name rather than ignoring them.
   never formed a preference" and "never reached at all" are different
   news a user can act on.
 
+- **The cost concentrates in a STRENGTH BAND, and it is the sharpest
+  runtime signal available (M189).** Splitting M188's 801 facing spots by
+  hand strength, the relationship is NON-MONOTONE — both the weakest and
+  the strongest hands are cheap:
+  | strength | % over 1bb | mean \|loss\| |
+  |---|---|---|
+  | 0.00-0.40 | 4-5% | 0.13-0.20 |
+  | 0.40-0.55 | 12.3% | 0.443 |
+  | **0.55-0.75** | **29.0%** | **1.376** |
+  | **0.75-0.90** | **43.8%** | **2.531** |
+  | 0.90-1.01 | 11.5% | 0.541 |
+  **Facing a bet AND strength 0.55-0.90 fires on 12.1% of postflop
+  decisions and catches 74% of all cost — lift 6.1x**, against M185's
+  coarse facing-only rule at 32.6% and 2.9x. **BOTH conditions are
+  needed**: an in-band hand acting first is cheap, and facing a bet
+  outside the band is much cheaper than inside it.
+  **Replicated by split-half before shipping** — in-band mean |loss|
+  **1.874 in BOTH halves**, out-of-band 0.267/0.307 (7.0x / 6.1x). M166
+  asserted a strength split from 27 spots and M167 withdrew it; this
+  survives being cut in half at n=801.
+  The coarse note still fires outside the band (out-of-band facing
+  averages 0.28-0.31 against an opening decision's 0.032 — cheaper, not
+  cheap), so the signal is GRADED rather than replaced.
+
 - **The advice costs ~16 bb/100 hands and 86% of it is TWO CELLS (M188,
   801 facing spots).** Sampling only the uncertain cells worked: the 95%
   interval closed **+4.7..+25.8 -> +8.4..+23.7** (half-width 10.5 -> 7.6)

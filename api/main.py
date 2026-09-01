@@ -1559,6 +1559,13 @@ def _aggression_reason(raw: dict, hero: dict | None = None) -> str:
     # known about this decision.
     if _is_facing_a_bet(raw):
         reason += cfg.FACING_A_BET_COST_NOTE
+        # M189: graded, not replaced. The coarse note covers all
+        # facing-a-bet decisions because even out-of-band ones average
+        # ~0.3 bb against an opening decision's 0.03. This adds the
+        # sharper half: 12% of postflop decisions carrying 74% of cost.
+        if (percentile is not None
+                and cfg.COSTLY_BAND_LOW <= percentile < cfg.COSTLY_BAND_HIGH):
+            reason += cfg.COSTLY_BAND_NOTE
     return reason
 
 

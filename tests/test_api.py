@@ -5912,6 +5912,72 @@ def test_the_unmeasured_street_note_says_why_rather_than_only_that(client):
     assert "least accurate" not in note
 
 
+def test_the_costly_band_needs_BOTH_conditions(client, monkeypatch):
+    """M189. The cost concentrates non-monotonically by hand strength:
+    both the weakest and the strongest hands are cheap, and the money is
+    in roughly the 55th-90th percentile — "is my top pair actually good?".
+
+    Facing a bet AND in that band is **12% of postflop decisions carrying
+    74% of all cost** (lift 6.1x), against M185's coarse rule at 33% and
+    2.9x. Neither condition alone is the signal: an in-band hand acting
+    first is cheap, and a facing-a-bet decision outside the band is much
+    cheaper than one inside it.
+    """
+    monkeypatch.setattr(api_config, "FLOP_TURN_RAISE_SIZES", (2.5,))
+    monkeypatch.setattr(api_config, "FLOP_TURN_MAX_RAISES", 2)
+    base = {"stack_bb": 100.0, "preflop_action_path": ["raise", "call_or_check"],
+            "players": 2, "board": "Kd7c2h"}
+
+    def reason_for(hero, facing):
+        body = {**base, "hero_cards": hero}
+        if facing:
+            body["flop_action_path"] = ["raise"]
+        payload = client.post("/advise", json=body).json()
+        return payload["aggression_confidence_reason"], payload["hand_strength_percentile"]
+
+    # 9c9d on Kd7c2h sits inside the band; KsQh above it; Tc9c below.
+    in_facing, pct_in = reason_for("9c9d", True)
+    assert api_config.COSTLY_BAND_LOW <= pct_in < api_config.COSTLY_BAND_HIGH, pct_in
+    assert api_config.COSTLY_BAND_NOTE in in_facing
+
+    in_opening, _ = reason_for("9c9d", False)
+    assert api_config.COSTLY_BAND_NOTE not in in_opening, (
+        "the band note fired on an opening decision; acting first with an "
+        "in-band hand is cheap and the signal needs BOTH conditions")
+
+    above, pct_hi = reason_for("KsQh", True)
+    assert pct_hi >= api_config.COSTLY_BAND_HIGH
+    assert api_config.COSTLY_BAND_NOTE not in above, (
+        "very strong hands measured 11.5% expensive against the band's 44%")
+
+    below, pct_lo = reason_for("Tc9c", True)
+    assert pct_lo < api_config.COSTLY_BAND_LOW
+    assert api_config.COSTLY_BAND_NOTE not in below, (
+        "weak hands measured 4-5% expensive; flagging them dilutes the signal")
+
+
+def test_the_band_is_narrow_enough_to_be_worth_reading(client):
+    """M189. The point of the band over M185's coarse flag is that it
+    fires rarely. A signal on a third of all decisions is one a player
+    learns to ignore (M167); this one fires on ~12%.
+
+    Guarding the WIDTH rather than the prose: if someone widens the band
+    to catch more cost, they trade away the property that makes it worth
+    surfacing, and should do that deliberately.
+    """
+    width = api_config.COSTLY_BAND_HIGH - api_config.COSTLY_BAND_LOW
+    assert width <= 0.40, (
+        f"the costly band spans {width:.2f} of the strength range; wider than "
+        "0.40 and it approaches M185's coarse flag, which fires on a third of "
+        "decisions and was measured at less than half this one's lift")
+    assert api_config.COSTLY_BAND_LOW > 0.4, (
+        "extending the band down into weak hands adds decisions that measured "
+        "4-5% expensive and dilutes it")
+    assert api_config.COSTLY_BAND_HIGH < 1.0, (
+        "the very strongest hands measured 11.5% expensive, well below the "
+        "band's 44% — including them dilutes it")
+
+
 def test_facing_a_bet_is_flagged_as_where_the_cost_is(client, monkeypatch):
     """M185. M183 priced 48 real decisions in chips and found the cost
     concentrated by NODE TYPE: facing a bet means mean |loss| 0.3107 bb
