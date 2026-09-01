@@ -784,8 +784,29 @@ requests now reject unknown fields by name rather than ignoring them.
   never formed a preference" and "never reached at all" are different
   news a user can act on.
 
-- **The advice costs ~17 bb/100 hands, and 94% of that is decisions
-  FACING A BET (M186).** 144 spots priced in chips, weighted by the cell
+- **The advice costs ~15 bb/100 hands, and 96% of that is decisions
+  FACING A BET (M187, 402 spots).** The level is settled — 8.6 at 48
+  spots, 17.2 at 144, **15.3 at 402**, each inside the others' intervals
+  after the n=48 noise correction. 95% interval **+4.7 to +25.8**.
+  **The interval barely tightened when the sample tripled** (half-width
+  12.7 -> 10.5) because more spots keep finding more extreme ones: the
+  worst single decision went **4.96 -> 8.17 -> 11.45 bb**. Heavy-tailed,
+  so the mean converges slowly.
+  **Concentration**: top 5 spots (1% of decisions) carry 29% of all cost,
+  top 20 (5%) carry 67%, top 40 (10%) carry 85%. Median decision costs
+  **+0.0028 bb** and 52% cost under 0.01.
+  **The three OPENING cells are settled and nearly free** (sems
+  0.003-0.016, together 0.018 of the 0.124 total). **The three FACING
+  cells carry 85% of the cost and essentially ALL the uncertainty** —
+  their sems alone reproduce the total. **Sample only facing-a-bet cells
+  from here**; halving the interval needs ~800 of them (~3.5h).
+  **Facing vs opening: 0.6983 vs 0.0320 = 21.9x at 5.64 sigma.** The
+  ratio has grown at every sample size (5.5 -> 14.8 -> 21.9), so the
+  user-facing note says **"at least 20 times"** — a rising figure is a
+  floor, not a point estimate.
+
+- **(SUPERSEDED by M187) The advice costs ~17 bb/100 hands, and 94% of
+  that is decisions FACING A BET (M186).** 144 spots priced in chips, weighted by the cell
   mix from 20 fresh sessions (5,352 decisions):
   **+0.1400 bb per postflop decision, 95% interval +4.5 to +29.9
   bb/100.**

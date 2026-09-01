@@ -9724,3 +9724,78 @@ The harness now records an `ev_cell` per decision — street x node type —
 because it previously recorded latency, defects and confidence and
 NOTHING about money, so a session could report "clean" while saying
 nothing about whether the advice helps a player win.
+
+## M187 — 402 spots: the estimate settles, the tail does not
+
+M186 put the cost at 17.2 bb/100 from 144 spots and recommended pushing
+to 300-400 before using the level to compare configurations. This is that
+run: 67 spots per cell, drawn from a pool three times larger (all 30
+sessions rather than the first ten).
+
+### The level has stabilised
+
+| n | bb/100 hands | 95% interval |
+|---|---|---|
+| 48 | 8.56 | -2.12 to +19.25 |
+| 144 | 17.22 | +4.48 to +29.95 |
+| **402** | **15.26** | **+4.73 to +25.79** |
+
+48 -> 144 doubled, and that was a noise correction (three cells had
+negative means at 8 spots each). **144 -> 402 is stable** — each estimate
+sits comfortably inside the other's interval. The level is now as
+settled as this method will make it.
+
+### The interval barely tightened, and that is the finding
+
+Tripling the sample moved the half-width only 12.7 -> 10.5 bb/100,
+because **more spots kept finding more extreme ones**:
+
+    worst single decision:  n=48  4.96 bb   n=144  8.17 bb   n=402  11.45 bb
+
+The distribution is heavy-tailed enough that the mean converges slowly.
+Concentration at 402 spots:
+
+| | share of decisions | share of all cost |
+|---|---|---|
+| top 5 | 1% | **29%** |
+| top 10 | 2% | **46%** |
+| top 20 | 5% | **67%** |
+| top 40 | 10% | **85%** |
+
+Median decision still costs **+0.0028 bb**, 52% cost under 0.01 bb, and
+9% cost over 1 bb with 2% over 5 bb.
+
+### Where the remaining uncertainty lives — and it is not everywhere
+
+| cell | n=24 | n=67 | sem at n=67 |
+|---|---|---|---|
+| flop / opening | +0.0243 | +0.0145 | **0.0034** |
+| turn / opening | +0.0150 | +0.0148 | **0.0032** |
+| river / opening | +0.0649 | +0.0663 | **0.0161** |
+| flop / facing | +0.5046 | +0.3614 | 0.2518 |
+| turn / facing | +0.1834 | +0.0760 | 0.1100 |
+| river / facing | +0.3565 | +0.6127 | 0.2560 |
+
+**The three opening cells are settled** — stable between samples and with
+error bars an order of magnitude smaller. They are also nearly free, and
+together contribute 0.0181 of the 0.1241 total. **The three facing cells
+carry 85% of the weighted cost and essentially all of the uncertainty**:
+their sems alone reproduce the total sem to three decimals.
+
+So further sampling should go to **facing-a-bet cells only**. The opening
+cells can stop being sampled. Halving the interval needs roughly 4x the
+facing spots — about 800 — which is ~3.5 hours at current solve speeds.
+
+### Facing a bet: the ratio keeps growing, so it is quoted as a floor
+
+| n | ratio | share of cost | separability |
+|---|---|---|---|
+| 48 | 5.5x | 85% | 2.58 sigma |
+| 144 | 14.8x | 94% | 3.06 sigma |
+| **402** | **21.9x** | **96%** | **5.64 sigma** |
+
+0.6983 bb facing against 0.0320 acting first. A ratio that rises
+monotonically with the sample is one whose extreme spots are still being
+discovered, so `FACING_A_BET_COST_NOTE` now says **"at least 20 times"**
+rather than quoting 21.9 — deliberately understating a figure that is a
+floor rather than a point estimate.
