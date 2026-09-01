@@ -9941,3 +9941,91 @@ property that makes it worth surfacing at all, and should be deliberate.
 Four mutations caught: the band note firing on every facing decision,
 never firing, ignoring the facing-a-bet condition, and being widened to
 the whole strength range.
+
+## M190 — widening for money: 44% less cost, and a real latency price
+
+The first change this session that makes the ADVICE better rather than
+better-disclosed — and the first to reverse an earlier verdict because
+that verdict used the wrong metric.
+
+### Why this was available
+
+Every configuration verdict in this engine was reached on pooled
+FREQUENCY error: cap 140 rejected for the flop (M180, 0.97 sigma),
+precision declared dead (M152/M180), eleven range-composition rules
+killed (M130-M141, M166). M183 then measured frequency distance as a poor
+proxy for cost, and M189 that 74% of the cost sits in 12% of decisions.
+**Those verdicts were reached with a metric that does not track money,
+over a population where 52% of decisions cost under 0.01 bb.**
+
+### Re-scored on EV loss in the costly band
+
+297 spots (facing a bet, strength 0.55-0.90) carrying 79% of all facing
+cost:
+
+| arm | mean \|loss\| | paired delta | sigma | separable |
+|---|---|---|---|---|
+| shipped | 1.8740 | — | — | — |
+| **cap 140** | **1.0489** | **-0.8250 +/- 0.1871** | **4.41** | **YES** |
+| iters 1000 | 1.9651 | +0.0911 +/- 0.0632 | 1.44 | no |
+
+**44% less cost, better on 124 spots and worse on 62.** By street: flop
+1.4987 -> 0.8098, **river 3.4573 -> 1.5845**, turn unchanged (already at
+140 from M179 — a useful check that the harness does what it claims).
+
+The river is the largest single win: its cap was **26**, in a cell
+carrying 24.6% of all cost.
+
+### The confound was controlled, not assumed
+
+Cap 140 sits closer to the 169-class reference than cap 100 does, so it
+could score better by resembling it rather than by being right. Two
+checks:
+
+1. **The `iters 1000` arm also moves toward the reference** (250 against
+   its 1500) and gains **nothing** (1.44 sigma). A pure-similarity effect
+   could not produce that.
+2. **The reference is converged in iterations**: 1500 against 3000 moves
+   it a mean of **0.0508 bb** with TVD 0.0084 — **2.7%** of the 1.87 bb
+   effect being measured. M138 had established sample-stability; nobody
+   had checked the axis one of the arms varies.
+
+### The price, measured over three sessions and larger than predicted
+
+| | before | after |
+|---|---|---|
+| median decision | 0.11s | **1.03s** |
+| p90 | 1.56s | 3.36s |
+| worst | 2.17s | 3.65s |
+| within 2s | 99.7% | **77.8%** |
+| within 5s | 100% | 100% |
+| defects | 0 | **0** |
+
+Flop 1.53 -> 3.19s, river 0.11 -> 1.04s. **The turn also moved (0.81 ->
+1.35s) despite its cap being unchanged** — a second-order cost of the
+widening: three cache ceilings had to be lowered to stay inside the byte
+budget (`river_path` 256 -> 96, `canonical_warm_starts` 128 -> 96), so
+more requests miss.
+
+**Isolated measurement under-predicted the request for the fifth time
+this session** — 1.54s isolated against 3.19s in production on the flop.
+
+### The trade, stated plainly
+
+Roughly **16 -> 11 bb/100 hands** for a median decision going 0.11s ->
+1.03s, worst case still 3.65s and everything inside 5s. By the product
+aim — helping a player make money, with speed a means — that is the right
+side of the trade, and 5 bb/100 is a large edge in poker terms.
+
+**It is also reversible in one constant per street**, and the two halves
+are independent: `MAX_PATH_QUERY_CLASSES_PER_SIDE` back to 100 restores
+the flop, `RIVER_STANDALONE_CLASSES_PER_SIDE` back to 26 the river. The
+flop carries the larger cost reduction (59.2% of total cost, 46% cut);
+the river the larger latency multiple (9.5x, from a very low base).
+
+### Three ceilings from one constant
+
+Widening ONE cap moved THREE cache ceilings, none visible from the config
+change itself. M127's byte test caught all of them by measuring real
+entries rather than trusting the comment beside the number — the third
+consecutive milestone it has done so.
