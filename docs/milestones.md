@@ -10118,3 +10118,81 @@ byte-identical to main — which is how the diagnosis started.
 
 The spy now records the calling thread and counts only its own. Counting
 a process-wide total was never what the test meant to assert.
+
+## M192 — the second benchmark: the cost is no longer measurable
+
+Twenty fresh sessions on the shipped configuration, a paired old-vs-new
+speed comparison, and the cost re-measured from scratch rather than
+extrapolated.
+
+### The cost, measured rather than inferred
+
+M190 estimated ~11 bb/100 by applying the costly-band reduction to cells
+nobody had re-measured. Measured directly at the shipped configuration,
+144 spots weighted by the mix the new sessions produced:
+
+| cell | before (n=67) | after (n=24) |
+|---|---|---|
+| flop / opening | +0.0145 | +0.0179 |
+| flop / facing | +0.3614 | **-0.2945** |
+| turn / opening | +0.0148 | +0.0125 |
+| turn / facing | +0.0760 | **-0.1355** |
+| river / opening | +0.0663 | +0.0242 |
+| river / facing | +0.6127 | **-0.1713** |
+| **weighted** | **+15.26 bb/100** | **-7.16 bb/100** |
+| 95% interval | +4.73 to +25.79 | **-17.51 to +3.19** |
+
+**The negative point estimate is not a finding.** Every negative cell has
+a standard error as large as its value and the interval spans zero. A
+strategy cannot systematically beat a fuller solve of itself; the two are
+now close enough that this method cannot separate them. The claim is
+**"the cost went from clearly present to too small to detect"**, nothing
+stronger.
+
+Supporting shape: worst single decision **73.25 -> 4.80 bb**, decisions
+over 1 bb down to **7%**, median decision **0.008 bb**.
+
+**A limitation this exposed and worth recording**: EV loss against a
+FIXED reference opponent measures how well a strategy exploits THAT
+opponent, not correctness. A row can beat the reference's own row against
+the reference's opponent model without being better in equilibrium, which
+is why negative values occur at all and why a near-zero result must not
+be read as "correct".
+
+### Speed, paired — the mildest of four attempts to measure it
+
+Eight sessions back to back, alternating configurations, **the same hands
+dealt to both arms**:
+
+| | old (100/26) | new (140/140) | |
+|---|---|---|---|
+| median | 0.11s | 0.58s | 5.2x |
+| p90 | 1.59s | 1.99s | **1.25x** |
+| worst | 2.39s | 2.30s | **0.96x** |
+| flop | 1.56s | 1.93s | 1.24x |
+| turn | 0.81s | 0.83s | 1.02x |
+| river | 0.11s | 0.62s | 5.44x |
+| within 5s | 100% | 100% | |
+| defects | 0 | 0 | |
+
+**The worst case did not move and p90 rose 25%.** The 5x median is the
+river going 0.11 -> 0.62s, and the median happens to sit in that band.
+
+**Three earlier attempts to price this all overstated it** — M190's
+validation said flop 3.19s and median 1.03s; paired it is 1.93s and
+0.58s. Each compared runs made hours apart on a machine that drifts up to
+1.7x. One of those numbers nearly caused this change to be reverted.
+
+### Benchmark 2 on its own
+
+5,255 decisions over 2,400 hands: median 0.59s, p90 2.09s, worst 3.82s,
+100% inside five seconds, **zero defects and zero uniform rows in all
+twenty sessions**. Across both benchmarks: **10,607 decisions, zero
+defects.**
+
+### What is NOT established
+
+144 spots with a twenty-big-blind interval says the cost fell a long way,
+not where it landed. And the reference shares every model limitation with
+the shipped solve — the bet-size menu, street isolation, terminal pricing
+— so this bounds one source of error and says nothing about the others.
