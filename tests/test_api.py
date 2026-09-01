@@ -6479,3 +6479,100 @@ def test_the_standalone_turn_still_refuses_an_impossible_board(client):
     source = inspect.getsource(api_solving._query_turn_standalone)
     assert "not a legal turn card" in source
     assert "if turn_card in board_cards:" in source
+
+
+def test_the_street_isolation_note_quotes_its_own_measurement():
+    """M196. The copy states a magnitude and a direction; both must match
+    the constants that recorded the measurement.
+
+    Same discipline as `test_the_aggression_caveat_quotes_its_own_
+    measurement`, and for the same reason: this project has twice shipped
+    prose that drifted from its evidence while the constants beside it
+    stayed right. The direction word is asserted too, because it is the
+    half a player acts on — a sign error here is worse than a magnitude
+    error, and M99 vs M195 is the standing proof that the sign is the
+    part that gets got wrong.
+    """
+    note = api_config.STREET_ISOLATION_NOTE
+    low_pp = round(api_config.STREET_ISOLATION_BIAS_LOW * 100)
+    high_pp = round(api_config.STREET_ISOLATION_BIAS_HIGH * 100)
+    assert f"{low_pp} to {high_pp} percentage points" in note, (
+        f"the note's magnitude no longer matches STREET_ISOLATION_BIAS_LOW/"
+        f"HIGH ({low_pp} to {high_pp} percentage points): {note!r}")
+    assert "LESS aggressive" in note, (
+        "the note must state the measured DIRECTION — modelling the turn "
+        "made the advice more aggressive on 23 of 24 deep spots, so the "
+        "shipped answer is the less aggressive one")
+    # The two limits that keep the note honest.
+    assert "not the distance to correct play" in note, (
+        "the chained solve is more complete, not right; the note must not "
+        "let a reader take it for a GTO reference")
+    assert "reverses at short stacks" in note, (
+        "the direction is depth-dependent (M196) and the note must say so, "
+        "since a reader at a different depth would otherwise mis-apply it")
+
+
+def test_street_isolation_is_gated_on_BOTH_street_and_depth():
+    """M196. Neither gate is cosmetic and neither may be dropped.
+
+    Depth: the bias flips sign between SPR 3.3 and 7.5 (-0.0099 -> +0.0981
+    over 12 spots), so below the threshold the note's direction is wrong,
+    not merely unsupported. Street: only the flop's isolation gap has been
+    measured — the turn's never has, and M168 is what happened the last
+    time a flop measurement was assumed to carry to another street.
+
+    Asserted against the helper rather than through a solve so the
+    BOUNDARY itself is pinned; a live end-to-end check follows separately.
+    """
+    from api.main import _street_isolation_applies
+
+    spr_min = api_config.STREET_ISOLATION_SPR_MIN
+    deep = {"pot": 6.0, "max_affordable_bb": 6.0 * spr_min}
+    shallow = {"pot": 6.0, "max_affordable_bb": 6.0 * spr_min * 0.99}
+
+    assert _street_isolation_applies(deep, "flop"), (
+        "the note must fire at the threshold itself — 80% of real "
+        "decisions sit at or above it")
+    assert not _street_isolation_applies(shallow, "flop"), (
+        "just below the threshold the measured direction reverses")
+
+    for street in ("turn", "river", "preflop", None):
+        assert not _street_isolation_applies(deep, street), (
+            f"the note fired on the {street}, whose isolation gap has "
+            f"never been measured")
+
+    # Degenerate inputs must not fire rather than divide by zero.
+    for raw in ({"pot": 0.0, "max_affordable_bb": 100.0},
+                {"pot": 6.0, "max_affordable_bb": None},
+                {}):
+        assert not _street_isolation_applies(raw, "flop"), raw
+
+
+def test_the_street_isolation_note_reaches_a_real_deep_flop_response(client):
+    """M196. The end-to-end half: the note must actually appear in the
+    caveat a deep-stacked flop player reads, and must be absent from a
+    short-stacked one.
+
+    The depth is driven through the request rather than the helper, so
+    this covers the wiring - that `_aggression_reason` consults the
+    response's OWN pot and affordability, and that those fields are
+    populated on the path a real request takes.
+    """
+    def reason_at(stack_bb):
+        payload = client.post("/advise", json={
+            "stack_bb": stack_bb, "players": 2, "board": "Kd7c2h",
+            "hero_cards": "9c9d",
+            "preflop_action_path": ["raise", "call_or_check"],
+        }).json()
+        spr = payload["max_affordable_bb"] / payload["pot"]
+        return payload["aggression_confidence_reason"], spr
+
+    deep, deep_spr = reason_at(100.0)
+    assert deep_spr >= api_config.STREET_ISOLATION_SPR_MIN, deep_spr
+    assert api_config.STREET_ISOLATION_NOTE in deep
+
+    shallow, shallow_spr = reason_at(8.0)
+    assert shallow_spr < api_config.STREET_ISOLATION_SPR_MIN, shallow_spr
+    assert api_config.STREET_ISOLATION_NOTE not in shallow, (
+        "the note fired at SPR %.1f, where the measured direction is the "
+        "opposite one" % shallow_spr)

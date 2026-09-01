@@ -1756,6 +1756,58 @@ UNCERTAIN_HAND_NOTE = (
     "of your stack on it alone. "
 )
 
+# M195/M196. **Street isolation** — the flop solve models the flop's own
+# betting round and averages every turn and river runout at the terminal,
+# so it never plays out a later street's betting. M195 measured that gap
+# by solving the same spot both ways, same board, same range, same seed,
+# so only depth varies: **30 of 30 spots got MORE aggressive when the
+# turn was modelled, +0.2291 +/- 0.0249, 9.21 sigma.**
+#
+# M99 had measured the same gap once and found the OPPOSITE sign. M196
+# resolved that: **the direction depends on stack depth.** 12 spots at
+# four depths, pot fixed at 6bb:
+#
+#   stack   SPR     delta     sigma   agree   action menu
+#       9   1.5   -0.1564      1.42     7/5   2 (no sized bet)
+#      20   3.3   -0.0099      0.08     9/3   3
+#      45   7.5   +0.0981      3.66    11/1   3
+#      97  16.2   +0.2183      5.48    12/0   3
+#
+# **The flip is depth, not tree shape** — it happens between SPR 3.3 and
+# 7.5, where the action menu is identical. Only the 9bb row loses its
+# sized raise, and that is not where the sign changes. The confound was
+# checked before the finding was believed.
+#
+# **Why the note fires anyway**: 80% of real decisions sit at SPR >= 5
+# (median 9.5, measured over 8,032 recorded opening decisions), which is
+# the regime where the direction is consistent — 23 of 24 spots across
+# the two deep arms. Below the threshold the sign reverses, so firing
+# there would point a player the wrong way; hence the gate.
+#
+# **FLOP ONLY, deliberately.** The turn's own isolation gap has never been
+# measured, and M168 is what assuming a flop measurement transfers to
+# another street looks like. The river has no later street to model.
+#
+# This is the gap to a fuller model of the SAME KIND, not the distance to
+# correct play — the chained solve is more complete, not right.
+STREET_ISOLATION_STREETS = ("flop",)
+STREET_ISOLATION_SPR_MIN = 5.0
+STREET_ISOLATION_BIAS_LOW = 0.098
+STREET_ISOLATION_BIAS_HIGH = 0.218
+
+STREET_ISOLATION_NOTE = (
+    " One more thing this number cannot see: the solve behind it models the betting on "
+    "this street only, and averages the turn and river in as card runouts rather than "
+    "playing them out. Measured against a solve that also plays out the turn - same "
+    "board, same range, same seed, so only that changes - the advice you are reading is "
+    "systematically LESS aggressive by roughly 10 to 22 percentage points at this stack "
+    "depth, in the same direction on 23 of 24 spots tested. So a marginal check or call "
+    "here is better read as this model's floor than as its verdict. Two limits worth "
+    "knowing: that is the gap to a fuller model of the same kind, not the distance to "
+    "correct play, and the direction reverses at short stacks, which is why this note "
+    "appears only when there is real money behind relative to the pot."
+)
+
 POSTFLOP_AGGRESSION_ERROR_MEAN = 0.1394
 POSTFLOP_AGGRESSION_ERROR_WORST = 0.8810
 

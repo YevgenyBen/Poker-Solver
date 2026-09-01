@@ -1500,6 +1500,32 @@ def _hand_strength_percentile(raw: dict, hero: dict | None) -> float | None:
         return None
 
 
+def _street_isolation_applies(raw: dict, street: str | None) -> bool:
+    """Does the measured street-isolation bias have a known direction here?
+
+    Two conditions, both measured rather than assumed (M195/M196):
+
+    * the street is one whose isolation gap was actually measured — only
+      the flop. The turn's has never been measured and the river has no
+      later street to model, and M168 is the standing example of what
+      applying one street's measurement to another costs.
+    * there is enough money behind relative to the pot that the direction
+      is the one the note describes. The bias flips sign between SPR 3.3
+      and 7.5; below the threshold the note would be actively wrong.
+
+    Derived from the response's own pot and affordability figures, so it
+    stays true if the tree or the caps move — the same discipline
+    `modelled_bet_sizes` follows (M144).
+    """
+    if street not in cfg.STREET_ISOLATION_STREETS:
+        return False
+    pot = raw.get("pot")
+    stack = raw.get("max_affordable_bb", raw.get("effective_stack_bb"))
+    if not pot or not stack or pot <= 0:
+        return False
+    return stack / pot >= cfg.STREET_ISOLATION_SPR_MIN
+
+
 def _aggression_reason(raw: dict, hero: dict | None = None) -> str:
     """The postflop caveat, calibrated to hero's own hand where possible.
 
@@ -1553,6 +1579,13 @@ def _aggression_reason(raw: dict, hero: dict | None = None) -> str:
             reason = cfg.UNCERTAIN_HAND_NOTE + reason
     if _has_no_intermediate_bet_size(raw):
         reason += cfg.BET_SIZING_COVERAGE_NOTE
+    # M196: the structural gap, disclosed where its direction is known.
+    # Gated on BOTH street and depth, and neither gate is cosmetic - the
+    # flop is the only street whose isolation gap has been measured, and
+    # below SPR 5 the measured direction reverses, so an ungated note
+    # would point a short-stacked player the wrong way.
+    if _street_isolation_applies(raw, street):
+        reason += cfg.STREET_ISOLATION_NOTE
     # M185: where the measured cost actually is. Appended LAST because it
     # is the part a player can act on immediately — the notes before it
     # describe what is known about the street, this describes what is
