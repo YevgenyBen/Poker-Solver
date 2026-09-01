@@ -10316,3 +10316,97 @@ cannot see, and leave speed alone.
 
 Cost over the sequence: **15.26 -> 3.44 bb/100**, a 77% reduction, for a
 paired latency price of p90 1.25x and a worst case that did not move.
+
+## M195 — scoping a better reference, and finding the structural gap is huge
+
+M194 concluded that configuration is exhausted and that further gains
+need a better REFERENCE — one modelling what the shipped solve and its
+reference both miss. This scopes that, and the scoping produced the
+largest measured defect in the product.
+
+### A full chained reference is unaffordable, measured not assumed
+
+`solve_flop_turn` and `solve_flop_to_river` already exist, so this is a
+cost measurement rather than a build. One board, increasing range width,
+hard budget per arm:
+
+| cap | combos | flop only | + turn | + turn + river |
+|---|---|---|---|---|
+| 10 | 52 | 0.1s | 8.8s | 206.6s |
+| 20 | 120 | 0.3s | 77.4s | 939.1s |
+| 40 | 269 | 0.3s | 187.3s | over budget |
+| 80 | 564 | 0.7s | **862.0s** | over budget |
+
+**O(N^2) confirmed** (269 -> 564 combos: 187 -> 862s, exponent 2.06).
+Extrapolated to reference-grade width (~1,100 combos): **~55 min per spot
+for flop+turn alone**, so a 400-spot study is **366 hours**. The three-
+street chain is two further orders of magnitude beyond that.
+
+Production cannot chain either: at the shipped cap 140 (~950 combos) a
+chained flop solve is ~41 min against today's 1.93s.
+
+### But the gap it would reveal is systematic, and enormous
+
+The full reference cannot be built — the BIAS it would expose can be
+measured cheaply, at narrow width, across many spots. 30 flop spots from
+real play, cap 20, both arms on the SAME range so only depth varies:
+
+| | |
+|---|---|
+| aggression shift when the turn is modelled | **+0.2291 +/- 0.0249** |
+| significance | **9.21 sigma** |
+| spots more aggressive when chained | **30 of 30**, none fewer |
+| mean \|delta\|, median, worst | 0.2291, 0.2290, 0.4522 |
+
+**Solving one street at a time makes the advice systematically ~23
+percentage points less aggressive.** Thirty spots, no exceptions, at nine
+standard errors. Nothing else measured in this project comes close to
+that consistency.
+
+### It contradicts M99, and the reconciliation matters
+
+M99 measured this gap once and found the OPPOSITE sign: all-in share
+0.5652 (flop only) -> 0.5099 (+turn), i.e. isolation made it MORE
+aggressive. That spot ran at **SPR ~1.5**; these run at **SPR ~16**.
+
+The plausible mechanism, stated as a hypothesis and not a finding: with a
+deep stack, seeing a future street gives room to realise equity and
+semi-bluff, so modelling it raises aggression; at low SPR there is no
+room, and the isolated solve over-commits instead. **One spot was never
+enough to establish a direction**, which is the fourth time this project
+has learned that.
+
+### What this does to everything measured in this session
+
+Every EV figure in M182-M194 was scored against a flop-only reference.
+That reference shares this bias with the shipped solve, so it cancels
+from the comparison — which is exactly why those numbers were always
+described as a **lower bound**. This quantifies the bound: the shared
+model error is worth **~0.23 of aggression** on the flop, systematically,
+where the residual convergence error is now **+3.44 bb/100 and not
+separable from zero**.
+
+**The structural gap is the whole remaining error, and it is much larger
+than the one that has been optimised.**
+
+### What can and cannot be done about it
+
+**Cannot**: chain in production (41 min/request at shipped width), or
+build a chained reference to measure against (366 hours).
+
+**Can**, in rough order of value:
+
+1. **Establish the SPR dependence.** The sign flipped between SPR 1.5 and
+   16 across two studies. If the bias reverses at low SPR, a single
+   correction is impossible and the shape of the fix depends entirely on
+   this. Cheap: the same 30-spot measurement at two or three stack
+   depths.
+2. **Disclose it.** The product currently tells players nothing about
+   this, and it is larger than every disclosed caveat combined.
+3. **Consider a correction** only after (1). The per-spot spread is wide
+   (0.09 to 0.45), so a flat offset would be crude, and applying one
+   without knowing the SPR dependence would be worse than the bias.
+
+**Do not** attempt a chained production solve or a chained reference at
+current speeds; both are measured unaffordable by two orders of
+magnitude.
