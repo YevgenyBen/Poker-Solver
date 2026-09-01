@@ -10196,3 +10196,68 @@ defects.**
 not where it landed. And the reference shares every model limitation with
 the shipped solve — the bet-size menu, street isolation, terminal pricing
 — so this bounds one source of error and says nothing about the others.
+
+## M193 — the estimate tightened, and a config knob found dead
+
+Benchmark recommendation 2, plus a finding it turned up on the way.
+
+### Rec 2: the cost, at 399 facing spots
+
+M192 measured **-7.16 bb/100** from 144 spots and warned the negative
+point estimate was noise. It was. Sampling only the cells that carry the
+uncertainty:
+
+| config | n facing | bb/100 | 95% interval | half-width |
+|---|---|---|---|---|
+| old (100/26) | 201 | +15.26 | +4.73 to +25.79 | 10.53 |
+| shipped, 24/cell | 72 | -7.16 | -17.51 to +3.19 | 10.35 |
+| **shipped, 133/cell** | **399** | **+3.44** | **-1.02 to +7.91** | **4.47** |
+
+All three facing cells moved back across zero as the sample grew
+(flop/facing -0.2945 -> +0.0667). **The cost fell 15.3 -> 3.4 bb/100, a
+77% reduction**, and what remains is still not separable from zero — but
+the interval is now less than half as wide, and 15.26 sits far outside
+it.
+
+Distribution at the shipped config: median facing decision **0.0251 bb**,
+13.0% over 1 bb, 1.3% over 5 bb, worst **10.34 bb** (was 73.25).
+
+**Rec 2 also reordered rec 1.** Rec 1 was written believing the cost was
+~11 bb/100; with the level unmeasurable, testing knobs could not be
+adjudicated. Tightening first was the prerequisite, and it establishes
+there is up to ~8 bb/100 left by the upper bound — enough to be worth
+chasing.
+
+### F48: `PATH_QUERY_EQUITY_SAMPLES` is inert on the production flop path
+
+Rec 1's first target was equity samples — shipped 30 against a reference
+believed to be 200, the largest apparent configuration gap. All three
+arms returned **byte-identical** values.
+
+`parallel_board_equity_table` is what production injects, and since M176
+it calls `build_shared_runout_equity_table(samples=
+SHARED_RUNOUT_FLOP_SAMPLES)`, deliberately not forwarding the caller's
+count because 30 is a PER-PAIR number and shared runouts need far more.
+That choice is correct and was documented in `api/parallel.py`. The
+consequence was not: **the constant still reads as though it controls
+flop equity precision, and has controlled nothing there for eight
+milestones.** Verified directly — samples=30 and samples=200 on the same
+board and seed give max difference **0.0**.
+
+**Two claims this invalidates.** M131 described the postflop budget as
+three settings that "move together"; samples has not moved anything on
+this path since M176. And every study quoting a reference as "200
+samples" was really running 320 shared runouts — **the same table the
+shipped solve gets**. Reference and shipped have identical equity; they
+differ only in classes (169 vs 140) and iterations (1500 vs 250). That is
+a large part of why M192's measured gap is so small.
+
+Pinned by `test_the_per_pair_sample_count_is_inert_on_the_production_
+flop_path`, which fails loudly if `samples` ever becomes live again so
+the comment stops being true noisily rather than quietly.
+
+### What rec 1 reduces to
+
+With samples inert and iterations already measured useless (M190), the
+only remaining measurable gap between shipped and reference is **the 29
+classes between cap 140 and the full 169**. Everything else the two share.

@@ -258,3 +258,45 @@ def test_the_shared_runout_path_is_what_the_flop_actually_uses():
     assert not np.array_equal(through_api[defined], per_pair[defined]), (
         "the production path returned the per-pair table — the flag is not "
         "being consulted")
+
+
+def test_the_per_pair_sample_count_is_inert_on_the_production_flop_path():
+    """F48 (M193). `PATH_QUERY_EQUITY_SAMPLES` reads like it controls the
+    flop's equity precision and has not since M176: the shared-runout
+    builder uses its own constant and deliberately does not forward the
+    caller's, so the production table is identical whatever is passed.
+
+    That is correct behaviour — 30 is a per-pair count and shared runouts
+    need many more — but a live-looking constant that does nothing will
+    mislead whoever tunes it next. It cost one attempt at re-testing
+    "equity samples on money" that could only ever have measured zero.
+
+    This pins the fact, so that if `samples` ever becomes live again the
+    comment above the constant stops being true loudly rather than
+    quietly.
+    """
+    import numpy as np
+
+    from api import config as cfg
+    from api.parallel import parallel_board_equity_table
+    from poker_solver.cards import Card
+    from poker_solver.combos import range_from_class_frequencies
+    from poker_solver.starting_hands import all_starting_hands
+
+    assert cfg.SHARED_RUNOUT_FLOP_TABLE is True, (
+        "with the shared builder off, samples IS live again and the comment "
+        "above PATH_QUERY_EQUITY_SAMPLES must be corrected")
+
+    board = tuple(Card.from_str(c) for c in ("Th", "5s", "7c"))
+    combos = sorted(
+        range_from_class_frequencies({h: 1.0 for h in all_starting_hands()[:16]},
+                                     exclude=frozenset(board)),
+        key=str)
+    low = parallel_board_equity_table(board, combos, samples=30, seed=42)
+    high = parallel_board_equity_table(board, combos, samples=200, seed=42)
+
+    both = ~np.isnan(low) & ~np.isnan(high)
+    assert both.any()
+    assert np.array_equal(low[both], high[both]), (
+        "samples now changes the production flop table — good, but the "
+        "constant's comment says it is inert and must be updated")
