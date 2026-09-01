@@ -364,18 +364,36 @@ def test_monte_carlo_equity_n_threads_rng_into_dealing_for_suit_diversity(monkey
     # deal_n_hands passes rng, spied on via monkeypatch.
     import poker_solver.equity as equity_module
 
+    # M191: the spy records the CALLING THREAD, and only this thread's
+    # calls are counted. Monkeypatching a module attribute is
+    # process-wide, so a background thread — an API prewarm left running
+    # by an earlier test, for instance — lands its own calls in the same
+    # list. That is exactly what happened: under the full suite this
+    # collected 171 calls where the test makes 1, while passing whenever
+    # the file ran alone or the prewarm had finished first.
+    #
+    # The flaw was in the test, not the product, and it went unnoticed
+    # until M190's wider range caps made prewarm slow enough to still be
+    # running here. Counting a global call total was never what this test
+    # meant to assert.
+    import threading
+
     calls = []
     real_deal_n_hands = equity_module.deal_n_hands
+    this_thread = threading.get_ident()
 
     def spy(hands, avoiding=frozenset(), rng=None):
-        calls.append(rng)
+        if threading.get_ident() == this_thread:
+            calls.append(rng)
         return real_deal_n_hands(hands, avoiding=avoiding, rng=rng)
 
     monkeypatch.setattr(equity_module, "deal_n_hands", spy)
     hands = [StartingHand("A", "K", suited=True), StartingHand("Q", "J", suited=True)]
     rng = random.Random(11)
     equity_module.monte_carlo_equity_n(hands, samples=5, rng=rng)
-    assert len(calls) == 1
+    assert len(calls) == 1, (
+        f"expected one call from this thread, got {len(calls)} — if this is "
+        "again picking up other threads, the guard above has stopped working")
     assert calls[0] is rng
 
 
