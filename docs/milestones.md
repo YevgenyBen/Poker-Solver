@@ -9874,3 +9874,70 @@ as a well-established floor whose level is still tail-sensitive.
 than five. **Characterising those specifically** — rather than reducing
 mean error anywhere — is now the only work with a measurable payoff, and
 it is concentrated in two cells covering 22% of play.
+
+## M189 — the costly band: 12% of decisions, 74% of the cost
+
+M188 ended by naming the next step: characterise the expensive
+facing-a-bet decisions rather than sample more of them, since sampling had
+hit diminishing returns on the interval while still finding new extremes.
+This is that characterisation, and it produced a much sharper signal than
+M185's.
+
+### The cost concentrates in a BAND, non-monotonically
+
+Splitting M188's 801 facing-a-bet spots by hand strength:
+
+| strength | % costing > 1bb | mean \|loss\| |
+|---|---|---|
+| 0.00-0.20 | 4.1% | 0.129 |
+| 0.20-0.40 | 4.9% | 0.200 |
+| 0.40-0.55 | 12.3% | 0.443 |
+| **0.55-0.75** | **29.0%** | **1.376** |
+| **0.75-0.90** | **43.8%** | **2.531** |
+| 0.90-1.01 | 11.5% | 0.541 |
+
+**Both the weakest and the strongest hands are cheap.** The money is in
+the middle — the "is my top pair actually good?" decision, strong enough
+to continue and not strong enough to be obvious. That is also the one a
+human finds hardest, which is a coincidence worth noticing but not
+over-reading.
+
+### As a runtime signal it is twice as sharp as M185's
+
+| rule | fires on | catches | lift |
+|---|---|---|---|
+| facing a bet (M185) | 32.6% of postflop | 93% of cost | 2.9x |
+| **facing + strength 0.55-0.90** | **12.1%** | **74%** | **6.1x** |
+
+Both conditions are needed and neither alone is the signal: an in-band
+hand ACTING FIRST is cheap, and a facing-a-bet decision outside the band
+is much cheaper than one inside it.
+
+### Replicated before shipping, because this is exactly how M166 went wrong
+
+A band found by inspecting the same data that suggested it is a fitted
+band. Split-half on a random partition of the 801 spots:
+
+    half A   in-band 1.874 (n=148)   out-of-band 0.267 (n=252)   7.0x
+    half B   in-band 1.874 (n=149)   out-of-band 0.307 (n=252)   6.1x
+
+The in-band mean is identical to three decimals across independent
+halves. M166 asserted a strength/error split from 27 spots and M167
+withdrew it when 18 more broke it; this is 801 spots and it survives
+being cut in half.
+
+### Graded, not replaced
+
+`FACING_A_BET_COST_NOTE` still fires on every facing-a-bet decision,
+because out-of-band ones average 0.28-0.31 bb against an opening
+decision's 0.032 — cheaper, not cheap. `COSTLY_BAND_NOTE` adds the
+sharper half on top, and tells the player plainly that this is where
+their own judgement is most likely to beat the engine.
+
+`test_the_band_is_narrow_enough_to_be_worth_reading` guards the WIDTH
+rather than the prose: widening it to catch more cost trades away the
+property that makes it worth surfacing at all, and should be deliberate.
+
+Four mutations caught: the band note firing on every facing decision,
+never firing, ignoring the facing-a-bet condition, and being widened to
+the whole strength range.
