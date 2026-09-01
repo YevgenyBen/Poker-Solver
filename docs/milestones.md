@@ -10029,3 +10029,92 @@ Widening ONE cap moved THREE cache ceilings, none visible from the config
 change itself. M127's byte test caught all of them by measuring real
 entries rather than trusting the comment beside the number — the third
 consecutive milestone it has done so.
+
+## M191 — the river cap sweep, and a correction to M190's latency
+
+Asked whether the river should be pulled back from 140 to 26 to recover
+speed. The answer is **no**, and getting there corrected M190's own
+numbers.
+
+### The accuracy curve is monotone — there is no free middle
+
+97 river spots in the costly band:
+
+| cap | mean \|loss\| | reduction | paired sigma | separable |
+|---|---|---|---|---|
+| 26 | 3.4573 | — | — | — |
+| 60 | 2.7233 | 21% | 1.91 | no |
+| 100 | 2.2234 | 36% | 2.97 | YES |
+| **140** | **1.5845** | **54%** | **3.52** | **YES** |
+
+Worst case falls 73.3 -> 35.3 and decisions over 1bb fall 54 -> 24 across
+the same range. Cap 60 is not even separable from 26. **This is not the
+flop's shape** — M172 found flop error RISING from 26 to 60 before
+halving at 100, so the monotonicity here had to be measured rather than
+assumed.
+
+### M190's latency numbers were inflated by machine drift
+
+M190's validation reported median 1.03s and flop 3.19s. Measured today,
+**the same configuration gives median 0.47s and flop 2.04s.** Nothing in
+the code changed between them.
+
+This is M70's finding biting again — this machine has been observed
+running identical work up to 1.7x slower across sessions — and M190
+compared its validation sessions against a 20-session benchmark run
+hours earlier. **That comparison was not sound and its latency table
+overstates the cost of the change.**
+
+Corrected, against the same 20-session benchmark but acknowledging the
+cross-run caveat: flop 1.53 -> ~2.04s, median 0.11 -> ~0.47s. Still a
+regression, roughly half what M190 reported.
+
+### Paired, in one machine state, the cap barely matters
+
+| | river 100 | river 140 |
+|---|---|---|
+| median | 0.46s | **0.47s** |
+| p90 | 1.89s | 2.05s |
+| worst | 2.16s | 3.72s |
+| river street | 0.52s | **0.64s** |
+| within 2s | 93% | 87% |
+
+**Cap 140 costs 0.12s on the river and nothing on the median**, against
+the isolated measurement's 0.23 -> 0.55s. Isolated numbers have now
+over- and under-predicted the request in both directions this session;
+only paired production measurement settles it.
+
+So the river stays at **140**: it captures 54% of the available cost
+reduction rather than cap 100's 36%, for a difference no user would
+perceive.
+
+### The general lesson, which cost two sessions to learn
+
+**Any latency claim comparing runs from different machine states is
+worthless here.** M190's own validation, run against an earlier
+benchmark, produced a number large enough to prompt reverting a change
+that measurement shows costs almost nothing. Latency comparisons must be
+paired within one machine state — the same rule M70 set for solver
+speedups, applied to end-to-end sessions.
+
+### A test-isolation bug this surfaced
+
+The suite went red on
+`test_monte_carlo_equity_n_threads_rng_into_dealing_for_suit_diversity`,
+which asserts `monte_carlo_equity_n` calls `deal_n_hands` exactly once.
+It collected **171** calls.
+
+**The flaw was in the test.** Monkeypatching a module attribute is
+process-wide, so a background thread — an API prewarm left running by an
+earlier test — put its own calls in the same list. The test passed
+whenever the file ran alone, or when everything before it ran, or when
+the whole suite was collected but only that test executed. It failed only
+under the full run, where the prewarm was still going.
+
+**M190 surfaced it without causing it**: wider range caps made prewarm
+slow enough to still be running by the time this test executed. The
+branch that exposed it changes only documentation — `api/` is
+byte-identical to main — which is how the diagnosis started.
+
+The spy now records the calling thread and counts only its own. Counting
+a process-wide total was never what the test meant to assert.

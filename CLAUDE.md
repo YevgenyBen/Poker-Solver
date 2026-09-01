@@ -797,9 +797,20 @@ requests now reject unknown fields by name rather than ignoring them.
   reference, so (a) the iters arm also moves toward it and gains nothing,
   and (b) the reference is converged in iterations — 1500 vs 3000 moves
   it 0.0508 bb, **2.7%** of the effect measured.
-  **PRICE**: median decision **0.11s -> 1.03s**, p90 1.56 -> 3.36s, worst
-  2.17 -> 3.65s, within-2s 99.7% -> 77.8%, all still inside 5s, zero
-  defects over 785 decisions. Estimated **~16 -> ~11 bb/100**.
+  **PRICE — M190's own figures were inflated by machine drift, corrected
+  in M191**: it reported median 0.11 -> 1.03s and flop 1.53 -> 3.19s,
+  measured against a benchmark run hours earlier. The SAME configuration
+  measured later gives **median 0.47s and flop 2.04s**. Corrected: flop
+  1.53 -> ~2.04s, median 0.11 -> ~0.47s, worst 2.17 -> ~3.7s, zero
+  defects. Estimated **~16 -> ~11 bb/100**.
+  **ANY latency claim across machine states is worthless here** (M70's
+  rule, applied to sessions): M190's unsound comparison nearly prompted
+  reverting a change that costs almost nothing.
+  **The river cap sweep (M191)**: 26/60/100/140 give cost reductions of
+  0/21/36/54%, monotone — cap 60 is not separable from 26, so there is no
+  free middle. **Paired in one machine state, cap 140 costs 0.12s on the
+  river street and NOTHING on the median** against cap 100. River stays
+  at 140.
   Reversible per street in one constant, and the halves are independent.
   **Widening one cap moved THREE cache ceilings** (`river_path` 256->96,
   `canonical_warm_starts` 128->96) — none visible from the config change.
