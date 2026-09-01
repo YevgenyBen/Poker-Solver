@@ -221,11 +221,44 @@ requests now reject unknown fields by name rather than ignoring them.
   flop advice. Same board/ranges/pot/stack/sizes, varying only how much
   future betting the tree sees: all-in share **0.5652 (flop only) ->
   0.5099 (+turn) -> 0.4635 (+turn+river)** — ~5pp per street, 10.2pp
-  monotone, exact solver so deterministic, not noise. Deliberately NOT surfaced as a caveat:
-  5.5pp is an order of magnitude below the preflop distortion, it is one
-  spot at SPR 1.5, and flagging every postflop response would devalue the
-  preflop warning that marks a genuinely unusable axis. Revisit if
-  measured wider and larger.
+  monotone, exact solver so deterministic, not noise.
+  **Measured wider, it IS larger, and its SIGN depends on stack depth —
+  M195/M196.** M99's own caveat asked for exactly this ("revisit if
+  measured wider") and flagged its own weakness ("one spot at SPR 1.5").
+  Both were right. 30 spots at SPR ~16: **+0.2291 +/- 0.0249, 30 of 30
+  more aggressive when the turn is modelled, 9.21 sigma** — the opposite
+  direction to M99 and an order of magnitude larger than the 5.5pp it
+  dismissed. 12 spots at four depths resolve the contradiction:
+
+  | stack | SPR | delta | sigma | agree | menu |
+  |---|---|---|---|---|---|
+  | 9 | 1.5 | -0.1564 | 1.42 | 7/5 | 2 |
+  | 20 | 3.3 | -0.0099 | 0.08 | 9/3 | 3 |
+  | 45 | 7.5 | **+0.0981** | 3.66 | 11/1 | 3 |
+  | 97 | 16.2 | **+0.2183** | 5.48 | **12/0** | 3 |
+
+  **The flip is depth, not tree shape**: it happens between SPR 3.3 and
+  7.5, where the action menu is IDENTICAL. Only the 9bb row loses its
+  sized raise, and that is not where the sign changes — the confound was
+  checked before the finding was believed. **80% of real decisions sit at
+  SPR >= 5** (median 9.5 over 8,032 recorded opening decisions), so the
+  consistent-positive regime is the normal one, and it is now surfaced:
+  `STREET_ISOLATION_NOTE`, gated on `STREET_ISOLATION_STREETS = ("flop",)`
+  and `STREET_ISOLATION_SPR_MIN = 5.0`. **FLOP ONLY** — the turn's own
+  isolation gap has never been measured and M168 is what assuming it
+  transfers looks like.
+  **A full chained REFERENCE remains unaffordable**: cost is O(N^2)
+  (exponent 2.06 measured), ~55 min/spot at reference width, 366 hours
+  for a 400-spot study, and 41 min/request in production. So this is
+  disclosed, not corrected — and a flat correction is impossible anyway,
+  since the sign reverses.
+  **Consequence for every accuracy number in M182-M194**: they were
+  scored against a flop-only reference that SHARES this bias, so it
+  cancels from the comparison. That is why those figures were always
+  called a lower bound. This quantifies it — the shared model error is
+  worth ~0.1-0.22 of aggression, where the residual convergence error is
+  +3.44 bb/100 and not separable from zero. **The remaining error is
+  structural, not configurational.**
 - **The fold-vs-play call at 6-max is NOT a positional range chart
   (M110).** M98 marked the SIZING axis broken and treated fold-vs-play as
   the reliable half; a random-deal simulation measured the implied

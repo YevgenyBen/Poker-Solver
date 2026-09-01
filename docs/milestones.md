@@ -10410,3 +10410,92 @@ build a chained reference to measure against (366 hours).
 **Do not** attempt a chained production solve or a chained reference at
 current speeds; both are measured unaffordable by two orders of
 magnitude.
+
+## M196 — the street-isolation bias flips sign with stack depth, and 80% of play is on one side of it
+
+M195 measured street isolation as systematic and large (+0.2291, 30 of
+30, 9.21 sigma) and noted it contradicted M99, which found the opposite
+sign on one spot. The single structural difference was stack depth —
+M99 at SPR ~1.5, M195 at SPR ~16. M195 named settling this as the top
+recommendation, because it decides whether any correction is possible.
+
+### The sign does flip, monotonically
+
+Same paired design, same 12 spots, pot fixed at 6bb, varying only
+`effective_stack_bb`:
+
+| stack | SPR | delta | sem | sigma | agree | action menu |
+|---|---|---|---|---|---|---|
+| 9 | 1.5 | -0.1564 | 0.1098 | 1.42 | 7/5 | **2** (no sized bet) |
+| 20 | 3.3 | -0.0099 | 0.1185 | 0.08 | 9/3 | 3 |
+| 45 | 7.5 | **+0.0981** | 0.0268 | 3.66 | 11/1 | 3 |
+| 97 | 16.2 | **+0.2183** | 0.0398 | 5.48 | **12/0** | 3 |
+
+Monotone in SPR, and the deep arms are near-unanimous (23 of 24) where
+the shallow ones are a coin flip. **M99 and M195 are both right, at their
+own depths.**
+
+### The obvious confound was checked before the finding was believed
+
+At pot 6.0 a 2.5x-pot raise is 15bb, so a 9bb stack cannot offer a sized
+bet at all and its only aggressive action is all-in. A sign flip that
+coincided with the menu collapsing would be a statement about the TREE,
+not about depth.
+
+**It does not coincide.** The flip happens between SPR 3.3 and 7.5, where
+both arms offer the identical 3-action menu; only the 9bb row loses its
+sized raise, and the sign has already changed by then. The menu was
+recorded per depth for exactly this reason.
+
+### Which regime real play is in — measured, not assumed
+
+The practical size of the bias depends entirely on where real decisions
+fall. Derived from 8,032 recorded opening decisions (pot recovered from
+the tree's own 2.5x-pot size, stack from `max_affordable_bb`):
+
+| street | n | median SPR | p25 | p75 | SPR < 5 | SPR >= 5 |
+|---|---|---|---|---|---|---|
+| flop | 4,217 | 9.5 | 8.6 | 19.5 | 21% | **79%** |
+| turn | 3,815 | 9.5 | 9.5 | 19.5 | 19% | **81%** |
+| all | 8,032 | 9.5 | 9.5 | 19.5 | 20% | **80%** |
+
+So the consistent-positive regime is the normal one: for four decisions
+in five, the shipped flop advice is systematically ~10-22pp LESS
+aggressive than a solve that also plays out the turn.
+
+### Disclosed, not corrected — and a flat correction is now impossible
+
+M195 established the reference cannot be built (366 hours) and production
+cannot chain (41 min/request). This adds a second, independent reason not
+to correct: **the sign reverses**, so a flat offset would be wrong at one
+end of the range, and applying it below the threshold would point a
+short-stacked player the opposite way.
+
+`STREET_ISOLATION_NOTE` therefore ships as a caveat, gated on **both**
+conditions and neither is cosmetic:
+
+* `STREET_ISOLATION_STREETS = ("flop",)` — the only street whose
+  isolation gap has been measured. The turn's never has; the river has no
+  later street to model. **M168 is the standing example** of what
+  assuming a flop measurement transfers to another street costs.
+* `STREET_ISOLATION_SPR_MIN = 5.0` — below it the measured direction is
+  the opposite one, so the note would be actively wrong rather than
+  merely unsupported.
+
+The copy states two limits explicitly: this is the gap to a fuller model
+**of the same kind, not the distance to correct play** (the chained solve
+is more complete, not right), and the direction reverses at short stacks.
+
+Five mutations killed: removing either gate, weakening `>=` to `>`,
+flipping the direction word, and drifting a constant from the copy.
+
+### What it does to this session's accuracy numbers
+
+Every EV figure in M182-M194 was scored against a flop-only reference
+that shares this bias, so it cancels from the comparison — which is why
+they were always reported as a lower bound. This quantifies the bound:
+the shared model error is worth **0.1-0.22 of aggression** where the
+residual convergence error is **+3.44 bb/100 and not separable from
+zero**. **The remaining error is structural, not configurational**, and
+M194's conclusion that configuration is exhausted is reinforced rather
+than superseded.
