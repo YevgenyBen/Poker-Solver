@@ -285,6 +285,30 @@ requests now reject unknown fields by name rather than ignoring them.
   positive, and the chained arm reaching 0.997 at a 120-combo range is
   the shape of F38's known thin-range over-aggression. Converged is not
   correct. The user-facing floor stays as M197 set it.
+  **M199 measured it at PRODUCTION width, and the unanimity did not
+  survive.** Converged full-width chained reference (cap 140, 940 combos,
+  400 iterations, ~79 min/spot), 8 spots at SPR 16.2:
+  **signed gap -0.1771 +/- 0.1268 = 1.40 sigma, less aggressive on 5 of
+  8.** The MAGNITUDE survives as a floor (point estimate 1.8x
+  `STREET_ISOLATION_BIAS_LOW`) but is **not separable from zero at n=8** —
+  this fails to reject, it does not confirm. M197's choice to publish a
+  floor rather than a point estimate is what let the copy survive.
+  **M196's "23 of 24 spots" was a THIN-RANGE ARTIFACT** and is withdrawn
+  from the note: at cap 20 the chained arm bets 0.2337 on As5d/JcTsKh
+  where the full-width reference bets 0.0010 — M198's warning, M172's
+  mechanism. **What replaces it is worse news**: the disagreement is
+  occasionally CATEGORICAL, not a tilt. On 9h5c/As3s7h the reference bets
+  **0.9696 where the shipped advice bets 0.0035** — opposite
+  recommendations. 1 of 8 spots exceeds 0.5.
+  **WIDTH-VERSUS-DEPTH IS CLOSED AS UNANSWERABLE.** No arm separates from
+  shipped: cap 6 +0.1387 (0.76 sigma), cap 10 +0.0917 (0.48), cap 20
+  **-0.0392 (0.23 sigma, 5 better / 3 worse)**. Separating cap 20 needs
+  **~587 spots, ~831 hours**. Question A needs only **~16 spots (~23h)**
+  and is the one worth running. Do not re-open the width/depth trade.
+  Worth knowing but NOT established: cap-20 chained reaches mean error
+  0.1928 on **113 combos** against the shipped arm's 0.2320 on **940** —
+  depth may substitute for width at a fraction of the range, at 0.23
+  sigma.
   **A full chained REFERENCE remains unaffordable**: cost is O(N^2)
   (exponent 2.06 measured), ~55 min/spot at reference width, 366 hours
   for a 400-spot study, and 41 min/request in production. So this is

@@ -1823,16 +1823,45 @@ STREET_ISOLATION_BIAS_LOW = 0.098
 STREET_ISOLATION_BIAS_HIGH = 0.218
 STREET_ISOLATION_BIAS_AT_150_ITERS = 0.4156
 
+# M199. Everything above was measured at cap 20. Re-run against a
+# CONVERGED FULL-WIDTH chained reference (cap 140, 940 combos, 400
+# iterations, ~79 min/spot), 8 spots at SPR 16.2:
+#
+#   signed (shipped - reference)  -0.1771 +/- 0.1268  = 1.40 sigma
+#   less aggressive on 5 of 8; |gap| over the floor on 5 of 8
+#
+# **The magnitude survives as a floor** — the point estimate is 1.8x
+# BIAS_LOW — but at n=8 it is NOT separable from zero, so this fails to
+# reject rather than confirming. M197's decision to publish a floor
+# instead of a point estimate is what makes the copy survive this.
+#
+# **The UNANIMITY does not survive, and the copy has to change.** M196
+# measured 23 of 24 spots in one direction and the note quoted it; at
+# production width it is **5 of 8**. That consistency was a thin-range
+# artifact, of exactly the kind M198 flagged and M172 measured — on
+# As5d/JcTsKh the cap-20 chained arm bets 0.2337 where the full-width
+# reference bets 0.0010.
+#
+# **What replaces it is worse news and more useful**: the disagreement is
+# occasionally CATEGORICAL rather than a tilt. On 9h5c/As3s7h the
+# reference bets 0.9696 and the shipped advice bets 0.0035 — opposite
+# recommendations, not a frequency gap. 1 of 8 spots exceeds 0.5.
+STREET_ISOLATION_PRODUCTION_AGREE = (5, 8)
+STREET_ISOLATION_WORST_CATEGORICAL = 0.9661
+
 STREET_ISOLATION_NOTE = (
     " One more thing this number cannot see: the solve behind it models the betting on "
     "this street only, and averages the turn and river in as card runouts rather than "
     "playing them out. Measured against a solve that also plays out the turn - same "
     "board, same range, same seed, so only that changes - the advice you are reading is "
-    "systematically LESS aggressive by AT LEAST 10 percentage points at this stack "
-    "depth, in the same direction on 23 of 24 spots tested. Read that as a floor rather "
-    "than an estimate: every time the comparison has been run more carefully the gap has "
-    "grown, and at the tightest setting measured it was roughly four times that. So a "
-    "marginal check or call "
+    "usually LESS aggressive by AT LEAST 10 percentage points at this stack "
+    "depth. Read that as a floor rather than an estimate: every time the comparison has "
+    "been run more carefully the gap has grown. Two things temper it. The direction is "
+    "the common case and not a rule - at full range width it held on 5 of 8 spots - so "
+    "do not apply it mechanically. And the disagreement is occasionally CATEGORICAL "
+    "rather than a tilt: on one spot the fuller solve bet 97% of the time where this one "
+    "bets under 1%, which is a different recommendation and not a different frequency. "
+    "So a marginal check or call "
     "here is better read as this model's floor than as its verdict. Two limits worth "
     "knowing: that is the gap to a fuller model of the same kind, not the distance to "
     "correct play, and the direction reverses at short stacks, which is why this note "

@@ -6515,6 +6515,26 @@ def test_the_street_isolation_note_quotes_its_own_measurement():
     assert "as a floor rather than an estimate" in note, (
         "the note must tell the reader the MAGNITUDE is a floor, not just "
         "contain the word 'floor' somewhere")
+    # M199: measured against a CONVERGED FULL-WIDTH chained reference,
+    # the direction held on 5 of 8 spots, not the 23 of 24 the copy used
+    # to quote from cap-20 arms. That unanimity was a thin-range artifact
+    # (M198's warning, M172's mechanism), so the copy must not imply the
+    # direction is a rule - and must not resurrect the old figure.
+    agree, total = api_config.STREET_ISOLATION_PRODUCTION_AGREE
+    assert f"{agree} of {total} spots" in note, (
+        f"the note no longer quotes STREET_ISOLATION_PRODUCTION_AGREE "
+        f"({agree} of {total} spots): {note!r}")
+    assert "23 of 24" not in note, (
+        "the note quotes a consistency measured only at cap 20; at "
+        "production width it does not replicate")
+    assert "systematically" not in note, (
+        "5 of 8 is not 'systematic' - the word overstates what a "
+        "1.40 sigma result with three spots going the other way supports")
+    # The categorical failure is the actionable half and must survive edits.
+    worst_pct = round(api_config.STREET_ISOLATION_WORST_CATEGORICAL * 100)
+    assert f"bet {worst_pct}% of the time" in note, (
+        f"the note must report the categorical disagreement "
+        f"({worst_pct}%): {note!r}")
     assert api_config.STREET_ISOLATION_BIAS_AT_150_ITERS >         api_config.STREET_ISOLATION_BIAS_HIGH, (
         "BIAS_AT_150_ITERS records that the gap GREW with convergence; if "
         "it no longer exceeds BIAS_HIGH the floor framing needs re-deriving")
