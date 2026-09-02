@@ -270,6 +270,21 @@ requests now reject unknown fields by name rather than ignoring them.
   **Consequence: any future chained measurement needs its own convergence
   control.** Every chained number in this project predating M197 was taken
   at 20 iterations and understates the effect.
+  **M198: it DOES converge, and iterations are nearly FREE.** Ladder at
+  150/400/1000 (cap 20, 3 spots): TVD(150,1000) 0.1304, **TVD(400,1000)
+  0.0457** — 0.35x, so the solve is settling rather than oscillating.
+  **The cost model was wrong**: 150 iters 80.7s, 1000 iters 145.9s, so
+  6.7x the iterations costs **1.81x**, because the equity table dominates
+  and the marginal iteration is ~0.077s. So a CONVERGED chained solve is
+  ~2x a 20-iteration one, not ~50x, and a converged full-width reference
+  is **~1h/spot, not ~5h**. **Do not price chained work as linear in
+  iterations.**
+  **The converged gap on those 3 spots is +0.7699 (sem 0.2274)** — 3.5x
+  the 20-iteration figure. **Do NOT put that number in front of users**:
+  all 3 spots have flop-only aggression ~0, which bounds the delta
+  positive, and the chained arm reaching 0.997 at a 120-combo range is
+  the shape of F38's known thin-range over-aggression. Converged is not
+  correct. The user-facing floor stays as M197 set it.
   **A full chained REFERENCE remains unaffordable**: cost is O(N^2)
   (exponent 2.06 measured), ~55 min/spot at reference width, 366 hours
   for a 400-spot study, and 41 min/request in production. So this is

@@ -10578,3 +10578,72 @@ alone, which is why it survived since M169. Fixed by keeping the objects
 rather than their ids.
 
 Suite 1,087 (the three existing guards were tightened; no new tests).
+
+## M198 — chaining converges, and iterations are nearly free
+
+Stage 2 was scoped as "width versus depth against a full-width chained
+reference" and costed at 5.6h. M197 invalidated that costing by showing
+the chained arm had not settled at 20 or 150 iterations, leaving only bad
+options: a converged reference priced (on a linear-in-iterations model)
+at ~5.25h per spot, or an unconverged one drifting by more than the
+effect it was meant to adjudicate — M138's failure repeated.
+
+So the blocking question became whether the chained solve converges at
+all at any payable budget. Ladder at 150 / 400 / 1000 iterations, 3 spots,
+cap 20, SPR 16.2 — same spots, cap, seed and shuffle as M195-M197.
+
+### It converges
+
+| comparison | mean TVD | worst |
+|---|---|---|
+| 150 vs 1000 | 0.1304 | 0.1744 |
+| **400 vs 1000** | **0.0457** | 0.1110 |
+
+**0.35x** — the drift collapses rather than persisting, so the solve is
+settling on an answer instead of oscillating. This was a real
+possibility, not a formality: M74 established the solver is bang-bang
+near indifference, and F46 measured the multiway flop solve still
+seed-dependent at 150x its shipped budget.
+
+### And the cost model behind stage 2 was simply wrong
+
+| iterations | mean solve | per-iteration |
+|---|---|---|
+| 150 | 80.7s | 0.538s |
+| 400 | 100.1s | 0.250s |
+| 1000 | 145.9s | 0.146s |
+
+**6.7x the iterations costs 1.81x the time.** The equity table build
+dominates and the marginal iteration is ~0.077s, so cost is nearly flat
+in iterations rather than linear. Consequences:
+
+* a CONVERGED chained solve is **~2x** a 20-iteration one, not ~50x;
+* a converged full-width chained reference is **~1h per spot, not ~5h**,
+  so an 8-spot study is an overnight run rather than 42 hours;
+* **stage 2 proper is affordable after all.**
+
+**Do not price chained work as linear in iterations.** Both this
+milestone's own scoping and M197's read of it made that assumption and
+were wrong by an order of magnitude in the expensive direction.
+
+### The magnitude is NOT ready for users, and this is the important caveat
+
+The converged gap on these 3 spots is **+0.7699 (sem 0.2274)**, 3.5x the
+20-iteration figure. It stays out of the product, for two reasons:
+
+* **All three spots have flop-only aggression ~0** (0.0297, 0.0003,
+  0.0001), which bounds the delta positive and near-maximal. The subset
+  cannot estimate a magnitude — it was chosen to answer a yes/no about
+  convergence.
+* **Converged is not correct.** The chained arm reaches 0.997 and 0.998
+  aggression at a 120-combo range — 7s5s on Qs2h4d goes from betting
+  0.0003 to betting 0.9970. That is the shape of F38's known thin-range
+  over-aggression (nine-high shoving 0.5672 where the right play is
+  folding 0.9869), and M172 measured narrow ranges producing exactly this
+  class of wrong answer.
+
+So what is established is that **at matched thin width, modelling the
+turn flips these spots from never-bet to almost-always-bet** — a
+categorical disagreement, not a 10-22pp one. Whether that survives at
+production width is precisely what stage 2 proper now costs ~7-14h to
+answer. `STREET_ISOLATION_NOTE` keeps M197's floor unchanged.
