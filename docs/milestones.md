@@ -10647,3 +10647,81 @@ turn flips these spots from never-bet to almost-always-bet** — a
 categorical disagreement, not a 10-22pp one. Whether that survives at
 production width is precisely what stage 2 proper now costs ~7-14h to
 answer. `STREET_ISOLATION_NOTE` keeps M197's floor unchanged.
+
+## M199 — the street-isolation gap at PRODUCTION width, and the end of width-versus-depth
+
+M195-M198 measured street isolation only at cap 20, where M172 established
+that narrow ranges generate their own wrong answers and M198 flagged the
+converged chained arm reaching 0.997 aggression on 120 combos as the shape
+of F38's thin-range over-aggression. This runs the comparison against a
+**converged full-width chained reference** — cap 140, 940 combos, 400
+iterations, **~79 min/spot** — with four arms scored against it, 8 spots
+at SPR 16.2.
+
+Affordable only because of M198: iterations are nearly free, so the
+reference cost ~79 min rather than the ~5h a linear-in-iterations model
+predicted.
+
+### Question A: the magnitude survives as a floor. It is not confirmed.
+
+**signed gap (shipped - reference) = -0.1771 +/- 0.1268 = 1.40 sigma**,
+less aggressive on **5 of 8**, |gap| over the shipped floor on 5 of 8.
+
+The point estimate is 1.8x `STREET_ISOLATION_BIAS_LOW`, so the copy's
+"at least 10 percentage points" holds — but at n=8 the result is **not
+separable from zero**. This is a failure to reject, not a confirmation,
+and the milestone says so rather than letting the harness's own canned
+verdict ("the note holds") stand. **M197's decision to publish a floor
+instead of a point estimate is what let the copy survive this.**
+
+### The unanimity was a thin-range artifact, and is withdrawn
+
+M196 measured 23 of 24 spots moving one direction and the note quoted it.
+At production width it is **5 of 8**. The mechanism is visible per spot:
+on As5d/JcTsKh the cap-20 chained arm bets **0.2337** where the full-width
+reference bets **0.0010**.
+
+**What replaces it is worse news and more actionable**: the disagreement
+is occasionally **CATEGORICAL** rather than a tilt. On 9h5c/As3s7h the
+reference bets **0.9696** and the shipped advice bets **0.0035** —
+opposite recommendations, not a frequency gap. 1 of 8 spots exceeds 0.5.
+The note now says this, and drops "systematically".
+
+### Question B: width versus depth is UNANSWERABLE, and is closed
+
+| arm | combos | mean err | paired vs shipped | sigma |
+|---|---|---|---|---|
+| shipped flop, cap 140 | 940 | 0.2320 | — | — |
+| chained cap 6 | 28 | 0.3706 | +0.1387 | 0.76 |
+| chained cap 10 | 52 | 0.3236 | +0.0917 | 0.48 |
+| chained cap 20 | 113 | **0.1928** | **-0.0392** | **0.23** |
+
+Nothing separates. Separating cap 20 from shipped at its observed delta
+needs **~587 spots, ~831 hours**. **Do not re-open this trade** — the
+answer is not that width wins or depth wins, it is that at a common
+reference the choice does not matter enough to measure.
+
+Question A, by contrast, needs only **~16 spots (~23h)** to reach 2 sigma.
+That is the run worth doing.
+
+Worth knowing and NOT established: cap-20 chained reaches mean error
+0.1928 on **113 combos** against the shipped arm's 0.2320 on **940**.
+Depth may substitute for width at an eighth of the range — at 0.23 sigma,
+which is nothing.
+
+### Limits
+
+Scored in **aggression and TVD, not chips**: `poker_solver/ev.py` handles
+terminal and decision nodes but not chance nodes, so it cannot price a
+chained tree, and extending it mid-study would have changed the
+instrument (M161's rule). Aggression is at least the unit the note is
+written in. **Pricing this in bb is the outstanding follow-on.**
+
+Held at pot 6 / stack 97 (SPR 16.2) for continuity with M195-M198 — a
+controlled comparison at a representative deep depth, **not a
+production-weighted estimate**, and it must not be quoted as one.
+
+Four mutations killed. One initially failed to APPLY (its anchor spanned
+a string-literal boundary and matched zero times) and the run reported
+three passes — a mutation that does not apply proves nothing, and it was
+re-run with a valid anchor rather than counted.
