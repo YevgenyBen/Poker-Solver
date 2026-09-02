@@ -10499,3 +10499,82 @@ residual convergence error is **+3.44 bb/100 and not separable from
 zero**. **The remaining error is structural, not configurational**, and
 M194's conclusion that configuration is exhausted is reinforced rather
 than superseded.
+
+## M197 — the street-isolation shift is real, but its size was measured on an unconverged arm
+
+M196 shipped `STREET_ISOLATION_NOTE`, telling players the flop advice is
+systematically less aggressive than a turn-modelling solve "by roughly 10
+to 22 percentage points". Every chained arm behind that number ran at
+**20 iterations**, against a flop-only arm at the shipped 250 — so the
+comparison confounded two things:
+
+* the chained tree models a street the flop-only tree cannot see (depth —
+  the effect claimed), and
+* the chained tree had 12x fewer iterations to converge (precision — an
+  artifact).
+
+This audits a live user-facing claim, which is why it ran before the more
+expensive width-versus-depth study. 8 spots at SPR 16.2, same spots, cap,
+seed and shuffle as M195/M196, chained arm at 20 / 60 / 150 iterations.
+
+### The direction survives — M196 stands
+
+| chained iters | delta | sem | sigma | agree |
+|---|---|---|---|---|
+| 20 | +0.2191 | 0.0505 | 4.34 | 8/0 |
+| 60 | +0.2293 | 0.0789 | 2.91 | 6/2 |
+| 150 | **+0.4156** | 0.1551 | 2.68 | 6/2 |
+
+Positive at every budget. **The shift is depth, not precision**, so the
+finding and its street/depth gating are unaffected.
+
+### But the magnitude is not established, and 0.218 is not a ceiling
+
+The gap at 150 iterations is **1.90x** the figure M195 measured. And the
+decisive control says why that number cannot simply be substituted:
+
+| | mean TVD | worst |
+|---|---|---|
+| chained 20 vs 150 | 0.2849 | 0.6647 |
+| chained 60 vs 150 | **0.2221** | 0.4511 |
+
+**The chained arm has not settled at any budget tested.** A converging
+solve would show 60-vs-150 collapsing relative to 20-vs-150; it is barely
+smaller. Combined with a noisy n=8 estimate at 150 (sem 0.155), the
+honest claim is a floor with no ceiling.
+
+`STREET_ISOLATION_NOTE` now says **"by AT LEAST 10 percentage points"**
+and tells the reader to treat it as a floor, because every time the
+comparison has been run more carefully the gap has grown. This is M188's
+rule applied again: a figure that rises with better measurement is a
+floor, not a point estimate. `STREET_ISOLATION_BIAS_HIGH` is kept as the
+20-iteration figure it always was and **must not be presented as a
+bound**; `STREET_ISOLATION_BIAS_AT_150_ITERS` records that it grew.
+
+### Consequence for future work
+
+**Every chained number in this project predating M197 was taken at 20
+iterations and understates the effect** — including M99's, M195's and
+M196's. Any future chained measurement needs its own convergence control,
+and the width-versus-depth study must budget for one.
+
+Three mutations killed. One of them initially SURVIVED and is worth
+recording: asserting `"floor" in note` passed while the magnitude framing
+was removed, because the note already contained the word in an unrelated
+sentence ("this model's floor than as its verdict"). The assertion now
+pins the specific phrase. Same class of error as M164's — a guard that
+matches text elsewhere and therefore tests nothing.
+
+### A latent test flake, found by the full-suite run and fixed here
+
+`test_every_ensemble_run_uses_a_different_seed` (M169) failed once during
+this milestone's verification and passed in isolation. Not contamination:
+it recorded **4 distinct seeds but only 3 distinct `id(equity_cache)`**,
+so four caches really were built and two shared an address. **`id()` is
+unique only among LIVE objects** — the test held no reference, so an
+early cache was collected and CPython reused its address for a later one.
+It can only fire under memory pressure, i.e. in a long run and never
+alone, which is why it survived since M169. Fixed by keeping the objects
+rather than their ids.
+
+Suite 1,087 (the three existing guards were tightened; no new tests).

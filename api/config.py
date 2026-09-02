@@ -1792,16 +1792,47 @@ UNCERTAIN_HAND_NOTE = (
 # correct play — the chained solve is more complete, not right.
 STREET_ISOLATION_STREETS = ("flop",)
 STREET_ISOLATION_SPR_MIN = 5.0
+# M197 CORRECTION. M195 and M196 both ran their chained arm at **20
+# iterations** against a flop-only arm at the shipped 250, so the shift
+# confounded depth (the effect claimed) with precision (12x fewer
+# iterations to converge). Audited on 8 spots at SPR 16.2, chained arm at
+# 20 / 60 / 150 iterations:
+#
+#   chained iters   delta      sem   sigma   agree
+#              20  +0.2191   0.0505    4.34     8/0
+#              60  +0.2293   0.0789    2.91     6/2
+#             150  +0.4156   0.1551    2.68     6/2
+#
+# **The shift is NOT a convergence artifact** — it survives at every
+# budget, in the same direction, so M196's finding and its gating stand.
+#
+# **But the magnitude is NOT established, and 0.218 is not an upper
+# bound.** At 150 iterations the gap is 1.90x the figure M195 measured,
+# and the chained arm has not settled at any budget tested: TVD between
+# 20 and 150 iterations is 0.2849 mean / 0.6647 worst, and between 60 and
+# 150 it is still 0.2221 — barely smaller, where a converging solve would
+# show it collapsing. So the arm is still moving, the n=8 estimate at 150
+# is noisy (sem 0.155), and the honest claim is a FLOOR with no ceiling.
+#
+# BIAS_LOW is therefore quoted to users as a floor and BIAS_HIGH is kept
+# only as the 20-iteration figure it always was — **it is not a bound and
+# the copy must not present it as one.** Same rule M188 applied to the
+# facing-a-bet ratio: a figure that grows every time it is measured more
+# carefully is a floor, not a point estimate.
 STREET_ISOLATION_BIAS_LOW = 0.098
 STREET_ISOLATION_BIAS_HIGH = 0.218
+STREET_ISOLATION_BIAS_AT_150_ITERS = 0.4156
 
 STREET_ISOLATION_NOTE = (
     " One more thing this number cannot see: the solve behind it models the betting on "
     "this street only, and averages the turn and river in as card runouts rather than "
     "playing them out. Measured against a solve that also plays out the turn - same "
     "board, same range, same seed, so only that changes - the advice you are reading is "
-    "systematically LESS aggressive by roughly 10 to 22 percentage points at this stack "
-    "depth, in the same direction on 23 of 24 spots tested. So a marginal check or call "
+    "systematically LESS aggressive by AT LEAST 10 percentage points at this stack "
+    "depth, in the same direction on 23 of 24 spots tested. Read that as a floor rather "
+    "than an estimate: every time the comparison has been run more carefully the gap has "
+    "grown, and at the tightest setting measured it was roughly four times that. So a "
+    "marginal check or call "
     "here is better read as this model's floor than as its verdict. Two limits worth "
     "knowing: that is the gap to a fuller model of the same kind, not the distance to "
     "correct play, and the direction reverses at short stacks, which is why this note "

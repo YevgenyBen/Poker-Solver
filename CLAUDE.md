@@ -247,6 +247,29 @@ requests now reject unknown fields by name rather than ignoring them.
   and `STREET_ISOLATION_SPR_MIN = 5.0`. **FLOP ONLY** — the turn's own
   isolation gap has never been measured and M168 is what assuming it
   transfers looks like.
+  **The shift is NOT a convergence artifact, but its MAGNITUDE is not
+  established (M197).** M195/M196 both ran the chained arm at **20
+  iterations** against a flop-only arm at the shipped 250, confounding
+  depth with precision. Audited on 8 spots at SPR 16.2:
+
+  | chained iters | delta | sem | sigma | agree |
+  |---|---|---|---|---|
+  | 20 | +0.2191 | 0.0505 | 4.34 | 8/0 |
+  | 60 | +0.2293 | 0.0789 | 2.91 | 6/2 |
+  | 150 | **+0.4156** | 0.1551 | 2.68 | 6/2 |
+
+  The direction survives at every budget, so **M196's finding and its
+  gating stand**. But the gap is **1.90x larger** at 150 iterations, and
+  the chained arm has not settled at ANY budget tested — TVD 20-vs-150 is
+  0.2849 mean / 0.6647 worst, and 60-vs-150 is still 0.2221, where a
+  converging solve would show it collapsing. So **0.218 is not an upper
+  bound**, the n=8 estimate at 150 is noisy (sem 0.155), and the
+  user-facing note quotes `STREET_ISOLATION_BIAS_LOW` as a **floor with
+  no ceiling** — M188's rule, that a figure which grows every time it is
+  measured more carefully is a floor and not a point estimate.
+  **Consequence: any future chained measurement needs its own convergence
+  control.** Every chained number in this project predating M197 was taken
+  at 20 iterations and understates the effect.
   **A full chained REFERENCE remains unaffordable**: cost is O(N^2)
   (exponent 2.06 measured), ~55 min/spot at reference width, 366 hours
   for a 400-spot study, and 41 min/request in production. So this is
