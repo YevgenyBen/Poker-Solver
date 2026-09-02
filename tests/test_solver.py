@@ -2646,7 +2646,15 @@ def test_every_ensemble_run_uses_a_different_seed():
 
     def spy(root, combos, positions_, equity_cache, **kwargs):
         seeds.append(kwargs.get("seed"))
-        caches.append(id(equity_cache))
+        # Keep the OBJECT, not its id. M197: this recorded `id(...)` and
+        # failed intermittently in full-suite runs - 4 distinct seeds but
+        # only 3 distinct ids. `id()` is unique only among LIVE objects,
+        # so with no reference held an early cache is collected and
+        # CPython hands its address to a later one. Holding the objects
+        # makes the identities genuinely distinct for the lifetime of the
+        # assertion. Fires under memory pressure, i.e. exactly in a long
+        # run and never in isolation.
+        caches.append(equity_cache)
         return real(root, combos, positions_, equity_cache, **kwargs)
 
     solver_module.mccfr_solve = spy
@@ -2660,4 +2668,4 @@ def test_every_ensemble_run_uses_a_different_seed():
 
     assert len(seeds) == 4, seeds
     assert len(set(seeds)) == 4, f"traversal seeds repeat across runs: {seeds}"
-    assert len(set(caches)) == 4, "every run reused the same equity cache"
+    assert len({id(c) for c in caches}) == 4, "every run reused the same equity cache"

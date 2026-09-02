@@ -6495,10 +6495,29 @@ def test_the_street_isolation_note_quotes_its_own_measurement():
     """
     note = api_config.STREET_ISOLATION_NOTE
     low_pp = round(api_config.STREET_ISOLATION_BIAS_LOW * 100)
+    assert f"AT LEAST {low_pp} percentage points" in note, (
+        f"the note's magnitude no longer matches STREET_ISOLATION_BIAS_LOW "
+        f"({low_pp} percentage points): {note!r}")
+    # M197: the magnitude is a FLOOR, not a range. The chained arm has not
+    # converged at any budget tested (TVD 0.2221 between 60 and 150
+    # iterations, barely below 0.2849 between 20 and 150), and the gap
+    # measured 1.90x larger at the tightest setting. Quoting an upper
+    # bound would assert something the data does not support - the same
+    # error M188 avoided by saying "at least 25 times".
     high_pp = round(api_config.STREET_ISOLATION_BIAS_HIGH * 100)
-    assert f"{low_pp} to {high_pp} percentage points" in note, (
-        f"the note's magnitude no longer matches STREET_ISOLATION_BIAS_LOW/"
-        f"HIGH ({low_pp} to {high_pp} percentage points): {note!r}")
+    assert f"{low_pp} to {high_pp} percentage points" not in note, (
+        "the note quotes BIAS_HIGH as an upper bound; it is the "
+        "20-iteration figure and the gap measured 1.9x larger at 150")
+    # Assert the SPECIFIC framing, not the word: the note already contains
+    # "floor" in an unrelated sentence ("this model's floor than as its
+    # verdict"), so a bare substring check passes while the magnitude
+    # framing is removed. Mutation testing caught exactly that.
+    assert "as a floor rather than an estimate" in note, (
+        "the note must tell the reader the MAGNITUDE is a floor, not just "
+        "contain the word 'floor' somewhere")
+    assert api_config.STREET_ISOLATION_BIAS_AT_150_ITERS >         api_config.STREET_ISOLATION_BIAS_HIGH, (
+        "BIAS_AT_150_ITERS records that the gap GREW with convergence; if "
+        "it no longer exceeds BIAS_HIGH the floor framing needs re-deriving")
     assert "LESS aggressive" in note, (
         "the note must state the measured DIRECTION — modelling the turn "
         "made the advice more aggressive on 23 of 24 deep spots, so the "
