@@ -10725,3 +10725,86 @@ Four mutations killed. One initially failed to APPLY (its anchor spanned
 a string-literal boundary and matched zero times) and the run reported
 three passes — a mutation that does not apply proves nothing, and it was
 re-run with a valid anchor rather than counted.
+
+## M200 — question A settled: the gap is real, the floor is withdrawn, and width beats depth
+
+M199 left the street-isolation gap at 1.40 sigma over 8 spots and put 2
+sigma at ~16. This runs the second eight and pools them — M199's spots
+were measured at exactly this reference (cap 140, 940 combos, 400
+iterations) with exactly these arms, so they pool without re-running, and
+the probe is skipped since cap 140 was already established. 11h, not 23.
+
+### The gap is real, and it replicates
+
+| set | signed gap | sigma |
+|---|---|---|
+| M199's original eight | -0.1771 +/- 0.1268 | 1.40 |
+| the fresh eight | -0.1925 +/- 0.1328 | 1.45 |
+| **pooled (n=16)** | **-0.1848 +/- 0.0887** | **2.08** |
+
+**Separable from zero**, 95% interval **[-0.3623, -0.0074]**. The two
+halves land within 0.015 of each other — a clean split-half, which is why
+the pooled figure is trusted at all after M166's split failed to hold and
+had to be withdrawn.
+
+### But the 10-point floor is withdrawn
+
+M197 published "AT LEAST 10 percentage points" and M199 let it stand.
+**The interval reaches -0.0074**, well short of the 0.098 floor, so the
+claim is not supported. Third time this copy has been corrected, and
+every correction has been in the same direction: a stated magnitude was
+firmer than the data.
+
+### The real shape, which the mean was hiding
+
+* median gap **0.0382**; **9 of 16 spots under 0.05**
+* **3 spots carry 71.2%** of the total
+* direction is barely a majority per spot: **9 of 16**
+
+Those three disagree CATEGORICALLY — reference **0.9696 / 0.9761 /
+0.9955** against shipped **0.0035 / 0.1442 / 0.2285**. So the two models
+usually agree closely and occasionally give opposite recommendations, and
+a mean of 0.18 describes neither case. Same distribution M183/M188 found
+for EV, on a different axis.
+
+### The reference deserves suspicion, and this is not a hedge
+
+Two of those three spots are **air** (9h5c on As3s7h, 8h4d on 3sJc3d),
+and `FLOP_TURN_RAISE_SIZES` bottoms out at **2.0x pot** — so the
+reference is betting two pots with nothing ~98% of the time. **That is
+F38's over-aggression signature.** What is established is that the two
+models DISAGREE and that chaining is the more aggressive one; **not which
+is correct.** M173's standing caveat — chained versus standalone was
+never established as right versus wrong — applies directly.
+
+### WIDTH BEATS DEPTH: M199's "unanswerable" was wrong
+
+M199 closed the width/depth trade by generalising from cap 20's tiny
+delta. The **equal-latency** arm separates cleanly at n=16:
+
+| arm | combos | mean err | paired vs shipped | sigma |
+|---|---|---|---|---|
+| shipped flop, cap 140 | 940 | 0.2251 | — | — |
+| chained cap 6 | 28 | 0.5267 | **+0.3015** | **2.12** |
+| chained cap 10 | 52 | 0.4620 | +0.2369 | 1.58 |
+| chained cap 20 | 113 | 0.3383 | +0.1131 | 0.80 |
+
+All three are worse, **monotone in width**, and the equal-cost arm is
+separable. **Spending the latency budget on depth instead of width is
+measurably worse advice — the shipped configuration is right.**
+
+And the "depth may substitute for width" hint from M199 is **dead**: cap
+20 measured -0.0392 at n=8 and **flipped sign to +0.1131** at n=16. A
+0.23-sigma hint reversing when the sample doubles is exactly what a
+0.23-sigma hint should be expected to do.
+
+### Limits, unchanged
+
+Scored in aggression, not chips — `ev.py` has no chance-node case, so it
+cannot price a chained tree. **Pricing this in bb remains the outstanding
+follow-on**, and it matters more now that the gap is established. Held at
+SPR 16.2: a controlled comparison, not a production-weighted estimate.
+
+Five mutations applied and killed. The harness now asserts that each
+mutation actually APPLIED before trusting the run — M199 had one whose
+anchor matched zero times while the suite reported three passes.

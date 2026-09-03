@@ -1846,7 +1846,38 @@ STREET_ISOLATION_BIAS_AT_150_ITERS = 0.4156
 # occasionally CATEGORICAL rather than a tilt. On 9h5c/As3s7h the
 # reference bets 0.9696 and the shipped advice bets 0.0035 — opposite
 # recommendations, not a frequency gap. 1 of 8 spots exceeds 0.5.
-STREET_ISOLATION_PRODUCTION_AGREE = (5, 8)
+# M200. Question A settled at n=16 (M199's eight pooled with eight fresh
+# ones at the identical reference). **The gap is REAL**: signed
+# -0.1848 +/- 0.0887 = **2.08 sigma**, 95% [-0.3623, -0.0074].
+#
+# **Split-half replicates cleanly** - the original eight give -0.1771 and
+# the fresh eight -0.1925, which is why the pooled figure is trusted at
+# all after M166's split failed to hold.
+#
+# **But the "at least 10 points" floor is NOT supported and is withdrawn.**
+# The interval reaches -0.0074, well short of the 0.098 floor M197
+# published, so a typical decision is not off by 10 points or more.
+#
+# **The real shape is the one this project keeps finding.** Median gap
+# **0.0382**, 9 of 16 spots under 0.05 - the two models usually agree
+# closely - while **3 spots carry 71.2% of the total** and disagree
+# CATEGORICALLY: the reference bets 0.9696 / 0.9761 / 0.9955 where the
+# shipped advice bets 0.0035 / 0.1442 / 0.2285. Direction is barely a
+# majority per spot (9 of 16); it is the tail that makes the mean.
+#
+# **The reference is NOT established as correct, and here that matters
+# more than usual.** Two of those three spots are AIR (9h5c on As3s7h,
+# 8h4d on 3sJc3d) and the chained tree's smallest bet is 2.0x pot, so the
+# reference is betting two pots with nothing ~98% of the time. That is
+# F38's over-aggression signature. What is established is that the two
+# models DISAGREE and that chaining is the more aggressive one - not
+# which is right. M173's standing caveat applies.
+STREET_ISOLATION_GAP_MEAN = 0.1848
+STREET_ISOLATION_GAP_CI_LOW = 0.0074
+STREET_ISOLATION_GAP_CI_HIGH = 0.3623
+STREET_ISOLATION_MEDIAN_GAP = 0.0382
+STREET_ISOLATION_CATEGORICAL = (3, 16)
+STREET_ISOLATION_PRODUCTION_AGREE = (9, 16)
 STREET_ISOLATION_WORST_CATEGORICAL = 0.9661
 
 STREET_ISOLATION_NOTE = (
@@ -1854,14 +1885,14 @@ STREET_ISOLATION_NOTE = (
     "this street only, and averages the turn and river in as card runouts rather than "
     "playing them out. Measured against a solve that also plays out the turn - same "
     "board, same range, same seed, so only that changes - the advice you are reading is "
-    "usually LESS aggressive by AT LEAST 10 percentage points at this stack "
-    "depth. Read that as a floor rather than an estimate: every time the comparison has "
-    "been run more carefully the gap has grown. Two things temper it. The direction is "
-    "the common case and not a rule - at full range width it held on 5 of 8 spots - so "
-    "do not apply it mechanically. And the disagreement is occasionally CATEGORICAL "
-    "rather than a tilt: on one spot the fuller solve bet 97% of the time where this one "
-    "bets under 1%, which is a different recommendation and not a different frequency. "
-    "So a marginal check or call "
+    "usually close to it, and occasionally the opposite of it. On more than half the "
+    "spots tested the two differed by under 5 percentage points, and the typical "
+    "difference was about 4. But 3 of 16 disagreed CATEGORICALLY - the fuller solve bet "
+    "97% to 100% of the time where this one bet under a quarter - and those few spots "
+    "carry most of the total difference. Averaged over everything, the advice here is "
+    "the LESS aggressive of the two by about 18 percentage points, though the "
+    "measurement is only sharp enough to place that somewhere between 1 and 36. So a "
+    "marginal check or call "
     "here is better read as this model's floor than as its verdict. Two limits worth "
     "knowing: that is the gap to a fuller model of the same kind, not the distance to "
     "correct play, and the direction reverses at short stacks, which is why this note "

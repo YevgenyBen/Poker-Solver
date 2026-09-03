@@ -300,15 +300,35 @@ requests now reject unknown fields by name rather than ignoring them.
   occasionally CATEGORICAL, not a tilt. On 9h5c/As3s7h the reference bets
   **0.9696 where the shipped advice bets 0.0035** — opposite
   recommendations. 1 of 8 spots exceeds 0.5.
-  **WIDTH-VERSUS-DEPTH IS CLOSED AS UNANSWERABLE.** No arm separates from
-  shipped: cap 6 +0.1387 (0.76 sigma), cap 10 +0.0917 (0.48), cap 20
-  **-0.0392 (0.23 sigma, 5 better / 3 worse)**. Separating cap 20 needs
-  **~587 spots, ~831 hours**. Question A needs only **~16 spots (~23h)**
-  and is the one worth running. Do not re-open the width/depth trade.
-  Worth knowing but NOT established: cap-20 chained reaches mean error
-  0.1928 on **113 combos** against the shipped arm's 0.2320 on **940** —
-  depth may substitute for width at a fraction of the range, at 0.23
-  sigma.
+  **M200 SETTLED IT AT n=16** (M199's eight pooled with eight fresh at the
+  identical reference). **The gap is REAL: -0.1848 +/- 0.0887 = 2.08
+  sigma, 95% [-0.3623, -0.0074]**, and the split-half replicates
+  (-0.1771 / -0.1925), which is why it is trusted after M166's failed to.
+  **But the 10-point FLOOR is withdrawn** — the interval reaches 0.0074,
+  so a typical decision is not off by 10 points or more.
+  **The shape is this project's usual one**: median gap **0.0382**, 9 of
+  16 under 0.05, while **3 spots carry 71.2%** and disagree
+  CATEGORICALLY — reference 0.9696 / 0.9761 / 0.9955 against shipped
+  0.0035 / 0.1442 / 0.2285. Direction is barely a majority per spot
+  (9/16); the tail makes the mean.
+  **Treat the reference with suspicion here.** Two of those three spots
+  are AIR and the chained tree's smallest bet is 2.0x pot — it is betting
+  two pots with nothing ~98% of the time, which is F38's signature. What
+  is established is that the models DISAGREE and chaining is the more
+  aggressive; **not which is right** (M173's standing caveat).
+  **WIDTH BEATS DEPTH — M199's "unanswerable" was wrong.** It generalised
+  from cap 20's tiny delta; the EQUAL-LATENCY arm separates cleanly at
+  n=16:
+  | arm | combos | paired vs shipped | sigma |
+  |---|---|---|---|
+  | chained cap 6 | 28 | **+0.3015** | **2.12** |
+  | chained cap 10 | 52 | +0.2369 | 1.58 |
+  | chained cap 20 | 113 | +0.1131 | 0.80 |
+  All three are WORSE, monotone in width, and cap 6 is separable — so
+  **spending the latency budget on depth instead of width is measurably
+  worse advice, and the shipped configuration is right.** The
+  "depth substitutes for width" hint is DEAD: cap 20 was -0.0392 at n=8
+  and **flipped sign to +0.1131** at n=16.
   **A full chained REFERENCE remains unaffordable**: cost is O(N^2)
   (exponent 2.06 measured), ~55 min/spot at reference width, 366 hours
   for a 400-spot study, and 41 min/request in production. So this is
