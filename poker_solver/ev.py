@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from .chance import ChanceNode
 from .game_tree import TerminalNode
 
 __all__ = ["action_values", "strategy_ev", "ev_loss"]
@@ -78,10 +79,60 @@ def _terminal_ev(node: TerminalNode, hero_position: str, hero_index: int,
 
 def _value(node, *, hero_position: str, hero_index: int, hero_is_a: bool,
            equity_table: np.ndarray, opp_reach: np.ndarray,
-           strategy_fn, hero_override, override_node) -> float:
+           strategy_fn, hero_override, override_node,
+           chance_data: dict | None = None, dispatch: bool = True) -> float:
     """Hero's expected chips from `node` down, both players following
-    `strategy_fn` (except hero's mix at `override_node`, if given)."""
+    `strategy_fn` (except hero's mix at `override_node`, if given).
+
+    `chance_data` is the dict a chained solve fills in
+    (`StrategyResult.chance_data`), mapping `id(terminal)` to the
+    `ChanceNode` that replaced it. Passing it prices a MULTI-STREET tree;
+    omitting it prices the tree as the single street it looks like.
+
+    `dispatch` mirrors cfr's per-branch `chance_fn` switch and is NOT
+    optional bookkeeping. **A branch's root can be the very terminal the
+    chance node replaced** - on an all-in line the turn has no betting
+    left, so `build_chance_node` hands back the same object for all 49
+    branches. Deciding to dispatch from `id(node) in chance_data` alone
+    therefore recurses forever. cfr avoids this by threading
+    `branch.chance_fn` (None unless the solve chains another street)
+    rather than the ambient one; this flag is that same rule.
+    """
+    if isinstance(node, ChanceNode):
+        # Uniform over branches, exactly as cfr values one (M12's
+        # approximation, documented in chance.py). **Each branch is
+        # valued with ITS OWN equity table** - one card richer than this
+        # node's - because a branch's board is not this board. M165 is
+        # what using the parent's table looks like: a confident answer to
+        # the wrong question.
+        branches = list(node.branches.values())
+        if not branches:
+            return 0.0
+        return sum(
+            _value(b.root, hero_position=hero_position, hero_index=hero_index,
+                   hero_is_a=hero_is_a, equity_table=b.equity_table,
+                   opp_reach=opp_reach, strategy_fn=strategy_fn,
+                   hero_override=hero_override, override_node=override_node,
+                   chance_data=chance_data,
+                   dispatch=b.chance_fn is not None)
+            for b in branches) / len(branches)
+
     if isinstance(node, TerminalNode):
+        # Dispatch into the next street, but only where this subtree is
+        # still allowed to - see `dispatch` in the docstring. Inside a
+        # branch it is off unless that branch chains another street,
+        # which is exactly cfr's rule and the only thing standing
+        # between this and infinite recursion on an all-in line.
+        if dispatch and chance_data and node.is_showdown:
+            chance_node = chance_data.get(id(node))
+            if chance_node is not None:
+                return _value(
+                    chance_node, hero_position=hero_position,
+                    hero_index=hero_index, hero_is_a=hero_is_a,
+                    equity_table=equity_table, opp_reach=opp_reach,
+                    strategy_fn=strategy_fn, hero_override=hero_override,
+                    override_node=override_node, chance_data=chance_data,
+                    dispatch=dispatch)
         return _terminal_ev(node, hero_position, hero_index, hero_is_a,
                             equity_table, opp_reach)
 
@@ -106,7 +157,7 @@ def _value(node, *, hero_position: str, hero_index: int, hero_is_a: bool,
                 hero_index=hero_index, hero_is_a=hero_is_a,
                 equity_table=equity_table, opp_reach=opp_reach,
                 strategy_fn=strategy_fn, hero_override=hero_override,
-                override_node=override_node)
+                override_node=override_node, chance_data=chance_data, dispatch=dispatch)
         return total
 
     # The opponent acts: their action probability is per-HAND, so it
@@ -125,17 +176,29 @@ def _value(node, *, hero_position: str, hero_index: int, hero_is_a: bool,
             hero_index=hero_index, hero_is_a=hero_is_a,
             equity_table=equity_table, opp_reach=child_reach,
             strategy_fn=strategy_fn, hero_override=hero_override,
-            override_node=override_node)
+            override_node=override_node, chance_data=chance_data, dispatch=dispatch)
     return total
 
 
 def action_values(node, *, hero_position: str, hero_index: int, hero_is_a: bool,
                   equity_table: np.ndarray, opp_reach: np.ndarray,
-                  strategy_fn) -> dict:
+                  strategy_fn, chance_data: dict | None = None) -> dict:
     """{action: hero's expected chips from taking it} at `node`.
 
     Normalised by the opponent's total reach, so the numbers are chips per
     hand rather than chips times an arbitrary range mass.
+
+    `chance_data` (M201) prices a CHAINED tree — pass
+    `StrategyResult.chance_data` from the same result whose tree is being
+    walked, and every showdown terminal the solve chained gets valued
+    through its next street's betting instead of collapsing to an
+    averaged equity number. Omit it and nothing changes.
+
+    **It must come from the same in-memory tree**: the dict is keyed on
+    `id(terminal)`, so a rebuilt tree silently matches nothing and the
+    result quietly degrades to the single-street valuation. That is
+    `warmstart.index_by_path`'s whole reason for existing (M158) and the
+    same trap applies here.
     """
     mass = float(opp_reach.sum())
     if mass <= 0.0:
@@ -147,7 +210,7 @@ def action_values(node, *, hero_position: str, hero_index: int, hero_is_a: bool,
             hero_index=hero_index, hero_is_a=hero_is_a,
             equity_table=equity_table, opp_reach=opp_reach,
             strategy_fn=strategy_fn, hero_override=None,
-            override_node=None) / mass
+            override_node=None, chance_data=chance_data) / mass
     return out
 
 
