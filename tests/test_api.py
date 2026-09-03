@@ -6482,73 +6482,57 @@ def test_the_standalone_turn_still_refuses_an_impossible_board(client):
 
 
 def test_the_street_isolation_note_quotes_its_own_measurement():
-    """M196. The copy states a magnitude and a direction; both must match
-    the constants that recorded the measurement.
+    """M196/M197/M199/M200. The copy states magnitudes, a shape and a
+    direction; all must match the constants recording the measurement.
 
-    Same discipline as `test_the_aggression_caveat_quotes_its_own_
-    measurement`, and for the same reason: this project has twice shipped
-    prose that drifted from its evidence while the constants beside it
-    stayed right. The direction word is asserted too, because it is the
-    half a player acts on — a sign error here is worse than a magnitude
-    error, and M99 vs M195 is the standing proof that the sign is the
-    part that gets got wrong.
+    This has been rewritten three times as the measurement improved, and
+    each rewrite corrected an overstatement: M196 quoted a range whose
+    upper bound the next run doubled, M197 replaced it with a floor, and
+    M200 withdrew the floor because the 95% interval reaches 0.007 - well
+    short of it. So the assertions pin the INTERVAL and the SHAPE, not a
+    single number, because a point estimate is what keeps going wrong.
     """
     note = api_config.STREET_ISOLATION_NOTE
-    low_pp = round(api_config.STREET_ISOLATION_BIAS_LOW * 100)
-    assert f"AT LEAST {low_pp} percentage points" in note, (
-        f"the note's magnitude no longer matches STREET_ISOLATION_BIAS_LOW "
-        f"({low_pp} percentage points): {note!r}")
-    # M197: the magnitude is a FLOOR, not a range. The chained arm has not
-    # converged at any budget tested (TVD 0.2221 between 60 and 150
-    # iterations, barely below 0.2849 between 20 and 150), and the gap
-    # measured 1.90x larger at the tightest setting. Quoting an upper
-    # bound would assert something the data does not support - the same
-    # error M188 avoided by saying "at least 25 times".
-    high_pp = round(api_config.STREET_ISOLATION_BIAS_HIGH * 100)
-    assert f"{low_pp} to {high_pp} percentage points" not in note, (
-        "the note quotes BIAS_HIGH as an upper bound; it is the "
-        "20-iteration figure and the gap measured 1.9x larger at 150")
-    # Assert the SPECIFIC framing, not the word: the note already contains
-    # "floor" in an unrelated sentence ("this model's floor than as its
-    # verdict"), so a bare substring check passes while the magnitude
-    # framing is removed. Mutation testing caught exactly that.
-    assert "as a floor rather than an estimate" in note, (
-        "the note must tell the reader the MAGNITUDE is a floor, not just "
-        "contain the word 'floor' somewhere")
-    # M199: measured against a CONVERGED FULL-WIDTH chained reference,
-    # the direction held on 5 of 8 spots, not the 23 of 24 the copy used
-    # to quote from cap-20 arms. That unanimity was a thin-range artifact
-    # (M198's warning, M172's mechanism), so the copy must not imply the
-    # direction is a rule - and must not resurrect the old figure.
-    agree, total = api_config.STREET_ISOLATION_PRODUCTION_AGREE
-    assert f"{agree} of {total} spots" in note, (
-        f"the note no longer quotes STREET_ISOLATION_PRODUCTION_AGREE "
-        f"({agree} of {total} spots): {note!r}")
-    assert "23 of 24" not in note, (
-        "the note quotes a consistency measured only at cap 20; at "
-        "production width it does not replicate")
-    assert "systematically" not in note, (
-        "5 of 8 is not 'systematic' - the word overstates what a "
-        "1.40 sigma result with three spots going the other way supports")
-    # The categorical failure is the actionable half and must survive edits.
-    worst_pct = round(api_config.STREET_ISOLATION_WORST_CATEGORICAL * 100)
-    assert f"bet {worst_pct}% of the time" in note, (
-        f"the note must report the categorical disagreement "
-        f"({worst_pct}%): {note!r}")
-    assert api_config.STREET_ISOLATION_BIAS_AT_150_ITERS >         api_config.STREET_ISOLATION_BIAS_HIGH, (
-        "BIAS_AT_150_ITERS records that the gap GREW with convergence; if "
-        "it no longer exceeds BIAS_HIGH the floor framing needs re-deriving")
-    assert "LESS aggressive" in note, (
-        "the note must state the measured DIRECTION — modelling the turn "
-        "made the advice more aggressive on 23 of 24 deep spots, so the "
-        "shipped answer is the less aggressive one")
-    # The two limits that keep the note honest.
+    pct = lambda v: round(v * 100)
+
+    # The mean and its interval, in the units the copy uses.
+    assert f"about {pct(api_config.STREET_ISOLATION_GAP_MEAN)} percentage points" in note
+    assert (f"between {pct(api_config.STREET_ISOLATION_GAP_CI_LOW)} and "
+            f"{pct(api_config.STREET_ISOLATION_GAP_CI_HIGH)}") in note, (
+        "the note must give the interval, not just the point estimate - "
+        "three rewrites have now been caused by quoting a bare number")
+
+    # The shape: usually close, occasionally opposite. This is the part a
+    # player acts on, and reporting only the mean would misdescribe a
+    # distribution whose median is 0.038 and whose top 3 spots carry 71%.
+    assert f"about {pct(api_config.STREET_ISOLATION_MEDIAN_GAP)}" in note, (
+        "the note must report the TYPICAL difference; the mean alone "
+        "implies every decision is off by 18 points and the median is 4")
+    n, total = api_config.STREET_ISOLATION_CATEGORICAL
+    assert f"{n} of {total} disagreed" in note
+    assert "CATEGORICALLY" in note
+
+    assert "LESS aggressive" in note, "the measured direction must survive edits"
+
+    # Withdrawn claims must not come back.
+    for stale in ("AT LEAST", "as a floor rather than an estimate",
+                  "23 of 24", "systematically", "5 of 8 spots"):
+        assert stale not in note, (
+            f"the note quotes a withdrawn claim ({stale!r}); "
+            f"M200 settled this at n=16 and none of these survived")
+
+    # The two standing limits.
     assert "not the distance to correct play" in note, (
-        "the chained solve is more complete, not right; the note must not "
-        "let a reader take it for a GTO reference")
-    assert "reverses at short stacks" in note, (
-        "the direction is depth-dependent (M196) and the note must say so, "
-        "since a reader at a different depth would otherwise mis-apply it")
+        "the chained solve is more complete, not established as right - "
+        "and 2 of its 3 categorical wins bet two pots with air")
+    assert "reverses at short stacks" in note
+
+    # The interval must actually straddle the withdrawn floor, or the
+    # withdrawal itself no longer follows from the data.
+    assert (api_config.STREET_ISOLATION_GAP_CI_LOW
+            < api_config.STREET_ISOLATION_BIAS_LOW), (
+        "the 95% interval no longer reaches below the old floor; if that "
+        "changed, the floor framing may be supportable again")
 
 
 def test_street_isolation_is_gated_on_BOTH_street_and_depth():
