@@ -10808,3 +10808,71 @@ SPR 16.2: a controlled comparison, not a production-weighted estimate.
 Five mutations applied and killed. The harness now asserts that each
 mutation actually APPLIED before trusting the run — M199 had one whose
 anchor matched zero times while the suite reported three passes.
+
+## M201 — ev.py can price a chained tree
+
+M195-M200 measured street isolation in **aggression** rather than chips,
+for one reason: `poker_solver/ev.py` handled `TerminalNode` and decision
+nodes but had no `ChanceNode` case, so it could not value
+`solve_flop_turn` / `solve_flop_to_river`. Extending it during those
+studies would have changed the instrument mid-measurement (M161's rule),
+so it waited. This closes it.
+
+`action_values(..., chance_data=res.chance_data)` now prices a
+multi-street tree. Omit the argument and nothing changes — every
+pre-existing caller is unaffected, which the original 8 tests confirm
+untouched.
+
+### The trap, which is not the obvious one
+
+The intuitive rule is "dispatch at a showdown terminal when
+`chance_data` has an entry for it", and it looked like it reproduced
+cfr's per-branch switch for free. **It recurses forever.**
+
+On an all-in flop line the turn has no betting left, so
+`build_chance_node` hands back **the very terminal it replaced** as every
+branch's root. Measured on a real `solve_flop_turn`: of seven chance
+nodes, one had **all 49 branch roots identical to its own dispatch key**.
+An id-keyed rule dispatches into the node, walks to the branch root,
+finds the same key, and dispatches again.
+
+cfr never hits this because it threads **`branch.chance_fn`** — `None`
+unless the solve chains a further street — rather than the ambient one,
+which is exactly what `chance.py`'s docstring means by "double-deal a
+card off the wrong board". `_value` now carries the same `dispatch` flag,
+set from `b.chance_fn is not None` when descending into a branch. It is
+not bookkeeping; it is the only thing between this and a blown stack.
+
+### The other two properties, both asserted
+
+* **Each branch is valued with ITS OWN equity table**, one card richer
+  than the node's. Using the parent's is M165's defect — a confident
+  answer to the wrong question.
+* **A chance node is the uniform average of its branches**, matching cfr
+  and M12's documented approximation.
+
+### Two test-construction errors, both caught by mutation testing
+
+Worth recording because both LOOKED right and neither tested anything:
+
+* the "own equity table" test first used branches of equity **1.0 and
+  0.0** against a parent of **0.5**. EV is linear in equity here, so
+  their average IS the parent value — the test passed with the bug
+  present. Rebuilt with both branches at 1.0 against a parent of 0.0,
+  where no arithmetic coincidence can satisfy it.
+* the dispatch test searched only `root.children` for a showdown
+  terminal. They sit deeper, so it found none and asserted on an empty
+  list.
+
+Five mutations applied and killed: parent equity table, dispatch forced
+on inside branches, the flag ignored at terminals, summing instead of
+averaging, and never dispatching at all.
+
+### What it unblocks
+
+Street isolation can now be priced in **big blinds** rather than
+frequency — the outstanding follow-on named by M199 and M200, and the
+metric this project says decides everything (M182/M183). The measurement
+itself is a separate piece of work; this is the instrument.
+
+Suite 1,087 -> 1,093.
