@@ -364,6 +364,36 @@ requests now reject unknown fields by name rather than ignoring them.
   worth ~0.1-0.22 of aggression, where the residual convergence error is
   +3.44 bb/100 and not separable from zero. **The remaining error is
   structural, not configurational.**
+- **THE ENGINE CANNOT BET LESS THAN 2.5x THE POT, and it costs +0.0863 bb
+  a decision (M203/M204).** `raise_sizes` held one multiplier per raise
+  level until M203, so a tree offered exactly one sized bet plus an
+  all-in — at production settings the smallest bet on any street is
+  **2.5x pot** (a real request reports `modelled_bet_sizes [12.5, 95.0]`
+  at a pot of 5.0), while solved play is dominated by 0.25-0.75x.
+  An entry of `raise_sizes` may now be a **tuple** and the solver picks
+  the size; a bare float behaves exactly as before, so nothing shipped
+  changed. Priced on M199's 16 spots against a full-width reference
+  offering 0.33/0.75/2.5:
+  | arm | mean loss | sigma |
+  |---|---|---|
+  | shipped (2.5x only) | **+0.0863 bb** | 3.41 |
+  | menu (0.33/0.75/2.5) | **+0.0368 bb** | 3.45 |
+  Paired **-0.0496 +/- 0.0170 = 2.92 sigma**, 10 better / 6 worse,
+  **57% recovered** at **1.57x** on the flop solve (isolated A/B).
+  **Not theoretical**: the reference bets small **46.5%** of the time on
+  average, 11/16 spots over 0.10, three spots at 97-99%. The shipped arm
+  bets small 0.0000 because it cannot.
+  **Mechanism confirmed**: corr(reference small-bet frequency, shipped
+  loss) = **+0.798**; loss is **0.1188 bb** where the reference wants a
+  small bet against **0.0148** where it does not, and the menu recovers
+  **61%** there while costing +0.0020 elsewhere.
+  **This is the first structural defect here that is both real and
+  affordable to fix** — street isolation costs a comparable +0.1097 bb
+  (M202) and cannot be fixed at any production budget.
+  **Second consequence, unmeasured**: with only a 2.5x bet, every
+  facing-a-bet node in this engine is "facing a 2.5x-pot overbet", so the
+  opponent model there is wrong in a way M204 does not price — and M188
+  puts ~20x the cost at those nodes.
 - **The fold-vs-play call at 6-max is NOT a positional range chart
   (M110).** M98 marked the SIZING axis broken and treated fold-vs-play as
   the reliable half; a random-deal simulation measured the implied
