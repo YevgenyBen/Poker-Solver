@@ -6630,3 +6630,64 @@ def test_the_street_isolation_note_reaches_a_real_deep_flop_response(client):
     assert api_config.STREET_ISOLATION_NOTE not in shallow, (
         "the note fired at SPR %.1f, where the measured direction is the "
         "opposite one" % shallow_spr)
+
+
+def _sized_bet_multiples(payload):
+    """Hero's SIZED bets as multiples of the pot, all-in excluded.
+
+    Read off the action NAMES rather than `modelled_bet_sizes`, because
+    the all-in cannot be identified by size: at a flop node the shove is
+    the stack entering that decision (95.0) while `max_affordable_bb` is
+    the stack entering the STREET (97.5), so subtracting one from the
+    other leaves the shove in. That gap is M101's whole point.
+    """
+    pot = payload["pot"]
+    return sorted(round(float(name.split(":")[1]) / pot, 2)
+                  for name in payload["hero"]["strategy"]
+                  if name.startswith("raise:"))
+
+
+def test_the_flop_bet_sizes_come_from_CONFIG_not_a_library_default(client, monkeypatch):
+    """M205. `FLOP_RAISE_SIZES` must reach the tree the flop is solved on.
+
+    Until M205 the flop's sizes were `StreetConfig`'s own default, so the
+    single most consequential modelling choice on the most-used street
+    was the one tunable not in `api/config.py`. Threading a constant
+    through is exactly the kind of change that can silently do nothing —
+    M163 shipped a trainer whose hero lookup never matched, and its tests
+    passed because they exercised a different branch.
+
+    So this drives the constant to a MENU (M203) and reads the sizes back
+    off a real response, rather than asserting the wiring exists.
+    """
+    monkeypatch.setattr(api_config, "FLOP_RAISE_SIZES", ((0.33, 0.75, 2.5), 3.0, 2.2))
+    monkeypatch.setattr(api_config, "FLOP_MAX_RAISES", 4)
+    payload = client.post("/advise", json={
+        "stack_bb": 100.0, "players": 2, "board": "Kd7c2h",
+        "hero_cards": "9c9d",
+        "preflop_action_path": ["raise", "call_or_check"],
+    }).json()
+
+    assert _sized_bet_multiples(payload) == [0.33, 0.75, 2.5], (
+        f"the flop tree ignored FLOP_RAISE_SIZES: modelled "
+        f"{_sized_bet_multiples(payload)} at a pot of {payload['pot']}")
+
+
+def test_the_shipped_flop_offers_whatever_config_says_it_does(client):
+    """The same read at the SHIPPED value, so the response and the
+    constant cannot drift apart unnoticed.
+
+    `modelled_bet_sizes` is derived from the response's own rows (M144),
+    which is what makes this a real cross-check rather than a tautology.
+    """
+    payload = client.post("/advise", json={
+        "stack_bb": 100.0, "players": 2, "board": "Kd7c2h",
+        "hero_cards": "9c9d",
+        "preflop_action_path": ["raise", "call_or_check"],
+    }).json()
+    sized = _sized_bet_multiples(payload)
+    opening = api_config.FLOP_RAISE_SIZES[0]
+    expected = sorted(round(m, 2) for m in
+                      (opening if isinstance(opening, tuple) else (opening,)))
+    assert sized == expected, (
+        f"the flop offers {sized} but FLOP_RAISE_SIZES[0] says {expected}")

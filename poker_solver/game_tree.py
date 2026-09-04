@@ -420,14 +420,34 @@ def resolve_action(node: "DecisionNode", kind: str) -> Action:
     kind that never collides with it. So a bare kind never has more than
     one matching `Action` here; no ambiguity case exists to resolve.
 
+    **M205 CORRECTION: M203 broke that invariant.** A raise level may now
+    offer a MENU of sizes, so several sized RAISE actions can be legal at
+    one node. The old loop returned the FIRST — measured on a
+    `(0.33, 0.75, 2.5)` menu it silently returned `raise:3.30`, so a
+    client saying "villain raised" would be modelled as facing the
+    SMALLEST bet with nothing saying so. That is a confident answer to a
+    different question, and this project has shipped enough of those.
+
+    Ambiguity is therefore an ERROR, not a silent choice. A bare kind
+    stays valid wherever it is unambiguous, which is every configuration
+    shipped today; enabling a menu on a street whose action paths are
+    walked requires the caller to name the size, and this is what forces
+    that to be a deliberate change rather than a silent one.
+
     Raises `ValueError` (not `StopIteration`) for an unknown kind or a
     kind not currently legal at this node — a clearer error for an
     untrusted caller than a bare generator exhaustion.
     """
-    for action in node.legal_actions:
-        if action.kind == kind:
-            return action
-    raise ValueError(f"{kind!r} is not legal at this node (legal actions: {node.legal_actions!r})")
+    matches = [action for action in node.legal_actions if action.kind == kind]
+    if not matches:
+        raise ValueError(f"{kind!r} is not legal at this node (legal actions: {node.legal_actions!r})")
+    if len(matches) > 1:
+        raise ValueError(
+            f"{kind!r} is ambiguous at this node — it matches "
+            f"{[str(a) for a in matches]}. Name the size instead of the "
+            f"bare kind (M205)."
+        )
+    return matches[0]
 
 
 def _validate_raise_sizes(raise_sizes: tuple) -> None:

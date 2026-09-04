@@ -663,6 +663,19 @@ PATH_QUERY_ITERATIONS = 250
 # changed underneath it, and the same comparison now measures
 # **1.43s -> 1.62s, 1.13x**.
 FLOP_TURN_MAX_RAISES = 3
+# M205. The heads-up FLOP's bet sizes, which until now were an invisible
+# default: `solve_flop` and `library.query_strategy_from_path` both fell
+# through to `StreetConfig`'s own `(2.5, 3.0, 2.2)`, so the single most
+# consequential modelling choice on the most-used street was the one
+# tunable not in this file. Naming it is a prerequisite for changing it
+# and worth doing regardless of the value.
+#
+# `raise_sizes[0]` is the OPENING bet as a multiple of the pot; later
+# entries are multiples of the previous bet (a re-raise). Since M203 an
+# entry may be a TUPLE, and the solver picks from the menu.
+FLOP_RAISE_SIZES = (2.5, 3.0, 2.2)
+FLOP_MAX_RAISES = 4
+
 FLOP_TURN_RAISE_SIZES = (2.5, 2.0)
 FLOP_TO_RIVER_MAX_RAISES = 1
 FLOP_TO_RIVER_RAISE_SIZES = ()
