@@ -11039,3 +11039,81 @@ filter, validation skipped (both configs), a tuple read as a single
 size, and the empty-menu check.
 
 Suite 1,093 -> 1,106.
+
+## M204 — what only having a 2.5x-pot bet costs, and a menu recovers 57%
+
+M203 made a bet-size menu representable. This prices the defect it
+exposed, on the same 16 spots M199/M200/M202 used, so it is directly
+comparable to street isolation.
+
+The reference is a full-width (169-class), better-converged solve whose
+tree offers **0.33x / 0.75x / 2.5x pot**, and which therefore CONTAINS
+the shipped tree's actions exactly. The shipped row is embedded by name
+with **no nearest-size fallback**: an arm that cannot bet 0.75x shows
+zero there, because that inability is precisely what is being priced.
+`mass_with_no_home` is **0.000000** across all arms and spots, so nothing
+was lost in the embedding.
+
+### The defect is real, and the fix is separable
+
+| arm | mean loss | sem | sigma | median | worst | >1bb |
+|---|---|---|---|---|---|---|
+| shipped (2.5x only) | **+0.0863 bb** | 0.0253 | 3.41 | +0.0499 | +0.3322 | 0 |
+| menu (0.33/0.75/2.5) | **+0.0368 bb** | 0.0107 | 3.45 | +0.0253 | +0.1373 | 0 |
+
+Paired: **-0.0496 +/- 0.0170 = 2.92 sigma**, better on 10 / worse on 6.
+**57% of the loss recovered.**
+
+### It is not theoretical — the reference bets small constantly
+
+**Mean 0.4652, median 0.4790, and 11 of 16 spots over 0.10.** On three
+spots it bets small **97-99%** of the time. The shipped arm bets small
+**0.0000**, because it cannot.
+
+### The mechanism is confirmed, not inferred
+
+**corr(reference small-bet frequency, shipped loss) = +0.798.**
+
+| spots | n | shipped | menu | |
+|---|---|---|---|---|
+| reference bets small > 0.10 | 11 | **0.1188 bb** | 0.0458 | **61% recovered** |
+| reference bets small <= 0.10 | 5 | 0.0148 bb | 0.0168 | +0.0020 |
+
+**8x more expensive where the reference wants a small bet**, and the menu
+helps exactly there while costing essentially nothing where it does not.
+That profile is much better than M141's conservation law: the six "worse"
+spots are all low-small-bet ones whose loss was already 0.0001-0.0255.
+
+### Comparison to the other structural defect
+
+Same 16 spots, same method, same root decision:
+
+| defect | cost | fixable? |
+|---|---|---|
+| street isolation (M202) | +0.1097 bb | **No** — 41 min/request, sign flips with depth |
+| missing bet sizes (M204) | +0.0863 bb | **Yes** — 57% for 1.57x on the flop solve |
+
+**This is the first structural defect in this project that is both real
+and affordable to fix.**
+
+### Cost, and what is NOT yet established
+
+Same-process A/B: flop solve median **2.593s -> 4.074s (1.57x)**, p90
+2.681 -> 4.189. **That is an isolated-solve figure and M172/M173 both
+showed those under- and over-quote end to end in opposite directions**,
+so it is not a production latency claim and shipping needs a paired
+benchmark plus three play sessions (M163).
+
+Reference convergence control: TVD **0.0315 mean / 0.0777 worst** between
+1,500 and 3,000 iterations.
+
+**Scope**: measured at the ROOT, at SPR 16.2, 16 spots. `ev_loss` changes
+hero's mix at one node, so this prices the opening decision. It does NOT
+capture a second consequence worth naming: with only a 2.5x bet
+available, **every facing-a-bet node in this engine is "facing a 2.5x-pot
+overbet"** — a situation a player rarely meets — so the opponent model at
+those nodes is wrong in a way this number does not measure. M188 puts
+~20x the cost there.
+
+Nothing shipped here. The config change is M205's job, gated on the
+benchmark.
