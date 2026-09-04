@@ -11117,3 +11117,67 @@ those nodes is wrong in a way this number does not measure. M188 puts
 
 Nothing shipped here. The config change is M205's job, gated on the
 benchmark.
+
+## M205 — the flop's bet sizes become a config constant, and M203's menu turns out not to be shippable yet
+
+M204 measured the menu as worth **-0.0496 bb at 2.92 sigma**, so this set
+out to ship it. It does not, and the reason is the milestone.
+
+### The flop's sizes were the one tunable not in config.py
+
+`solve_flop` and `library.query_strategy_from_path` both fell through to
+`StreetConfig`'s own `(2.5, 3.0, 2.2)`, so the single most consequential
+modelling choice on the most-used street was invisible.
+`FLOP_RAISE_SIZES` / `FLOP_MAX_RAISES` now name it and are threaded
+through all three flop call sites — the demo endpoint, the canonical
+library path (the opening decision) and `_solve_flop_node` (the mid-flop
+cell, M88/M163). **The value is unchanged**, so this half is inert by
+construction and the suite confirms it.
+
+Guarded by a test that drives the constant to a MENU through
+`monkeypatch` and reads the sizes back off a real `/advise` response —
+not by asserting the wiring exists. M163 shipped a trainer whose hero
+lookup never matched and whose tests passed because they exercised a
+different branch.
+
+**A helper detail worth keeping**: the sized bets are read from hero's
+ACTION NAMES, not from `modelled_bet_sizes` minus the all-in. At a flop
+node the shove is the stack entering that decision (95.0) while
+`max_affordable_bb` is the stack entering the STREET (97.5), so
+subtracting one from the other leaves the shove in the list. That gap is
+M101's whole point and it broke the first version of this test.
+
+### M203 broke a documented invariant, and nothing noticed
+
+`resolve_action`'s docstring claimed:
+
+> Safe by construction, not just in practice: at most one sized RAISE
+> action can ever exist at a single node ... no ambiguity case exists.
+
+M203's menu makes that false. Measured on a `(0.33, 0.75, 2.5)` menu,
+`resolve_action(node, "raise")` returned **`raise:3.30`** — the smallest.
+So with the menu enabled, a client sending `flop_action_path: ["raise"]`
+would be modelled as facing the SMALLEST bet, silently, with nothing in
+the response saying which bet it had assumed.
+
+**That is why the menu is not shipped.** Enabling it on a street whose
+action paths are walked needs the API to express WHICH size, which is a
+schema and validation change, not a constant.
+
+Ambiguity is now a loud `ValueError` rather than a silent choice. The
+guard is inert for every shipped configuration — a single sized raise is
+unambiguous — and it is what forces enabling a menu to be a deliberate
+change. The docstring's invariant claim is corrected in place rather than
+deleted, since the reasoning still holds for single-size trees.
+
+### What is still owed before the menu can ship
+
+1. An action-path representation that names a bet size.
+2. The paired latency benchmark and three play sessions (M163) that M204
+   already flagged — still not run, because there is nothing to benchmark
+   until 1 is done.
+
+The measured **57% recovery stands**; what has changed is that collecting
+it costs an API change, not a config flip.
+
+Suite 1,106 -> 1,110.

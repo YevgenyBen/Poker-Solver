@@ -1114,3 +1114,33 @@ def test_the_menu_reaches_preflop_too():
         raise_sizes=((2.0, 3.0), 2.2), max_raises=3))
     raises = sorted(a.size for a in root.legal_actions if a.kind == RAISE)
     assert raises == [2.0, 3.0], raises
+
+
+def test_a_bare_kind_is_an_ERROR_when_a_menu_makes_it_ambiguous():
+    """M205. `resolve_action`'s docstring claimed at most one sized RAISE
+    could exist at a node, and M203's menu broke that.
+
+    The old loop returned the first match: on a (0.33, 0.75, 2.5) menu it
+    silently returned `raise:3.30`, so an action path saying "villain
+    raised" would be modelled as facing the SMALLEST bet with nothing
+    reporting the choice. Ambiguity must fail loudly instead — which is
+    also what stops a menu being enabled on a street whose action paths
+    are walked without the API being extended first.
+    """
+    root = build_street_tree(StreetConfig(
+        positions=("OOP", "IP"), pot=10.0, stack_bb=100.0,
+        raise_sizes=((0.33, 0.75, 2.5), 3.0, 2.2), max_raises=4))
+    with pytest.raises(ValueError, match="ambiguous"):
+        resolve_action(root, RAISE)
+    # Unambiguous kinds at the same node still resolve.
+    assert resolve_action(root, CALL_OR_CHECK).kind == CALL_OR_CHECK
+    assert resolve_action(root, ALL_IN).kind == ALL_IN
+
+
+def test_a_bare_kind_still_resolves_for_every_shipped_configuration():
+    """The guard must be inert where no menu is configured — which is
+    every street today. A single sized raise is unambiguous."""
+    root = build_street_tree(StreetConfig(
+        positions=("OOP", "IP"), pot=10.0, stack_bb=100.0,
+        raise_sizes=(2.5, 3.0, 2.2), max_raises=4))
+    assert str(resolve_action(root, RAISE)) == "raise:25.00"

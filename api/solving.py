@@ -255,6 +255,8 @@ def _get_or_solve_flop(board_cards: tuple, pot: float, stack_bb: float, iteratio
         villain_range=villain_range,
         pot=pot,
         effective_stack_bb=stack_bb,
+        raise_sizes=cfg.FLOP_RAISE_SIZES,
+        max_raises=cfg.FLOP_MAX_RAISES,
         iterations=iterations,
     )
 
@@ -1136,6 +1138,8 @@ def _query_flop_from_path(
             situation.preflop_result,
             situation.capped_scenario,
             board_cards,
+            raise_sizes=cfg.FLOP_RAISE_SIZES,
+            max_raises=cfg.FLOP_MAX_RAISES,
             iterations=cfg.PATH_QUERY_ITERATIONS,
             # M131: the flop path ran at board_equity's default of 200
             # samples because nothing passed this. Precision was being
@@ -1350,6 +1354,8 @@ def _solve_flop_node(board_cards, situation, oop_position, ip_position, pot,
         pot=pot,
         effective_stack_bb=effective_stack_bb,
         positions=(oop_position, ip_position),
+        raise_sizes=cfg.FLOP_RAISE_SIZES,
+        max_raises=cfg.FLOP_MAX_RAISES,
         iterations=(min(cfg.PATH_QUERY_WARM_ITERATIONS, cfg.PATH_QUERY_ITERATIONS)
                     if warm is not None else cfg.PATH_QUERY_ITERATIONS),
         equity_samples=cfg.PATH_QUERY_EQUITY_SAMPLES,
