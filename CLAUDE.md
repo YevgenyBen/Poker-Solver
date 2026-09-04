@@ -394,6 +394,21 @@ requests now reject unknown fields by name rather than ignoring them.
   facing-a-bet node in this engine is "facing a 2.5x-pot overbet", so the
   opponent model there is wrong in a way M204 does not price — and M188
   puts ~20x the cost at those nodes.
+  **NOT SHIPPED, and M205 found why.** The flop's sizes were the one
+  tunable not in this file (`solve_flop` and `query_strategy_from_path`
+  both fell through to `StreetConfig`'s default); they are now
+  `FLOP_RAISE_SIZES = (2.5, 3.0, 2.2)` / `FLOP_MAX_RAISES = 4`, threaded
+  through all three flop call sites at an unchanged value.
+  **M203's menu broke a documented invariant**: `resolve_action`'s
+  docstring claimed at most one sized RAISE could exist at a node, so no
+  ambiguity case existed. With a `(0.33, 0.75, 2.5)` menu it returned
+  **`raise:3.30`, the smallest**, so `flop_action_path: ["raise"]` would
+  silently model the player as facing the SMALLEST bet. Ambiguity is now
+  a loud `ValueError` (inert for every shipped config).
+  **So enabling a menu needs the action-path API to name a SIZE** — a
+  schema change, not a constant flip — plus M204's still-unrun paired
+  benchmark and three play sessions. The 57% recovery stands; collecting
+  it costs an API change.
 - **The fold-vs-play call at 6-max is NOT a positional range chart
   (M110).** M98 marked the SIZING axis broken and treated fold-vs-play as
   the reliable half; a random-deal simulation measured the implied
