@@ -931,6 +931,21 @@ def test_no_raise_is_offered_once_anyone_is_all_in():
                   raise_sizes=(0.75, 2.5), max_raises=3), build_street_tree),
     (StreetConfig(positions=("SB", "BB"), pot=10.0, stack_bb=2.0,
                   raise_sizes=(0.75, 2.5), max_raises=3), build_street_tree),
+    # M203: bet-size MENUS get the same exhaustive treatment. The
+    # "raise label != money" check is what would catch a late-binding
+    # closure handing every branch the last size's subtree - a tree that
+    # is wholly wrong while every node still looks legal.
+    (StreetConfig(positions=("OOP", "IP"), pot=6.0, stack_bb=97.0,
+                  raise_sizes=((0.33, 0.75, 2.5), (2.0, 3.0)), max_raises=3),
+     build_street_tree),
+    (StreetConfig(positions=("P0", "P1", "P2"), pot=6.0, stack_bb=40.0,
+                  raise_sizes=((0.5, 1.0), 2.5), max_raises=3),
+     build_street_tree),
+    # A menu at a SHORT stack, where some sizes are filtered out for
+    # reaching the stack and the rest must still be coherent.
+    (StreetConfig(positions=("OOP", "IP"), pot=10.0, stack_bb=12.0,
+                  raise_sizes=((0.25, 0.75, 2.5),), max_raises=2),
+     build_street_tree),
 ])
 def test_every_tree_obeys_the_rules_of_poker(config, builder):
     """M117 (audit round 10). Eight legality invariants checked over
@@ -992,3 +1007,110 @@ def test_every_tree_obeys_the_rules_of_poker(config, builder):
             check(child, frozenset([actor]) if reopens else frozenset(acted) | {actor})
 
     check(builder(config), frozenset())
+
+
+# --- M203: a raise level can offer a MENU of sizes ---------------------
+#
+# `raise_sizes` held one multiplier per raise level, so the tree could
+# offer exactly one sized bet and an all-in. At production settings the
+# smallest flop bet was 2.5x the pot: the engine could not bet half the
+# pot on any street, ever, while solved play is dominated by bets of
+# 0.25-0.75x. An entry may now be a tuple, and the solver picks the size.
+
+def _menu_tree(sizes, pot=10.0, stack=100.0, max_raises=2):
+    return build_street_tree(StreetConfig(
+        positions=("OOP", "IP"), pot=pot, stack_bb=stack,
+        raise_sizes=(sizes,), max_raises=max_raises))
+
+
+def test_a_menu_offers_one_raise_action_per_size():
+    root = _menu_tree((0.5, 1.0, 2.5))
+    raises = sorted(a.size for a in root.legal_actions if a.kind == RAISE)
+    assert raises == [5.0, 10.0, 25.0], raises
+
+
+def test_a_single_multiplier_still_behaves_exactly_as_before():
+    """Backward compatibility, asserted rather than assumed: every
+    pre-M203 config passes a bare float and must be untouched."""
+    menu = _menu_tree((2.5,))
+    single = _menu_tree(2.5)
+    assert ([str(a) for a in single.legal_actions]
+            == [str(a) for a in menu.legal_actions])
+
+
+def test_each_size_leads_to_its_OWN_subtree():
+    """The late-binding trap, pinned directly.
+
+    Building the branches in a loop makes the closure capture `size` by
+    reference; without per-iteration binding every raise action would
+    lead to the LAST size's subtree. Every node would still be legal —
+    pots conserved, no side pots — while the tree modelled a game nobody
+    plays. Here: after betting 5, the money in front of the bettor must
+    be 5, not 25.
+    """
+    root = _menu_tree((0.5, 1.0, 2.5))
+    for action in root.legal_actions:
+        if action.kind != RAISE:
+            continue
+        child = root.children[action]
+        assert abs(child.invested["OOP"] - action.size) < 1e-9, (
+            f"{action} led to a subtree where OOP had committed "
+            f"{child.invested['OOP']}")
+
+
+def test_duplicate_sizes_are_collapsed_by_the_SIZE_HELPER_not_by_luck():
+    """Asserted on `_raise_total_sizes`, not on the tree.
+
+    Mutation testing caught the first version of this test: it built a
+    tree from (1.0, 1.0, 2.5) and checked the action list, which passes
+    with the dedupe REMOVED because two equal sizes make the identical
+    `Action(RAISE, 10.0)` dict key and collapse anyway. The tree-level
+    assertion could not fail. Testing the helper makes the guard real.
+    """
+    from poker_solver.game_tree import _raise_total_sizes
+
+    assert _raise_total_sizes(1, 10.0, 0.0, ((1.0, 1.0, 2.5),)) == (10.0, 25.0)
+    # Order is preserved — the first occurrence wins, not the last.
+    assert _raise_total_sizes(1, 10.0, 0.0, ((2.5, 1.0, 2.5),)) == (25.0, 10.0)
+
+
+def test_a_size_at_or_beyond_the_stack_is_dropped_not_disguised_as_a_raise():
+    """A 2.5x-pot bet into a 12bb stack is a shove. It must appear as
+    the all-in action, not as a `raise` labelled with the whole stack —
+    which would also collide with the all-in's own key."""
+    root = _menu_tree((0.25, 0.75, 2.5), pot=10.0, stack=12.0)
+    raises = [a for a in root.legal_actions if a.kind == RAISE]
+    assert all(a.size < 12.0 for a in raises), raises
+    assert sum(1 for a in root.legal_actions if a.kind == ALL_IN) == 1
+
+    # The BOUNDARY, which the case above never reaches: a size landing
+    # EXACTLY on the stack. Mutation testing caught this - relaxing the
+    # filter from >= to > left the first version passing, because 2.5x
+    # of a 10 pot is 25 against a 12bb stack and is filtered either way.
+    exact = _menu_tree((0.5, 2.5), pot=10.0, stack=25.0)
+    assert [str(a) for a in exact.legal_actions] == [
+        "call_or_check", "raise:5.00", "all_in:25.00"], (
+        "a bet equal to the stack must be the all-in action, not a raise "
+        "labelled with the whole stack")
+
+
+@pytest.mark.parametrize("bad", [(), (0.0, 1.0), (-0.5,), ("half",)])
+def test_a_malformed_menu_is_rejected_at_construction(bad):
+    """A malformed menu does not fail on its own: an empty tuple removes
+    every sized raise at that level and a non-positive multiplier builds
+    a bet nobody made, both producing a tree that passes every legality
+    invariant while modelling the wrong game."""
+    with pytest.raises(ValueError):
+        StreetConfig(positions=("OOP", "IP"), pot=10.0, stack_bb=100.0,
+                     raise_sizes=(bad,), max_raises=2)
+
+
+def test_the_menu_reaches_preflop_too():
+    """`GameConfig` and `StreetConfig` share the builder, so the feature
+    is not postflop-only — preflop sizes are multiples of the big blind
+    rather than the pot, and nothing else changes."""
+    root = build_game_tree(GameConfig(
+        positions=("BTN", "BB"), stack_bb=100.0,
+        raise_sizes=((2.0, 3.0), 2.2), max_raises=3))
+    raises = sorted(a.size for a in root.legal_actions if a.kind == RAISE)
+    assert raises == [2.0, 3.0], raises
