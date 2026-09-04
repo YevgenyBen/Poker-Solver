@@ -1880,6 +1880,40 @@ STREET_ISOLATION_CATEGORICAL = (3, 16)
 STREET_ISOLATION_PRODUCTION_AGREE = (9, 16)
 STREET_ISOLATION_WORST_CATEGORICAL = 0.9661
 
+# M202. What the gap COSTS, now that M201 gave `ev.py` a chance-node case
+# and a chained tree can be priced. Same 16 spots, references rebuilt at
+# the identical configuration, `EV(reference row) - EV(shipped row)` with
+# opponent, continuation and range held fixed:
+#
+#   mean +0.1097 bb +/- 0.0380 = 2.88 sigma, 95% [+0.0336, +0.1857]
+#   median +0.0382, worst +0.4123, best -0.0169
+#   0 of 16 cost over 1bb; 4 of 16 are NEGATIVE (shipped priced better)
+#
+# **Real, separable, and small.** The three CATEGORICAL disagreements -
+# frequency gaps of 0.77 to 0.97 - cost **0.2569 / 0.3256 / 0.4123 bb**.
+# A near-total disagreement about whether to bet is worth a quarter to
+# four tenths of a blind, which is M182/M183's thesis landing exactly:
+# the largest frequency errors sit where they are cheapest.
+#
+# **Scope, and it matters**: all 16 are decisions where hero acts FIRST,
+# at SPR 16.2. M188 measured facing-a-bet decisions as ~20x more
+# expensive than opening ones, so this figure must NOT be read as
+# covering the node type where the money actually is. Unpriced there.
+#
+# **The aggression gap DOES track cost here (r = +0.756)**, which
+# partially vindicates M195-M200 having measured in frequency. But note
+# it disagrees with M183, where frequency distance was weak (|r| <= 0.46)
+# and `TVD x value spread` was the best predictor at +0.772. Here spread
+# is INERT (r = -0.030) and the product is WORSE than the gap alone
+# (+0.675). Not a contradiction - a regime difference. These 16 spots are
+# one node type at one depth, so their value spreads barely vary and
+# carry no information; M183's set spanned three streets and both node
+# types. **Neither predictor generalises off its own population.**
+STREET_ISOLATION_COST_BB = 0.1097
+STREET_ISOLATION_COST_CI_LOW = 0.0336
+STREET_ISOLATION_COST_CI_HIGH = 0.1857
+STREET_ISOLATION_COST_WORST = 0.4123
+
 STREET_ISOLATION_NOTE = (
     " One more thing this number cannot see: the solve behind it models the betting on "
     "this street only, and averages the turn and river in as card runouts rather than "
@@ -1891,7 +1925,13 @@ STREET_ISOLATION_NOTE = (
     "97% to 100% of the time where this one bet under a quarter - and those few spots "
     "carry most of the total difference. Averaged over everything, the advice here is "
     "the LESS aggressive of the two by about 18 percentage points, though the "
-    "measurement is only sharp enough to place that somewhere between 1 and 36. So a "
+    "measurement is only sharp enough to place that somewhere between 1 and 36. "
+    "Priced in chips, though, that disagreement is a small leak rather than a "
+    "disaster: about a tenth of a big blind per decision, four tenths at its worst, "
+    "and not one of the 16 spots cost a full blind - even the ones where the two "
+    "models disagreed almost completely. That pricing covers decisions where you act "
+    "FIRST; the cost of facing a bet was not priced here, and that is where this "
+    "engine's mistakes are otherwise around twenty times more expensive. So a "
     "marginal check or call "
     "here is better read as this model's floor than as its verdict. Two limits worth "
     "knowing: that is the gap to a fuller model of the same kind, not the distance to "

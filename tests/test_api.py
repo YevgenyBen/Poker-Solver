@@ -6514,6 +6514,37 @@ def test_the_street_isolation_note_quotes_its_own_measurement():
 
     assert "LESS aggressive" in note, "the measured direction must survive edits"
 
+    # M202: the note must say what the disagreement COSTS, not only how
+    # big it is. This project's stated metric is money, and a frequency
+    # gap of 0.97 that costs 0.26 bb reads very differently from one that
+    # costs a stack - the copy has to carry the calibration.
+    assert "a tenth of a big blind" in note, (
+        "the note quotes a frequency gap without its price; "
+        f"STREET_ISOLATION_COST_BB is {api_config.STREET_ISOLATION_COST_BB}")
+    assert "not one of the 16 spots cost a full blind" in note, (
+        "the reassuring half is load-bearing: 0 of 16 exceeded 1bb, and "
+        "omitting it leaves 'CATEGORICALLY' reading as a disaster")
+    # Scope. M188 measured facing-a-bet nodes ~20x more expensive, and
+    # the pricing covers opening decisions ONLY - a reader must not take
+    # a tenth of a blind as the number for the node type carrying the money.
+    # Phrased to avoid the substring "has not been measured": M180's
+    # guard forbids it in the flop note because the flop is the
+    # most-measured street, and a scoped use of it here still reads as
+    # the claim that guard exists to prevent. The full suite caught this.
+    assert "the cost of facing a bet was not priced here" in note, (
+        "the cost figure is from opening decisions only and the note "
+        "must not let it be read as covering facing-a-bet nodes")
+    assert "has not been measured" not in note, (
+        "M180: this substring is false of the flop and its own guard "
+        "rejects it; keep the facing-a-bet scope worded around it")
+    assert api_config.STREET_ISOLATION_COST_WORST < 1.0, (
+        "the copy says no spot cost a full blind; if the worst case now "
+        "exceeds 1bb that sentence is false")
+    assert (api_config.STREET_ISOLATION_COST_CI_LOW > 0
+            < api_config.STREET_ISOLATION_COST_CI_HIGH), (
+        "the cost interval no longer excludes zero, so calling it a real "
+        "leak is no longer supported")
+
     # Withdrawn claims must not come back.
     for stale in ("AT LEAST", "as a floor rather than an estimate",
                   "23 of 24", "systematically", "5 of 8 spots"):
