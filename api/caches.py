@@ -359,7 +359,13 @@ class _MappingSolveCache(_SolveCache):
 # turn_path and this), none of them visible from the config change
 # itself. That is exactly why M127's test measures a real entry instead
 # of trusting the comment beside the number.
-_canonical_warm_starts = _MappingSolveCache("canonical_warm_starts", maxsize=96)
+# M207: the flop tree carries a 3-size opening MENU, roughly tripling
+# its branching at level 1, so a stored entry grew with it. Measured
+# by test_cache_ceilings_are_sized_against_what_an_entry_actually_costs
+# rather than estimated: 2.86 MB/entry against the 168 MB per-cache
+# budget. M127's rule — a ceiling on entry COUNT is not a ceiling on
+# memory, and widening a tree moves ceilings nothing else points at.
+_canonical_warm_starts = _MappingSolveCache("canonical_warm_starts", maxsize=56)
 
 # M163: the same idea for the MID-flop node, which cannot use the one
 # above. That store is keyed on the CANONICAL board (so one entry serves
@@ -448,7 +454,13 @@ _preflop_raw_cache = _SolveCache("preflop_raw", maxsize=128)
 # stack) key could silently serve one real situation's answer to an
 # unrelated one. One private library per distinct (action_path,
 # stack_bb, iterations) instead.
-_path_query_libraries = _SolveCache("path_query_libraries", maxsize=256)
+# M207: the flop tree carries a 3-size opening MENU, roughly tripling
+# its branching at level 1, so a stored entry grew with it. Measured
+# by test_cache_ceilings_are_sized_against_what_an_entry_actually_costs
+# rather than estimated: 0.75 MB/entry against the 168 MB per-cache
+# budget. M127's rule — a ceiling on entry COUNT is not a ceiling on
+# memory, and widening a tree moves ceilings nothing else points at.
+_path_query_libraries = _SolveCache("path_query_libraries", maxsize=208)
 
 # M26's own plain-dict cache for solve_flop_turn results, deliberately
 # separate from every dict above. Keyed narrowly — only what solve_

@@ -401,7 +401,13 @@ class DecisionNode:
         return list(self.children.keys())
 
 
-def resolve_action(node: "DecisionNode", kind: str) -> Action:
+# M206. A client echoes a size back as text it read from a response
+# ("raise:12.50"), so an exact float comparison would reject the API's
+# own output. Half a cent is far below any real bet increment.
+_SIZE_TOLERANCE = 0.005
+
+
+def resolve_action(node: "DecisionNode", kind: str, size: float | None = None) -> Action:
     """The one real `Action` of kind `kind` legal at `node`, without the
     caller needing to know its exact `size`.
 
@@ -434,13 +440,28 @@ def resolve_action(node: "DecisionNode", kind: str) -> Action:
     walked requires the caller to name the size, and this is what forces
     that to be a deliberate change rather than a silent one.
 
-    Raises `ValueError` (not `StopIteration`) for an unknown kind or a
-    kind not currently legal at this node — a clearer error for an
-    untrusted caller than a bare generator exhaustion.
+    `size` (M206) names WHICH sized action is meant, which is how a
+    caller resolves the ambiguity above. Matched within a tolerance
+    rather than exactly, because a client echoes back a size it read from
+    a response as decimal text and float equality would reject its own
+    output.
+
+    Raises `ValueError` (not `StopIteration`) for an unknown kind, a kind
+    not currently legal at this node, or a size that is not on offer — a
+    clearer error for an untrusted caller than a bare generator
+    exhaustion.
     """
     matches = [action for action in node.legal_actions if action.kind == kind]
     if not matches:
         raise ValueError(f"{kind!r} is not legal at this node (legal actions: {node.legal_actions!r})")
+    if size is not None:
+        for action in matches:
+            if action.size is not None and abs(action.size - size) <= _SIZE_TOLERANCE:
+                return action
+        raise ValueError(
+            f"{kind!r} at size {size} is not legal at this node "
+            f"(legal actions: {node.legal_actions!r})"
+        )
     if len(matches) > 1:
         raise ValueError(
             f"{kind!r} is ambiguous at this node — it matches "

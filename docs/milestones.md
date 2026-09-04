@@ -11181,3 +11181,66 @@ The measured **57% recovery stands**; what has changed is that collecting
 it costs an API change, not a config flip.
 
 Suite 1,106 -> 1,110.
+
+## M206/M207 — an action path can name a bet size, and the flop can finally bet small
+
+M205 found the menu unshippable: with several sized raises at a node,
+`flop_action_path: ["raise"]` silently resolved to the SMALLEST bet, so a
+player saying "I faced a bet" would be modelled as facing a third of the
+pot. This builds the missing half and turns the menu on.
+
+### The sized action path (M206)
+
+A path entry may now be `"raise:12.50"` as well as `"raise"`. The size is
+read exactly as `Action.__str__` writes it, so a client can echo back a
+name it read out of a `strategy` row. An unavailable size is a clean 422
+rather than a silent snap to the nearest — the same refusal to remap that
+M204's pricing depended on.
+
+**A bare kind keeps meaning exactly what it meant.** 59 places in this
+suite and 18 in the frontend send one, and enabling a menu must not
+silently change what they describe. `BARE_RAISE_MEANS_MULTIPLE = 2.5`
+resolves it to the size that was the only sized bet before menus existed,
+so no existing caller is affected.
+
+**Only at a street's OPENING decision**, and that restriction is real,
+not cautious: a first raise is sized off the pot but every later one is
+sized off the PREVIOUS BET, so multiplying the pot would name a size that
+is not on offer. Ambiguity anywhere else is a 422 telling the caller to
+name the size.
+
+### Three tests that tested nothing, all caught by mutation
+
+* **The compatibility test was served from cache.** It requested, enabled
+  the menu, requested again — and the second request returned the first
+  one's cached solve, so the assertion passed no matter what the
+  bare-kind rule did. Both "policy removed" and "policy picks the
+  smallest" survived. Fixed with `clear_all()` between arms, and
+  strengthened to assert the pot is the opening pot plus 2.5x rather than
+  merely unchanged.
+* **The helper subtracted money already invested**, which is a no-op at a
+  street's opening decision and WRONG anywhere else. No test could tell,
+  because ambiguity only arises at the opening decision. That is what
+  produced the restriction above, and the error path is now tested with a
+  level-2 menu.
+
+### The menu is on (M207)
+
+`FLOP_RAISE_SIZES = ((0.33, 0.75, 2.5), 3.0, 2.2)`. Measured live on
+Kd7c2h with 9c9d, the advice changes categorically:
+
+| | check | 0.33x | 0.75x | 2.5x | all-in |
+|---|---|---|---|---|---|
+| before | **0.965** | — | — | 0.034 | 0.000 |
+| after | **0.583** | 0.281 | 0.131 | 0.005 | 0.000 |
+
+A hand that checked 96.5% of the time now bets 41%, almost all of it
+small — which is the behaviour M204 priced at 57% of a 3.41-sigma defect.
+
+**Two cache ceilings moved**, and nothing except M127's byte-budget guard
+pointed at them: the menu roughly triples the flop tree's level-1
+branching, so `canonical_warm_starts` went 96 -> 56 (2.86 MB/entry) and
+`path_query_libraries` 256 -> 208 (0.75 MB/entry) against the 168 MB
+per-cache budget. Widening a tree moves ceilings nothing else measures.
+
+Suite 1,110 -> 1,116.
