@@ -10876,3 +10876,107 @@ metric this project says decides everything (M182/M183). The measurement
 itself is a separate piece of work; this is the instrument.
 
 Suite 1,087 -> 1,093.
+
+## M202 — street isolation, priced in big blinds
+
+M195-M200 measured this gap in aggression because `ev.py` could not value
+a chained tree; M201 fixed that. This asks the question the project says
+decides everything: what does the structural defect COST?
+
+Same 16 spots as M199/M200, references rebuilt at the identical
+configuration (their trees were in memory and gone), `EV(reference row) -
+EV(shipped row)` with opponent, continuation and range held fixed.
+
+### Real, separable, and small
+
+| | |
+|---|---|
+| mean loss | **+0.1097 bb +/- 0.0380 = 2.88 sigma** |
+| 95% interval | **[+0.0336, +0.1857]** |
+| median / worst / best | +0.0382 / +0.4123 / -0.0169 |
+| over 1bb | **0 of 16** |
+| negative (shipped priced better) | 4 of 16 |
+| top 3 share of loss | 63.6% |
+
+### The categorical disagreements are cheap, and that is the headline
+
+M200 found three spots where the two models give opposite
+recommendations — frequency gaps of 0.77 to 0.97. Priced:
+
+| spot | aggression gap | cost |
+|---|---|---|
+| KsQc Qh5dJs | -0.7670 | **+0.4123 bb** |
+| 8h4d 3sJc3d | -0.8319 | +0.3256 bb |
+| 9h5c As3s7h | **-0.9662** | +0.2569 bb |
+
+A near-total disagreement about whether to bet is worth **a quarter to
+four tenths of a big blind**. That is M182/M183's founding thesis landing
+precisely: the largest frequency errors live where they are cheapest,
+because a solver mixes when actions are near-indifferent. Note the
+biggest frequency gap is the CHEAPEST of the three.
+
+Second-most-expensive spot (Ks2d, +0.4042) has a gap of only **+0.20**,
+and in the other direction — the shipped arm being MORE aggressive. Cost
+is not a function of gap size alone.
+
+### Scope, which decides how this may be quoted
+
+**All 16 are decisions where hero acts FIRST, at SPR 16.2.** M188
+measured facing-a-bet nodes ~20x more expensive than opening ones, so
+this figure does **not** cover the node type where the money actually
+is. Street isolation remains unpriced there, and the note says so.
+
+### The predictor result disagrees with M183, and the reason is instructive
+
+| predictor | r vs \|loss\| |
+|---|---|
+| \|aggression gap\| | **+0.756** |
+| value spread | -0.030 |
+| gap x spread | +0.675 |
+
+The aggression gap tracks cost well here, which **partly vindicates
+M195-M200** having measured in frequency at all. But M183 found the
+opposite ordering — frequency distance weak (|r| <= 0.46), `TVD x spread`
+best at +0.772.
+
+**Not a contradiction, a regime difference.** These 16 spots are one node
+type at one depth, so their value spreads barely vary (1.8-7.7, mostly
+3-5) and carry no information; M183's set spanned three streets and both
+node types, where spread separates a cheap indifference from an expensive
+mistake. **Neither predictor generalises off the population it was fitted
+on** — which is the same lesson as M166/M167 and M199's cap-20 hint.
+
+### Two controls, both passed
+
+* **Pricing the same rows WITHOUT the turn** gives +0.1567 against
+  +0.1097. They differ, so M201's chance-node support is doing real work
+  rather than silently no-opping — and ignoring the turn **overstates**
+  the loss by 43%.
+* **Action menus identical on 16/16 spots, remapped mass 0.0000.** The
+  two trees offer the same three actions at the opening decision (the
+  extra sizes live at re-raise nodes), so no alignment distortion enters.
+
+### What the user-facing note now says
+
+It carried the frequency gap and the word CATEGORICALLY, which reads as a
+disaster. It now carries the price: about a tenth of a big blind per
+decision, four tenths at worst, **and not one of the 16 cost a full
+blind** — with the facing-a-bet scope limit stated explicitly. Five
+mutations applied and killed, including removing the reassuring half and
+removing the scope caveat.
+
+### A guard caught the new copy, correctly
+
+The first wording said the cost "has not been measured where you are
+facing a bet". `test_the_flop_note_says_measured_and_refuses_to_name_a_
+direction` (M180) forbids the substring "has not been measured" anywhere
+in the flop note, because the flop is the most-measured street and
+claiming otherwise is false. The guard was right on the merits, not just
+literally: read inside the flop note, a scoped use of that phrase still
+lands as the claim it exists to prevent. Reworded to "the cost of facing
+a bet was not priced here", and the new test now asserts the substring
+stays absent so this cannot recur.
+
+Only the FULL suite caught it — the street-isolation tests alone passed.
+
+Suite 1,093.

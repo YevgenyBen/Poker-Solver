@@ -329,6 +329,29 @@ requests now reject unknown fields by name rather than ignoring them.
   worse advice, and the shipped configuration is right.** The
   "depth substitutes for width" hint is DEAD: cap 20 was -0.0392 at n=8
   and **flipped sign to +0.1131** at n=16.
+  **M202 PRICED IT IN CHIPS** (M201 made that possible). Same 16 spots,
+  references rebuilt identically, opponent/continuation/range held fixed:
+  **+0.1097 bb +/- 0.0380 = 2.88 sigma, 95% [+0.0336, +0.1857]**, median
+  +0.0382, worst +0.4123, **0 of 16 over 1bb**, 4 of 16 negative.
+  **Real, separable, and SMALL.** The three categorical disagreements
+  (frequency gaps 0.77-0.97) cost **0.2569 / 0.3256 / 0.4123 bb** — a
+  near-total disagreement about whether to bet is worth under half a
+  blind. M182/M183's thesis landing exactly: the biggest frequency errors
+  sit where they are cheapest.
+  **SCOPE — all 16 are OPENING decisions at SPR 16.2.** M188 measured
+  facing-a-bet nodes ~20x more expensive, so this figure does NOT cover
+  the node type carrying the money. Unpriced there.
+  **The aggression gap tracks cost here (r = +0.756)**, which partly
+  vindicates M195-M200 measuring in frequency — but it **disagrees with
+  M183**, where frequency was weak (|r| <= 0.46) and `TVD x spread` best
+  (+0.772). Here spread is INERT (-0.030) and the product is WORSE than
+  the gap alone (+0.675). A regime difference, not a contradiction: one
+  node type at one depth means value spreads barely vary and carry no
+  information. **Neither predictor generalises off its own population.**
+  Control: pricing the same rows WITHOUT the turn gives +0.1567 against
+  +0.1097 — so ignoring the turn overstates the loss by 43%, and M201's
+  chance-node support is doing real work. Action menus were identical on
+  16/16 spots, remapped mass 0.0000.
   **A full chained REFERENCE remains unaffordable**: cost is O(N^2)
   (exponent 2.06 measured), ~55 min/spot at reference width, 366 hours
   for a 400-spot study, and 41 min/request in production. So this is
