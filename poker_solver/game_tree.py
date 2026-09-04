@@ -96,6 +96,7 @@ class GameConfig:
                 "raise_sizes must have exactly max_raises - 1 "
                 f"({self.max_raises - 1}) entries, got {len(self.raise_sizes)}"
             )
+        _validate_raise_sizes(self.raise_sizes)
         if self.stack_bb < self.big_blind:
             # M117. This used to compare against small_blind, which let a
             # stack shorter than the BIG blind through — and the big blind
@@ -241,6 +242,7 @@ class StreetConfig:
                 "raise_sizes must have exactly max_raises - 1 "
                 f"({self.max_raises - 1}) entries, got {len(self.raise_sizes)}"
             )
+        _validate_raise_sizes(self.raise_sizes)
         if self.pot <= 0:
             raise ValueError("pot must be positive")
         if self.stack_bb <= 0:
@@ -428,19 +430,68 @@ def resolve_action(node: "DecisionNode", kind: str) -> Action:
     raise ValueError(f"{kind!r} is not legal at this node (legal actions: {node.legal_actions!r})")
 
 
-def _raise_total_size(raise_number: int, open_size_reference: float, previous_bet: float, raise_sizes: tuple) -> float:
-    """Total committed size for raise number `raise_number` (1-indexed).
+def _validate_raise_sizes(raise_sizes: tuple) -> None:
+    """Each entry is a positive multiplier, or a non-empty tuple of them.
+
+    Checked rather than trusted because a malformed menu does not fail —
+    an empty tuple silently removes every sized raise at that level, and
+    a non-positive multiplier builds a bet nobody made. Both produce a
+    tree that passes every legality invariant while modelling the wrong
+    game, which is the failure mode this project keeps meeting.
+    """
+    for level, entry in enumerate(raise_sizes, start=1):
+        multipliers = entry if isinstance(entry, (tuple, list)) else (entry,)
+        if not multipliers:
+            raise ValueError(
+                f"raise_sizes[{level - 1}] is an empty menu; a level must "
+                "offer at least one sized raise"
+            )
+        for multiplier in multipliers:
+            if not isinstance(multiplier, (int, float)) or multiplier <= 0:
+                raise ValueError(
+                    f"raise_sizes[{level - 1}] contains {multiplier!r}; "
+                    "every multiplier must be a positive number"
+                )
+
+
+def _raise_total_sizes(raise_number: int, open_size_reference: float,
+                       previous_bet: float, raise_sizes: tuple) -> tuple:
+    """Every total size offered at raise number `raise_number` (1-indexed).
+
+    An entry of `raise_sizes` is either a single multiplier — one sized
+    raise at that level, the original behaviour — or a TUPLE of them, a
+    **menu** the solver picks from as part of its strategy (M203).
 
     `open_size_reference` is what the *first* raise is sized relative to
     — GameConfig.open_size_reference (the big blind) for preflop,
     StreetConfig.open_size_reference (the pot) for postflop; every raise
     after the first is always sized relative to the previous bet,
     regardless of which kind of config this is.
+
+    Sizes are deduplicated, in order: two multipliers can land on the
+    same total, and `Action(RAISE, size)` values are dict keys during
+    tree construction, so a duplicate would silently drop a branch
+    rather than raise.
     """
-    multiplier = raise_sizes[raise_number - 1]
-    if raise_number == 1:
-        return multiplier * open_size_reference
-    return multiplier * previous_bet
+    entry = raise_sizes[raise_number - 1]
+    multipliers = entry if isinstance(entry, (tuple, list)) else (entry,)
+    reference = open_size_reference if raise_number == 1 else previous_bet
+    seen, out = set(), []
+    for multiplier in multipliers:
+        size = multiplier * reference
+        if size not in seen:
+            seen.add(size)
+            out.append(size)
+    return tuple(out)
+
+
+def _raise_total_size(raise_number: int, open_size_reference: float, previous_bet: float, raise_sizes: tuple) -> float:
+    """The FIRST total size at `raise_number` — the single-size case.
+
+    Kept because callers and tests predating the menu (M203) expect one
+    float back; `_raise_total_sizes` is what the tree builder uses.
+    """
+    return _raise_total_sizes(raise_number, open_size_reference, previous_bet, raise_sizes)[0]
 
 
 def _reopened_order(config: GameConfig, raiser: str, invested: dict, folded: frozenset) -> list:
@@ -519,12 +570,23 @@ def _build(
     if next_raise_number <= config.max_raises and remaining_stack > to_call:
         reopened = _reopened_order(config, player, invested, folded)
         if next_raise_number < config.max_raises:
-            size = _raise_total_size(next_raise_number, config.open_size_reference, previous_bet, config.raise_sizes)
-            if size < config.stack_bb:
+            for size in _raise_total_sizes(next_raise_number, config.open_size_reference,
+                                           previous_bet, config.raise_sizes):
+                if size >= config.stack_bb:
+                    # At or beyond the stack this is the all-in below, and
+                    # a sized action equal to it would collide with that
+                    # action's own dict key.
+                    continue
                 raise_invested = dict(invested)
                 raise_invested[player] = size
-                builders[Action(RAISE, size)] = lambda: _build(
-                    config, raise_invested, folded, next_raise_number, size, reopened
+                # Bind per iteration. With one size a bare closure was
+                # safe; with a menu, late binding would give every branch
+                # the LAST size's subtree - the whole tree silently wrong
+                # while every node still looked legal.
+                builders[Action(RAISE, size)] = (
+                    lambda _ri=raise_invested, _s=size: _build(
+                        config, _ri, folded, next_raise_number, _s, reopened
+                    )
                 )
         jam_invested = dict(invested)
         jam_invested[player] = config.stack_bb

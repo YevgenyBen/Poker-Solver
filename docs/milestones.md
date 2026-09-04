@@ -10980,3 +10980,62 @@ stays absent so this cannot recur.
 Only the FULL suite caught it — the street-isolation tests alone passed.
 
 Suite 1,093.
+
+## M203 — a raise level can offer a MENU of bet sizes
+
+Scoping "add a normal-sized bet" found the blocker one layer down:
+`raise_sizes` held **one multiplier per raise level**, so a tree could
+offer exactly one sized bet plus an all-in. At production settings that
+means the smallest bet available anywhere is **2.5x the pot** — verified
+on a real request, which reports `modelled_bet_sizes [12.5, 95.0]` at a
+pot of 5.0, i.e. 2.5x pot and a 19x-pot shove. **The engine cannot bet
+half the pot on any street, ever**, while solved play is dominated by
+bets of 0.25-0.75x.
+
+That also blocks measuring the question: comparing single-size arms
+fairly needs a common richer game to evaluate them in, and none could be
+built. So the fix and its measurement share this prerequisite.
+
+An entry of `raise_sizes` may now be a **tuple**, and the solver picks the
+size as part of its strategy:
+
+    raise_sizes=((0.33, 0.75, 2.5), (2.0, 3.0))
+    -> call_or_check / raise:2.00 / raise:4.50 / raise:15.00 / all_in
+
+A bare float behaves exactly as before, asserted rather than assumed, so
+every existing config is untouched. Preflop gets it too — `GameConfig`
+and `StreetConfig` share the builder, with sizes relative to the big
+blind rather than the pot.
+
+**No shipped configuration changes here.** This is the instrument; using
+it is M204's job. Changing the model inside the milestone that builds it
+would make the measurement uninterpretable (M161's rule, and F45's).
+
+### The trap, and why the exhaustive sweep now covers menus
+
+Building branches in a loop makes the closure capture `size` by
+reference. With late binding **every raise action leads to the LAST
+size's subtree** — and the tree still passes every legality invariant,
+because pots are conserved and there are no side pots. It is simply a
+game nobody plays. M117's `test_every_tree_obeys_the_rules_of_poker`
+catches it through "raise label != money", so three menu configs were
+added to that parametrization rather than trusting a targeted test alone.
+
+### Two tests looked right and tested nothing, both caught by mutation
+
+* **Deduplication.** The first test built a tree from `(1.0, 1.0, 2.5)`
+  and checked the action list — which passes with the dedupe REMOVED,
+  because two equal sizes make the identical `Action(RAISE, 10.0)` dict
+  key and collapse anyway. Rewritten against `_raise_total_sizes`
+  directly, where the guard is real.
+* **The at-stack filter.** The fixture used a 2.5x bet of a 10 pot into a
+  **12bb** stack; 25 is filtered under both `>=` and `>`, so relaxing the
+  comparison changed nothing. The boundary needs a size landing EXACTLY
+  on the stack — a 25bb stack — where `>` would produce a `raise`
+  labelled with the whole stack instead of the all-in.
+
+Six mutations applied and killed: late binding, dedupe, the at-stack
+filter, validation skipped (both configs), a tuple read as a single
+size, and the empty-menu check.
+
+Suite 1,093 -> 1,106.
