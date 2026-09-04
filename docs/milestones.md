@@ -11181,3 +11181,142 @@ The measured **57% recovery stands**; what has changed is that collecting
 it costs an API change, not a config flip.
 
 Suite 1,106 -> 1,110.
+
+## M206/M207 — an action path can name a bet size, and the flop can finally bet small
+
+M205 found the menu unshippable: with several sized raises at a node,
+`flop_action_path: ["raise"]` silently resolved to the SMALLEST bet, so a
+player saying "I faced a bet" would be modelled as facing a third of the
+pot. This builds the missing half and turns the menu on.
+
+### The sized action path (M206)
+
+A path entry may now be `"raise:12.50"` as well as `"raise"`. The size is
+read exactly as `Action.__str__` writes it, so a client can echo back a
+name it read out of a `strategy` row. An unavailable size is a clean 422
+rather than a silent snap to the nearest — the same refusal to remap that
+M204's pricing depended on.
+
+**A bare kind keeps meaning exactly what it meant.** 59 places in this
+suite and 18 in the frontend send one, and enabling a menu must not
+silently change what they describe. `BARE_RAISE_MEANS_MULTIPLE = 2.5`
+resolves it to the size that was the only sized bet before menus existed,
+so no existing caller is affected.
+
+**Only at a street's OPENING decision**, and that restriction is real,
+not cautious: a first raise is sized off the pot but every later one is
+sized off the PREVIOUS BET, so multiplying the pot would name a size that
+is not on offer. Ambiguity anywhere else is a 422 telling the caller to
+name the size.
+
+### Three tests that tested nothing, all caught by mutation
+
+* **The compatibility test was served from cache.** It requested, enabled
+  the menu, requested again — and the second request returned the first
+  one's cached solve, so the assertion passed no matter what the
+  bare-kind rule did. Both "policy removed" and "policy picks the
+  smallest" survived. Fixed with `clear_all()` between arms, and
+  strengthened to assert the pot is the opening pot plus 2.5x rather than
+  merely unchanged.
+* **The helper subtracted money already invested**, which is a no-op at a
+  street's opening decision and WRONG anywhere else. No test could tell,
+  because ambiguity only arises at the opening decision. That is what
+  produced the restriction above, and the error path is now tested with a
+  level-2 menu.
+
+### The menu is on (M207)
+
+`FLOP_RAISE_SIZES = ((0.33, 0.75, 2.5), 3.0, 2.2)`. Measured live on
+Kd7c2h with 9c9d, the advice changes categorically:
+
+| | check | 0.33x | 0.75x | 2.5x | all-in |
+|---|---|---|---|---|---|
+| before | **0.965** | — | — | 0.034 | 0.000 |
+| after | **0.583** | 0.281 | 0.131 | 0.005 | 0.000 |
+
+A hand that checked 96.5% of the time now bets 41%, almost all of it
+small — which is the behaviour M204 priced at 57% of a 3.41-sigma defect.
+
+**Two cache ceilings moved**, and nothing except M127's byte-budget guard
+pointed at them: the menu roughly triples the flop tree's level-1
+branching, so `canonical_warm_starts` went 96 -> 56 (2.86 MB/entry) and
+`path_query_libraries` 256 -> 208 (0.75 MB/entry) against the 168 MB
+per-cache budget. Widening a tree moves ceilings nothing else measures.
+
+Suite 1,110 -> 1,116.
+
+## M208 — the menu benchmarked: speed holds, and it is separably cheaper where the money is
+
+M204 priced the bet-size menu at the flop's OPENING decision and said
+plainly that it had not been scored where M188/M189 put 74% of all cost:
+facing a bet holding roughly the 55th-90th percentile. M207 shipped it
+anyway on the opening-decision evidence. This closes both gaps.
+
+### Speed — paired, alternating, same hands
+
+12 sessions (6 seeds x 2 arms x 120 hands), arm order flipped per seed,
+caches cleared and depths re-warmed per arm. **3,193 decisions.**
+
+| arm | p50 | p90 | p99 | max | wall/session |
+|---|---|---|---|---|---|
+| single (2.5x only) | 0.468s | 2.032s | 2.226s | 2.602s | 190.6s |
+| **menu** | **0.476s** | **2.988s** | 3.232s | 3.299s | 248.1s |
+
+Paired: p50 **+0.008s** (2.47 sigma), p90 **+0.955s** (84 sigma), wall
++30%. **The median player experience is unchanged and the whole cost is
+in the tail** — and the tail still lands at 3.3s worst, inside the 5s bar,
+with **zero decisions over 5s in either arm**.
+
+**Zero defects in both arms**: no uniform-prior rows, no untrained nodes,
+no flagged problems. Rejections 264 across 12 sessions (22/session)
+against a 16-22 historical baseline, so the menu introduces no new
+failure class — checked because a bare `"raise"` after the first would
+now be ambiguous, and the harness turns out to send at most one.
+
+### Money — facing a bet, in the costly band, n=97
+
+Spots drawn from the benchmark's own sessions, so the population is one a
+player actually met. Reference: full 169-class, 1,500 iterations, same
+three sizes, built at each request's OWN pot and stack.
+
+| arm | mean | median | worst | over 1bb |
+|---|---|---|---|---|
+| single | +0.4869 bb | +0.0078 | +6.386 | **26** |
+| **menu** | **+0.2529 bb** | +0.0138 | +3.192 | **14** |
+
+Paired **-0.2340 +/- 0.1007 = 2.32 sigma, SEPARABLE**. Mean cost down
+48%, worst case down 50%, decisions over 1bb down 46%.
+
+**The mechanism is F38's axis.** Against the reference's 0.4878 fold
+frequency, the single-size arm **over-folds by +0.1111** and the menu by
+**+0.0556** — the over-folding is halved. With only a 2.5x-pot bet in the
+tree, every facing-a-bet node is "facing an overbet", so the model folds
+too much; giving the opponent realistic sizes fixes half of that.
+
+### What is NOT established, and the honest caveats
+
+* **Split-half replicates in DIRECTION but not tightly in magnitude**:
+  -0.3158 (2.11 sigma) and -0.1537 (1.13 sigma). Both negative, 2x apart.
+  M189's rule was applied before reporting, and this passes it more
+  weakly than M189 itself did.
+* **Per spot it is near a coin flip** — 50 better / 46 worse. The gain is
+  the tail, not the typical decision. Trimming the two worst per arm
+  still leaves 0.3851 -> 0.1927, so it is not one outlier either.
+* **The reference shares the menu arm's tree shape.** It is also wider
+  and better converged, and the arm is scored only on how close it gets —
+  the M172/M190/M204 construction, with its standing limitation: distance
+  to a fuller model of the same family, not to correct play.
+* **Every facing spot here is "facing a 2.5x-pot bet"**, because the
+  harness sends bare kinds and `BARE_RAISE_MEANS_MULTIPLE` resolves them
+  to 2.5x. So this measures hero's response to an overbet under both
+  models; what it does NOT measure is advice when facing a SMALL bet — a
+  node type the engine could not represent at all before M206 and which
+  no benchmark yet generates.
+
+### Combined verdict
+
+Opening decisions **2.92 sigma** better (M204), facing-a-bet in the
+costly band **2.32 sigma** better, median latency unchanged, tail +0.96s
+but inside 5s, zero defects over 3,193 decisions. **The menu stays on.**
+
+Suite 1,116.

@@ -673,7 +673,23 @@ FLOP_TURN_MAX_RAISES = 3
 # `raise_sizes[0]` is the OPENING bet as a multiple of the pot; later
 # entries are multiples of the previous bet (a re-raise). Since M203 an
 # entry may be a TUPLE, and the solver picks from the menu.
-FLOP_RAISE_SIZES = (2.5, 3.0, 2.2)
+# M206. What a BARE "raise" in a client's action path means once a level
+# offers a menu (M203). Set to the size that was the ONLY sized bet
+# before menus existed, so an existing caller's ["raise"] keeps meaning
+# exactly what it meant and opting into a menu changes nothing for them.
+# M205 measured the alternative: the un-guarded loop returned the
+# SMALLEST bet, modelling a player as facing a third of the pot when they
+# said they faced a bet.
+BARE_RAISE_MEANS_MULTIPLE = 2.5
+
+# M207: the opening bet is now a MENU. Until M203 a raise level held one
+# multiplier, so the smallest bet this engine could make anywhere was
+# 2.5x pot while solved play is dominated by 0.25-0.75x. Priced on 16
+# spots against a full-width reference that offers all three: the
+# single-size arm loses +0.0863 bb a decision (3.41 sigma) and the menu
+# recovers 57% of that at 2.92 sigma (M204). The reference bets small
+# 46.5% of the time; the old arm bet small 0.0000 because it could not.
+FLOP_RAISE_SIZES = ((0.33, 0.75, 2.5), 3.0, 2.2)
 FLOP_MAX_RAISES = 4
 
 FLOP_TURN_RAISE_SIZES = (2.5, 2.0)

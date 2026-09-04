@@ -596,6 +596,70 @@ def _validate_preflop_path_shape(
         )
 
 
+def _parse_action_token(token: str) -> tuple:
+    """Split a client's path entry into (kind, size or None).
+
+    M206. A bare kind — `"raise"` — is what every caller sent before a
+    raise level could offer a MENU of sizes (M203), and stays valid. A
+    sized entry — `"raise:12.50"` — names WHICH bet, which is the only
+    way to describe facing a half-pot bet rather than an overbet once a
+    menu is configured.
+
+    The size is read exactly as `Action.__str__` writes it, so a client
+    can echo back a name it read out of a `strategy` row without
+    reformatting it.
+    """
+    if ":" not in token:
+        return token, None
+    kind, _, raw = token.partition(":")
+    try:
+        return kind, float(raw)
+    except ValueError:
+        raise ValueError(
+            f"{token!r} has a size that is not a number; expected a form "
+            f"like 'raise:12.50'"
+        ) from None
+
+
+def _bare_kind_size(node: DecisionNode, kind: str) -> float | None:
+    """Which size a BARE kind means when several are on offer.
+
+    Returns None when there is no ambiguity — every shipped
+    configuration, and every non-raise kind — so `resolve_action` then
+    behaves exactly as it always has.
+
+    When a menu makes the kind ambiguous, it resolves to
+    `cfg.BARE_RAISE_MEANS_MULTIPLE` times the street's pot: the size that
+    was the only sized bet before menus existed (M203). So an existing
+    client's `["raise"]` keeps meaning precisely what it meant. M205
+    measured the alternative — the un-guarded loop returned the SMALLEST
+    bet, modelling a player as facing a third of the pot when they said
+    they faced a bet.
+
+    **Only at a street's OPENING decision**, and that restriction is real
+    rather than cautious: a first raise is sized off the pot, but every
+    later one is sized off the PREVIOUS BET
+    (`game_tree._raise_total_sizes`), so multiplying the pot would name a
+    size that is not on offer. Ambiguity anywhere else is an error
+    telling the caller to name the size — the one thing that must never
+    happen here is a confident guess.
+    """
+    matches = [a for a in node.legal_actions if a.kind == kind]
+    if len(matches) <= 1:
+        return None
+    sized = [a for a in matches if a.size is not None]
+    if not sized:
+        return None
+    if sum(node.invested.values()) > 0:
+        raise ValueError(
+            f"{kind!r} is ambiguous here and cannot be defaulted — a raise "
+            f"after the first is sized off the previous bet, not the pot. "
+            f"Name the size, e.g. {str(sized[0])!r}."
+        )
+    target = cfg.BARE_RAISE_MEANS_MULTIPLE * node.pot
+    return min(sized, key=lambda a: abs(a.size - target)).size
+
+
 def _resolve_action_path(root: DecisionNode, action_kinds: list) -> tuple:
     """Turns a client-supplied list of bare action *kind* strings (e.g.
     ["raise", "call_or_check"]) into the real Action objects derive_
@@ -620,11 +684,14 @@ def _resolve_action_path(root: DecisionNode, action_kinds: list) -> tuple:
     """
     actions = []
     node = root
-    for step, kind in enumerate(action_kinds):
+    for step, token in enumerate(action_kinds):
         if not isinstance(node, DecisionNode):
             raise ValueError(f"step {step}: the hand is already over — no more actions are legal")
+        kind, size = _parse_action_token(token)
         try:
-            action = resolve_action(node, kind)
+            if size is None:
+                size = _bare_kind_size(node, kind)
+            action = resolve_action(node, kind, size)
         except ValueError as exc:
             raise ValueError(f"step {step}: {exc}") from exc
         actions.append(action)

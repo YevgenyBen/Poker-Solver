@@ -6691,3 +6691,122 @@ def test_the_shipped_flop_offers_whatever_config_says_it_does(client):
                       (opening if isinstance(opening, tuple) else (opening,)))
     assert sized == expected, (
         f"the flop offers {sized} but FLOP_RAISE_SIZES[0] says {expected}")
+
+
+# --- M206: an action path can name WHICH bet was faced ----------------
+
+def _menu_flop(monkeypatch):
+    monkeypatch.setattr(api_config, "FLOP_RAISE_SIZES", ((0.33, 0.75, 2.5), 3.0, 2.2))
+    monkeypatch.setattr(api_config, "FLOP_MAX_RAISES", 4)
+
+
+def test_a_bare_raise_still_means_what_it_meant_before_menus_existed(client, monkeypatch):
+    """M206. The compatibility guarantee, asserted rather than hoped.
+
+    Every caller today sends a bare kind, and 59 places in this suite
+    plus 18 in the frontend do. Enabling a menu must not silently change
+    what those requests describe — M205 measured the un-guarded loop
+    resolving a bare "raise" to the SMALLEST bet, which would have
+    modelled a player as facing a third of the pot when they said they
+    faced a bet.
+    """
+    body = {"stack_bb": 100.0, "players": 2, "board": "Kd7c2h",
+            "hero_cards": "9c9d",
+            "preflop_action_path": ["raise", "call_or_check"],
+            "flop_action_path": ["raise"]}
+    before = client.post("/advise", json=body).json()
+    _menu_flop(monkeypatch)
+    # Clear caches between the arms. Without this the second request is
+    # served from the solve the FIRST one cached, so the menu is never
+    # exercised and the assertion passes no matter what the bare-kind
+    # rule does - mutation testing caught exactly that here.
+    api_main._SolveCache.clear_all()
+    after = client.post("/advise", json=body).json()
+
+    # The pot after villain's bet identifies WHICH bet was modelled.
+    assert before["pot"] == pytest.approx(after["pot"]), (
+        f"a bare 'raise' changed meaning when the menu was enabled: pot "
+        f"{before['pot']} -> {after['pot']}")
+    # And it is the 2.5x bet specifically, not merely a stable one: the
+    # pot must be the opening pot plus BARE_RAISE_MEANS_MULTIPLE of it.
+    opening = client.post("/advise", json={
+        k: v for k, v in body.items() if k != "flop_action_path"}).json()["pot"]
+    assert after["pot"] == pytest.approx(
+        opening * (1 + api_config.BARE_RAISE_MEANS_MULTIPLE)), (
+        f"a bare 'raise' resolved to something other than "
+        f"{api_config.BARE_RAISE_MEANS_MULTIPLE}x pot: {after['pot']} "
+        f"against an opening pot of {opening}")
+
+
+def test_a_sized_action_path_names_the_bet_that_was_actually_faced(client, monkeypatch):
+    """The capability the menu exists for: describing a half-pot bet.
+
+    Without this an engine that models small bets still cannot be TOLD
+    about one, so the extra sizes would only ever be reachable when hero
+    is the bettor.
+    """
+    _menu_flop(monkeypatch)
+    base = {"stack_bb": 100.0, "players": 2, "board": "Kd7c2h",
+            "hero_cards": "9c9d",
+            "preflop_action_path": ["raise", "call_or_check"]}
+    opening = client.post("/advise", json=base).json()
+    pot = opening["pot"]
+    small = round(0.33 * pot, 2)
+
+    faced_small = client.post("/advise", json={
+        **base, "flop_action_path": [f"raise:{small:.2f}"]}).json()
+    faced_big = client.post("/advise", json={
+        **base, "flop_action_path": [f"raise:{2.5 * pot:.2f}"]}).json()
+
+    assert faced_small["pot"] == pytest.approx(pot + small)
+    assert faced_big["pot"] == pytest.approx(pot + 2.5 * pot)
+    assert faced_small["pot"] != pytest.approx(faced_big["pot"]), (
+        "facing a third-pot bet and a 2.5x-pot overbet produced the same "
+        "node, so the size in the path was ignored")
+
+
+def test_a_size_that_was_never_offered_is_rejected_not_rounded(client, monkeypatch):
+    """A client naming a bet the tree cannot represent must be told, not
+    quietly snapped to the nearest one — that would be the silent
+    remapping M204 refused to do when pricing."""
+    _menu_flop(monkeypatch)
+    resp = client.post("/advise", json={
+        "stack_bb": 100.0, "players": 2, "board": "Kd7c2h",
+        "hero_cards": "9c9d",
+        "preflop_action_path": ["raise", "call_or_check"],
+        "flop_action_path": ["raise:9.99"]})
+    assert resp.status_code == 422, resp.status_code
+    assert "not legal" in resp.json()["detail"].lower()
+
+
+def test_a_malformed_size_is_a_clean_422(client):
+    resp = client.post("/advise", json={
+        "stack_bb": 100.0, "players": 2, "board": "Kd7c2h",
+        "hero_cards": "9c9d",
+        "preflop_action_path": ["raise", "call_or_check"],
+        "flop_action_path": ["raise:half"]})
+    assert resp.status_code == 422, resp.status_code
+    assert "not a number" in resp.json()["detail"].lower()
+
+
+def test_a_bare_raise_is_refused_where_it_cannot_be_defaulted(client, monkeypatch):
+    """M206. The bare-kind default is only sound at a street's OPENING
+    decision, where a raise is sized off the pot. Every later raise is
+    sized off the PREVIOUS BET, so the same rule would name a size that
+    is not on offer — and guessing is the one thing that must not happen.
+
+    Mutation testing is why this exists: the helper originally subtracted
+    what was already invested, which is a no-op at the opening decision
+    and wrong everywhere else, and no test could tell the difference.
+    """
+    monkeypatch.setattr(api_config, "FLOP_RAISE_SIZES", (2.5, (2.0, 3.0), 2.2))
+    monkeypatch.setattr(api_config, "FLOP_MAX_RAISES", 4)
+    api_main._SolveCache.clear_all()
+    resp = client.post("/advise", json={
+        "stack_bb": 100.0, "players": 2, "board": "Kd7c2h",
+        "hero_cards": "9c9d",
+        "preflop_action_path": ["raise", "call_or_check"],
+        "flop_action_path": ["raise", "raise"]})
+    assert resp.status_code == 422, resp.status_code
+    detail = resp.json()["detail"].lower()
+    assert "ambiguous" in detail and "name the size" in detail, detail
