@@ -6,6 +6,7 @@ the endpoints that use it, which is exactly why the thundering-herd cost
 below went unmeasured for so long.
 """
 
+import pytest
 import threading
 import time
 
@@ -283,30 +284,12 @@ def test_the_expensive_caches_keep_a_generous_ceiling():
     assert by_name["preflop_raw"].maxsize >= 64
 
 
-def _deep_size(obj, seen=None):
-    """Bytes an object graph actually holds, following containers and
-    counting numpy buffers by `nbytes` rather than by object header."""
-    import sys
-
-    import numpy as np
-
-    if seen is None:
-        seen = set()
-    if id(obj) in seen:
-        return 0
-    seen.add(id(obj))
-    if isinstance(obj, np.ndarray):
-        return obj.nbytes
-    size = sys.getsizeof(obj, 0)
-    if isinstance(obj, dict):
-        for key, value in obj.items():
-            size += _deep_size(key, seen) + _deep_size(value, seen)
-    elif isinstance(obj, (list, tuple, set, frozenset)):
-        for item in obj:
-            size += _deep_size(item, seen)
-    elif hasattr(obj, "__dict__"):
-        size += _deep_size(vars(obj), seen)
-    return size
+# M216: the sizer lives in `api/caches.py` now, because the CACHE weighs
+# entries with it. A guard that measures with a different ruler than
+# production is how M214 shipped an allowance that could not fire, so
+# this is the production function under its old local name rather than a
+# second implementation kept in step by hand.
+from api.caches import entry_bytes as _deep_size            # noqa: E402
 
 
 # M215. No cache is allowed to exceed its byte budget here any more.
@@ -521,3 +504,163 @@ def test_the_multiway_preflop_entry_is_pruned_before_it_is_cached():
         f"multiway preflop result accumulated nothing — prune_empty_nodes is not "
         f"being applied where this cache is filled, and every ceiling derived "
         f"from a pruned entry size is now wrong")
+
+
+# ---------------------------------------------------------------------------
+# Byte-aware eviction (M216). `maxsize` bounds the entry COUNT, which is only
+# a memory bound if entries are comparable — and inside `_multiway_cache`
+# alone they span 127x, so twelve entries was anywhere between 24 MB and
+# 3.1 GB depending on which table sizes a server saw.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def isolated_registry():
+    """Keep test-only caches out of the global registry.
+
+    **autouse**, because this module has built throwaway caches since
+    M92 — `test_single_flight`, `test_parallel_keys`, `test_unbounded`
+    and six more — and every one of them has been leaking into the
+    registry ever since.
+
+    `_SolveCache.__init__` appends every instance to a class-level
+    registry, which is how `test_no_solve_cache_is_unbounded` and
+    `test_every_cache_registers_itself` can assert over *all* caches
+    without a hand-maintained list (M60). The cost is that a cache built
+    inside a test is indistinguishable from a shipped one.
+
+    Found by running two modules in isolation rather than the whole
+    suite: `pytest tests/test_caches.py tests/test_api.py` failed four
+    tests that the full run passes, because the full run happens to
+    execute `test_api.py` first — **alphabetical order was the only
+    thing keeping this green**, for the pre-existing caches as much as
+    the new ones.
+    """
+    from api.caches import _SolveCache
+
+    before = list(_SolveCache._registry)
+    yield
+    _SolveCache._registry[:] = before
+
+
+class _Chunk:
+    """An entry of a known, controllable size."""
+
+    def __init__(self, megabytes):
+        import numpy as np
+        self.payload = np.zeros(int(megabytes * 1e6 // 8), dtype=np.float64)
+
+
+def test_the_byte_bound_evicts_where_the_count_bound_would_not():
+    """The whole point: a cache well under its entry ceiling can still be
+    far over its memory budget, and only the byte bound sees it."""
+    from api.caches import _SolveCache
+
+    cache = _SolveCache("test_bytes", maxsize=100, max_bytes=int(25e6))
+    for i in range(10):
+        cache.store(i, _Chunk(10))
+
+    assert len(cache.entries) < 10, (
+        "nothing was evicted: 10 entries of 10 MB each fit the count ceiling "
+        "of 100, which is exactly the blind spot byte-aware eviction exists "
+        "to close")
+    assert cache.total_bytes <= 25e6
+
+
+def test_eviction_is_still_least_recently_used():
+    """Byte-aware, but the policy is unchanged: recency is what makes an
+    entry worth keeping (M93), and a solve does not go stale."""
+    from api.caches import _SolveCache
+
+    cache = _SolveCache("test_lru", maxsize=100, max_bytes=int(25e6))
+    cache.store("a", _Chunk(10))
+    cache.store("b", _Chunk(10))
+    cache.get("a")                       # 'a' is now the most recent
+    cache.store("c", _Chunk(10))
+
+    assert "b" not in cache.entries, "evicted the recently-read entry, not the cold one"
+    assert "a" in cache.entries and "c" in cache.entries
+
+
+def test_an_entry_larger_than_the_budget_is_kept_not_dropped():
+    """A 9-max multiway preflop entry is 256.56 MB against a 160 MB
+    default. Discarding the thing the cache just spent 525 seconds
+    computing would be worse than being briefly over budget — and the
+    alternative failure here is a silent infinite loop, which is why this
+    is pinned rather than left to the eviction loop's shape."""
+    from api.caches import _SolveCache
+
+    cache = _SolveCache("test_oversize", maxsize=10, max_bytes=int(5e6))
+    cache.store("big", _Chunk(40))
+
+    assert "big" in cache.entries, "the cache discarded the entry it just stored"
+    assert len(cache.entries) == 1
+
+
+def test_the_running_total_matches_a_fresh_measurement():
+    """The total is maintained incrementally across stores and evictions,
+    so it can drift from the truth without anything failing. This
+    re-measures it from scratch."""
+    from api.caches import _SolveCache, entry_bytes
+
+    cache = _SolveCache("test_total", maxsize=100, max_bytes=int(60e6))
+    for i in range(8):
+        cache.store(i, _Chunk(10))
+    cache.get(3)
+    cache.store(99, _Chunk(10))
+
+    fresh = sum(entry_bytes(value) for value in cache.entries.values())
+    # Within 1%, not byte-exact. CPython does not promise identical
+    # `sys.getsizeof` for identically-constructed instances — the first
+    # instance of a class and later ones can lay their `__dict__` out
+    # differently — and this was measured at 88 bytes on 50 MB, 1.7 parts
+    # per million. The failures worth catching here are order-of-
+    # magnitude ones: a leak (the total climbs away from the truth) or
+    # double-counting (it doubles). A 1% bound catches both and does not
+    # assert something the interpreter never guaranteed.
+    assert abs(cache.total_bytes - fresh) < 0.01 * fresh, (
+        f"running total {cache.total_bytes} has drifted from the real "
+        f"{fresh} — eviction or overwrite is not maintaining it")
+
+
+def test_clearing_resets_the_byte_accounting():
+    from api.caches import _SolveCache
+
+    cache = _SolveCache("test_clear", maxsize=10, max_bytes=int(50e6))
+    cache.store("a", _Chunk(10))
+    assert cache.total_bytes > 0
+    cache.clear()
+    assert cache.total_bytes == 0 and not cache.entries
+
+
+def test_overwriting_a_key_does_not_double_count_it():
+    """Storing the same key twice must replace its cost, not add to it —
+    the bug that would make a long-lived cache evict everything."""
+    from api.caches import _SolveCache
+
+    cache = _SolveCache("test_overwrite", maxsize=10, max_bytes=int(100e6))
+    cache.store("a", _Chunk(10))
+    first = cache.total_bytes
+    cache.store("a", _Chunk(10))
+
+    assert abs(cache.total_bytes - first) < 0.01 * first, (
+        f"re-storing one key took the total from {first} to "
+        f"{cache.total_bytes} — the old entry's bytes were never released. "
+        f"Doubling is the failure this catches; the 1% band is CPython's own "
+        f"per-instance `getsizeof` variance, measured at ~8 bytes on 10 MB.")
+    assert len(cache.entries) == 1
+
+
+def test_every_registered_cache_has_a_byte_bound():
+    """M93's rule, one layer up: `test_no_solve_cache_is_unbounded`
+    asserts every cache bounds its COUNT. After M216 that is the weaker
+    of the two bounds, and a cache with only a count bound is once again
+    unbounded in the dimension that runs a server out of memory."""
+    from api import caches as caches_module
+
+    missing = [c.name for c in caches_module._SolveCache.registered()
+               if c.max_bytes is None]
+    assert not missing, (
+        f"these caches bound entry count but not memory: {missing}. Entry "
+        f"sizes vary by 127x inside a single cache, so a count ceiling is "
+        f"not a memory ceiling.")

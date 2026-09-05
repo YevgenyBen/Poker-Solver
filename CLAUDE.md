@@ -585,11 +585,36 @@ requests now reject unknown fields by name rather than ignoring them.
   `solver_confidence`. Ceiling **64 -> 12**, derived from the 9 entries
   the prewarm creates. Requires BOTH arrays empty, since regret alone can
   seed a warm start (`warmstart.py`).
-  **STILL NOT FIXED, deliberately**: a 9-max entry is 256.56 MB and
-  cannot fit the 168 MB per-cache budget — the TREE alone is 166.10 MB.
-  `MAX_CACHE_BYTES_PER_CACHE` bounds by COUNT x an assumed uniform entry
-  size, and that assumption is false here by 127x, so **byte-aware
-  eviction is the real fix** and is not bundled with a data change.
+  **M216 BUILT byte-aware eviction.** `_SolveCache` evicts on MEMORY as
+  well as count; the count bound stays as a cheap backstop. `entry_bytes`
+  moved into `api/caches.py` (the test imports it, so guard and
+  production measure with one ruler). **Exact, not estimated** — a
+  numpy-buffers estimator measured 44-63% of true size, and a bound that
+  UNDER-counts is the one failure mode a memory bound may not have.
+  Affordable because `store` runs only on a MISS, which has just paid for
+  a solve: measured over a 60-hand session, **115 calls, 1.88s, 0.507%
+  of wall clock**.
+  **The paired benchmark is a NULL result and that IS the finding**: 2
+  seeds x 2 arms x 120 hands gave identical cached bytes (513 MB) and
+  identical entry counts (190), because a normal session never approaches
+  any per-cache budget. **This is a SAFETY bound, not an active one** —
+  its value is bounding M215's 40 GB adversarial case, not improving a
+  typical session. `_multiway_cache` has an enforced **1 GB** budget
+  sized at its 896 MB prewarmed working set; an entry larger than the
+  budget is KEPT, since discarding a 525s solve is worse than being
+  briefly over (pinned, because the alternative failure is a silent
+  infinite loop).
+  **F50 (M216): the cache registry has leaked test caches since M92.**
+  `_SolveCache.__init__` registers every instance, and that registry is
+  what lets `test_no_solve_cache_is_unbounded` and
+  `test_every_cache_registers_itself` assert over ALL caches without a
+  hand-maintained list (M60) — but `tests/test_caches.py` has built
+  throwaway caches since M92 and every one leaked in. `pytest
+  tests/test_caches.py tests/test_api.py` fails **four** tests the full
+  run passes: **the suite is green only because `test_api` sorts before
+  `test_caches`.** Fixed with an autouse registry snapshot. **Run a
+  SUBSET of the suite occasionally** — whole-suite runs hide ordering
+  dependencies by construction.
   Dropping `regret_sum` from surviving tables is another ~half of
   node_data and is provably unread for this cache, but would make a
   shared engine structure carry a compacted state most consumers must not
