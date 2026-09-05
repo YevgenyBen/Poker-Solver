@@ -25,6 +25,12 @@ from poker_solver.starting_hands import StartingHand
 # several parametrized players=9 tests, was measured during M9 to make
 # the test suite itself slow.
 FAST_MULTIWAY_ITERATIONS = 30
+
+# The SHIPPED multiway bet sizes, captured at import — before
+# `_disable_prewarm_and_clear_cache` monkeypatches them to () for speed.
+# Every other multiway test patches a menu in, so none of them would
+# notice the shipped constant being reverted; this is what does.
+SHIPPED_MULTIWAY_FLOP_RAISE_SIZES = api_config.MULTIWAY_FLOP_RAISE_SIZES
 # M67 made the real multiway preflop pool all 169 classes, which costs
 # ~170s (6-max) / ~215s (9-max) per spot at production settings. The
 # autouse fixture clears caches between tests, so every multiway test
@@ -6982,3 +6988,188 @@ def test_every_published_bet_size_is_accepted_back(client):
                 f"{echoed.json().get('detail')}")
             checked += 1
     assert checked >= 4, f"only round-tripped {checked} sizes"
+
+
+def test_a_multiway_player_can_say_they_face_a_small_bet(client, monkeypatch):
+    """M214. The capability the multiway menu exists to provide.
+
+    Measured through `/advise` on 16 three-way spots before this shipped:
+    the share of spots where a player could name the bet they faced was
+    **0.00 at a third of the pot and 0.00 at half the pot, on all three
+    streets**, against 1.00 at 2.5x. `MULTIWAY_FLOP_RAISE_SIZES` held one
+    size, so the only bet the engine could represent was a 2.5x overbet
+    and `["raise"]` meant that whatever the player actually faced. On the
+    heads-up streets the same mistake was priced at 1.74 / 1.85 / 1.75 bb
+    per decision (M209/M213).
+
+    Asserted against the pot rather than against a literal size, so it
+    keeps meaning what it says if the menu is retuned: SOME bet smaller
+    than the pot must be offered, and naming it must be accepted.
+
+    Needs the tree restored — `_disable_prewarm_and_clear_cache` sets
+    `MULTIWAY_FLOP_RAISE_SIZES = ()` for speed, so under the suite the
+    multiway flop offers only check and all-in.
+    """
+    monkeypatch.setattr(api_config, "MULTIWAY_FLOP_RAISE_SIZES",
+                        ((0.33, 0.75, 2.5),))
+    monkeypatch.setattr(api_config, "MULTIWAY_FLOP_MAX_RAISES", 2)
+    base = _advise_body(
+        preflop_action_path=["raise", "call_or_check", "call_or_check"],
+        hero_cards="5c4d", board="Kd7c2h", players=3, stack_bb=100.0,
+    )
+    opening = client.post("/advise", json=base)
+    assert opening.status_code == 200, opening.json()
+    payload = opening.json()
+    pot, offered = payload["pot"], payload["modelled_bet_sizes"]
+
+    small = [s for s in offered if s < pot]
+    assert small, (
+        f"no bet smaller than the {pot}bb pot is modelled at a multiway "
+        f"node (offered {offered}) — a player facing a half-pot bet "
+        f"cannot describe it, so they are answered about a 2.5x overbet")
+
+    named = client.post("/advise", json={
+        **base, "flop_action_path": [f"raise:{min(small):.2f}"]})
+    assert named.status_code == 200, named.json()
+    # `modelled_bet_sizes` is ROUNDED for display (2.48 is published for a
+    # 2.475 action), so the pot it implies has to be compared at the same
+    # tolerance the resolver matches sizes at — the round-trip trap M213
+    # was bitten by from the other direction.
+    assert named.json()["pot"] == pytest.approx(pot + min(small), abs=0.011), (
+        "naming the small bet did not reach the node that bet creates")
+
+
+def test_a_multiway_small_bet_is_folded_to_less_than_an_overbet(client, monkeypatch):
+    """M214. The multiway sibling of
+    `test_facing_a_small_bet_folds_less_than_facing_an_overbet`.
+
+    A menu that lets the question be ASKED is worth nothing if the answer
+    is ordered backwards, and at multiway that was a live risk rather
+    than a theoretical one: this is a SAMPLED solver (MCCFR), so tripling
+    the opening actions divides the traversals reaching each of them, and
+    an isolated study at the old 200-iteration budget did measure the
+    ordering inverted.
+
+    **Asserted as a MEAN over spots, not as a per-spot invariant, because
+    that is what was measured.** Through `/advise` at the shipped budget
+    the flop gap is +0.3138 at 3.14 sigma over 16 spots — but 3 of those
+    16 spots individually invert, so a single-spot assertion would be
+    flaky and would also overstate the finding. The heads-up sibling can
+    assert per spot because its solver is exact; this one cannot.
+
+    Uses several heroes for the same reason M177 stopped trusting one:
+    error there split by hand strength on the river and not on the flop,
+    so one hand never represents a board.
+    """
+    monkeypatch.setattr(api_config, "MULTIWAY_FLOP_RAISE_SIZES",
+                        ((0.33, 0.75, 2.5),))
+    monkeypatch.setattr(api_config, "MULTIWAY_FLOP_MAX_RAISES", 2)
+
+    gaps = []
+    for hero, board in (("5c4d", "Kd7c2h"), ("Ah Ks".replace(" ", ""), "Kd7c2h"),
+                        ("Jc9c", "Kd7c2h"), ("5c4d", "Jh7d2c"),
+                        ("AhKs", "Jh7d2c"), ("Jc9c", "Jh7d2c")):
+        base = _advise_body(
+            preflop_action_path=["raise", "call_or_check", "call_or_check"],
+            hero_cards=hero, board=board, players=3, stack_bb=100.0,
+        )
+        opening = client.post("/advise", json=base)
+        if opening.status_code != 200:
+            continue
+        raises = sorted(float(k.split(":")[1])
+                        for k in opening.json()["hero"]["strategy"]
+                        if k.startswith("raise:"))
+        if len(raises) < 2:
+            continue
+
+        folds = {}
+        for size in (raises[0], raises[-1]):
+            got = client.post("/advise", json={
+                **base, "flop_action_path": [f"raise:{size:.2f}"]})
+            assert got.status_code == 200, got.json()
+            strategy = got.json()["hero"]["strategy"]
+            assert "fold" in strategy, f"no fold offered facing {size}: {strategy}"
+            folds[size] = strategy["fold"]
+        gaps.append(folds[raises[-1]] - folds[raises[0]])
+
+    if len(gaps) < 3:
+        pytest.skip("no multiway bet-size menu configured")
+    mean_gap = sum(gaps) / len(gaps)
+    assert mean_gap > 0, (
+        f"across {len(gaps)} multiway spots the mean fold frequency facing the "
+        f"LARGEST modelled bet is {mean_gap:+.4f} relative to the smallest — a "
+        f"smaller bet must be folded to less on average, or the size in the "
+        f"action path is not reaching the multiway tree")
+
+
+def test_every_multiway_street_offers_the_same_bet_sizes(client, monkeypatch):
+    """M214. The cross-street invariant M213 had to learn the hard way.
+
+    The multiway turn and river are CHAINED solves that walk the flop leg
+    of their own tree. If the flop cell ever solved a different set of
+    sizes than those trees offer, a player could be advised on a
+    third-pot flop bet and then told one street later that the bet was
+    never legal — M207's defect, where the hand became unfollowable
+    halfway through, and it went unnoticed because every cross-street
+    test sent a bare `"raise"` that resolved to 2.5x on both trees.
+
+    So this compares the sizes ACROSS streets rather than against a
+    constant, and it names a size rather than sending a bare kind — the
+    two properties that would have caught M207 the day it shipped.
+
+    Note the invariant is about tree SHAPE, not precision: the three
+    cells run different iteration budgets on purpose (M214 raised only
+    the flop's), which is safe because iterations do not change which
+    actions exist.
+    """
+    monkeypatch.setattr(api_config, "MULTIWAY_FLOP_RAISE_SIZES",
+                        ((0.33, 0.75, 2.5),))
+    monkeypatch.setattr(api_config, "MULTIWAY_FLOP_MAX_RAISES", 2)
+    common = dict(preflop_action_path=["raise", "call_or_check", "call_or_check"],
+                  hero_cards="5c4d", board="Kd7c2h", players=3, stack_bb=100.0)
+    checked = ["call_or_check", "call_or_check", "call_or_check"]
+
+    flop = client.post("/advise", json=_advise_body(**common)).json()
+    turn = client.post("/advise", json=_advise_body(
+        flop_action_path=checked, turn_card="Ts", **common)).json()
+
+    assert flop["modelled_bet_sizes"] == turn["modelled_bet_sizes"], (
+        f"the multiway flop models {flop['modelled_bet_sizes']} but the turn's "
+        f"tree models {turn['modelled_bet_sizes']} — a bet advised on at one "
+        f"street would 422 at the next")
+
+    # And the small bet really is walkable from the flop into the turn,
+    # which is the failure a size comparison alone would still miss.
+    small = min(s for s in flop["modelled_bet_sizes"] if s < flop["pot"])
+    onward = client.post("/advise", json=_advise_body(
+        flop_action_path=[f"raise:{small:.2f}", "call_or_check", "call_or_check"],
+        turn_card="Ts", **common))
+    assert onward.status_code == 200, (
+        f"a {small:.2f}bb flop bet the engine itself offers cannot be "
+        f"continued to the turn: {onward.json()}")
+
+
+def test_the_shipped_multiway_config_can_represent_a_small_bet():
+    """M214. The one multiway guard that reads the SHIPPED constant.
+
+    Every other test in this file patches a menu in, because
+    `_disable_prewarm_and_clear_cache` sets `MULTIWAY_FLOP_RAISE_SIZES =
+    ()` for speed — so reverting the shipped value to a lone 2.5x would
+    leave all of them green while putting the defect straight back. This
+    reads the value captured at import instead.
+
+    Measured before M214: on 16 three-way spots the share where a player
+    could name the bet they faced was 0.00 at a third of the pot and 0.00
+    at half the pot, on all three multiway streets.
+
+    Asserted against the POT (a multiple below 1.0), not against the
+    literal menu, so retuning the sizes is free and only losing the
+    capability fails.
+    """
+    opening = SHIPPED_MULTIWAY_FLOP_RAISE_SIZES[0]
+    multiples = opening if isinstance(opening, tuple) else (opening,)
+    assert any(m < 1.0 for m in multiples), (
+        f"the shipped multiway opening bet sizes are {multiples} — none is "
+        f"smaller than the pot, so a player facing a half-pot bet three-way "
+        f"cannot describe it and is answered about a 2.5x overbet instead "
+        f"(M209 priced that mistake at 1.74 bb a decision heads-up)")

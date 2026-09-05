@@ -395,11 +395,46 @@ DEMO_MULTIWAY_FLOP_CLASSES = {
 # today (see the module docstring's own note on why).
 DEFAULT_MULTIWAY_FLOP_BOARD = "Jh7d2c"
 
-# Real sized bet + all-in, matching FLOP_TURN_MAX_RAISES/FLOP_TURN_
-# RAISE_SIZES's own choice for consistency — shared between both new
-# endpoints, same as those two share one raise-sizing menu.
+# M214: the multiway bet-size menu — the last place in the product where
+# the smallest bet the engine could represent was 2.5x the pot.
+#
+# The gap was a CAPABILITY one, exactly as M209 found on the heads-up
+# flop. Measured through `/advise` on 16 three-way spots, the share of
+# spots where a player can even ASK about the bet they face:
+#
+#   arm       0.33x   0.75x   2.50x
+#   (2.5,)     0.00    0.00    1.00      <- every multiway street
+#   menu       1.00    1.00    1.00
+#
+# A player facing a half-pot bet three-way could not say so on ANY
+# street, and `["raise"]` was modelled as a 2.5x overbet. On the heads-up
+# streets that mistake was priced at 1.74 / 1.85 / 1.75 bb per decision
+# (M209/M213).
+#
+# **It is NOT priced in bb here, and that is deliberate.** F46/M163
+# measured multiway seed spread p90 0.240 at 30,000 iterations, so there
+# is no converged multiway reference to score against; a bb figure would
+# be pricing against one draw from a distribution, which M153 records
+# this project nearly adopting a config change on. What IS measured is
+# the capability above and the ordering below.
+#
+# **One constant, all three multiway streets, deliberately.** The turn
+# and river cells are chained solves that WALK the flop leg of their own
+# tree, so a split would put a different flop tree under them than the
+# flop cell solves - which is precisely the M207 defect M213 had to fix,
+# where a bet was advised on and then 422'd one street later. Note the
+# constraint is on tree SHAPE, not on precision: the iteration budgets
+# differ per cell and that is safe, because iterations do not change
+# which actions exist.
+#
+# Cost, cold through `/advise`, at each cell's own budget:
+# flop 0.38 -> 1.05s (the budget rise, not the menu), turn 1.69 -> 2.38s,
+# river 1.85 -> 2.41s. The chained trees did NOT explode as M173's
+# width finding suggested they might: that was RANGE width, which the
+# O(N^2) equity table scales with, and this is ACTION width at a fixed
+# pool.
 MULTIWAY_FLOP_MAX_RAISES = 2
-MULTIWAY_FLOP_RAISE_SIZES = (2.5,)
+MULTIWAY_FLOP_RAISE_SIZES = ((0.33, 0.75, 2.5),)
 
 # Measured live, at DEMO_MULTIWAY_FLOP_CLASSES' own 11-combo pool (see
 # the module docstring for the full numbers this milestone's own scoping
@@ -1072,16 +1107,42 @@ MAX_RIVER_PATH_QUERY_ITERATIONS = DEFAULT_FLOP_TO_RIVER_ITERATIONS
 # 10 is measured and available if the latency budget ever grows.
 MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION = 8
 
-# Iteration-count scaling at this cap's own 35-combo pool is NOT close
-# to flat, unlike DEMO_MULTIWAY_FLOP_CLASSES' own tiny 11-combo pool
-# (see MAX_FLOP_MULTIWAY_ITERATIONS' own comment) — measured, same
-# path/board as above: 200 iters ~22.46s, 500 iters ~36.76s, 1000 iters
-# ~48.20s, 2000 iters ~58.13s. Default kept at solve_flop_multiway's
-# own default (200); cap set to 500 (~37s) rather than solve_flop_
-# multiway's own generous 2000-iteration ceiling, which was tuned
-# against a much smaller (11-combo) pool.
-DEFAULT_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = DEFAULT_FLOP_MULTIWAY_ITERATIONS
-MAX_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = 500
+# M214. 1000, raised from 200, because the bet-size MENU needs it to
+# point the right way.
+#
+# **The old numbers here were stale by ~40x and would have refused this
+# change.** They read "200 iters ~22.46s ... 1000 iters ~48.20s", which
+# is what this cost before M162 made multiway equity ~28x cheaper.
+# Re-measured cold through `/advise` on the multiway flop cell:
+#
+#   iterations   200    500   1000   2000
+#   flop        0.39s  0.67s  1.05s  1.94s
+#
+# **Why it moves at all.** M162 declined to raise the multiway budget and
+# was right to: "Nothing measured shows more budget produces a better
+# answer, only a differently-noisy one... Raising it needs a converged
+# multiway reference to score against, and none exists." There is still
+# no converged multiway reference (F46/M163: seed spread p90 0.240 at
+# 30,000 iterations). What is new is a correctness criterion that needs
+# none - facing a SMALLER bet must fold LESS - validated on the same
+# harness against the heads-up exact solver, where it holds at 6.90
+# sigma. Stability evidence would still not justify this; directional
+# correctness against a known-truth control is different evidence.
+#
+# Measured through `/advise`, menu arm, 16 multiway spots, fold frequency
+# facing 0.33x / 0.75x / 2.5x of pot:
+#
+#   flop budget   0.33x    0.75x    2.50x      gap    sigma   right
+#   200 (was)    0.5502   0.4538   0.6968   +0.1466    1.62   11/16
+#   1000 (now)   0.4004   0.5608   0.7142   +0.3138    3.14   13/16
+#
+# The flop is the ONLY multiway cell that clears 2 sigma, and the only
+# one where the fix is affordable: the turn and river cells are CHAINED
+# solves, and a 1000-iteration flop leg costs them **32.83s and 25.06s**
+# (measured, same run). They keep their own budgets - see
+# DEFAULT_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS below.
+DEFAULT_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = 1000
+MAX_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = 1000
 
 # /solve_turn_multiway_from_path's (M44) own class cap and iteration
 # bounds — deliberately its own, not MAX_MULTIWAY_PATH_QUERY_CLASSES_

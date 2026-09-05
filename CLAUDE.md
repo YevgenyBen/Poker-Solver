@@ -504,8 +504,68 @@ requests now reject unknown fields by name rather than ignoring them.
   solve, and through `/advise` the same step is 1.25 -> ~6s.
   **The chained `solve_flop_turn` keeps its single size deliberately** —
   two streets in one tree took a cached entry to 26.75 MB and the cache
-  to 1.6 GB. `MULTIWAY_FLOP_RAISE_SIZES` is still 2.5x only: same defect,
-  still open.
+  to 1.6 GB.
+  **M214 closed the MULTIWAY half, the last place a 2.5x overbet was the
+  smallest modellable bet.** `MULTIWAY_FLOP_RAISE_SIZES =
+  ((0.33, 0.75, 2.5),)`. Measured through `/advise` on 16 three-way
+  spots, the share where a player can NAME the bet they face:
+  | arm | 0.33x | 0.75x | 2.50x |
+  |---|---|---|---|
+  | old `(2.5,)` | **0.00** | **0.00** | 1.00 |
+  | menu | 1.00 | 1.00 | 1.00 |
+  Zero on every multiway street. **NOT priced in bb, deliberately** —
+  F46/M163 measured multiway seed spread p90 0.240 at 30,000 iterations,
+  so there is no converged reference and a bb figure would price against
+  one draw from a distribution.
+  **One constant drives all three multiway streets and must stay that
+  way**: the turn and river are CHAINED solves walking the flop leg of
+  their own tree, so splitting it recreates M207 exactly. The constraint
+  is on tree SHAPE, not precision — the cells run different iteration
+  budgets on purpose, which is safe because iterations do not change
+  which actions exist.
+  **`DEFAULT_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = 1000`** (was 200).
+  M162 refused this for want of a converged multiway reference; there
+  still is none, but there is now a correctness criterion needing none —
+  facing a smaller bet must fold less — validated against the heads-up
+  exact solver at **6.90 sigma, 17/17**. Fold frequency vs 0.33/0.75/2.5x
+  on the multiway flop goes 0.5502/0.4538/0.6968 (gap +0.1466, 1.62
+  sigma) at 200 to **0.4004/0.5608/0.7142 (gap +0.3138, 3.14 sigma)** at
+  1000. The flop is the ONLY multiway cell that clears 2 sigma and the
+  only one where it is affordable: the chained turn and river cost
+  **32.83s and 25.06s** with a 1000-iteration flop leg, so they keep
+  their budgets and their ordering is positive but not separable.
+  Cost: flop 0.38 -> 1.05s, turn 1.69 -> 2.38s, river 1.85 -> 2.41s.
+  The chained trees did NOT explode — M173's width finding was RANGE
+  width (which the O(N^2) equity table scales with); this is ACTION width
+  at a fixed pool.
+  **A conclusion withdrawn mid-milestone, worth knowing before measuring
+  multiway anything**: an isolated `solve_flop_multiway` study measured
+  the ordering INVERTED at 200 iterations (-0.0232 / -0.1556 over two
+  disjoint seed sets), with a plausible mechanism (MCCFR samples, so
+  tripling root branching divides traversals). Through `/advise` it is
+  positive on every street at the same budget. The isolated arm skipped
+  hero force-inclusion (M51/M76), on-demand node training (M163/M164) and
+  real derived ranges. **M174's rule: measure multiway through
+  `/advise`.**
+  **Still open at multiway**: `MULTIWAY_FLOP_MAX_RAISES = 2`, so facing a
+  bet the only way to commit chips is all-in — F40's shape.
+  **F49 (M214): M127's byte budget never covered a single multiway
+  cache.** `test_cache_ceilings_are_sized_against_what_an_entry_actually_
+  costs` measures a real entry, but only for caches its own sweep
+  populates, and that sweep was entirely `players: 2`. One multiway
+  request found three over the 168 MB budget:
+  | cache | MB/entry | maxsize | budget |
+  |---|---|---|---|
+  | `flop_multiway_path` | 0.425 -> 0.926 | 256 | 109 -> **237 MB** |
+  | `turn_multiway_path` | 10.174 -> 16.712 | 128 | **1,302 -> 2,139 MB** |
+  | `multiway` (preflop) | 83.589 (unchanged) | 64 | **5,350 MB** |
+  Now 181 and 10; `turn_multiway_path` was already **7.8x** over before
+  the menu. **The preflop one is RECORDED, NOT FIXED** — unaffected by
+  M214, and the budget affords TWO entries against a solve measured at
+  35s (3-max) / 76s (6-max) cold, so shrinking it as a side effect would
+  ship an unmeasured latency regression. It sits in `_KNOWN_OVER_BUDGET`
+  with its measured ceiling so it cannot grow quietly, and it is the
+  obvious next piece of work. The sweep now sends a multiway request.
   **M213 also fixed a bug M207 shipped: a hand became unfollowable
   halfway through.** Turn and river paths WALK a flop tree built with
   `FLOP_TURN_RAISE_SIZES` while the flop SOLVES with `FLOP_RAISE_SIZES`,

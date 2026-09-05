@@ -393,7 +393,11 @@ _flop_query_library = _SolveCache("flop_query_library", maxsize=2048)
 # preflop-leg iterations, and flop_iterations — two different requests
 # that happen to derive an identical range/pot/stack still get correctly
 # separate cache entries if either iteration count differs.
-_flop_multiway_path_cache = _SolveCache("flop_multiway_path", maxsize=256)
+# M214 re-derived this against a real entry. The multiway bet-size menu
+# roughly doubled it (0.425 -> 0.926 MB), taking the old 256 ceiling from
+# 109 MB to 237 MB, past MAX_CACHE_BYTES_PER_CACHE. 168 / 0.926 = 181.
+# M127's rule: a wider tree moves ceilings nothing else points at.
+_flop_multiway_path_cache = _SolveCache("flop_multiway_path", maxsize=181)
 
 # /solve_turn_multiway_from_path's (M44) own plain dict cache — same
 # "no canonical library, keyed on everything the solve depends on"
@@ -407,7 +411,23 @@ _flop_multiway_path_cache = _SolveCache("flop_multiway_path", maxsize=256)
 # _query_turn_multiway_from_path below) — that call mutates a cached
 # StrategyResult's own chance_data dict in place, so it needs the same
 # protection the cache dict's own reads/writes already get.
-_turn_multiway_path_cache = _SolveCache("turn_multiway_path", maxsize=128)
+# M214. **This was already 7.8x over budget before the menu touched it**,
+# and nothing had ever measured it: `test_cache_ceilings_are_sized_
+# against_what_an_entry_actually_costs` sizes a REAL entry, but only for
+# the caches its own sweep populates, and that sweep is entirely heads-up
+# (`players: 2`). So every multiway cache had been outside M127's
+# guarantee since it was written.
+#
+# Measured per entry: 10.174 MB before the menu, 16.712 MB after — a
+# chained multiway solve holds two streets of tree. At 128 that is
+# 1,302 MB before and 2,139 MB after, against a 168 MB budget.
+# 168 / 16.712 = 10.
+#
+# A ceiling of 10 does mean more misses on the multiway turn than 128
+# did, and that is the trade M127 settled: a bound on entry COUNT is not
+# a bound on memory, and 2.1 GB in one cache is what the unbounded
+# version of this looks like.
+_turn_multiway_path_cache = _SolveCache("turn_multiway_path", maxsize=10)
 
 # M67: MultiwayEquityCache instances, shared across every multiway solve
 # that uses the same hand pool — keyed by the pool, NOT by (stack,
