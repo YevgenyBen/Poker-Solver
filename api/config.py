@@ -433,6 +433,35 @@ DEFAULT_MULTIWAY_FLOP_BOARD = "Jh7d2c"
 # width finding suggested they might: that was RANGE width, which the
 # O(N^2) equity table scales with, and this is ACTION width at a fixed
 # pool.
+# M218. The multiway TURN is solved as its own street, not chained from
+# the flop - the move M173/M174 made heads-up, where it was worth
+# 7.94s -> 0.87s (9.1x) AND better advice, because chaining was what
+# forced the turn's range coverage down.
+#
+# Measured before building it: the chained multiway turn costs **3.83s**
+# through `/advise` against a **0.24s** standalone solve. Chaining solves
+# the flop AND the turn in one tree, so the flop leg is paid for on every
+# turn request and the whole thing scales with the product of both
+# streets' widths.
+#
+# A four-card board also makes `NwayBoardEquityCache` ENUMERATE the one
+# remaining runout instead of sampling it (M154), so the standalone turn
+# is exact in equity where the chained one is Monte Carlo - the same
+# property that made the heads-up standalone turn cheap.
+#
+# `False` restores the chained path exactly. The flag exists because
+# what standalone gives up - the flop betting round's influence on the
+# turn - is a real question M173 could not settle heads-up either, not
+# as a migration aid.
+MULTIWAY_TURN_SOLVE_STANDALONE = True
+
+# The standalone multiway turn's own iteration budget. Same value as the
+# flop cell (M214), and for the same measured reason: below ~1000 the
+# ordering facing different bet sizes points the wrong way, which is a
+# correctness criterion that needs no converged reference. It is
+# affordable here precisely because the street is no longer chained.
+MULTIWAY_TURN_STANDALONE_ITERATIONS = 1000
+
 MULTIWAY_FLOP_MAX_RAISES = 2
 MULTIWAY_FLOP_RAISE_SIZES = ((0.33, 0.75, 2.5),)
 
@@ -1364,7 +1393,11 @@ SIZING_CAVEAT_REASON = (
 # this should measure the flop leg directly first, the way the flop
 # sibling's comment does.
 DEFAULT_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS = DEFAULT_FLOP_TURN_MULTIWAY_ITERATIONS
-MAX_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS = 200
+# M218 raised this 200 -> 1000. It is a CAP, not a default, so raising it
+# slows nothing: it exists to stop a caller asking for an unaffordable
+# solve, and standalone the affordable ceiling is far higher because the
+# budget buys one street instead of two.
+MAX_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS = 1000
 
 
 # M124 (D1). The bucket width for the multiway preflop solve cache.

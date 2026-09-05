@@ -308,8 +308,19 @@ from api.caches import entry_bytes as _deep_size            # noqa: E402
 # recorded number rather than a live one.
 
 
-def _allowance(_name):
+# The one cache with a budget of its own, and the reason it has one.
+# M215 measured a 9-max multiway preflop entry at 256.56 MB - a single
+# entry larger than every other cache's whole budget - against a solve
+# costing 35s at 3-max and 525s at 9-max. It is sized at the prewarmed
+# working set and enforced by eviction (M216), not waived.
+_DECLARED_BUDGETS_MB = {"multiway": 1_024}
+
+
+def _allowance(name):
     from api import caches as caches_module
+    declared = _DECLARED_BUDGETS_MB.get(name)
+    if declared is not None:
+        return declared * 1024 * 1024
     return caches_module.MAX_CACHE_BYTES_PER_CACHE
 
 
@@ -381,17 +392,47 @@ def test_cache_ceilings_are_sized_against_what_an_entry_actually_costs():
         # 2.02 MB at 3-max to 256.56 MB at 9-max), so that was a coin
         # flip dressed as a measurement.
         entry_bytes = max(_deep_size(entry) for entry in value.entries.values())
-        budget = entry_bytes * value.maxsize
-        measured.append((value.name, entry_bytes, value.maxsize, budget))
-        if budget > _allowance(value.name):
+        measured.append((value.name, entry_bytes, value.maxsize, value.total_bytes))
+        # M218: assert the LIVE invariant, not `maxsize x worst entry`.
+        #
+        # That product was the right bound while a count ceiling was the
+        # only bound there was. Now every cache evicts on memory (M216),
+        # and `turn_multiway_path` holds entries 38x apart (0.927 MB
+        # standalone turn, 35.029 MB chained river) - so a count ceiling
+        # generous enough for the cheap kind reads as a huge overrun
+        # against the expensive kind, while the cache is in fact bounded.
+        #
+        # The exception is M216's deliberate one: a single entry larger
+        # than the whole budget is KEPT, because discarding a solve worth
+        # minutes is worse than being briefly over.
+        # Two checks, because they fail in different situations.
+        #
+        # (1) The LIVE invariant: a populated cache must not be HOLDING
+        #     more than its budget. Cheap and exactly right, but it only
+        #     bites under load - disabling byte eviction entirely does
+        #     not fail it, because this sweep makes a handful of entries.
+        #     Kept as a sanity check, not relied on. The mechanism itself
+        #     is covered by `test_the_byte_bound_evicts_where_the_count_
+        #     bound_would_not`, which stores enough to force eviction.
+        if value.total_bytes > _allowance(value.name) and len(value.entries) > 1:
             over_budget.append(
-                f"{value.name}: {entry_bytes / 1e6:.2f} MB/entry x {value.maxsize} "
-                f"= {budget / 1e6:.0f} MB"
+                f"{value.name}: HOLDING {value.total_bytes / 1e6:.0f} MB across "
+                f"{len(value.entries)} entries (worst {entry_bytes / 1e6:.2f} MB)"
+            )
+        # (2) The CONFIG check, which has teeth whatever the sweep
+        #     happens to populate: the ceiling a cache is ALLOWED to
+        #     reach. This is what M127's `maxsize x worst entry` product
+        #     was really asserting, now that `max_bytes` is the bound
+        #     rather than a proxy for it.
+        if value.max_bytes is not None and value.max_bytes > _allowance(value.name):
+            over_budget.append(
+                f"{value.name}: max_bytes {value.max_bytes / 1e6:.0f} MB exceeds "
+                f"its {_allowance(value.name) / 1e6:.0f} MB budget"
             )
 
     assert measured, "populated no caches — has the request shape changed?"
     assert not over_budget, (
-        "these caches exceed their per-cache byte budget "
+        "these caches are HOLDING more than their per-cache byte budget "
         f"(default {caches_module.MAX_CACHE_BYTES_PER_CACHE / 1e6:.0f} MB): "
         f"{over_budget}. Lower the maxsize — a ceiling on entry COUNT is not a "
         "ceiling on memory."

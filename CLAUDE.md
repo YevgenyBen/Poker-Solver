@@ -557,13 +557,45 @@ requests now reject unknown fields by name rather than ignoring them.
   registers. But the CHAINED turn and river share that tree shape and pay
   **1.38x / 1.52x, reaching 5.28s and 6.78s**, while using the new action
   0.027 / 0.007. Splitting the constant is M207 exactly.
-  **The unlock is making the multiway turn/river STANDALONE** (M173/M174's
-  move, which measured 7.94 -> 0.87s heads-up). Measured here:
-  chained turn **3.83s** through `/advise` against a **0.24s** standalone
-  solve, **0.29s** with the re-raise — and a four-card board makes
-  `NwayBoardEquityCache` enumerate rather than sample (M154), so it is
-  exact too. `_query_turn_multiway_from_path` is 321 lines, so it is its
-  own milestone.
+  **M218 MADE THE MULTIWAY TURN STANDALONE.**
+  `MULTIWAY_TURN_SOLVE_STANDALONE = True`; `False` restores the chained
+  path exactly.
+  | | chained | standalone |
+  |---|---|---|
+  | `/advise`, turn facing a bet | 3.88s | **1.84s** (2.1x) |
+  | cache entry | 35.03 MB | **0.927 MB** (38x) |
+  | turn equity | sampled | **exact** (M154) |
+  **Quality, on the only axis multiway has** (no converged reference —
+  F46/M163), 17 spots through `/advise`, facing 0.33/0.75/2.5x:
+  standalone folds 0.5552/0.6375/0.7312, **gap +0.1760, 12/17 spots
+  right**; chained 0.4287/0.4591/0.5281, gap +0.0993, 7/17. Both order
+  correctly and standalone is stronger, but **neither is separable at
+  n=17** — the speed and memory carry the change, not the ordering.
+  **Only the LIVE positions are solved** — the one real difference from
+  the heads-up version. Heads-up a fold ends the hand; three-handed it
+  leaves a two-player turn, and `solve_flop_multiway` seats every
+  position it is handed, so a flop folder must be dropped explicitly.
+  **The end-to-end gain is 2.1x where the isolated solve suggested 16x**
+  — a request also pays for derived ranges, hero force-inclusion and node
+  training. M173 saw the same in reverse.
+  **The caller's budget drives the solve**: standalone there is no flop
+  leg, so `flop_iterations` is the TURN's budget, and the cell's DEFAULT
+  switches on the flag because the two architectures want very different
+  numbers from one constant. `MAX_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS`
+  200 -> 1000 (a cap, so raising it slows nothing).
+  **It keys PER TURN CARD now** (the board is part of what was solved),
+  where chained held every runout as a chance branch in one entry —
+  M174's trade for the heads-up river, and the test asserts both
+  behaviours by flag rather than being deleted.
+  **First place M216's byte bound BINDS**: this cache now holds entries
+  **38x apart** (0.927 MB turn, 35.03 MB chained river), which a count
+  ceiling cannot express. maxsize 10 -> 181 against the turn entry, with
+  `max_bytes` doing the real bounding.
+  **STILL BLOCKED: the sized re-raise.** Now **1.05x** on the standalone
+  turn (against 1.38x chained), but `MULTIWAY_FLOP_RAISE_SIZES` drives
+  the flop, turn AND the still-chained river, where M217 measured 1.52x
+  and 6.78s. **Making the multiway river standalone unblocks it** —
+  M174's second half.
   **The player IS told**: `BET_SIZING_COVERAGE_NOTE` fires on exactly the
   facing-a-bet rows (sizes `[97.5]`) and stays silent at opening
   decisions, pinned by
