@@ -6810,3 +6810,69 @@ def test_a_bare_raise_is_refused_where_it_cannot_be_defaulted(client, monkeypatc
     assert resp.status_code == 422, resp.status_code
     detail = resp.json()["detail"].lower()
     assert "ambiguous" in detail and "name the size" in detail, detail
+
+
+def test_facing_a_small_bet_folds_less_than_facing_an_overbet(client):
+    """M209. The invariant the bet-size menu exists to make expressible.
+
+    Before M206 a player facing a half-pot bet had no way to say so —
+    their `["raise"]` was modelled as a 2.5x-pot overbet — and the engine
+    folded accordingly. Measured against a full-width reference, that
+    mis-modelling costs **1 to 4 big blinds** on a single decision,
+    because folding to a third-pot bet with a playable hand gives up a
+    pot you were priced in to contest.
+
+    Asserted as a DIRECTION rather than a level, so it survives every
+    range cap, iteration budget and equity seed this project keeps
+    moving: whatever the frequencies, a smaller bet must be folded to
+    less often than a larger one. If that ever inverts, the size in the
+    action path is not reaching the tree.
+    """
+    base = {"stack_bb": 100.0, "players": 2, "board": "Kd7c2h",
+            "hero_cards": "9c9d",
+            "preflop_action_path": ["raise", "call_or_check"]}
+    pot = client.post("/advise", json=base).json()["pot"]
+
+    sizes = api_config.FLOP_RAISE_SIZES[0]
+    if not isinstance(sizes, tuple) or len(sizes) < 2:
+        pytest.skip("no bet-size menu configured on the flop")
+    small, large = min(sizes), max(sizes)
+
+    def fold_freq(multiple):
+        payload = client.post("/advise", json={
+            **base, "flop_action_path": [f"raise:{multiple * pot:.2f}"]}).json()
+        strategy = payload["hero"]["strategy"]
+        assert "fold" in strategy, f"no fold offered facing {multiple}x: {strategy}"
+        return strategy["fold"]
+
+    facing_small, facing_large = fold_freq(small), fold_freq(large)
+    assert facing_small < facing_large, (
+        f"folds {facing_small:.4f} facing {small}x pot but only "
+        f"{facing_large:.4f} facing {large}x — a smaller bet must be "
+        f"folded to less, or the size in the path never reached the tree")
+
+
+def test_the_two_bet_sizes_reach_genuinely_different_nodes(client):
+    """M209. The cheap structural half of the guard above.
+
+    A direction can hold by coincidence if both requests land on the same
+    node. The pot after the bet identifies WHICH bet was modelled, and it
+    is derived from the tree rather than echoed from the request.
+    """
+    base = {"stack_bb": 100.0, "players": 2, "board": "Kd7c2h",
+            "hero_cards": "9c9d",
+            "preflop_action_path": ["raise", "call_or_check"]}
+    pot = client.post("/advise", json=base).json()["pot"]
+    sizes = api_config.FLOP_RAISE_SIZES[0]
+    if not isinstance(sizes, tuple) or len(sizes) < 2:
+        pytest.skip("no bet-size menu configured on the flop")
+
+    pots = {}
+    for multiple in (min(sizes), max(sizes)):
+        payload = client.post("/advise", json={
+            **base, "flop_action_path": [f"raise:{multiple * pot:.2f}"]}).json()
+        pots[multiple] = payload["pot"]
+        assert payload["pot"] == pytest.approx(pot * (1 + multiple)), (
+            f"facing {multiple}x pot produced a pot of {payload['pot']} "
+            f"against an opening pot of {pot}")
+    assert len(set(pots.values())) == 2, pots
