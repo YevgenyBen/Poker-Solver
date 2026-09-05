@@ -40,6 +40,39 @@ as evidence:
   reliability certificate (M180) — every one this product carried failed
   when measured at a larger sample.
 
+## External tools are INSTRUMENTS, never ingredients
+
+**Stone law.** Independent solvers (TexasSolver, postflop-solver), bot
+APIs (Slumbot), hand-history corpora, and any other outside artefact
+exist here for exactly one purpose: **to measure this engine and tell us
+where it is wrong.** None of them may become part of what ships.
+
+Concretely, the shipped product must never:
+
+- import, bundle, wrap or shell out to an external solver;
+- depend on a downloaded dataset, hand-history file or solution library
+  at request time;
+- serve an answer that originated anywhere but `poker_solver/`.
+
+**Why this is a law and not a preference.** The engine is the product.
+An answer copied from another solver is not this engine getting better —
+it is a lookup with our name on it, and it would silently cap us at that
+tool's coverage, its licence, its availability and its own errors. Worse,
+it would destroy the only thing that makes the accuracy programme mean
+anything: a reference has to be INDEPENDENT of the thing it measures. The
+moment a solver's output is inside the engine, it can no longer judge the
+engine, and we lose the one instrument that sees the errors our own
+references share (M194 established that shared model error is now the
+entire residual).
+
+So: use them freely in `scratchpad/`, in studies, in milestone work.
+Bring back **findings** — "we under-bluff backdoor hands", "the turn
+cannot bet small" — and fix the engine. Never bring back their answers.
+
+Enforced by `tests/test_external_tools_are_not_dependencies.py`, which
+scans the shipped packages the way `test_package_boundary.py` guards the
+engine/API split.
+
 ## Current state (read this first)
 
 A Texas Hold'em GTO solver engine plus a web UI for exploring it. The

@@ -11386,3 +11386,60 @@ signed rather than clamping).
   size is stripped from the path token or ignored by `resolve_action`.
 
 Suite 1,116 -> 1,118.
+
+## M210 — external tools are instruments, never ingredients
+
+A standing constraint, written where it will be read and enforced where
+it can be broken. Independent solvers (TexasSolver, postflop-solver), bot
+APIs (Slumbot), hand-history corpora and any other outside artefact exist
+in this project to **measure the engine**. None may become part of what
+ships.
+
+### Why it is a law rather than a preference
+
+Two reasons, and the second is the one that would be easy to miss.
+
+**The engine is the product.** An answer copied from another solver is
+not this engine improving; it is a lookup wearing our name, capped at
+that tool's coverage, licence, availability and errors.
+
+**And it would destroy the instrument.** A reference has to be
+INDEPENDENT of the thing it measures. The moment an external solver's
+output is inside `poker_solver/`, it can no longer judge us — and M194
+established that shared model error is now the **entire** remaining
+residual, so an independent reference is the only thing that can see it.
+M210's own first comparison is the demonstration: against TexasSolver
+restricted to our own bet menu, we bet 0.390 where it bets 0.542, a mean
+per-hand gap of 0.265 — substantially larger than any internal reference
+ever showed, because the internal ones shared our blind spots.
+
+### What it permits, which is most of the value
+
+Drive them freely from the scratchpad, in studies and milestone work.
+Bring back **findings** — "we under-bluff backdoor hands", "the turn
+cannot bet small" — and fix the engine. Never bring back their answers.
+
+### Enforcement
+
+`tests/test_external_tools_are_not_dependencies.py`, shaped after
+`test_package_boundary.py`, scans the shipped packages two ways:
+
+* **imports**, catching `subprocess`, `texassolver`, `slumbot`,
+  `open_spiel` and friends. `subprocess` is on the list deliberately —
+  shelling out to a solver binary is the most likely way this gets broken,
+  and it needs no dependency and no suspicious-looking import.
+* **source text**, catching what an import scan cannot: a hardcoded
+  binary path, an endpoint, a dataset filename.
+
+Scope is the SHIPPED packages only; the scratchpad is meant to drive
+these tools and forbidding that would defeat the point. Nothing in
+`poker_solver/` or `api/` imports `subprocess` today, so the rule costs
+nothing to adopt.
+
+Three mutations killed: a shipped module importing `subprocess`, one
+hardcoding `console_solver.exe`, and the law being deleted from
+CLAUDE.md. The last matters — a guard whose reasoning lives only in a
+test file is a rule nobody knows about, so the test asserts the law stays
+written down and that CLAUDE.md names the test enforcing it.
+
+Suite 1,118 -> 1,179.
