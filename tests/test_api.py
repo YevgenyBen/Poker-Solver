@@ -7173,3 +7173,57 @@ def test_the_shipped_multiway_config_can_represent_a_small_bet():
         f"smaller than the pot, so a player facing a half-pot bet three-way "
         f"cannot describe it and is answered about a 2.5x overbet instead "
         f"(M209 priced that mistake at 1.74 bb a decision heads-up)")
+
+
+def test_a_multiway_player_facing_a_bet_is_told_shoving_was_the_only_size(
+        client, monkeypatch):
+    """M217. The disclosure that makes F40-at-multiway tolerable to ship with.
+
+    `MULTIWAY_FLOP_MAX_RAISES = 2` allows exactly one sized raise level,
+    which the opening menu uses — so facing a bet the only way to put
+    chips in is all-in, on every multiway street. Measured through
+    `/advise`: `modelled_bet_sizes` is `[2.97, 6.75, 22.5, 97.5]` at the
+    opening decision and **`[97.5]`** one action later.
+
+    Adding a sized re-raise was measured and refused for now: it is FREE
+    on the multiway flop (1.00x over 3 reps) and used ~40% of the time by
+    strong hands, but the turn and river are CHAINED solves sharing that
+    tree shape, where it costs 1.38-1.52x and takes them to 5.28s and
+    6.78s while being used under 3%. Splitting the constant would
+    recreate M207 — advice on a bet the next street refuses to continue
+    from.
+
+    So the gap stands, and what makes that acceptable is that the player
+    is TOLD. This pins it, because the note is derived from the
+    response's own rows (M144) and a future tree change could silence it
+    without failing anything else.
+    """
+    monkeypatch.setattr(api_config, "MULTIWAY_FLOP_RAISE_SIZES",
+                        ((0.33, 0.75, 2.5),))
+    monkeypatch.setattr(api_config, "MULTIWAY_FLOP_MAX_RAISES", 2)
+    common = dict(preflop_action_path=["raise", "call_or_check", "call_or_check"],
+                  hero_cards="5c4d", board="Kd7c2h", players=3, stack_bb=100.0)
+    probe = api_config.BET_SIZING_COVERAGE_NOTE.strip()[:60]
+
+    opening = client.post("/advise", json=_advise_body(**common)).json()
+    sized = [s for s in opening["modelled_bet_sizes"] if s < opening["pot"] * 3]
+    if not sized:
+        pytest.skip("no multiway bet-size menu configured")
+    assert probe not in (opening.get("aggression_confidence_reason") or ""), (
+        "the no-intermediate-size note fired at an opening decision that "
+        "models several bet sizes")
+
+    facing = client.post("/advise", json=_advise_body(
+        flop_action_path=[f"raise:{min(sized):.2f}"], **common))
+    assert facing.status_code == 200, facing.json()
+    payload = facing.json()
+
+    raises = [k for k in payload["hero"]["strategy"] if k.startswith("raise:")]
+    assert not raises, (
+        f"this test documents the gap; a sized raise {raises} is now offered "
+        f"facing a multiway bet, so F40-at-multiway is closed and this test "
+        f"should be replaced by one asserting the size is USED")
+    assert probe in (payload.get("aggression_confidence_reason") or ""), (
+        "facing a multiway bet the only way to commit chips is all-in, and the "
+        "response does not say so — a player is being told to shove 97.5bb "
+        "without being told that shoving was the only option modelled")

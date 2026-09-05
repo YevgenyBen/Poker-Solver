@@ -549,6 +549,26 @@ requests now reject unknown fields by name rather than ignoring them.
   `/advise`.**
   **Still open at multiway**: `MULTIWAY_FLOP_MAX_RAISES = 2`, so facing a
   bet the only way to commit chips is all-in — F40's shape.
+  **M217 PRICED that gap and refused it, for now.** A sized re-raise
+  (`((0.33, 0.75, 2.5), 2.0)` at max_raises 3) is **FREE on the multiway
+  flop (2.43 -> 2.42s, median of 3) and USED 0.39-0.43 by strong hands**
+  where they previously had only a 97.5bb shove — free because a multiway
+  flop solve is 99% equity lookups (M162), so tree width barely
+  registers. But the CHAINED turn and river share that tree shape and pay
+  **1.38x / 1.52x, reaching 5.28s and 6.78s**, while using the new action
+  0.027 / 0.007. Splitting the constant is M207 exactly.
+  **The unlock is making the multiway turn/river STANDALONE** (M173/M174's
+  move, which measured 7.94 -> 0.87s heads-up). Measured here:
+  chained turn **3.83s** through `/advise` against a **0.24s** standalone
+  solve, **0.29s** with the re-raise — and a four-card board makes
+  `NwayBoardEquityCache` enumerate rather than sample (M154), so it is
+  exact too. `_query_turn_multiway_from_path` is 321 lines, so it is its
+  own milestone.
+  **The player IS told**: `BET_SIZING_COVERAGE_NOTE` fires on exactly the
+  facing-a-bet rows (sizes `[97.5]`) and stays silent at opening
+  decisions, pinned by
+  `test_a_multiway_player_facing_a_bet_is_told_shoving_was_the_only_size`
+  in both directions.
   **F49 (M214): M127's byte budget never covered a single multiway
   cache.** `test_cache_ceilings_are_sized_against_what_an_entry_actually_
   costs` measures a real entry, but only for caches its own sweep
@@ -1853,6 +1873,20 @@ requests now reject unknown fields by name rather than ignoring them.
   estimated the vector rewrite at 3-5x; it measured 13.07x at a
   production-sized pool. See M161's entry above.
 
+- **THE ANATOMY HAS INVERTED THREE TIMES — MEASURE, DON'T ASSUME (M217).**
+  M155 said table 14% / solve 86%; M176 said 89.5% / 4.8% and after its
+  own fix 48% / 19%; **M217 measures table 40.9% (1.81s) / CFR 57.7%
+  (2.55s)**, because M207's menu widened the tree and CFR is dominant
+  again. Cold per cell, one machine state: heads-up flop **6.10s** (the
+  only cell over 5s), turn 3.43s, river 3.15s; multiway flop 2.45s, turn
+  3.43s, river 4.23s — all ~0.02-0.04s warm. **No change made**: the
+  flop's 6.10s is 1.81s of cap-140 equity table (4.41 sigma on money,
+  M190) plus 2.55s of CFR over the bet menu (up to 1.74 bb, M209), so
+  every component is paid for, and M216's session benchmark puts a
+  typical flop decision at 2.15-2.32s. A per-board equity-table cache was
+  rejected on the product's shape: M155 measured **71 of 73** flop
+  requests cold because each hand deals a NEW board, so table reuse only
+  pays for several players sharing one board.
 - **The flop request's cost is now 89.5% EQUITY TABLE, not the CFR solve
   — M155's finding is INVERTED and was corrected in M176.** M155 measured
   14% table / 86% solve and concluded "anything aimed at flop latency
