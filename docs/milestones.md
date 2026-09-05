@@ -11443,3 +11443,84 @@ test file is a rule nobody knows about, so the test asserts the law stays
 written down and that CLAUDE.md names the test enforcing it.
 
 Suite 1,118 -> 1,179.
+
+## M211 — exploitability: the first number here that needs no reference
+
+Every accuracy figure this project has produced measures distance from a
+FULLER SOLVE OF THE SAME MODEL, and every one carries the same caveat:
+an error both arms share is invisible, so the number is a lower bound.
+After M194 that shared model error is the *entire* remaining residual,
+which makes the caveat the dominant term rather than a footnote.
+
+`poker_solver/exploitability.py` computes what a best-responding opponent
+wins against our strategy. It is a property of our strategy alone — no
+reference, no shared blind spot. Zero at Nash, and every departure real.
+
+Seeing TexasSolver print `Total exploitability 0.49 percent` is what made
+the absence obvious; the measure itself is entirely ours.
+
+### The shipped configuration is ~1.1% of pot exploitable
+
+Cap 140, 250 iterations, the M207 bet menu, 8 real boards at SPR 16.2:
+
+| | |
+|---|---|
+| mean | **1.11% of pot** (+0.065 bb) |
+| median / worst | 1.11% / 1.38% |
+| cost of the best-response walk | **0.0s** against a 2.3s solve |
+
+For scale, TexasSolver's own sample converges to 0.49%. The
+best-response walk being free matters: this can be computed on every
+solve, not as a special study.
+
+### And it reopens an axis that was declared dead
+
+| iterations | exploitability | solve |
+|---|---|---|
+| 50 | 7.60% | 1.4s |
+| **250 (shipped)** | **1.14%** | 2.4s |
+| 1000 | **0.25%** | 5.9s |
+| 4000 | **0.04%** | 20.0s |
+
+Monotone, and steep: **250 -> 1000 iterations cuts distance from
+equilibrium 4.6x**, and 250 -> 4000 cuts it 28x.
+
+**M190 measured 250 -> 1000 as +0.0911 +/- 0.0632 = 1.44 sigma, "not
+separable", and M152 called precision a dead axis.** Both were measured
+as EV loss against our own fuller solve — where the two arms SHARE their
+convergence error, so it partly cancels. Exploitability has no reference
+to cancel against.
+
+So "iterations buy nothing" was an artifact of the metric, and this is
+the first concrete demonstration of the lower-bound caveat biting rather
+than being a disclaimer. **It does not by itself say to raise the
+budget** — 2.4s to 5.9s on the flop is a real latency cost against a
+paired benchmark of p50 0.476s / p90 2.99s, and that trade needs its own
+measurement. What has changed is that the axis is live again.
+
+Population caveat, stated because this project has been burned by
+skipping it: M190 measured facing-a-bet spots in the costly band, this
+measures the root of symmetric spots. The mechanism is sound; the
+comparison is suggestive rather than airtight.
+
+### What it does NOT measure
+
+Distance from equilibrium **within the modelled game**. A tree that
+cannot bet half the pot has an equilibrium of its own, and a strategy can
+sit exactly on it while giving bad advice — M204 priced precisely that.
+This retires the lower-bound caveat about our SOLVER and says nothing
+about our MODEL. Both numbers are needed.
+
+### A parameter deleted because the data said so
+
+The walk was written with a `br_is_a` flag, since `equity_table[i, j]` is
+the row player's equity and the other seat would need `(1 - table).T`.
+The test asserting the two orientations DIFFER failed — correctly. The
+pairwise tables are **exactly antisymmetric about 0.5** (deviation
+0.00e+00 over a full table, blocked pairs included at 0.5 both ways), so
+that transform is the identity. The flag is gone and the test now pins
+the antisymmetry, which is the property that makes its absence safe.
+
+Four mutations killed: the responder summing instead of taking a max,
+the opponent's branches averaging instead of summing, dropping the
+dead-pot constant, and reach ignoring the opponent's strategy.
