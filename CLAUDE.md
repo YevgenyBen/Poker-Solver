@@ -1036,6 +1036,36 @@ requests now reject unknown fields by name rather than ignoring them.
   never formed a preference" and "never reached at all" are different
   news a user can act on.
 
+- **EXPLOITABILITY IS MEASURABLE, AND IT REOPENED THE ITERATION AXIS
+  (M211).** `poker_solver/exploitability.py` computes what a
+  best-responding opponent wins — a property of our strategy alone, with
+  no reference solve and therefore none of the shared-blind-spot caveat
+  every other figure here carries. **The best-response walk costs 0.0s
+  against a 2.3s solve**, so it can run on every solve rather than as a
+  study.
+  Shipped config (cap 140, 250 iters, M207 menu), 8 boards at SPR 16.2:
+  **mean 1.11% of pot, worst 1.38%** (+0.065 bb). TexasSolver's own
+  sample converges to 0.49% for scale.
+  | iterations | 50 | **250 (shipped)** | 1000 | 4000 |
+  |---|---|---|---|---|
+  | exploitability | 7.60% | **1.14%** | **0.25%** | **0.04%** |
+  | flop solve | 1.4s | 2.4s | 5.9s | 20.0s |
+  **M190 measured 250 -> 1000 at 1.44 sigma ("not separable") and M152
+  called precision a dead axis. Both used EV loss against our OWN fuller
+  solve, where the arms share their convergence error and it cancels.**
+  Exploitability has no reference to cancel against, and says the same
+  step cuts distance from equilibrium **4.6x**. The axis is live again —
+  though raising the budget is a latency trade needing its own paired
+  benchmark, not an automatic win. Populations differ (M190 measured
+  facing-a-bet in the costly band; this measures symmetric roots), so the
+  mechanism is sound and the comparison suggestive.
+  **It measures distance from equilibrium WITHIN the modelled game** and
+  is silent on whether the model is right — M204 priced a strategy that
+  can sit on its own equilibrium and still advise badly.
+  **Equity tables are exactly antisymmetric** (`eq[i,j]+eq[j,i] == 1`,
+  deviation 0.0), so a best response needs no seat-orientation argument;
+  a `br_is_a` flag was written, measured redundant, and deleted.
+
 - **CONFIGURATION IS EXHAUSTED — every knob is now scored on money and
   none is separable (M194).** Cost stands at **+3.44 bb/100 (95% -1.02
   to +7.91)** after 399 facing spots (M193), down from 15.26.
