@@ -662,6 +662,59 @@ PATH_QUERY_ITERATIONS = 250
 # And the cost premise inverted too. M156 measured 1.5x; the solver
 # changed underneath it, and the same comparison now measures
 # **1.43s -> 1.62s, 1.13x**.
+# M212/M213. The turn and river carry their own iteration budget as a
+# named constant, and it is deliberately the SAME as the flop's. The
+# constant exists because this axis was measured and the tempting answer
+# was rejected on cost.
+#
+# M212 measured exploitability against a best-responding opponent - the
+# one figure here with no reference solve and therefore no shared blind
+# spot - on 6 boards per street:
+#
+#   street   250 iters   1000 iters      isolated solve 250 -> 1000
+#   flop     1.14%       0.25%  (4.6x)   2.4s -> 5.8s
+#   turn     0.92%       0.09%  (10x)    0.8s -> 1.7s
+#   river    1.02%       0.11%  (9x)     0.6s -> 1.6s
+#
+# A tenfold cut in distance from equilibrium for a second of compute is
+# the best ratio measured anywhere in this project, so M213 shipped 1000
+# here and benchmarked it. **The paired benchmark rejected it**: 4 seeds
+# x 120 hands, alternating, caches cleared per arm, turn **0.97 ->
+# 6.06s** and river **0.74 -> 5.80s**, pooled p50 +1.955s at 14.9 sigma,
+# with 180 of ~1,070 decisions past 5s against 51. Zero defects in both
+# arms - the change was correct and unaffordable.
+#
+# **An isolated solve and a request do not measure the same work** (M173
+# saw this in the other direction). M212's 0.8 -> 1.7s was a bare solve;
+# through /advise, facing a bet, the same step is 1.25 -> ~6s, because
+# the menu below multiplies the per-iteration cost that M212 measured on
+# a narrower tree.
+#
+# Decomposed on the production path (mean of 2 reps, cold, facing a bet):
+#
+#   arm            turn    river   exploitability (turn / river)
+#   single @  250  1.25s   1.02s   0.86% / 1.03%
+#   menu   @  250  1.79s   1.60s   1.36% / 1.75%
+#   menu   @  500  2.77s   2.55s   0.56% / 0.85%
+#   menu   @ 1000  ~6s     ~5.8s   0.25% / 0.40%
+#
+# **The menu costs 1.4-1.6x; the iterations cost 4-5x.** So the two were
+# separated and only the menu kept. M212's warning - that a menu without
+# more iterations ships a less converged strategy inside a better model -
+# is TRUE and was quantified rather than assumed: menu@250 sits at
+# 1.36%/1.75%, the band the flop already ships at (1.10%), and the ~0.5
+# points given up is worth ~0.03 bb at these pot sizes against a
+# capability worth up to 1.74 bb (M209). A 50x asymmetry.
+#
+# **Do not raise these without re-running the paired benchmark.** menu@500
+# is strictly better than the shipped arm on BOTH axes (0.56%/0.85%
+# exploitability AND the menu) at 2.2-2.5x; it was left out because 2.77s
+# cold breaches 5s in the slower machine state that appeared in two of
+# the four benchmark seeds. It is the first thing to try if the streets
+# get cheaper.
+TURN_STANDALONE_ITERATIONS = 250
+RIVER_STANDALONE_ITERATIONS = 250
+
 FLOP_TURN_MAX_RAISES = 3
 # M205. The heads-up FLOP's bet sizes, which until now were an invisible
 # default: `solve_flop` and `library.query_strategy_from_path` both fell
@@ -692,7 +745,23 @@ BARE_RAISE_MEANS_MULTIPLE = 2.5
 FLOP_RAISE_SIZES = ((0.33, 0.75, 2.5), 3.0, 2.2)
 FLOP_MAX_RAISES = 4
 
+# The CHAINED flop->turn solve (`solve_flop_turn`), which serves the
+# deprecated /solve_turn_from_path and the TURN_SOLVE_STANDALONE=False
+# fallback. Deliberately NOT given M213's menu: it solves two streets in
+# one tree, so a menu took a cached entry to 26.75 MB and the whole cache
+# to 1.6 GB. The street a player actually gets advice on is the
+# standalone turn below.
 FLOP_TURN_RAISE_SIZES = (2.5, 2.0)
+
+# M213: the STANDALONE turn — the one production serves — gets the
+# opening menu the flop got in M207. It was the largest defect class
+# left: on the flop a single 2.5x-pot bet cost +0.0863 bb at opening
+# decisions and **1.74 bb** when a player actually faced a small bet
+# (M204/M209), and the turn carries 57.7% of all postflop advice (M173)
+# with exactly the same limitation. Separated from the chained constant
+# above for the same reason the river already had its own.
+TURN_STANDALONE_RAISE_SIZES = ((0.33, 0.75, 2.5), 2.0)
+TURN_STANDALONE_MAX_RAISES = 3
 FLOP_TO_RIVER_MAX_RAISES = 1
 FLOP_TO_RIVER_RAISE_SIZES = ()
 
@@ -930,7 +999,8 @@ RIVER_STANDALONE_CLASSES_PER_SIDE = 140
 # tied on 7. They are adopted because they close F40 (the river could not
 # answer "how much should I bet") at no measurable accuracy cost and
 # +0.15s, NOT because they measured better. Coverage does the work here.
-RIVER_STANDALONE_RAISE_SIZES = (2.5, 2.0)
+# M213: same menu for the river, which carries 24.6% of all cost (M188).
+RIVER_STANDALONE_RAISE_SIZES = ((0.33, 0.75, 2.5), 2.0)
 RIVER_STANDALONE_MAX_RAISES = 3
 
 RIVER_PATH_QUERY_MAX_COMBOS_PER_SIDE = 9

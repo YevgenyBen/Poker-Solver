@@ -6876,3 +6876,109 @@ def test_the_two_bet_sizes_reach_genuinely_different_nodes(client):
             f"facing {multiple}x pot produced a pot of {payload['pot']} "
             f"against an opening pot of {pot}")
     assert len(set(pots.values())) == 2, pots
+
+
+def test_a_hand_stays_followable_across_streets_at_every_bet_size(client):
+    """M213. If the flop will advise on a bet, the turn and river must
+    accept that the bet happened.
+
+    M207 gave the flop a bet-size MENU and left the flop trees that the
+    turn and river paths WALK on the old single size. The result was a
+    hand that fell apart halfway through: a player describing a third-pot
+    flop bet got advice (200), then asked about the turn and got a 422
+    saying that bet was never legal. The engine had advised on an action
+    it would not then let them continue from.
+
+    Nothing else caught it. Every existing cross-street test sends a bare
+    "raise", which `BARE_RAISE_MEANS_MULTIPLE` resolves to 2.5x pot on
+    both trees — the one size the two happened to share.
+
+    So this walks EVERY size the flop models, all the way to the river.
+    """
+    base = {"stack_bb": 100.0, "players": 2, "board": "Kd7c2h",
+            "hero_cards": "9c9d",
+            "preflop_action_path": ["raise", "call_or_check"]}
+    opening = client.post("/advise", json=base).json()
+    pot = opening["pot"]
+    # SIZED raises only, read off the action names. Filtering
+    # `modelled_bet_sizes` by `max_affordable_bb` does not work and the
+    # first version of this test proved it: the shove is the stack
+    # entering this DECISION (95.0) while max_affordable_bb is the stack
+    # entering the STREET (97.5), so the all-in slipped through. M101's
+    # gap, biting a third piece of code. An all-in that gets called ends
+    # the hand anyway, so there is no later street to follow it to.
+    sizes = [float(name.split(":")[1]) for name in opening["hero"]["strategy"]
+             if name.startswith("raise:")]
+    assert sizes, "the flop offered no sized bet to follow"
+
+    for size in sizes:
+        faced = [f"raise:{size:.2f}", "call_or_check"]
+        turn = client.post("/advise", json={
+            **base, "flop_action_path": faced, "turn_card": "Js"})
+        assert turn.status_code == 200, (
+            f"the flop advises on a bet of {size} but the turn rejects it: "
+            f"{turn.json().get('detail')}")
+        # The pot must reflect the bet the player actually described, not
+        # whichever size the walked tree happened to offer.
+        assert turn.json()["pot"] == pytest.approx(pot + 2 * size), (
+            f"a {size} bet called should leave a pot of {pot + 2 * size}, "
+            f"got {turn.json()['pot']}")
+
+        river = client.post("/advise", json={
+            **base, "flop_action_path": faced, "turn_card": "Js",
+            "turn_action_path": ["call_or_check", "call_or_check"],
+            "river_card": "3d"})
+        assert river.status_code == 200, (
+            f"the turn advises after a flop bet of {size} but the river "
+            f"rejects it: {river.json().get('detail')}")
+
+        # And the same again one street down: a SIZED turn bet must
+        # survive to the river. Walking the turn with call_or_check only
+        # would leave the turn tree's own sizes untested — mutation
+        # testing caught exactly that, since swapping the turn tree onto
+        # the chained constant then broke nothing.
+        turn_sizes = [float(n.split(":")[1])
+                      for n in turn.json()["hero"]["strategy"]
+                      if n.startswith("raise:")]
+        assert turn_sizes, f"the turn offered no sized bet after a {size} flop bet"
+        for turn_size in turn_sizes:
+            after = client.post("/advise", json={
+                **base, "flop_action_path": faced, "turn_card": "Js",
+                "turn_action_path": [f"raise:{turn_size:.2f}", "call_or_check"],
+                "river_card": "3d"})
+            assert after.status_code == 200, (
+                f"the turn advises on a bet of {turn_size} but the river "
+                f"rejects it: {after.json().get('detail')}")
+
+
+def test_every_published_bet_size_is_accepted_back(client):
+    """M213. The API's own output must be valid input.
+
+    `Action.__str__` prints two decimals, so a raise of 9.375 is
+    published as `raise:9.38`. M206 set the matching tolerance to exactly
+    0.005 — half the printed precision — and an echo of a size that
+    rounds by the full half-digit then lost to floating point and came
+    back 422. The engine was rejecting the very string it had just handed
+    the client.
+
+    Round-tripping is the invariant, so this asserts it directly on every
+    size every street publishes, rather than trusting a tolerance.
+    """
+    base = {"stack_bb": 100.0, "players": 2, "board": "Kd7c2h",
+            "hero_cards": "9c9d",
+            "preflop_action_path": ["raise", "call_or_check"]}
+    checked = 0
+    for extra in ({}, {"flop_action_path": ["call_or_check", "call_or_check"],
+                       "turn_card": "Js"}):
+        payload = client.post("/advise", json={**base, **extra}).json()
+        street = payload["street"]
+        for name in payload["hero"]["strategy"]:
+            if not name.startswith("raise:"):
+                continue
+            key = ("flop_action_path" if street == "flop" else "turn_action_path")
+            echoed = client.post("/advise", json={**base, **extra, key: [name]})
+            assert echoed.status_code == 200, (
+                f"the {street} published {name!r} but rejects it as input: "
+                f"{echoed.json().get('detail')}")
+            checked += 1
+    assert checked >= 4, f"only round-tripped {checked} sizes"

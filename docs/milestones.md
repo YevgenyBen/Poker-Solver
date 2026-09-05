@@ -11597,3 +11597,126 @@ lower is not evidence that narrowness is good: the single-size turn has a
 lower number than the menu turn and gives worse advice, which M204 and
 M209 priced directly. This measures how well we solve the game we chose,
 never whether we chose the right game.
+
+## M213 — the turn and river can bet small, and the iteration budget that was supposed to come with it was measured and refused
+
+M209 found the largest error this project's accuracy work has produced:
+a player facing a third-pot bet on the FLOP could not say so, the engine
+modelled it as a 2.5x overbet, and it folded 63% where the correct fold
+is zero — **1.74 bb on one decision**. It is a capability gap, not an
+accuracy one. The turn and river had exactly the same gap, and they
+carry 57.7% of all postflop advice (M173) and 24.6% of all cost (M188).
+
+This closes it there. `TURN_STANDALONE_RAISE_SIZES` and
+`RIVER_STANDALONE_RAISE_SIZES` are now `((0.33, 0.75, 2.5), 2.0)`.
+
+### The same defect, on two more streets, at the same size
+
+60 spots (30 per street), full 169-class reference at 1,500 iterations,
+opponent/continuation/range held fixed, arms differing only in the size
+menu. **Helpers imported from M209's harness rather than re-typed** —
+the old arm's row has to be mapped by KIND onto the reference's actions,
+and a re-typed copy is how a replication quietly stops replicating.
+
+| street | bet faced | ref folds | menu folds | OLD folds | menu bb | OLD bb | sigma |
+|---|---|---|---|---|---|---|---|
+| turn | 0.33x | 0.0000 | 0.0003 | **0.7045** | -0.0028 | **+1.8504** | 8.24 |
+| turn | 0.75x | 0.0834 | 0.1322 | **0.7045** | +0.1178 | **+1.8575** | 6.91 |
+| turn | 2.50x | 0.6080 | 0.6786 | 0.7045 | +0.3861 | +0.5721 | 1.12 |
+| river | 0.33x | 0.0221 | 0.0404 | **0.6405** | +0.0082 | **+1.7526** | 6.77 |
+| river | 0.75x | 0.1350 | 0.2031 | **0.6405** | +0.0527 | **+1.7826** | 5.33 |
+| river | 2.50x | 0.5277 | 0.5884 | 0.6405 | +0.2611 | +0.7785 | 2.73 |
+
+**The old arm's fold frequency is identical down each street's column**
+because it always read its 2.5x node — M209's signature exactly. Against
+a third-pot bet on the turn the correct fold is **zero** and it folded
+**70%**, losing **1.85 bb**.
+
+Three streets, three independent measurements, the same magnitude
+(1.74 / 1.85 / 1.75 bb). Turn and river equity is EXACT (M154), so
+neither arm nor reference carries Monte Carlo noise here — the flop
+figure could not say that.
+
+**Unexpected, and worth keeping:** on the 2.5x row, where the old engine
+*could* answer the question, the river menu is still better at 2.73
+sigma. A richer menu improves the node itself, not only its
+addressability. The turn's 2.5x row is null (1.12 sigma), so this is a
+river result, not a general one.
+
+### The iteration budget: shipped, benchmarked, and taken back out
+
+M212 measured 250 -> 1000 iterations buying a **tenfold** cut in
+exploitability on these two streets (0.92% -> 0.09% turn, 1.02% -> 0.11%
+river) for a second of compute, and argued the two changes had to move
+together: a menu makes a bigger game, so the same budget lands further
+from ITS equilibrium (turn 0.92 -> 1.48% at a fixed 250). Both halves
+shipped, and the paired benchmark refused them.
+
+**4 seeds x 120 hands, alternating arm order, caches cleared and depths
+re-warmed per arm:**
+
+| arm | p50 | p90 | max | >5s | defects |
+|---|---|---|---|---|---|
+| before | 0.733 | 3.497 | 5.621 | 51 | 0 |
+| after | 2.688 | 6.235 | 8.874 | 180 | 0 |
+
+**turn 0.97 -> 6.06s, river 0.74 -> 5.80s**, pooled p50 +1.955s at
+**14.9 sigma**. Zero defects and zero uniform rows in both arms — the
+change was correct and unaffordable.
+
+**An isolated solve and a request do not measure the same work** (M173
+saw this in the other direction, under-quoting by 8x). M212's 0.8 ->
+1.7s was a bare solve; through `/advise` facing a bet it is 1.25 -> ~6s,
+because the menu multiplies the per-iteration cost M212 measured on a
+narrower tree.
+
+Decomposed on the production path, mean of 2 reps, cold, facing a bet:
+
+| arm | turn | river | exploitability (turn / river) |
+|---|---|---|---|
+| single @ 250 | 1.25s | 1.02s | 0.86% / 1.03% |
+| **menu @ 250** | **1.79s** | **1.60s** | **1.36% / 1.75%** |
+| menu @ 500 | 2.77s | 2.55s | 0.56% / 0.85% |
+| menu @ 1000 | ~6s | ~5.8s | 0.25% / 0.40% |
+
+**The menu costs 1.4-1.6x; the iterations cost 4-5x.** M212's warning was
+true and quantified rather than assumed: menu@250 sits at 1.36%/1.75%,
+the band the flop already ships at (1.10%), and the ~0.5 points given up
+is worth **~0.03 bb** at these pot sizes against a capability worth up to
+**1.74 bb**. A 50x asymmetry, so the menu ships alone.
+
+**menu@500 is strictly better than the shipped arm on BOTH axes** and was
+still left out: 2.77s cold breaches 5s in the slower machine state that
+appeared in two of the four benchmark seeds. It is the first thing to try
+if these streets get cheaper.
+
+### Two real bugs, both found by building this
+
+**The M207 cross-street 422 — a hand that became unfollowable halfway
+through.** The turn and river paths WALK a flop tree, and that tree was
+built with `FLOP_TURN_RAISE_SIZES` while the flop SOLVES with
+`FLOP_RAISE_SIZES`. M207 changed one and not the other. So a player
+describing a third-pot flop bet got advice (200), then asked about the
+turn and got **422, "that bet was never legal"** — advice on an action
+the engine then refused to continue from. Nothing caught it because every
+existing cross-street test sends a bare `"raise"`, which resolves to 2.5x
+on both trees: the one size they happened to share.
+
+**A size the API printed and then rejected.** `_SIZE_TOLERANCE` was
+0.005, exactly half the printed precision, so `raise:9.38` — the API's
+own rendering of a 9.375 action — lost to floating point and 422'd.
+Raised to 0.01, with a guard that every size any street publishes must be
+accepted back.
+
+### Deliberately not done
+
+- **The chained `solve_flop_turn` keeps its single size.** It solves two
+  streets in one tree, so a menu took a cached entry to 26.75 MB and the
+  cache to 1.6 GB. It serves the deprecated route and the
+  `TURN_SOLVE_STANDALONE=False` fallback; the street a player actually
+  gets advice on is the standalone turn.
+- **`MULTIWAY_FLOP_RAISE_SIZES` is still 2.5x only.** Same defect, still
+  open, and unmeasured at multiway.
+
+Cache ceilings re-derived: `turn_path` and `river_path` 96 -> 72, entries
+having grown 0.22 -> 2.27 MB with the wider tree.
