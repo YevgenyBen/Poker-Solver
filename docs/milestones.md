@@ -11320,3 +11320,69 @@ costly band **2.32 sigma** better, median latency unchanged, tail +0.96s
 but inside 5s, zero defects over 3,193 decisions. **The menu stays on.**
 
 Suite 1,116.
+
+## M209 — the small-bet blind spot, closed: the old engine cost 1.74 bb a decision there
+
+M208 shipped the bet-size menu and named its own blind spot: every spot
+it benchmarked had the player facing **2.5x the pot**, because the
+simulator sends bare action kinds and `BARE_RAISE_MEANS_MULTIPLE`
+resolves those to 2.5x. The node type the menu exists to make
+representable had never been evaluated. This closes both halves —
+generating those nodes, and measuring advice at them.
+
+### What the old engine did when a player faced a small bet
+
+It answered a different question. A player facing a half-pot bet had no
+way to say so, so their `["raise"]` was modelled as a 2.5x-pot overbet.
+60 costly-band spots, reference full 169-class at 1,500 iterations:
+
+| bet faced | reference folds | menu folds | OLD folds | menu bb | OLD bb | paired | sigma |
+|---|---|---|---|---|---|---|---|
+| 0.33x pot | 0.0000 | 0.0002 | **0.6340** | +0.0071 | **+1.7400** | -1.7330 | **10.88** |
+| 0.75x pot | 0.0769 | 0.0591 | **0.6340** | -0.0507 | **+1.6914** | -1.7421 | **9.62** |
+| 2.50x pot | 0.5273 | 0.5841 | 0.6340 | +0.1701 | +0.4425 | -0.2724 | 2.13 |
+
+**The old arm's fold frequency is identical on all three rows** — 0.6340
+— because it always read its 2.5x node whatever the player actually
+faced. Against a third-pot bet the correct fold frequency is **zero** and
+it folded **63%**, giving up a pot it was priced in to contest. That is
+**1.74 bb on a single decision**, the largest error measured anywhere in
+this project's accuracy work, and it was invisible because no benchmark
+could pose the question.
+
+The menu arm is close to exact where the old one was worst: **+0.0071 bb**
+facing a third-pot bet, and **-0.0507** facing three-quarters (better
+than the reference against this opponent model, which `ev_loss` reports
+signed rather than clamping).
+
+### Reading it honestly
+
+* This is **not "the same task, done better"**. The old engine could not
+  be asked the question at all; the comparison prices the advice a player
+  would actually have received, which is the only thing that matters, but
+  it is a capability gap rather than an accuracy gap.
+* The old arm's row is mapped onto the real node **by kind**, since a
+  raise sized off a 2.5x bet has no counterpart at a small-bet node.
+  M204 refused exactly this kind of remap — the difference is that there
+  it would have erased the defect, here refusing it would leave nothing
+  to score. **Mean remapped mass is 0.0412**, so the figure barely
+  depends on it, and the FOLD axis needs no mapping at all and shows the
+  same thing.
+* The 2.5x row reproduces M208 on a different subset (0.4425 / 0.1701
+  against M208's 0.4869 / 0.2529 at n=97), which is the internal
+  consistency check.
+
+### Both halves closed, durably
+
+* **Generation**: the session harness now draws villain's flop bet from
+  the sizes the engine actually models, querying the opening decision
+  first because those sizes are multiples of a pot the client does not
+  know until it asks — which is what a real client must do too. Verified:
+  a 25-hand run produced both `raise:12.50` and `raise:0.66`.
+* **Measurement**: two guards in the suite. The load-bearing one asserts
+  a DIRECTION rather than a level — a smaller bet must be folded to less
+  often than a larger one — so it survives every range cap, iteration
+  budget and equity seed this project keeps moving. Both die when the
+  size is stripped from the path token or ignored by `resolve_action`.
+
+Suite 1,116 -> 1,118.
