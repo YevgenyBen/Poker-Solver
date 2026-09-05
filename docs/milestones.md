@@ -11720,3 +11720,152 @@ accepted back.
 
 Cache ceilings re-derived: `turn_path` and `river_path` 96 -> 72, entries
 having grown 0.22 -> 2.27 MB with the wider tree.
+
+## M214 — the multiway streets can bet small, and the cache guarantee that never covered them
+
+`MULTIWAY_FLOP_RAISE_SIZES = (2.5,)` was the last place in the product
+where the smallest bet the engine could represent was 2.5x the pot.
+M209 priced that mistake on the heads-up flop at **1.74 bb a decision**
+and M213 on the turn and river at **1.85 and 1.75 bb**. Multiway had it
+on all three streets.
+
+`MULTIWAY_FLOP_RAISE_SIZES = ((0.33, 0.75, 2.5),)`.
+
+### The gap, where a player would meet it
+
+Measured through `/advise` on 16 three-way spots — the share of spots
+where a player can name the bet they face:
+
+| arm | 0.33x | 0.75x | 2.50x |
+|---|---|---|---|
+| shipped `(2.5,)` | **0.00** | **0.00** | 1.00 |
+| menu | 1.00 | 1.00 | 1.00 |
+
+Zero, on every multiway street. A player facing a half-pot bet
+three-way could not describe it, so `["raise"]` was answered as a 2.5x
+overbet.
+
+**Deliberately NOT priced in bb.** F46/M163 measured multiway seed
+spread **p90 0.240 at 30,000 iterations**, so there is no converged
+multiway reference; a bb figure would be scored against one draw from a
+distribution, which M153 records this project nearly adopting a config
+change on. What is measured is the capability above and the ordering
+below.
+
+### One constant for all three multiway streets, deliberately
+
+The multiway turn and river are CHAINED solves that walk the flop leg of
+their own tree. Splitting the constant would put a different flop tree
+under them than the flop cell solves — precisely M207's defect, which
+M213 had to fix, where a bet was advised on and then 422'd one street
+later.
+
+The constraint is on tree SHAPE, not precision: the three cells run
+different iteration budgets on purpose, which is safe because iterations
+do not change which actions exist.
+
+### The iteration budget: M162's refusal, met on different evidence
+
+`DEFAULT_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS` 200 -> **1000**.
+
+M162 declined to raise this and was right to: "Nothing measured shows
+more budget produces a better answer, only a differently-noisy one...
+Raising it needs a converged multiway reference to score against, and
+none exists." There still is none. What is new is a correctness
+criterion that needs none — **facing a smaller bet must fold less** —
+validated on the same harness against the heads-up exact solver, where
+it holds at **+0.5756, 6.90 sigma, 17 of 17 spots**.
+
+Fold frequency through `/advise`, menu arm, 16 multiway spots:
+
+| flop budget | street | 0.33x | 0.75x | 2.50x | gap | sigma | right |
+|---|---|---|---|---|---|---|---|
+| 200 | flop | 0.5502 | 0.4538 | 0.6968 | +0.1466 | 1.62 | 11/16 |
+| 200 | turn | 0.3914 | 0.4630 | 0.5919 | +0.2005 | 1.84 | 12/16 |
+| 200 | river | 0.5037 | 0.4924 | 0.5557 | +0.0520 | 0.60 | 10/16 |
+| **1000** | **flop** | 0.4004 | 0.5608 | 0.7142 | **+0.3138** | **3.14** | 13/16 |
+
+The flop is the only multiway cell that clears 2 sigma and the only one
+where the fix is affordable: the turn and river are chained, and a
+1000-iteration flop leg costs them **32.83s and 25.06s**. They keep
+their budgets, and their ordering is positive but not separable.
+
+**A conclusion that had to be withdrawn mid-milestone.** An isolated
+study of `solve_flop_multiway` measured the ordering INVERTED at 200
+iterations (-0.0232 / -0.1556 across two disjoint seed sets) and I had
+already reasoned out a mechanism for it — MCCFR samples, so tripling the
+root's branching divides the traversals reaching each branch. Through
+`/advise` the direction is positive on every street at the same budget.
+The isolated arm was measuring a path production does not take:
+`/advise` force-includes hero (M51/M76), trains the node on demand at
+400 iterations (M163/M164), and derives real ranges from the preflop
+path rather than taking the top 8 classes uniform. **M174's rule, and
+the mechanism was plausible enough to have been believed.**
+
+Cost, cold through `/advise`: flop 0.38 -> 1.05s (the budget, not the
+menu), turn 1.69 -> 2.38s, river 1.85 -> 2.41s. The chained trees did
+NOT explode as M173's width finding suggested: that was RANGE width,
+which the O(N^2) equity table scales with; this is ACTION width at a
+fixed pool. Zero non-200s across 24 requests.
+
+The config comment this replaced quoted **"200 iters ~22.46s ... 1000
+iters ~48.20s"** — stale by ~40x since M162 made multiway equity 28x
+cheaper, and it would have refused this change on cost.
+
+### M127's byte budget never covered a single multiway cache
+
+`test_cache_ceilings_are_sized_against_what_an_entry_actually_costs`
+measures a REAL entry rather than trusting a comment — but only for the
+caches its own sweep populates, and **that sweep was entirely
+`players: 2`**. So every multiway cache had been outside the guarantee
+since it was written. One multiway request found three over budget:
+
+| cache | MB/entry (single -> menu) | maxsize | budget |
+|---|---|---|---|
+| `flop_multiway_path` | 0.425 -> 0.926 | 256 | 109 -> **237 MB** |
+| `turn_multiway_path` | 10.174 -> 16.712 | 128 | **1,302 -> 2,139 MB** |
+| `multiway` (preflop) | 83.589 (unchanged) | 64 | **5,350 MB** |
+
+`flop_multiway_path` 256 -> **181**, `turn_multiway_path` 128 -> **10**.
+The second was already **7.8x** over before the menu touched it.
+
+**The preflop one is recorded, not fixed.** It is unaffected by this
+milestone (83.589 MB with or without the menu) and the 168 MB budget
+affords TWO entries, against a solve measured at **35s cold at 3-max and
+76s at 6-max** — so a player alternating table sizes would re-solve on
+nearly every request. Making that trade as a side effect of an unrelated
+milestone is how a latency regression ships unmeasured. It sits in
+`_KNOWN_OVER_BUDGET` with its measured ceiling, so it cannot grow
+quietly, and it is the obvious next piece of work.
+
+The sweep now sends a multiway request (+38s to that test).
+
+### Guards
+
+Four, each mutation-tested:
+
+- `test_the_shipped_multiway_config_can_represent_a_small_bet` — the
+  only one reading the SHIPPED constant. Every other multiway test
+  patches a menu in, because the fixture sets
+  `MULTIWAY_FLOP_RAISE_SIZES = ()` for speed, so reverting the shipped
+  value would have left all of them green.
+- `test_a_multiway_player_can_say_they_face_a_small_bet` — naming the
+  small bet reaches the node that bet creates. `modelled_bet_sizes` is
+  ROUNDED for display (2.48 published for a 2.475 action), so the pot it
+  implies is compared at the resolver's own tolerance — M213's
+  round-trip trap from the other side.
+- `test_a_multiway_small_bet_is_folded_to_less_than_an_overbet` —
+  asserted as a MEAN over spots, not a per-spot invariant, because 3 of
+  16 spots individually invert. The heads-up sibling can assert per spot
+  because its solver is exact; this one cannot, and pretending otherwise
+  would be both flaky and an overstatement.
+- `test_every_multiway_street_offers_the_same_bet_sizes` — compares
+  sizes ACROSS streets and names a size rather than sending a bare
+  kind, the two properties that would have caught M207 the day it
+  shipped.
+
+### Still open
+
+`MULTIWAY_FLOP_MAX_RAISES = 2` means that facing a bet, the only way to
+put chips in is all-in — F40's shape, at multiway. This closes the
+small-bet gap, not the re-raise-sizing one.
