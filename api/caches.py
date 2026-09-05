@@ -510,7 +510,13 @@ _path_query_libraries = _SolveCache("path_query_libraries", maxsize=208)
 # to grow a little without an overrun. It is still ~7x the ceiling this
 # cache carried before M178, and covers roughly two sessions' worth of
 # distinct turn boards (a 120-hand session produces ~50 turn decisions).
-_turn_path_cache = _SolveCache("turn_path", maxsize=96)
+# M213: the opening bet is now a MENU on this street, which roughly
+# triples the tree and took an entry from ~0.22 MB to 2.27 MB.
+# Re-derived against the 168 MB per-cache budget by
+# test_cache_ceilings_are_sized_against_what_an_entry_actually_costs,
+# which measures a real entry rather than trusting this comment.
+# M127's rule: widening a tree moves ceilings nothing else points at.
+_turn_path_cache = _SolveCache("turn_path", maxsize=72)
 
 # M46's own plain-dict cache for solve_flop_to_river results — same
 # shape/reasoning as _turn_path_cache above (keyed on what the solve
@@ -532,4 +538,10 @@ _turn_path_cache = _SolveCache("turn_path", maxsize=96)
 # mechanism M178 built and M179 first exercised.
 #
 # 96 x 1.33 MB = 128 MB, matching what the turn carries at the same cap.
-_river_path_cache = _SolveCache("river_path", maxsize=96)
+# M213: the opening bet is now a MENU on this street, which roughly
+# triples the tree and took an entry from ~0.22 MB to 2.27 MB.
+# Re-derived against the 168 MB per-cache budget by
+# test_cache_ceilings_are_sized_against_what_an_entry_actually_costs,
+# which measures a real entry rather than trusting this comment.
+# M127's rule: widening a tree moves ceilings nothing else points at.
+_river_path_cache = _SolveCache("river_path", maxsize=72)

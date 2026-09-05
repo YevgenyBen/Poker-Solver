@@ -1624,8 +1624,13 @@ def _query_turn_standalone(*, situation, board_cards, turn_card,
         positions=(oop_position, ip_position),
         pot=path_scenario.pot,
         stack_bb=effective_stack_bb,
-        raise_sizes=cfg.FLOP_TURN_RAISE_SIZES,
-        max_raises=cfg.FLOP_TURN_MAX_RAISES,
+        # M213: the FLOP's own sizes. This tree exists to walk the client's
+        # flop action path, so it must offer what the flop actually solved.
+        # M207 gave the flop a menu and left this on the turn's single
+        # size, so a third-pot flop bet the flop endpoint ADVISED on came
+        # back 422 one street later — the hand became unfollowable.
+        raise_sizes=cfg.FLOP_RAISE_SIZES,
+        max_raises=cfg.FLOP_MAX_RAISES,
     ))
     _flop_actions, flop_node = _resolve_action_path(flop_root, flop_action_kinds)
     if not isinstance(flop_node, TerminalNode):
@@ -1682,9 +1687,9 @@ def _query_turn_standalone(*, situation, board_cards, turn_card,
             pot=flop_node.pot,
             effective_stack_bb=remaining_stack,
             positions=(oop_position, ip_position),
-            raise_sizes=cfg.FLOP_TURN_RAISE_SIZES,
-            max_raises=cfg.FLOP_TURN_MAX_RAISES,
-            iterations=cfg.PATH_QUERY_ITERATIONS,
+            raise_sizes=cfg.TURN_STANDALONE_RAISE_SIZES,
+            max_raises=cfg.TURN_STANDALONE_MAX_RAISES,
+            iterations=cfg.TURN_STANDALONE_ITERATIONS,
             equity_samples=cfg.PATH_QUERY_EQUITY_SAMPLES,
             equity_table_fn=parallel_board_equity_table,
         ),
@@ -2326,8 +2331,13 @@ def _query_river_standalone(*, situation, board_cards, turn_card, river_card,
         positions=(oop_position, ip_position),
         pot=path_scenario.pot,
         stack_bb=effective_stack_bb,
-        raise_sizes=cfg.FLOP_TURN_RAISE_SIZES,
-        max_raises=cfg.FLOP_TURN_MAX_RAISES,
+        # M213: the FLOP's own sizes. This tree exists to walk the client's
+        # flop action path, so it must offer what the flop actually solved.
+        # M207 gave the flop a menu and left this on the turn's single
+        # size, so a third-pot flop bet the flop endpoint ADVISED on came
+        # back 422 one street later — the hand became unfollowable.
+        raise_sizes=cfg.FLOP_RAISE_SIZES,
+        max_raises=cfg.FLOP_MAX_RAISES,
     ))
     _flop_actions, flop_node = _resolve_action_path(flop_root, flop_action_kinds)
     if not isinstance(flop_node, TerminalNode):
@@ -2350,8 +2360,10 @@ def _query_river_standalone(*, situation, board_cards, turn_card, river_card,
         positions=(oop_position, ip_position),
         pot=flop_node.pot,
         stack_bb=stack_after_flop,
-        raise_sizes=cfg.FLOP_TURN_RAISE_SIZES,
-        max_raises=cfg.FLOP_TURN_MAX_RAISES,
+        # Must match what the STANDALONE turn solves, for the same reason
+        # the flop tree above must match the flop.
+        raise_sizes=cfg.TURN_STANDALONE_RAISE_SIZES,
+        max_raises=cfg.TURN_STANDALONE_MAX_RAISES,
     ))
     _turn_actions, turn_node = _resolve_action_path(turn_root, turn_action_kinds or [])
     if not isinstance(turn_node, TerminalNode):
@@ -2399,7 +2411,7 @@ def _query_river_standalone(*, situation, board_cards, turn_card, river_card,
             positions=(oop_position, ip_position),
             raise_sizes=cfg.RIVER_STANDALONE_RAISE_SIZES,
             max_raises=cfg.RIVER_STANDALONE_MAX_RAISES,
-            iterations=cfg.PATH_QUERY_ITERATIONS,
+            iterations=cfg.RIVER_STANDALONE_ITERATIONS,
             equity_table_fn=capture_table,
         ),
     )

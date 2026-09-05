@@ -401,10 +401,23 @@ class DecisionNode:
         return list(self.children.keys())
 
 
-# M206. A client echoes a size back as text it read from a response
+# M206/M213. A client echoes a size back as text it read from a response
 # ("raise:12.50"), so an exact float comparison would reject the API's
-# own output. Half a cent is far below any real bet increment.
-_SIZE_TOLERANCE = 0.005
+# own output.
+#
+# **It must EXCEED half of the printed precision, and M206's 0.005 did
+# not.** `Action.__str__` prints two decimals, so a 9.375 raise is
+# published as "raise:9.38" and an echo of that sits 0.005 away — which
+# `<=` then loses to floating point, rejecting the API's own output with
+# a 422. Found by walking every size the turn publishes rather than only
+# the ones that happen to round cleanly.
+#
+# 0.01 is the smallest round value strictly above that bound and still
+# orders of magnitude below any real bet increment. Two offered sizes
+# within 0.01 of each other would print identically and be ambiguous to a
+# client regardless, which
+# `test_every_published_bet_size_is_accepted_back` pins.
+_SIZE_TOLERANCE = 0.01
 
 
 def resolve_action(node: "DecisionNode", kind: str, size: float | None = None) -> Action:
