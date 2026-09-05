@@ -11869,3 +11869,127 @@ Four, each mutation-tested:
 `MULTIWAY_FLOP_MAX_RAISES = 2` means that facing a bet, the only way to
 put chips in is all-in — F40's shape, at multiway. This closes the
 small-bet gap, not the re-raise-sizing one.
+
+## M215 — the multiway preflop cache: 58% smaller, and three corrections to M214
+
+F49 left the multiway preflop cache recorded but unfixed: 83.589 MB per
+entry at a ceiling of 64, a 5,350 MB budget against 168 MB. Closing it
+found that every number in that sentence was wrong, and one of the guards
+M214 shipped could not fire.
+
+### The real cost, and why it was mis-measured
+
+Entries in this cache span **127x**, because the tree does. Measured at
+100bb:
+
+| table | decision nodes | node_data entries | entry |
+|---|---|---|---|
+| 3-max | 270 | 252 | 2.45 MB |
+| 6-max | 289,036 | 9,057 | 83.59 MB |
+| 9-max | — | 71,256 | **632.15 MB** |
+
+M127 recorded 2.45 MB and M214 recorded 83.589 MB. Both are real; both
+are the 3-max and 6-max entries. **The worst is 7.6x larger than F49
+said, and the ceiling-64 exposure was 40.4 GB rather than 5,350 MB.**
+
+Worse, the pre-warm is not a worst case: `MULTIWAY_PREWARM_STACK_DEPTHS`
+x three table sizes is 9 entries, so **the server held 2,154 MB of
+preflop solves after startup**.
+
+### The fix: node_data that was never written to
+
+`StrategyResult.prune_empty_nodes` drops entries whose arrays are
+entirely zero, applied where this cache is filled. It is
+behaviour-preserving **by construction, not by luck**: `strategy_at` and
+`trained_hands` both do `node_data.get(id(node))` and fall back to
+`InfoSetTable.zeros(...)`, which is precisely what an all-zero table is.
+`strategy_at`'s own docstring already stated the equivalence — "an
+unvisited node behaves the same as a visited-but-untrained one".
+
+They are not rare, because MCCFR VISITS far more nodes than it learns at
+(M150: learning stops by depth 8, and 6-max has 289,036 decision nodes).
+**6,398 of 9,057 entries at 6-max — 70.6% — are all-zero, worth 42.29 MB
+of 61.90 MB.**
+
+| table | before | after | saved | node_data entries |
+|---|---|---|---|---|
+| 3-max | 2.45 MB | 2.02 MB | 17.6% | 252 -> 186 |
+| 6-max | 83.59 MB | 40.17 MB | 51.9% | 9,057 -> 2,667 |
+| 9-max | 632.15 MB | **256.56 MB** | **59.4%** | 71,256 -> 13,661 |
+
+**Prewarmed working set 2,154 -> 896 MB.** Verified end to end: 36
+`/advise` requests across 4 heroes and 9 preflop paths, **0 differing**
+on strategy, `trained`, and `solver_confidence`, and marginally faster
+(31.4s vs 36.2s).
+
+The equivalence check covered one thing a per-node assertion cannot:
+M150's on-demand trainer fires when hero's row IS the prior, so if
+"absent" and "all-zero" differed to `_row_is_the_prior`, the two arms
+would diverge by training at different RATES.
+
+**Conservative on purpose**: it requires BOTH arrays empty, not just
+`strategy_sum`. A table with regret but no strategy can still seed a
+warm start (`warmstart.py` reads `regret_sum`), and this is a general
+method on a general result.
+
+Ceiling **64 -> 12**, derived from the 9 entries the prewarm creates plus
+headroom: worst case 40.4 GB -> ~3.1 GB, realistic 896 MB.
+
+### Three corrections to M214
+
+**F49's figure was the wrong entry** — 83.589 MB is 6-max; the worst is
+632 MB. Corrected in CLAUDE.md.
+
+**The `_KNOWN_OVER_BUDGET` allowance was DEAD CODE.** The ceiling sweep
+sends `players` 2 and 3 only, so `multiway` holds a 2.02 MB 3-max entry
+and never approached the budget. Deleting the allowance entirely changed
+nothing — which is how it was caught, and the only reason it was checked
+is that this milestone needed to know what the guard actually covered.
+**An exception that cannot fire is worse than no exception**: it reads as
+a guarded risk while guarding nothing. Removed.
+
+**The ceiling test measured an arbitrary entry.** `_deep_size(next(iter(
+value.entries.values())))` judges a cache by whichever entry happens to
+be first — a coin flip dressed as a measurement, in a cache spanning
+127x. Now `max(...)`.
+
+### And one correction to a much older test
+
+`test_the_expensive_caches_keep_a_generous_ceiling` asserted
+`multiway.maxsize >= 32`, to stop a tidy-up evicting pre-warmed work.
+Sound intent, but 32 predates anyone measuring the entry: at 256.56 MB
+that is an **8.2 GB** cache, so the number protecting against
+over-eviction was simultaneously licensing an enormous overrun. The floor
+is now DERIVED from `MULTIWAY_PREWARM_STACK_DEPTHS`.
+
+### What is still not fixed, with numbers
+
+**A single 9-max entry is 256.56 MB and cannot fit the 168 MB per-cache
+budget.** The tree alone is 166.10 MB, so no amount of node_data work
+gets there.
+
+Two levers, neither taken here:
+
+- **Byte-aware eviction.** `MAX_CACHE_BYTES_PER_CACHE` bounds a cache by
+  COUNT x an assumed uniform entry size. That assumption is false in this
+  cache by 127x, so 12 entries is anywhere between 24 MB and 3.1 GB
+  depending on which table sizes a server sees. This is the real fix and
+  it is a mechanism change, deliberately not bundled with a data change
+  — M213 shipped two things at once and had to unpick them.
+- **`regret_sum` on the surviving tables** is another ~half of node_data
+  and is provably never read for this cache: the only `initial_node_data=`
+  caller in the codebase is `solve_flop`'s postflop warm-start (M158),
+  and M150's trainer builds fresh tables. Not taken because it would mean
+  a shared engine structure carrying a "compacted" state that most of its
+  consumers must not see.
+
+### A harness lesson worth keeping
+
+The first attempt at this measurement **crashed the machine**. It counted
+nodes by walking `children` — which builds LAZILY — so the walk
+MATERIALISED the 9-max tree and died with `MemoryError`. A lazily-built
+tree cannot be measured by traversing it, because traversing it is what
+makes it big. `_deep_size` does not force building, which is why the
+3-max and 6-max figures taken before the walk survived.
+`tests/test_solver.py::_walk_built` only follows already-materialised
+children so a test can never repeat it.

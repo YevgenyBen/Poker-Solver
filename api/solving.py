@@ -214,7 +214,7 @@ def _get_or_solve_multiway(stack_bb: float, players: int) -> StrategyResult:
     def _solve():
         config = GameConfig(positions=table["positions"], stack_bb=solved_stack_bb)
         equity_cache = _get_multiway_equity_cache(cfg.MULTIWAY_PREFLOP_HANDS)
-        return solve_preflop(
+        result = solve_preflop(
             config=config,
             hands=cfg.MULTIWAY_PREFLOP_HANDS,
             equity_cache=equity_cache,
@@ -222,6 +222,18 @@ def _get_or_solve_multiway(stack_bb: float, players: int) -> StrategyResult:
             seed=1,
             floor_regret=table.get("floor_regret"),
         )
+        # M215. Drop the node_data entries that never accumulated
+        # anything before this is cached. MCCFR VISITS far more nodes
+        # than it learns at, and an all-zero table is what `strategy_at`
+        # and `trained_hands` already synthesise for an ABSENT node — so
+        # this changes no answer and is the difference between an entry
+        # that fits a memory budget and one that does not.
+        #
+        # This is the most expensive artifact the product builds and the
+        # largest thing it holds: measured at 632 MB for a 9-max entry,
+        # of which node_data is 466 MB.
+        result.prune_empty_nodes()
+        return result
 
     # M92: single-flight. This is the most expensive solve in the product
     # (75-140s at 6-max/9-max), so it is the worst possible thundering

@@ -257,16 +257,29 @@ def test_no_solve_cache_is_unbounded():
 def test_the_expensive_caches_keep_a_generous_ceiling():
     """The other half: bounding them must not make them useless.
 
-    Multiway entries cost 75-140s to rebuild and the pre-warm fills them
+    Multiway entries cost 35-525s to rebuild and the pre-warm fills them
     on purpose, so the ceiling has to bind only under adversarial
     variety — never under the handful of depths a real session touches.
     Asserted as a floor on the limit so a later "tidy-up" cannot quietly
     shrink it to something that evicts pre-warmed work.
+
+    **The floor is DERIVED, not a constant, and that is M215's
+    correction.** It used to be a bare `>= 32`, chosen before anyone had
+    measured what a multiway entry costs. At the real worst entry
+    (256.56 MB, 9-max, pruned) 32 entries is an **8.2 GB** cache, so the
+    number protecting against over-eviction was simultaneously licensing
+    an enormous overrun. What matters is that the prewarm's own entries
+    survive, which is a quantity the config knows.
     """
     from api import caches as caches_module
+    from api import config as api_config
 
     by_name = {c.name: c for c in caches_module._SolveCache.registered()}
-    assert by_name["multiway"].maxsize >= 32
+    designed = len(api_config.MULTIWAY_PREWARM_STACK_DEPTHS) * 3
+    assert by_name["multiway"].maxsize >= designed, (
+        f"the multiway ceiling ({by_name['multiway'].maxsize}) is below the "
+        f"{designed} entries the prewarm creates, so warmed solves would be "
+        f"evicted by their own warm-up")
     assert by_name["preflop_raw"].maxsize >= 64
 
 
@@ -296,37 +309,25 @@ def _deep_size(obj, seen=None):
     return size
 
 
-# M214. Caches whose byte budget is knowingly exceeded, with the reason
-# and the measured cost of the alternative.
+# M215. No cache is allowed to exceed its byte budget here any more.
 #
-# This is NOT a way to silence the check. Each entry carries its own
-# ceiling measured at the time, so the overrun is bounded and cannot grow
-# quietly — if the entry gets bigger the test fails, which is exactly
-# what the check is for.
-_KNOWN_OVER_BUDGET = {
-    # The multiway PREFLOP solve: the most expensive artifact this
-    # product builds, measured cold at **35s for 3-max and 76s for
-    # 6-max**. An entry is 83.6 MB, so the 168 MB budget affords TWO —
-    # and a player alternating between a 3-max and a 6-max table would
-    # re-solve on nearly every request.
-    #
-    # The overrun is PRE-EXISTING and has nothing to do with the change
-    # that found it: the entry measures 83.589 MB with or without M214's
-    # bet-size menu. It stayed invisible because this sweep never sent a
-    # multiway request until M214 added one.
-    #
-    # Recorded rather than fixed because the fix is a real piece of work
-    # with its own trade (a smaller ceiling costs a 35-76s re-solve; a
-    # smaller ENTRY means storing less of a 289,036-node tree), and
-    # making that trade as a side effect of an unrelated milestone is how
-    # a latency regression ships unmeasured.
-    "multiway": 5_400e6,
-}
+# M214 added a `_KNOWN_OVER_BUDGET` allowance for `multiway` and it was
+# **dead code**: the sweep below sends `players` 2 and 3 only, so that
+# cache holds a 2.02 MB 3-max entry and never approached the budget.
+# Deleting the allowance entirely changed nothing, which is how it was
+# caught. An exception that cannot fire is worse than no exception - it
+# reads as a guarded risk while guarding nothing.
+#
+# The real risk it was meant to describe (a 9-max entry at 256.56 MB) is
+# not reachable from a test: that solve costs ~525s. It is pinned by
+# `test_the_multiway_preflop_ceiling_is_derived_from_its_worst_entry`
+# against a RECORDED measurement instead, which is honest about being a
+# recorded number rather than a live one.
 
 
-def _allowance(name):
+def _allowance(_name):
     from api import caches as caches_module
-    return _KNOWN_OVER_BUDGET.get(name, caches_module.MAX_CACHE_BYTES_PER_CACHE)
+    return caches_module.MAX_CACHE_BYTES_PER_CACHE
 
 
 def test_cache_ceilings_are_sized_against_what_an_entry_actually_costs():
@@ -391,7 +392,12 @@ def test_cache_ceilings_are_sized_against_what_an_entry_actually_costs():
         seen.add(id(value))
         if not value.entries or value.maxsize is None:
             continue
-        entry_bytes = _deep_size(next(iter(value.entries.values())))
+        # M215: the WORST entry, not an arbitrary one. `next(iter(...))`
+        # judged a cache by whichever entry happened to be first, and
+        # entries inside one cache can differ by 127x (`multiway` spans
+        # 2.02 MB at 3-max to 256.56 MB at 9-max), so that was a coin
+        # flip dressed as a measurement.
+        entry_bytes = max(_deep_size(entry) for entry in value.entries.values())
         budget = entry_bytes * value.maxsize
         measured.append((value.name, entry_bytes, value.maxsize, budget))
         if budget > _allowance(value.name):
@@ -451,3 +457,67 @@ def test_the_turn_cache_ceiling_matches_what_a_turn_entry_now_costs():
         f"{affordable} at {entry_bytes / 1e6:.2f} MB each — the ceiling looks stale "
         "against what an entry now costs, which is how it sat at 14 after M173 made "
         "entries 50x smaller")
+
+
+def test_the_multiway_preflop_ceiling_is_derived_from_its_worst_entry():
+    """M215. The one cache whose real cost a test cannot afford to measure.
+
+    `_multiway_cache` holds the multiway preflop solve, and its entries
+    span 127x — 2.02 MB at 3-max, 40.17 MB at 6-max, 256.56 MB at 9-max
+    (all after `prune_empty_nodes`). The ceiling sweep populates 3-max,
+    because a 9-max solve costs ~525s, so the number that actually sizes
+    this ceiling is RECORDED in `api/caches.py`, not measured live.
+
+    This asserts the derivation still holds, so raising the ceiling
+    without re-measuring the entry fails here rather than in production.
+
+    Every earlier figure for this cache came from the wrong entry: M127
+    recorded 2.45 MB and M214 recorded 83.589 MB, which are the 3-max and
+    6-max entries of a cache whose worst is 632 MB unpruned.
+    """
+    from api import caches as caches_module
+    from api import config as api_config
+
+    budget = (caches_module._multiway_cache.maxsize
+              * caches_module.MULTIWAY_PREFLOP_WORST_MB)
+    assert budget <= caches_module.MULTIWAY_PREFLOP_DECLARED_BUDGET_MB, (
+        f"_multiway_cache holds {caches_module._multiway_cache.maxsize} entries "
+        f"of up to {caches_module.MULTIWAY_PREFLOP_WORST_MB} MB = {budget:.0f} MB, "
+        f"past its declared "
+        f"{caches_module.MULTIWAY_PREFLOP_DECLARED_BUDGET_MB} MB. Re-measure the "
+        f"worst entry before raising the ceiling — the 9-max entry is the one "
+        f"that matters and no sweep can afford to build it."
+    )
+
+    designed = len(api_config.MULTIWAY_PREWARM_STACK_DEPTHS) * 3
+    assert caches_module._multiway_cache.maxsize >= designed, (
+        f"ceiling {caches_module._multiway_cache.maxsize} is below the "
+        f"{designed} entries the prewarm creates, so warmed solves would be "
+        f"evicted by their own warm-up")
+
+
+def test_the_multiway_preflop_entry_is_pruned_before_it_is_cached():
+    """M215. That the saving is actually being taken.
+
+    `prune_empty_nodes` removes node_data entries that accumulated
+    nothing — 70.6% of them at 6-max — and the ceiling above is derived
+    from the PRUNED size. If the prune stopped being applied the entries
+    would quietly return to ~2.5x their recorded size, and every ceiling
+    derived from a pruned figure would be wrong by that factor with
+    nothing failing.
+
+    Uses 3-max, the only multiway preflop solve a test can afford.
+    """
+    from api import caches as caches_module
+    from api import solving as solving_module
+
+    caches_module._SolveCache.clear_all()
+    result = solving_module._get_or_solve_multiway(100.0, 3)
+
+    empty = [key for key, table in result.node_data.items()
+             if not table.strategy_sum.any() and not table.regret_sum.any()]
+    assert not empty, (
+        f"{len(empty)} of {len(result.node_data)} node_data entries in a cached "
+        f"multiway preflop result accumulated nothing — prune_empty_nodes is not "
+        f"being applied where this cache is filled, and every ceiling derived "
+        f"from a pruned entry size is now wrong")

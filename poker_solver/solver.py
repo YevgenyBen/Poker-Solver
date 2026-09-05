@@ -111,6 +111,42 @@ class StrategyResult:
         street's `positions` (OOP, by convention)."""
         return self.strategy_at(self.root)
 
+    def prune_empty_nodes(self) -> int:
+        """Drop `node_data` entries that never accumulated anything, and
+        return how many went. Behaviour-preserving by construction.
+
+        Both readers of `node_data` — `strategy_at` and `trained_hands` —
+        do `self.node_data.get(id(node))` and fall back to
+        `InfoSetTable.zeros(...)`, which is precisely what an all-zero
+        table already is. `strategy_at`'s own docstring states the
+        equivalence: "an unvisited node behaves the same as a
+        visited-but-untrained one — consistent, not a special case." So
+        an entry whose arrays are entirely zero costs bytes and changes
+        no answer.
+
+        These are not rare. MCCFR VISITS far more nodes than it learns
+        at: measured on the shipped multiway preflop solve, **6,398 of
+        9,057 entries at 6-max (70.6%) are all-zero, worth 42.29 MB of
+        61.90 MB**. M150's depth table is the reason — learning stops by
+        depth 8 while the 6-max tree has 289,036 decision nodes.
+
+        **Conservative on purpose**: it requires BOTH arrays to be empty,
+        not just `strategy_sum`. A table with accumulated regret but no
+        strategy could in principle seed a warm start (`warmstart.py`
+        reads `regret_sum`), and this is a general method on a general
+        result — the caller deciding to prune should not have to know
+        which of its consumers reads which array.
+
+        Mutates in place rather than copying, because the thing worth
+        keeping is a tree that `node_data`'s `id(node)` keys still refer
+        to.
+        """
+        dead = [key for key, table in self.node_data.items()
+                if not table.strategy_sum.any() and not table.regret_sum.any()]
+        for key in dead:
+            del self.node_data[key]
+        return len(dead)
+
     def trained_hands(self, node: DecisionNode) -> dict:
         """hand label -> whether `node`'s strategy_at() entry for that
         hand reflects real accumulated visits, or the untrained

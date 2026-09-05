@@ -283,7 +283,51 @@ class _SolveCache:
 MAX_CACHE_BYTES_PER_CACHE = 160 * 1024 * 1024
 
 
-_multiway_cache = _SolveCache("multiway", maxsize=64)
+# M215. The multiway PREFLOP solve: the most expensive artifact this
+# product builds and the largest thing it holds.
+#
+# **Every earlier figure for this cache was measured on the wrong
+# entry.** M127 recorded 2.45 MB and M214 recorded 83.589 MB; both are
+# real, and both are the 3-max and 6-max entries. Entries in THIS cache
+# span 127x, because the tree does:
+#
+#   table    node_data entries   entry (unpruned -> pruned)
+#   3-max                  186     2.45 MB ->   2.02 MB
+#   6-max                2,667    83.59 MB ->  40.17 MB
+#   9-max               13,661   632.15 MB -> 256.56 MB
+#
+# The pruning is `StrategyResult.prune_empty_nodes`, applied where this
+# cache is filled: MCCFR VISITS far more nodes than it learns at, and an
+# all-zero table is exactly what `strategy_at` and `trained_hands`
+# synthesise for an ABSENT node, so dropping them changes no answer.
+# It takes the PREWARMED working set from **2,155 MB to 896 MB**.
+#
+# The ceiling was 64, which at the real worst entry is a **16 GB** cache
+# (40 GB before pruning). 12 covers the designed working set — three
+# prewarmed depths (`MULTIWAY_PREWARM_STACK_DEPTHS`) x three table sizes
+# = 9 — with room for a few unwarmed depths, and bounds the worst case at
+# ~3.1 GB. Lower would evict prewarmed entries and re-pay a solve
+# measured at 35s (3-max) to 525s (9-max).
+#
+# **A count ceiling is a weak bound here and that is worth knowing.**
+# M127 sized every cache by count against a per-cache byte budget, which
+# assumes entries within a cache are comparable; in this one they differ
+# by 127x, so 12 entries is anywhere between 24 MB and 3.1 GB depending
+# on which table sizes a server sees. Byte-aware eviction is the real
+# fix and is deliberately not built here — see MULTIWAY_PREFLOP_WORST_MB.
+_multiway_cache = _SolveCache("multiway", maxsize=12)
+
+# The worst measured entry in `_multiway_cache`, in MB (9-max at 100bb,
+# after pruning). The ceiling above is derived from it, and
+# `test_the_multiway_preflop_ceiling_is_derived_from_its_worst_entry`
+# recomputes that derivation — so raising the ceiling without
+# re-measuring fails loudly.
+#
+# Not measured live by the ceiling sweep because a 9-max preflop solve
+# costs ~525s, which no test should pay. That is exactly why it is
+# recorded here rather than left implicit.
+MULTIWAY_PREFLOP_WORST_MB = 256.56
+MULTIWAY_PREFLOP_DECLARED_BUDGET_MB = 3_100
 _flop_cache = _SolveCache("flop", maxsize=256)
 # Deliberately separate from _flop_cache and from each other, not one
 # shared dict — the cache key (board, pot, stack_bb, iterations) omits

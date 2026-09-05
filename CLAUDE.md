@@ -558,14 +558,54 @@ requests now reject unknown fields by name rather than ignoring them.
   |---|---|---|---|
   | `flop_multiway_path` | 0.425 -> 0.926 | 256 | 109 -> **237 MB** |
   | `turn_multiway_path` | 10.174 -> 16.712 | 128 | **1,302 -> 2,139 MB** |
-  | `multiway` (preflop) | 83.589 (unchanged) | 64 | **5,350 MB** |
+  | `multiway` (preflop) | 83.589 -> see M215 | 64 | **5,350 MB** |
   Now 181 and 10; `turn_multiway_path` was already **7.8x** over before
-  the menu. **The preflop one is RECORDED, NOT FIXED** — unaffected by
-  M214, and the budget affords TWO entries against a solve measured at
-  35s (3-max) / 76s (6-max) cold, so shrinking it as a side effect would
-  ship an unmeasured latency regression. It sits in `_KNOWN_OVER_BUDGET`
-  with its measured ceiling so it cannot grow quietly, and it is the
-  obvious next piece of work. The sweep now sends a multiway request.
+  the menu. The sweep now sends a multiway request.
+  **M215 CORRECTED the preflop row and closed it.** 83.589 MB is the
+  **6-max** entry; entries in that cache span **127x** and the worst is
+  **632.15 MB** (9-max), so the real exposure at ceiling 64 was **40.4
+  GB**, not 5,350 MB — and the prewarm alone (3 depths x 3 table sizes)
+  held **2,154 MB** after startup. M127's 2.45 MB was the 3-max entry.
+  **Every figure this cache ever carried was measured on whichever entry
+  came first.**
+  **`StrategyResult.prune_empty_nodes`** drops node_data entries whose
+  arrays are entirely zero, applied where this cache is filled.
+  Behaviour-preserving BY CONSTRUCTION: `strategy_at` and
+  `trained_hands` both fall back to `InfoSetTable.zeros(...)` for an
+  ABSENT node, which is what an all-zero table already is. They are not
+  rare — MCCFR visits far more nodes than it learns at (M150), and
+  **70.6% of 6-max entries are all-zero, 42.29 MB of 61.90 MB**.
+  | table | before | after | saved | node_data entries |
+  |---|---|---|---|---|
+  | 3-max | 2.45 MB | 2.02 MB | 17.6% | 252 -> 186 |
+  | 6-max | 83.59 MB | 40.17 MB | 51.9% | 9,057 -> 2,667 |
+  | 9-max | 632.15 MB | **256.56 MB** | **59.4%** | 71,256 -> 13,661 |
+  **Prewarmed working set 2,154 -> 896 MB**, verified over 36 `/advise`
+  requests with **0 differing** on strategy, `trained` or
+  `solver_confidence`. Ceiling **64 -> 12**, derived from the 9 entries
+  the prewarm creates. Requires BOTH arrays empty, since regret alone can
+  seed a warm start (`warmstart.py`).
+  **STILL NOT FIXED, deliberately**: a 9-max entry is 256.56 MB and
+  cannot fit the 168 MB per-cache budget — the TREE alone is 166.10 MB.
+  `MAX_CACHE_BYTES_PER_CACHE` bounds by COUNT x an assumed uniform entry
+  size, and that assumption is false here by 127x, so **byte-aware
+  eviction is the real fix** and is not bundled with a data change.
+  Dropping `regret_sum` from surviving tables is another ~half of
+  node_data and is provably unread for this cache, but would make a
+  shared engine structure carry a compacted state most consumers must not
+  see.
+  **Two M214 guards were wrong and are fixed**: `_KNOWN_OVER_BUDGET` was
+  **dead code** (the sweep sends `players` 2 and 3, so `multiway` holds a
+  2.02 MB entry — deleting the allowance changed nothing), and the
+  ceiling test measured `next(iter(entries))`, an arbitrary entry, in a
+  cache spanning 127x. An exception that cannot fire is worse than none.
+  Also corrected: `test_the_expensive_caches_keep_a_generous_ceiling`
+  asserted `multiway.maxsize >= 32`, which at the real entry licenses an
+  **8.2 GB** cache; the floor now derives from
+  `MULTIWAY_PREWARM_STACK_DEPTHS`.
+  **A lazily-built tree cannot be measured by traversing it** — the first
+  attempt walked `children`, materialised the 9-max tree and died with
+  MemoryError. `_deep_size` does not force building.
   **M213 also fixed a bug M207 shipped: a hand became unfollowable
   halfway through.** Turn and river paths WALK a flop tree built with
   `FLOP_TURN_RAISE_SIZES` while the flop SOLVES with `FLOP_RAISE_SIZES`,
