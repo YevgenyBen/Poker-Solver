@@ -11993,3 +11993,112 @@ makes it big. `_deep_size` does not force building, which is why the
 3-max and 6-max figures taken before the walk survived.
 `tests/test_solver.py::_walk_built` only follows already-materialised
 children so a test can never repeat it.
+
+## M216 — byte-aware eviction, and a cache registry that has been leaking since M92
+
+M215 said the real fix for the multiway preflop cache was a mechanism
+change and declined to bundle it with a data change. This is that
+mechanism.
+
+`_SolveCache` now evicts on MEMORY as well as entry count. The count
+bound stays as a cheap backstop; the byte bound is the one that holds.
+
+### Why a count ceiling was never a memory ceiling
+
+M127 sized every cache as `maxsize x one measured entry`, which is a
+memory bound only if entries within a cache are comparable. M215
+measured that assumption wrong by **127x** inside `_multiway_cache`
+alone — 2.02 MB at 3-max, 40.17 MB at 6-max, 256.56 MB at 9-max — so
+twelve entries was anywhere between 24 MB and 3.1 GB depending on which
+table sizes a server happened to see.
+
+### Exact sizing, and why it is affordable
+
+`entry_bytes` moved from `tests/test_caches.py` into `api/caches.py`,
+because the CACHE weighs entries with it now and the test imports the
+same function. A guard measuring with a different ruler than production
+is how M214 shipped an allowance that could not fire.
+
+**Exact, not estimated.** A cheap estimator summing only the numpy
+buffers was measured at **44-63%** of true size, and a bound that
+UNDER-counts is the one failure mode a memory bound may not have.
+
+It is affordable for a structural reason rather than a lucky one:
+`store` runs only on a MISS, and a miss has just paid for a solve.
+Measured directly over a 60-hand session — **115 calls, 1.88s, 0.507%
+of wall clock**, 16.35 ms mean, 385 MB sized.
+
+That direct measurement exists because the paired benchmark could not
+answer the question (below).
+
+### The paired benchmark is a null result, and the reason is the finding
+
+2 seeds x 2 arms x 120 hands, alternating:
+
+| arm | p50 | p90 | end WS | cached | entries | defects |
+|---|---|---|---|---|---|---|
+| before | 2.151 | 5.087 | 1031 MB | 513 MB | 190 | 0 |
+| after | 2.322 | 5.574 | 1032 MB | **513 MB** | **190** | 0 |
+
+**Cached bytes and entry count are IDENTICAL between arms.** A normal
+session's whole cache footprint is 513 MB spread across 18 caches and
+never approaches any per-cache budget, so byte-aware eviction evicted
+nothing extra. The p50 delta of +0.171s is with byte-for-byte identical
+cache contents, and wall times varied 590-683s between seeds on their
+own, so it is drift at n=2 — which is why the cost was measured
+directly instead.
+
+**So this is a SAFETY bound, not an active one.** Its value is bounding
+the adversarial case M215 measured at 40 GB, not improving a typical
+session. Stating that plainly matters more than the null: a mechanism
+that does nothing under the workload you measured is easy to
+misrepresent as a win.
+
+`_multiway_cache` gets its own enforced **1 GB** budget, sized at the
+896 MB prewarmed working set (M215). The difference from the
+`_KNOWN_OVER_BUDGET` allowance it replaces is that this one EVICTS,
+rather than a test declining to complain.
+
+**An entry larger than the budget is kept, not dropped.** A 9-max entry
+is 256.56 MB against a 160 MB default; a cache that discards what it
+just spent 525 seconds computing is worse than one briefly over budget.
+Pinned by a test, because the alternative failure is a silent infinite
+loop.
+
+### The cache registry has been leaking test caches since M92
+
+Found by running two modules in isolation rather than the whole suite:
+`pytest tests/test_caches.py tests/test_api.py` failed **four** tests
+that the full run passes.
+
+`_SolveCache.__init__` appends every instance to a class-level registry.
+That registry is what lets `test_no_solve_cache_is_unbounded` and
+`test_every_cache_registers_itself` assert over ALL caches without a
+hand-maintained inventory (M60) — and `tests/test_caches.py` has been
+constructing throwaway caches since M92 (`test_single_flight`,
+`test_parallel_keys`, `test_unbounded` and six more), every one of which
+leaks into it.
+
+**The full suite stays green only because `test_api.py` sorts before
+`test_caches.py`.** A guarantee that no cache escapes the bounded-size
+check has been one filename away from breaking for twenty-odd
+milestones. An autouse fixture now snapshots and restores the registry,
+which fixes it for the pre-existing caches as much as the new ones.
+
+The first version of the isolation fixture was opt-in and fixed only the
+six new tests — three of the four failures went away and the fourth
+stayed, because it faithfully restored a registry that was already
+polluted.
+
+### A measurement that was nearly believed
+
+The full suite ran 942s against ~500s before this change, which looked
+like a serious regression from sizing every store. Interleaved ON/OFF/
+ON/OFF on the two heaviest modules in one machine state: **ON 280s /
+245s, OFF 256s / 246s**. The byte bound is free and the 942s was drift.
+
+The first attempt at that A/B reported **"bytes OFF: 0s"** — a plugin
+that failed to import, which pytest reports as an error and a shell loop
+reports as a fast run. A 0-second arm is not a fast arm; it is a number
+that cannot be true, and it would have read as "free" from a summary
+table.

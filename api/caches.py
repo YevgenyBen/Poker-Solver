@@ -10,7 +10,10 @@ See `_SolveCache`'s own docstring for why it deliberately exposes
 across call sites genuinely differ and that difference is load-bearing.
 """
 
+import sys
 import threading
+
+import numpy as np
 from collections import OrderedDict
 
 # M58: there is exactly ONE preflop solve cache, _preflop_raw_cache
@@ -18,6 +21,48 @@ from collections import OrderedDict
 # and independently re-solve the identical spot for GET /solve — see
 # CLAUDE.md's M58 entry and docs/project-audit-2026-08-21.md's SS2.1 for
 # the measured ~3.2s that wasted on the most common first user journey.
+def entry_bytes(obj, seen=None) -> int:
+    """Bytes an object graph actually holds, following containers and
+    counting numpy buffers by `nbytes` rather than by object header.
+
+    Lived in `tests/test_caches.py` until M216. It is here now because
+    the cache itself weighs entries with it, and a guard that measures
+    with a different ruler than production is how M214 shipped an
+    allowance that could not fire.
+
+    **Does not force a lazily-built tree.** `DecisionNode.children`
+    builds on demand, and this walks `vars(obj)` rather than iterating
+    children, so it sees `_built` and the un-called `_builders` without
+    materialising anything. That distinction is not academic: M215's
+    first measurement traversed a 9-max tree and died with MemoryError.
+
+    Exact rather than estimated, deliberately. A cheap estimator that
+    summed only the numpy buffers was measured at 44-63% of the true
+    size — and a bound that UNDER-counts is the one failure mode a
+    memory bound may not have. The exact walk is affordable because it
+    runs only where entries are STORED, which is only on a miss, which
+    has just paid for a solve: 0.306s of sizing after a 76s 6-max
+    preflop solve.
+    """
+    if seen is None:
+        seen = set()
+    if id(obj) in seen:
+        return 0
+    seen.add(id(obj))
+    if isinstance(obj, np.ndarray):
+        return obj.nbytes
+    size = sys.getsizeof(obj, 0)
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            size += entry_bytes(key, seen) + entry_bytes(value, seen)
+    elif isinstance(obj, (list, tuple, set, frozenset)):
+        for item in obj:
+            size += entry_bytes(item, seen)
+    elif hasattr(obj, "__dict__"):
+        size += entry_bytes(vars(obj), seen)
+    return size
+
+
 class _SolveCache:
     """One endpoint's solve cache: the dict plus the lock guarding it,
     bundled (M60, audit recommendation #3).
@@ -51,9 +96,21 @@ class _SolveCache:
 
     _registry: list["_SolveCache"] = []
 
-    def __init__(self, name: str, maxsize: int | None = None):
+    def __init__(self, name: str, maxsize: int | None = None,
+                 max_bytes: int | None = None):
         self.name = name
         self.maxsize = maxsize
+        # M216: the real bound. `maxsize` bounds the entry COUNT, which
+        # is only a memory bound if entries are comparable — and they are
+        # not. Inside `_multiway_cache` alone they span 127x (2.02 MB at
+        # 3-max to 256.56 MB at 9-max), so one ceiling meant anywhere
+        # between 24 MB and 3.1 GB depending on which table sizes a
+        # server happened to see. `maxsize` is kept as a cheap secondary
+        # bound; this is the one that holds.
+        self.max_bytes = (MAX_CACHE_BYTES_PER_CACHE if max_bytes is None
+                          else max_bytes)
+        self._entry_bytes: dict = {}
+        self.total_bytes = 0
         # M93: an OrderedDict so `store` can evict least-recently-used.
         # Still a plain mapping to every reader, so the many call sites
         # that read `.entries` directly are unaffected.
@@ -86,6 +143,8 @@ class _SolveCache:
         with self.lock:
             self.entries.clear()
             self._key_locks.clear()
+            self._entry_bytes.clear()
+            self.total_bytes = 0
 
     def store(self, key, value):
         """Write an entry, evicting the least-recently-used one if this
@@ -110,14 +169,54 @@ class _SolveCache:
             self._store_locked(key, value)
 
     def _store_locked(self, key, value):
-        """`store`'s body, for callers already holding `self.lock`."""
+        """`store`'s body, for callers already holding `self.lock`.
+
+        Evicts least-recently-used until BOTH bounds hold. The byte bound
+        is the one that matters (see `max_bytes`); the count bound stays
+        as a cheap backstop.
+
+        **The entry just stored is never evicted, even if it alone
+        exceeds `max_bytes`.** A 9-max multiway preflop entry is 256.56
+        MB against a 160 MB default budget, and a cache that discards the
+        thing it just spent 525 seconds computing is worse than one
+        briefly over its budget. When that happens the cache holds
+        exactly that one entry, which is the smallest state it can be in
+        — and `test_an_entry_larger_than_the_budget_is_kept_not_dropped`
+        pins it, because the alternative failure is a silent infinite
+        loop.
+        """
         if key in self.entries:
+            self.total_bytes -= self._entry_bytes.pop(key, 0)
             self.entries.move_to_end(key)
         self.entries[key] = value
+        size = entry_bytes(value)
+        self._entry_bytes[key] = size
+        self.total_bytes += size
+
         if self.maxsize is not None:
             while len(self.entries) > self.maxsize:
-                evicted, _ = self.entries.popitem(last=False)
-                self._key_locks.pop(evicted, None)
+                self._evict_oldest(protect=key)
+        if self.max_bytes is not None:
+            while self.total_bytes > self.max_bytes and len(self.entries) > 1:
+                self._evict_oldest(protect=key)
+
+    def _evict_oldest(self, protect=None) -> bool:
+        """Drop the least-recently-used entry. Returns whether one went.
+
+        `protect` is the key just written: it is the most-recently-used,
+        so an LRU walk reaches it only when it is the sole entry left,
+        and at that point there is nothing left to give up.
+        """
+        for evicted in list(self.entries):
+            if evicted == protect and len(self.entries) > 1:
+                continue
+            if evicted == protect:
+                return False
+            del self.entries[evicted]
+            self.total_bytes -= self._entry_bytes.pop(evicted, 0)
+            self._key_locks.pop(evicted, None)
+            return True
+        return False
 
     def get(self, key, default=None):
         """Read an entry AND mark it most-recently-used (M93).
@@ -315,7 +414,18 @@ MAX_CACHE_BYTES_PER_CACHE = 160 * 1024 * 1024
 # by 127x, so 12 entries is anywhere between 24 MB and 3.1 GB depending
 # on which table sizes a server sees. Byte-aware eviction is the real
 # fix and is deliberately not built here — see MULTIWAY_PREFLOP_WORST_MB.
-_multiway_cache = _SolveCache("multiway", maxsize=12)
+_multiway_cache = _SolveCache(
+    "multiway", maxsize=12,
+    # M216. Its own budget, because a SINGLE 9-max entry (256.56 MB)
+    # exceeds the 160 MB every other cache gets, and a cache that cannot
+    # hold one entry is not a cache. Sized at the prewarmed working set —
+    # three depths x three table sizes = 896 MB (M215) — plus headroom.
+    #
+    # This is what M215 said the fix had to be, and the difference from
+    # the `_KNOWN_OVER_BUDGET` allowance it replaces is that this one is
+    # ENFORCED: the cache evicts against it on every store, rather than a
+    # test declining to complain.
+    max_bytes=1_000 * 1024 * 1024)
 
 # The worst measured entry in `_multiway_cache`, in MB (9-max at 100bb,
 # after pruning). The ceiling above is derived from it, and
