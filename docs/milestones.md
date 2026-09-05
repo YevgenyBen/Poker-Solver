@@ -12102,3 +12102,142 @@ that failed to import, which pytest reports as an error and a shell loop
 reports as a fast run. A 0-second arm is not a fast arm; it is a number
 that cannot be true, and it would have read as "free" from a summary
 table.
+
+## M217 — where the time actually goes, and what a sized multiway re-raise would cost
+
+A scoping milestone. It ships one guard and no config change, because
+everything it measured turned out to be either already paid for or
+blocked behind a bigger piece of work — and both of those are worth
+writing down precisely rather than discovering again.
+
+### The request anatomy has inverted for the third time
+
+M155 measured a flop request as **table 14% / solve 86%** and concluded
+that anything aimed at flop latency must attack CFR. M176 inverted it to
+**table 89.5% / CFR 4.8%** (M161 made CFR O(N), M172 tripled the combo
+count the O(N^2) table scales with), fixed the table, and left it at
+**48% / 19%** — with an explicit note to re-measure rather than assume
+either.
+
+M207 has since given the flop a three-size menu, which multiplies tree
+width and therefore CFR while leaving the table alone. Measured on the
+production path:
+
+| | seconds | share |
+|---|---|---|
+| equity table | 1.81 | 40.9% |
+| CFR solve | 2.55 | **57.7%** |
+| everything else inside `solve_flop` | 0.01 | — |
+| unaccounted | — | 1.1% |
+
+**CFR is dominant again.** Anyone optimising this next should measure
+first; this anatomy has now reversed three times in five milestones.
+
+### Cold latency, per cell, in one machine state
+
+| table | street | cold | warm |
+|---|---|---|---|
+| heads-up | flop | **6.10s** | 0.04s |
+| heads-up | turn | 3.43s | 0.03s |
+| heads-up | river | 3.15s | 0.03s |
+| multiway | flop | 2.45s | 0.02s |
+| multiway | turn | 3.43s | 0.02s |
+| multiway | river | 4.23s | 0.02s |
+
+**The heads-up flop is the only cell over 5s**, and it is the first
+postflop decision of every hand. But its 6.10s is 1.81s of equity table
+at cap 140 (worth 4.41 sigma on money, M190) plus 2.55s of CFR over the
+bet menu (worth up to 1.74 bb, M209). **Every component is paid for in
+EV**, and M216's session benchmark puts the typical flop decision at
+2.15-2.32s rather than 6.10s. No change made.
+
+A per-board equity-table cache was considered and rejected on the
+product's own shape: M155 measured **71 of 73** flop requests in a
+session as cold because each hand deals a NEW board. Table reuse pays
+only when several players query one board, which is not the single
+player this product is for.
+
+### F40 at multiway, priced
+
+Facing a bet on any multiway street, `modelled_bet_sizes` is `[97.5]` —
+fold, call, or shove 97.5bb into a 9bb pot. `MULTIWAY_FLOP_MAX_RAISES =
+2` permits exactly one sized level and the opening menu uses it.
+
+Adding a sized re-raise (`((0.33, 0.75, 2.5), 2.0)` at max_raises 3):
+
+| street | shove-only | sized re-raise | ratio | new action used |
+|---|---|---|---|---|
+| flop | 2.43s | **2.42s** | **1.00** | **0.39-0.43** |
+| turn | 3.83s | 5.28s | 1.38 | 0.027 |
+| river | 4.47s | 6.78s | 1.52 | 0.007 |
+
+Median of 3 reps. On the flop it is **free and heavily used** — AhKs
+takes the 45bb raise 0.4326 and QdQh 0.3909, where both previously had
+only a 97.5bb shove. Free because a multiway flop solve is 99% equity
+lookups (M162), so tree width barely registers.
+
+**Refused for now** because the constant cannot be split: the turn and
+river are CHAINED solves that walk the flop leg of their own tree, so a
+flop offering a raise level they lack is M207 exactly — advice on a bet
+the next street refuses to continue from. Shipping it means a 6.78s
+multiway river for an action that street takes 0.7% of the time.
+
+### The unlock, measured
+
+Heads-up had this problem and M173/M174 solved it by making the turn and
+river STANDALONE, measuring 7.94s -> 0.87s (9.1x) end to end. The same
+move looks unusually cheap here, because `solve_flop_multiway` already
+takes a board and a four-card board makes `NwayBoardEquityCache`
+enumerate rather than sample (M154):
+
+| | solve |
+|---|---|
+| chained multiway turn (through `/advise`) | 3.83s |
+| **standalone multiway turn** | **0.24s** |
+| standalone + sized re-raise | 0.29s |
+
+So the re-raise costs 1.2x standalone against 1.38x chained, and the
+street itself gets an order of magnitude cheaper AND exact in equity.
+`_query_turn_multiway_from_path` is 321 lines, so this is its own
+milestone — but it is now scoped with numbers rather than a hunch, and
+it dissolves the trade-off above instead of accepting it.
+
+### What did ship
+
+The disclosure that makes the gap tolerable was verified and pinned. The
+note fires on exactly the right rows:
+
+| street | facing a bet | sizes | note |
+|---|---|---|---|
+| any multiway | no | [2.97, 6.75, 22.5, 97.5] | silent |
+| any multiway | yes | **[97.5]** | **fires** |
+
+So a player told to shove is also told that shoving was the only size
+modelled. It is derived from the response's own rows (M144), which means
+a future tree change could silence it without failing anything else —
+`test_a_multiway_player_facing_a_bet_is_told_shoving_was_the_only_size`
+now fails in BOTH directions (note never fires; note always fires), and
+its body says to replace it with a usage assertion once F40-at-multiway
+is closed.
+
+### Five measurements that were nearly believed
+
+This session kept producing numbers that could not be true, and the
+pattern is worth more than any of them individually:
+
+- `cfr.solve` reported **0.0s in a 4.36s request** — `solver.py` does
+  `from .cfr import solve`, so patching `cfr_mod.solve` misses the
+  binding. M155's trap, one level down.
+- three iteration budgets produced **identical latency** —
+  `_ADVISE_ITERATION_CAPS` is built at import from the config constants.
+- a benchmark arm reported **0s** — a pytest plugin that failed to
+  import, which a shell loop times as a fast run.
+- the warm-start telemetry reported **0 calls** — `api/solving.py` does
+  `from poker_solver.warmstart import index_by_path`.
+- the bet-sizing note appeared **never to fire** — it lives in
+  `aggression_confidence_reason`, and the probe read a `caveats` key
+  that does not exist.
+
+Every one surfaced as a value that was impossible rather than merely
+surprising. **Checking whether a number CAN be true has caught more here
+than checking whether it looks plausible.**
