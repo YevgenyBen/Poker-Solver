@@ -31,6 +31,7 @@ FAST_MULTIWAY_ITERATIONS = 30
 # Every other multiway test patches a menu in, so none of them would
 # notice the shipped constant being reverted; this is what does.
 SHIPPED_MULTIWAY_FLOP_RAISE_SIZES = api_config.MULTIWAY_FLOP_RAISE_SIZES
+SHIPPED_MULTIWAY_TURN_SOLVE_STANDALONE = api_config.MULTIWAY_TURN_SOLVE_STANDALONE
 # M67 made the real multiway preflop pool all 169 classes, which costs
 # ~170s (6-max) / ~215s (9-max) per spot at production settings. The
 # autouse fixture clears caches between tests, so every multiway test
@@ -3161,14 +3162,39 @@ def test_solve_turn_multiway_from_path_rejects_flop_iterations_above_the_cap(cli
     assert response.status_code == 422
 
 
-def test_solve_turn_multiway_from_path_reuses_the_same_cache_entry_across_turn_cards_and_flop_lines(client):
+def test_the_standalone_multiway_turn_keys_its_cache_per_turn_card(client):
+    """M218 INVERTED this test, and the inversion is the architecture.
+
+    Chained, one cached solve served every turn card, because each runout
+    was a chance branch INSIDE it - so this asserted `== 1` after two
+    different turn cards. Solving the turn as its own street means the
+    board is part of what was solved, so each card is its own entry.
+
+    M174 recorded the identical trade for the heads-up river: standalone
+    "keys its cache PER BOARD, so the chained solve's reuse across every
+    runout is gone", and paid for it with an entry 90x smaller.
+
+    The trade is worth stating rather than just absorbing: more entries,
+    each far cheaper, and each one a solve of the street actually being
+    asked about instead of a slice of a two-street solve.
+    """
     base = _multiway_turn_body(_THREE_LIVE_PATH)
     client.post("/solve_turn_multiway_from_path", json=base)
     assert len(api_main._turn_multiway_path_cache) == 1
 
-    different_turn_card = client.post("/solve_turn_multiway_from_path", json={**base, "turn_card": "4c"})
+    different_turn_card = client.post(
+        "/solve_turn_multiway_from_path", json={**base, "turn_card": "4c"})
     assert different_turn_card.status_code == 200
-    assert len(api_main._turn_multiway_path_cache) == 1
+
+    if api_config.MULTIWAY_TURN_SOLVE_STANDALONE:
+        assert len(api_main._turn_multiway_path_cache) == 2, (
+            "a second turn card did not create a second entry - the standalone "
+            "turn solves a four-card board, so the card is part of what was "
+            "solved and cannot be shared across runouts")
+    else:
+        assert len(api_main._turn_multiway_path_cache) == 1, (
+            "the chained solve holds every runout as a chance branch, so one "
+            "entry must serve every turn card")
 
 
 def test_solve_turn_multiway_from_path_partitions_different_preflop_legs_into_separate_cache_entries(client):
@@ -7227,3 +7253,113 @@ def test_a_multiway_player_facing_a_bet_is_told_shoving_was_the_only_size(
         "facing a multiway bet the only way to commit chips is all-in, and the "
         "response does not say so — a player is being told to shove 97.5bb "
         "without being told that shoving was the only option modelled")
+
+
+def test_the_standalone_multiway_turn_solves_the_turn_board_not_the_flop(
+        client, monkeypatch):
+    """M218. The property that makes the standalone multiway turn what it
+    claims to be.
+
+    Chained, `solve_flop_turn_multiway` solves the flop AND the turn in
+    one tree and the turn is read off a sampled chance branch. Standalone
+    solves the FOUR-CARD board directly, which is both one street cheaper
+    (3.88s -> 1.84s through `/advise`) and exact in equity, because
+    `NwayBoardEquityCache` enumerates a single remaining runout rather
+    than sampling it (M154).
+
+    Asserted through the pot and the action structure rather than by
+    reaching into the solver: a turn decision must be priced at the pot
+    the flop left behind, and must offer this street's sizes against it.
+    """
+    monkeypatch.setattr(api_config, "MULTIWAY_TURN_SOLVE_STANDALONE", True)
+    monkeypatch.setattr(api_config, "MULTIWAY_FLOP_RAISE_SIZES",
+                        ((0.33, 0.75, 2.5),))
+    monkeypatch.setattr(api_config, "MULTIWAY_FLOP_MAX_RAISES", 2)
+    common = dict(preflop_action_path=["raise", "call_or_check", "call_or_check"],
+                  hero_cards="5c4d", board="Kd7c2h", players=3, stack_bb=100.0)
+    checked = ["call_or_check", "call_or_check", "call_or_check"]
+
+    flop = client.post("/advise", json=_advise_body(**common)).json()
+    turn = client.post("/advise", json=_advise_body(
+        flop_action_path=checked, turn_card="Ts", **common))
+    assert turn.status_code == 200, turn.json()
+    payload = turn.json()
+
+    assert payload["street"] == "turn"
+    # `/advise` reshapes the raw path response and does not surface
+    # `turn_card`, so the board is checked through the pot and the
+    # street instead of a field that only the raw endpoint returns.
+    # Checked through, so the turn is played for the pot the flop left.
+    assert payload["pot"] == pytest.approx(flop["pot"], abs=0.01), (
+        f"the turn is priced at {payload['pot']} against a flop pot of "
+        f"{flop['pot']} — a checked-through flop adds nothing to the pot")
+    assert payload["modelled_bet_sizes"], "the turn modelled no bet sizes at all"
+
+
+def test_the_standalone_multiway_turn_drops_a_position_that_folded_on_the_flop(
+        client, monkeypatch):
+    """M218. The one place this genuinely differs from the heads-up
+    version rather than being it with more seats.
+
+    Heads-up a fold ends the hand, so `_query_turn_standalone` returns a
+    terminal. Three-handed a fold leaves a real two-player turn — and
+    `solve_flop_multiway` builds a tree in which EVERY position it is
+    given acts, so passing the folded seat would put a player who is out
+    of the hand back into the betting.
+
+    The chained path never had to decide this: it dealt a chance branch
+    off the flop terminal, which already knew who had folded.
+    """
+    monkeypatch.setattr(api_config, "MULTIWAY_TURN_SOLVE_STANDALONE", True)
+    monkeypatch.setattr(api_config, "MULTIWAY_FLOP_RAISE_SIZES",
+                        ((0.33, 0.75, 2.5),))
+    monkeypatch.setattr(api_config, "MULTIWAY_FLOP_MAX_RAISES", 2)
+    common = dict(preflop_action_path=["raise", "call_or_check", "call_or_check"],
+                  hero_cards="5c4d", board="Kd7c2h", players=3, stack_bb=100.0)
+
+    opening = client.post("/advise", json=_advise_body(**common)).json()
+    everyone = opening["positions"]
+    assert len(everyone) == 3, everyone
+
+    # One player bets, one folds, one calls: the turn is two-handed.
+    sized = [s for s in opening["modelled_bet_sizes"] if s < opening["pot"]]
+    if not sized:
+        pytest.skip("no multiway bet-size menu configured")
+    turn = client.post("/advise", json=_advise_body(
+        flop_action_path=[f"raise:{min(sized):.2f}", "fold", "call_or_check"],
+        turn_card="Ts", **common))
+    assert turn.status_code == 200, turn.json()
+    payload = turn.json()
+
+    assert len(payload["positions"]) == 2, (
+        f"the turn is solved for {payload['positions']} after one of three "
+        f"players folded on the flop — a folded seat is being given actions")
+    assert payload["player_to_act"] in payload["positions"]
+
+
+def test_the_multiway_turn_ships_as_its_own_street():
+    """M218. The shipped-value guard for the architecture.
+
+    Both standalone-turn tests monkeypatch the flag ON, so flipping the
+    shipped default leaves them green — the same gap M214 had, where
+    every multiway test patched a menu in and none read the constant.
+    This reads the value captured at import.
+
+    Why standalone ships: the chained solve builds the flop AND the turn
+    in one tree, so a turn request pays for a flop solve it never reads a
+    strategy from. Measured through `/advise`, **3.88s -> 1.84s**, and the
+    cache entry **35.0 MB -> 0.927 MB**, while a four-card board makes the
+    equity EXACT rather than sampled (M154). It is the same move M173
+    made heads-up for 9.1x.
+
+    `False` still restores the chained path exactly, and that flag exists
+    because what standalone gives up — the flop betting round's influence
+    on the turn — is a real open question M173 could not settle heads-up
+    either.
+    """
+    assert SHIPPED_MULTIWAY_TURN_SOLVE_STANDALONE is True, (
+        "the multiway turn is chained again. That is a supported "
+        "configuration, but it costs 2.1x per request, a 38x larger cache "
+        "entry, and sampled equity where the standalone solve enumerates — "
+        "so it should be a measured decision, not a default nobody noticed."
+    )

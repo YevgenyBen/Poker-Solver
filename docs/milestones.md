@@ -12241,3 +12241,113 @@ pattern is worth more than any of them individually:
 Every one surfaced as a value that was impossible rather than merely
 surprising. **Checking whether a number CAN be true has caught more here
 than checking whether it looks plausible.**
+
+## M218 — the multiway turn is its own street
+
+M217 scoped this with numbers: the chained multiway turn cost **3.83s**
+through `/advise` against a **0.24s** standalone solve, and chaining was
+what made a sized re-raise unaffordable there. This is the move M173/M174
+made heads-up, where it was worth 9.1x and better advice.
+
+`MULTIWAY_TURN_SOLVE_STANDALONE = True`. `False` restores the chained
+path exactly.
+
+### What it bought
+
+| | chained | standalone |
+|---|---|---|
+| `/advise`, turn facing a bet | 3.88s | **1.84s** (2.1x) |
+| cache entry | 35.03 MB | **0.927 MB** (38x) |
+| turn equity | sampled | **exact** (M154) |
+
+The equity is exact for free: a four-card board makes
+`NwayBoardEquityCache` enumerate the single remaining runout instead of
+sampling it. Chaining had to sample because it solved the flop too.
+
+**The end-to-end gain is 2.1x where the isolated solve suggested 16x** —
+a request also pays for derived ranges, hero force-inclusion and node
+training that a bare solve skips. M173 saw this in the other direction
+(1.2x isolated, 9.1x end to end); both are the same lesson.
+
+### Quality, on the only axis multiway has
+
+There is no converged multiway reference (F46/M163: seed spread p90 0.240
+at 30,000 iterations), so the check is the reference-free one M214 used —
+**facing a smaller bet must fold less** — which holds at 6.90 sigma on the
+heads-up exact solver where the truth is known. 17 spots through
+`/advise`, both architectures:
+
+| arm | 0.33x | 0.75x | 2.50x | gap | sigma | right |
+|---|---|---|---|---|---|---|
+| standalone | 0.5552 | 0.6375 | 0.7312 | **+0.1760** | 1.48 | **12/17** |
+| chained | 0.4287 | 0.4591 | 0.5281 | +0.0993 | 0.86 | 7/17 |
+
+Both order correctly; standalone's gap is 1.8x larger and nearly twice as
+many spots are individually right. **Neither is separable at n=17**, so
+this is "better on this axis, not separably so" — the speed and the
+memory are what carry the change.
+
+### The one real difference from the heads-up version
+
+**Only the LIVE positions are solved.** Heads-up a fold ends the hand;
+three-handed it leaves a real two-player turn, and `solve_flop_multiway`
+gives every position it is handed a seat at the betting — so a seat that
+folded on the flop has to be dropped explicitly, or a player who is out
+of the hand is put back into it. The chained path never had to decide
+this, because it dealt a chance branch off a terminal that already knew
+who had folded.
+
+### Two bugs found by the existing tests
+
+**The standalone path ignored the caller's iteration budget**, hardcoding
+the config default. That removed caller control AND would have run
+production budgets under a fixture that deliberately shrinks them for
+speed — caught by `test_solve_turn_multiway_from_path_returns_200_for_a_
+real_three_live_line` asserting the echoed value. The budget now flows
+through `flop_iterations`, the only knob this endpoint has ever exposed,
+and the cell's DEFAULT switches on the architecture flag because chained
+and standalone want very different numbers from the same constant.
+
+**The cache-keying test inverted, and the inversion is the architecture.**
+Chained, one entry served every turn card because each runout was a
+chance branch inside it. Standalone solves a four-card board, so the card
+is part of what was solved. M174 recorded the identical trade for the
+heads-up river. The test now asserts BOTH behaviours, selected by the
+flag, rather than being deleted.
+
+### The first place M216's byte bound actually binds
+
+`_turn_multiway_path_cache` now holds two kinds of entry **38x apart** —
+0.927 MB standalone turn, 35.03 MB chained river. A COUNT ceiling cannot
+express "either ~180 cheap turn entries or ~4 expensive river ones, or
+any mix", which is exactly the assumption M215 measured wrong by 127x and
+M216 replaced. The count is now set generously (10 -> 181) against the
+turn entry and `max_bytes` does the real bounding.
+
+M216's own benchmark called it "a safety bound, not an active one"
+because a normal session never strained it. One milestone later it is
+load-bearing.
+
+### A guard of mine that was inert, one milestone after I criticised one
+
+Re-deriving the ceiling meant `maxsize x worst entry` no longer expressed
+the bound, so it was replaced with the live invariant: a cache must not
+be HOLDING more than its budget. Correct, and **completely inert** —
+disabling byte eviction entirely did not fail it, because the sweep makes
+a handful of entries and never strains anything. That is precisely the
+dead-guard failure M215 caught in M214's `_KNOWN_OVER_BUDGET`, committed
+by me one milestone later.
+
+Replaced with a CONFIG check that has teeth whatever the sweep populates:
+the ceiling a cache is ALLOWED to reach. Mutation-tested both ways —
+raising an ordinary cache's `max_bytes` past the per-cache limit, and
+raising the multiway preflop cache past its declared budget.
+
+### Still open
+
+The sized re-raise is now **1.05x** on the standalone turn (against 1.38x
+chained) — affordable, and used 0.0003 there against 0.39-0.43 on the
+flop. It still cannot ship, because `MULTIWAY_FLOP_RAISE_SIZES` drives
+the flop, the turn AND the still-chained river, where M217 measured
+1.52x and 6.78s. **Making the multiway river standalone is what unblocks
+it**, and that is M174's second half.

@@ -581,7 +581,25 @@ _flop_multiway_path_cache = _SolveCache("flop_multiway_path", maxsize=181)
 # did, and that is the trade M127 settled: a bound on entry COUNT is not
 # a bound on memory, and 2.1 GB in one cache is what the unbounded
 # version of this looks like.
-_turn_multiway_path_cache = _SolveCache("turn_multiway_path", maxsize=10)
+# M218. This cache now holds entries of two very different kinds, and it
+# is the first place M216's byte bound actually BINDS rather than sitting
+# there as a safety net:
+#
+#   standalone multiway turn   0.927 MB   (one street, four-card board)
+#   chained multiway river    35.029 MB   (three streets in one tree)
+#
+# 38x apart in one cache. A COUNT ceiling cannot express "either ~180
+# cheap turn entries or ~4 expensive river ones, or any mix" - which is
+# precisely the assumption M215 measured wrong by 127x in the preflop
+# cache and M216 replaced. So the count is set generously against the
+# turn entry and `max_bytes` does the real bounding: the cache evicts on
+# memory and holds whatever mix of the two fits.
+#
+# It was 10, derived from a 16.712 MB chained-turn entry (M214). The
+# standalone turn keys PER TURN CARD (a four-card board is part of what
+# was solved), so it needs many more entries than the chained one did -
+# M174 recorded the same trade for the heads-up river.
+_turn_multiway_path_cache = _SolveCache("turn_multiway_path", maxsize=181)
 
 # M67: MultiwayEquityCache instances, shared across every multiway solve
 # that uses the same hand pool — keyed by the pool, NOT by (stack,

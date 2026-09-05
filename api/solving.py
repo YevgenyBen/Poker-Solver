@@ -1960,6 +1960,175 @@ def _query_turn_from_path(
     }
 
 
+def _query_turn_multiway_standalone(*, situation, board_cards, turn_card,
+                                    flop_action_kinds, turn_action_kinds,
+                                    preflop_action_kinds, stack_bb, players,
+                                    iterations, flop_iterations,
+                                    hero_combo) -> dict:
+    """The MULTIWAY turn solved as its own street (M218).
+
+    The multiway sibling of `_query_turn_standalone` (M173). Chaining
+    solves the flop and the turn in ONE tree, so a turn request pays for
+    a flop solve it never reads a strategy from, and cost scales with the
+    product of both streets' widths: measured **3.83s chained through
+    `/advise` against a 0.24s standalone solve**.
+
+    A four-card board also makes `NwayBoardEquityCache` ENUMERATE the
+    single remaining runout rather than sample it (M154), so this is
+    exact in equity where the chained solve is Monte Carlo.
+
+    **The flop tree is built but never solved.** Everything needed from
+    the flop - the terminal's pot, who folded, each player's investment -
+    is structural, and `build_street_tree` builds children lazily, so
+    walking one action path materialises only that path.
+
+    **Only the LIVE positions are solved**, which is the one place this
+    genuinely differs from the heads-up version rather than being it with
+    more seats. Heads-up a fold ends the hand; three-handed it leaves a
+    real two-player turn, and `solve_flop_multiway` builds a tree in
+    which every position in `positions` acts - so passing the folded seat
+    would put a player who is out of the hand back into the betting.
+    """
+    postflop_positions = situation.postflop_positions
+    effective_stack_bb = situation.effective_stack_bb
+    path_scenario = situation.path_scenario
+
+    response = {
+        "board": "".join(str(c) for c in board_cards),
+        "turn_card": str(turn_card),
+        "river_card": None,
+        "preflop_action_path": list(preflop_action_kinds),
+        "flop_action_path": list(flop_action_kinds),
+        "turn_action_path": list(turn_action_kinds or []),
+        "stack_bb": stack_bb,
+        "position": postflop_positions[0],
+        "positions": list(postflop_positions),
+        "players": players,
+        "hero_in_range": situation.hero_in_range,
+        "range_confidence": situation.range_confidence,
+        "hero_range_trained": situation.hero_range_trained,
+    }
+
+    flop_root = build_street_tree(StreetConfig(
+        positions=postflop_positions,
+        pot=path_scenario.pot,
+        stack_bb=effective_stack_bb,
+        # The multiway FLOP's own sizes: this tree exists to walk the
+        # client's flop path, so it must offer what the flop cell solved.
+        # M207 is what happens when these drift apart - advice on a bet
+        # the next street then refuses to continue from.
+        raise_sizes=cfg.MULTIWAY_FLOP_RAISE_SIZES,
+        max_raises=cfg.MULTIWAY_FLOP_MAX_RAISES,
+    ))
+    _flop_actions, flop_node = _resolve_action_path(flop_root, flop_action_kinds)
+    if not isinstance(flop_node, TerminalNode):
+        raise ValueError(
+            "flop_action_path does not close the flop's betting, so no turn card can be "
+            "dealt yet. Two different things are being asked for here and it is easy to "
+            "mix them up: to ask about a TURN decision, flop_action_path must run to the "
+            "end of the flop's action; to ask about a later FLOP decision instead, send "
+            "the same partial path WITHOUT a turn_card."
+        )
+
+    # M173's finding, which applies identically here: the chained path got
+    # this check for free, because a card already on the board simply had
+    # no chance branch. Solving the turn standalone has no branch list to
+    # fail against, so the same request would be answered with a confident
+    # strategy for an impossible board.
+    if turn_card in board_cards:
+        raise ValueError(
+            f"{turn_card} is not a legal turn card here (already on the board, or "
+            "already dealt)"
+        )
+
+    remaining_stack = effective_stack_bb - max(flop_node.invested.values())
+    turn_entry_stack = remaining_stack
+
+    if not flop_node.is_showdown or remaining_stack <= 0:
+        # Folded out to one player, or the flop action put someone all in.
+        # The chained path expressed these two as "no chance branch" and
+        # "the branch root is itself a terminal".
+        return {
+            **response,
+            "elapsed_seconds": 0.0,
+            "flop_iterations": flop_iterations,
+            "is_terminal": True,
+            "player_to_act": None,
+            "strategy": {},
+            "trained": {},
+            "pot": flop_node.pot,
+            "effective_stack_bb": remaining_stack,
+            "max_affordable_bb": turn_entry_stack,
+        }
+
+    live_positions = tuple(p for p in postflop_positions if p not in flop_node.folded)
+    live_ranges = {p: situation.position_ranges[p] for p in live_positions}
+    turn_board = tuple(board_cards) + (turn_card,)
+
+    solve_key = (
+        tuple(preflop_action_kinds), tuple(flop_action_kinds), players,
+        round(stack_bb), iterations, turn_board, live_positions,
+        flop_iterations,
+        _hero_cache_component(hero_combo, situation.hero_in_range),
+    )
+    result = _turn_multiway_path_cache.get_or_compute(
+        solve_key,
+        lambda: solve_flop_multiway(
+            board=turn_board,
+            position_ranges=live_ranges,
+            pot=flop_node.pot,
+            effective_stack_bb=remaining_stack,
+            positions=live_positions,
+            raise_sizes=cfg.MULTIWAY_FLOP_RAISE_SIZES,
+            max_raises=cfg.MULTIWAY_FLOP_MAX_RAISES,
+            # The caller's budget for this cell. Standalone there is no
+            # flop solve, so `flop_iterations` - the only knob this
+            # endpoint has ever exposed - now drives the TURN solve. A
+            # first version hardcoded the config default and ignored it,
+            # which both removed caller control and made the suite run
+            # production budgets under a fixture that deliberately shrinks
+            # them.
+            iterations=flop_iterations,
+        ),
+    )
+    response["elapsed_seconds"] = result.elapsed_seconds
+    response["flop_iterations"] = result.iterations
+    response["positions"] = list(live_positions)
+
+    turn_node = result.root
+    if turn_action_kinds:
+        _turn_actions, turn_node = _resolve_action_path(turn_node, turn_action_kinds)
+        if isinstance(turn_node, TerminalNode):
+            raise ValueError(
+                "turn_action_path reaches a terminal - the turn's action has closed, so "
+                "there is no turn decision left to advise. Supply a river_card for river "
+                "advice."
+            )
+        remaining_stack = turn_entry_stack - max(turn_node.invested.values())
+
+    # M163/M164: repair a node that came back as the bare prior BEFORE
+    # formatting it. The chained path got this from the branch trainer
+    # (M75); solving the street directly does not, so it is called here.
+    _ensure_flop_multiway_node_trained(
+        result, turn_node, turn_board,
+        None if hero_combo is None else str(hero_combo))
+
+    return {
+        **response,
+        "is_terminal": False,
+        "player_to_act": turn_node.player_to_act,
+        "position": turn_node.player_to_act,
+        "strategy": result.strategy_at(turn_node),
+        "trained": result.trained_hands(turn_node),
+        "pot": turn_node.pot,
+        "effective_stack_bb": remaining_stack,
+        # M143/F39: the stack entering THIS street, which is what the tree
+        # quotes its sizes against.
+        "max_affordable_bb": turn_entry_stack,
+        "street": "turn",
+    }
+
+
 def _query_turn_multiway_from_path(
     preflop_action_kinds: list,
     flop_action_kinds: list,
@@ -2011,6 +2180,19 @@ def _query_turn_multiway_from_path(
     # River depth is requested by supplying BOTH a turn action path and
     # a river card; either alone is a caller error rejected upstream.
     to_river = river_card is not None
+    if not to_river and cfg.MULTIWAY_TURN_SOLVE_STANDALONE:
+        # M218: solve the turn as its own street. Routed from here rather
+        # than from main.py so the river path below keeps sharing every
+        # step above - the preflop solve, the derived ranges, the cap -
+        # and only the solve itself differs.
+        return _query_turn_multiway_standalone(
+            situation=situation, board_cards=board_cards, turn_card=turn_card,
+            flop_action_kinds=flop_action_kinds,
+            turn_action_kinds=turn_action_kinds,
+            preflop_action_kinds=preflop_action_kinds, stack_bb=stack_bb,
+            players=players, iterations=iterations,
+            flop_iterations=flop_iterations, hero_combo=hero_combo,
+        )
     solver = solve_flop_to_river_multiway if to_river else solve_flop_turn_multiway
 
     # to_river is part of the key: the two solvers produce genuinely
@@ -2758,8 +2940,15 @@ _ADVISE_ITERATION_CAPS = {
     ("flop", False): (cfg.PATH_QUERY_ITERATIONS, cfg.PATH_QUERY_ITERATIONS),
     ("flop", True): (cfg.DEFAULT_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS, cfg.MAX_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS),
     ("turn", False): (DEFAULT_FLOP_TURN_ITERATIONS, cfg.MAX_FLOP_TURN_ITERATIONS),
+    # M218: the two architectures want very different budgets, and the
+    # constant is the same one. Chained, it buys a flop leg whose solve
+    # the turn never reads a strategy from; standalone, it IS the turn
+    # solve - and M214 measured ~1000 as where the multiway ordering
+    # facing different bet sizes stops pointing the wrong way.
     ("turn", True): (
-        cfg.DEFAULT_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS,
+        (cfg.MULTIWAY_TURN_STANDALONE_ITERATIONS
+         if cfg.MULTIWAY_TURN_SOLVE_STANDALONE
+         else cfg.DEFAULT_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS),
         cfg.MAX_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS,
     ),
     ("river", False): (cfg.DEFAULT_RIVER_PATH_QUERY_ITERATIONS, cfg.MAX_RIVER_PATH_QUERY_ITERATIONS),
