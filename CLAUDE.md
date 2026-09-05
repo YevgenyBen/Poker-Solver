@@ -1065,6 +1065,26 @@ requests now reject unknown fields by name rather than ignoring them.
   **Equity tables are exactly antisymmetric** (`eq[i,j]+eq[j,i] == 1`,
   deviation 0.0), so a best response needs no seat-orientation argument;
   a `br_is_a` flag was written, measured redundant, and deleted.
+  **M212 measured all three streets, and found the cheapest fix here.**
+  Shipped settings, 6 boards each: flop **1.10%**, turn **0.86%**, river
+  **1.02%** of pot. Turn/river equity is EXACT (M154) so those carry no
+  Monte Carlo noise.
+  | street | 250 iters | 1000 | solve 250 -> 1000 |
+  |---|---|---|---|
+  | flop | 1.14% | 0.25% (4.6x) | 2.4s -> 5.8s |
+  | **turn** | 0.92% | **0.09% (10x)** | **0.8s -> 1.7s** |
+  | **river** | 1.02% | **0.11% (9x)** | **0.6s -> 1.6s** |
+  **A second of compute on the turn or river buys a tenfold cut in
+  distance from equilibrium** — the best ratio measured anywhere in this
+  project, on the two streets carrying 57.7% of advice and 24.6% of cost.
+  Needs a paired latency benchmark before shipping (M192).
+  **It also constrains the pending menu work**: at 250 iterations a menu
+  raises turn exploitability 0.92 -> 1.48% and river 1.02 -> 1.73%, so
+  extending M207's menu to those streets without also raising iterations
+  would ship a LESS converged strategy inside a better model.
+  **Never compare exploitability across trees** — it is defined relative
+  to one. The single-size turn scores lower than the menu turn and gives
+  worse advice (M204/M209 priced that).
 
 - **CONFIGURATION IS EXHAUSTED — every knob is now scored on money and
   none is separable (M194).** Cost stands at **+3.44 bb/100 (95% -1.02

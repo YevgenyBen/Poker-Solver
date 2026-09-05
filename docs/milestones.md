@@ -11524,3 +11524,76 @@ the antisymmetry, which is the property that makes its absence safe.
 Four mutations killed: the responder summing instead of taking a max,
 the opponent's branches averaging instead of summing, dropping the
 dead-pot constant, and reach ignoring the opponent's strategy.
+
+## M212 — exploitability on the turn and river, and the cheapest fix in the project
+
+M211 measured the flop at 1.11% of pot and found the iteration axis alive
+after M152/M190 had declared it dead. The turn carries **57.7% of all
+postflop advice** (M173) and the river **24.6% of all cost** (M188), and
+neither had ever been measured this way.
+
+Their equity is EXACT rather than sampled (M154), so these numbers carry
+no Monte Carlo noise — unlike the flop's.
+
+### All three streets sit near 1% of pot
+
+Shipped settings, 250 iterations, 6 boards each:
+
+| street | mean | median | worst | solve |
+|---|---|---|---|---|
+| flop | 1.10% | 1.11% | 1.38% | 2.3s |
+| **turn** | **0.86%** | 0.87% | 0.92% | **0.6s** |
+| **river** | **1.02%** | 1.03% | 1.05% | **0.5s** |
+
+The turn is both the best-solved street and the tightest across boards
+(0.79-0.92); the river is tighter still (0.97-1.05). The flop is worst
+and most variable (0.83-1.38), which fits — it has the largest tree and
+the only sampled equity.
+
+### The finding: on turn and river, a second of compute buys 10x
+
+| street | 250 iters | 1000 | 4000 |
+|---|---|---|---|
+| flop | 1.14% | 0.25% (4.6x) | 0.04% |
+| **turn** | 0.92% | **0.09% (10x)** | 0.01% |
+| **river** | 1.02% | **0.11% (9x)** | 0.02% |
+
+| street | 250 | 1000 |
+|---|---|---|
+| turn solve | 0.8s | **1.7s** |
+| river solve | 0.6s | **1.6s** |
+
+**Going from 250 to 1000 iterations on the turn and river costs about one
+second each and cuts distance from equilibrium roughly tenfold.** These
+are already the two cheapest streets — the flop's own 250-iteration solve
+takes 2.3s, more than a 1000-iteration turn and river combined — and
+together they carry the majority of the product's work.
+
+That is the best cost/benefit ratio measured anywhere in this project.
+**It still needs a paired latency benchmark before shipping** (M192's
+rule: three separate attempts to price a change across machine states
+each overstated it), but nothing else on the table is close.
+
+### And it changes how the pending menu work must be done
+
+A bet menu makes the tree a DIFFERENT game, so these are not comparable
+to the rows above — this asks only whether 250 iterations still converges
+once the tree grows:
+
+| street | single size | with a menu |
+|---|---|---|
+| turn | 0.92% (0.6s, 3 actions) | **1.48%** (1.1s, 5 actions) |
+| river | 1.02% (0.6s, 3 actions) | **1.73%** (1.1s, 5 actions) |
+
+So extending the menu to the turn and river — the outstanding work from
+M209, where the flop's version was worth +0.0863 bb and 1.74 bb facing a
+small bet — **would ship a LESS converged strategy inside a better
+model** if the budget stayed at 250. The two changes belong together, and
+conveniently the fix is the cheap one above.
+
+**The comparability trap, stated because it would be easy to fall into.**
+Exploitability is defined relative to a tree. A narrower tree scoring
+lower is not evidence that narrowness is good: the single-size turn has a
+lower number than the menu turn and gives worse advice, which M204 and
+M209 priced directly. This measures how well we solve the game we chose,
+never whether we chose the right game.
