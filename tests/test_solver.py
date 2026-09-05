@@ -2669,3 +2669,99 @@ def test_every_ensemble_run_uses_a_different_seed():
     assert len(seeds) == 4, seeds
     assert len(set(seeds)) == 4, f"traversal seeds repeat across runs: {seeds}"
     assert len({id(c) for c in caches}) == 4, "every run reused the same equity cache"
+
+
+# ---------------------------------------------------------------------------
+# prune_empty_nodes (M215) — the multiway preflop cache entry was 632 MB at
+# 9-max, of which node_data was 466 MB, and 70.6% of node_data entries at
+# 6-max had accumulated nothing at all.
+# ---------------------------------------------------------------------------
+
+
+def _walk_built(root):
+    """Every node whose children are ALREADY materialised.
+
+    Deliberately does not touch un-built children: `DecisionNode.children`
+    builds lazily, so walking it is what makes a big tree big — a first
+    version of M215's measurement traversed a 9-max tree and died with
+    MemoryError. Tests should not be able to do that either.
+    """
+    seen, stack, out = set(), [root], []
+    while stack:
+        node = stack.pop()
+        if id(node) in seen:
+            continue
+        seen.add(id(node))
+        out.append(node)
+        children = getattr(node, "children", None)
+        built = getattr(children, "_built", None)
+        if built:
+            stack.extend(built.values())
+    return out
+
+
+def test_pruning_empty_nodes_changes_no_answer():
+    """The property the whole saving rests on.
+
+    `strategy_at` and `trained_hands` both do `node_data.get(id(node))`
+    and fall back to `InfoSetTable.zeros(...)` — which is exactly what an
+    all-zero table already is. So dropping one must be invisible, and
+    that is asserted here rather than argued from the docstring.
+    """
+    config = GameConfig(raise_sizes=(), max_raises=1)
+    result = solve_preflop(iterations=20, config=config, hands=_SMALL_HANDS,
+                           equity_table=_SMALL_EQUITY_TABLE)
+    nodes = [n for n in _walk_built(result.root) if hasattr(n, "legal_actions")]
+    before = {id(n): (result.strategy_at(n), result.trained_hands(n)) for n in nodes}
+
+    result.prune_empty_nodes()
+
+    for node in nodes:
+        strategy, trained = before[id(node)]
+        assert result.strategy_at(node) == strategy, (
+            "pruning changed the served strategy at a node — an all-zero table "
+            "is supposed to be indistinguishable from an absent one")
+        assert result.trained_hands(node) == trained, (
+            "pruning changed trained_hands — F41/F43/F47 all read this signal")
+
+
+def test_pruning_keeps_a_table_that_has_regret_but_no_strategy():
+    """Conservative on purpose.
+
+    An entry with accumulated regret but no strategy could still seed a
+    warm start (`warmstart.py` reads `regret_sum`), and this is a general
+    method on a general result — the caller should not have to know which
+    of its consumers reads which array. So BOTH must be empty.
+    """
+    config = GameConfig(raise_sizes=(), max_raises=1)
+    result = solve_preflop(iterations=20, config=config, hands=_SMALL_HANDS,
+                           equity_table=_SMALL_EQUITY_TABLE)
+    key = next(iter(result.node_data))
+    table = result.node_data[key]
+    table.strategy_sum[:] = 0.0
+    table.regret_sum[:] = 0.0
+    table.regret_sum[0, 0] = 1.5          # regret only
+
+    result.prune_empty_nodes()
+
+    assert key in result.node_data, (
+        "a table carrying accumulated regret was pruned — strategy_sum being "
+        "empty is not enough, because regret alone can still seed a warm start")
+
+
+def test_pruning_actually_removes_the_empty_ones():
+    """Mutation-proofing: a prune that removes nothing would satisfy both
+    tests above while saving nothing, which is the entire point of it."""
+    config = GameConfig(raise_sizes=(), max_raises=1)
+    result = solve_preflop(iterations=20, config=config, hands=_SMALL_HANDS,
+                           equity_table=_SMALL_EQUITY_TABLE)
+    key = next(iter(result.node_data))
+    result.node_data[key].strategy_sum[:] = 0.0
+    result.node_data[key].regret_sum[:] = 0.0
+    before = len(result.node_data)
+
+    removed = result.prune_empty_nodes()
+
+    assert removed >= 1, "prune_empty_nodes reported removing nothing"
+    assert len(result.node_data) == before - removed
+    assert key not in result.node_data
