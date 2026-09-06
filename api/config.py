@@ -2161,6 +2161,77 @@ STREET_ISOLATION_COST_CI_LOW = 0.0336
 STREET_ISOLATION_COST_CI_HIGH = 0.1857
 STREET_ISOLATION_COST_WORST = 0.4123
 
+# M222. The TURN, checked from outside for the first time - and it is
+# the worst result this project has measured.
+#
+# M221 checked the flop against an independent implementation and found
+# good agreement (median 0.0099, 19 of 28 within 0.02). The same method
+# one street later, at the SAME stack-to-pot ratio, on 24 spots:
+#
+#   street   median gap   within 0.02   over 0.10
+#   flop         0.0099        19/28         5/28
+#   turn         0.1943         3/24        15/24
+#
+# **Twenty times the flop's disagreement, on the street carrying 57.7% of
+# all postflop advice** (M173).
+#
+# And unlike the flop, there is a DIRECTION: we bet more than the
+# reference, +0.1063 at 2.5 sigma, replicated at +0.1535 / 2.31 sigma on
+# a structurally different line. On the flop the same statistic was 0.86
+# sigma and went nowhere.
+#
+# **It is SPR-dependent, and that is what makes the deep arm the one that
+# matters.** Repeated at SPR 0.61 (a flop bet and call), the median gap
+# is 0.0018 and 15 of 24 spots agree within 0.02 - at that depth one bet
+# commits the stack and there is little strategy left to differ about.
+#
+# The MEAN does not collapse with the median there (0.1613 against the deep
+# line's 0.1844): 6 spots still exceed 0.10 and one reaches 0.978. So the
+# shallow turn is mostly exact and occasionally categorical, where the deep
+# turn is wrong in the middle nearly everywhere - and the note says "typical
+# case", not "agrees". The
+# gap belongs to SPR ~6, and M199 measured **80% of real decisions at SPR
+# >= 5, median 9.5**. So the representative case is the bad one.
+#
+# **The likely mechanism, stated as a hypothesis.** Our turn solve models
+# the turn's betting and averages the river in as a runout; the reference
+# plays the river out. A solve that never plays the river cannot be
+# punished on it, so it has no reason to keep a checking range - which is
+# F38/M151's shape one street up, and fits the measured direction. Not
+# established: it predicts the sign, and the sign is what was measured.
+#
+# **Texture does NOT explain it.** M221's two-tone effect does not appear
+# here (0.48 sigma on one line, 0.15 on the other), which is why that
+# note stays gated to the flop - the gate was correctness, not caution.
+#
+# **A near-miss worth recording.** The first run of this study reported a
+# median gap of 0.3618 and "the turn is 37x worse than the flop". It was
+# void: the standalone turn reads TURN_STANDALONE_CLASSES_PER_SIDE (140)
+# and the study had patched only MAX_PATH_QUERY_CLASSES_PER_SIDE, so our
+# arm solved 140 classes against a reference given 25. The two sides were
+# solving different games. The tell was the magnitude - 37x fits nothing
+# else known about this engine.
+TURN_INDEPENDENT_GAP_MEDIAN = 0.1943
+TURN_INDEPENDENT_GAP_FLOP_MEDIAN = 0.0099
+TURN_INDEPENDENT_SPR_MIN = 5.0
+TURN_INDEPENDENT_NOTE = (
+    " A warning specific to the turn, and it is the sharpest one here. Checked against a "
+    "different solver entirely - one that plays the river out instead of averaging it in - "
+    "turn advice sat about 19 percentage points away from it on the typical spot, against "
+    "1 point on the flop. Only 3 of 24 turn spots agreed within 2 points, where 19 of 28 "
+    "flop spots did. The disagreement has a direction: this engine BETS MORE than the "
+    "reference, by about 11 points on average, and that held on a second set of spots "
+    "built differently. The likely reason is the limitation described above showing up "
+    "where it bites hardest - a solve that never plays the river out cannot be punished "
+    "on the river, so it has less reason to keep a checking range. On the turn, with money "
+    "still behind, treat a marginal bet from this engine as a candidate to check instead. "
+    "This does NOT apply when the pot is already large relative to the stack: repeated at a "
+    "stack of well under one pot, the typical spot agreed to within a point or two, because at "
+    "that depth one bet commits and there is little strategy left to differ about - though a "
+    "handful of spots there still disagreed sharply, so this is the typical case and not "
+    "every case."
+)
+
 # M221. The first finding this project has that came from OUTSIDE.
 #
 # Every accuracy figure before this measured distance from a fuller solve

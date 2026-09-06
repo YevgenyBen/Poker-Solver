@@ -7537,12 +7537,17 @@ def test_a_two_tone_flop_is_told_the_advice_tested_further_from_a_reference(clie
 
 
 def test_the_two_tone_note_does_not_leak_onto_a_later_street(client):
-    """M221. The gate M168 exists to enforce.
+    """M221. The gate M168 exists to enforce - and M222 justified it.
 
     The comparison behind this note was run at the FLOP's opening
-    decision. The turn and river were never checked against an
-    independent solver, so the note must not appear there - M168 assumed
-    exactly that kind of transfer and the turn came back inverted.
+    decision, and M221 gated it there because the turn was unmeasured
+    and M168 is the standing example of assuming a transfer.
+
+    M222 then measured the turn against the same reference on 48 spots
+    and the texture split is NOT there: two-tone minus rainbow is 0.48
+    sigma on one line and 0.15 on the other, with the sign reversed
+    between them. So the gate was correctness, not caution, and this
+    test now pins a measured fact rather than an abundance of it.
     """
     probe = api_config.DRAWY_BOARD_NOTE.strip()[:50]
     turn = client.post("/advise", json=_advise_body(
@@ -7551,5 +7556,89 @@ def test_the_two_tone_note_does_not_leak_onto_a_later_street(client):
         flop_action_path=["call_or_check", "call_or_check"], turn_card="2s"))
     assert turn.status_code == 200, turn.json()
     assert probe not in (turn.json().get("aggression_confidence_reason") or ""), (
-        "the two-tone note reached the TURN, where nothing has been measured "
-        "against an independent reference")
+        "the two-tone note reached the TURN, where the same reference measured "
+        "no texture split at all (0.48 sigma / 0.15 sigma, sign reversed)")
+
+
+def test_a_deep_turn_is_told_the_advice_tested_further_from_a_reference(client):
+    """M222. The sharpest accuracy finding this project has.
+
+    M221 checked the flop against an independent implementation and
+    found good agreement (median 0.0099, 19 of 28 within 0.02). The same
+    method one street later, at the same stack depth, over 24 spots:
+    median 0.1943, 3 of 24 within 0.02, 15 over 0.10 - **20x the flop's
+    disagreement, on the street carrying 57.7% of postflop advice**.
+
+    And unlike the flop it has a DIRECTION: we bet more, +0.1063 at 2.50
+    sigma, replicated at +0.1535 / 2.31 sigma on a structurally
+    different line. The flop's signed gap was 0.86 sigma and reversed
+    sign between studies.
+
+    So this note exists to be acted on, not merely disclosed: on a deep
+    turn, a marginal bet from this engine is a candidate to check.
+    """
+    probe = api_config.TURN_INDEPENDENT_NOTE.strip()[:50]
+    body = dict(stack_bb=100.0, players=2, hero_cards="AcKc",
+                preflop_action_path=["raise", "raise", "call_or_check"])
+
+    turn = client.post("/advise", json=_advise_body(
+        board="Jh9h4c", flop_action_path=["call_or_check", "call_or_check"],
+        turn_card="2s", **body))
+    assert turn.status_code == 200, turn.json()
+    payload = turn.json()
+
+    behind = payload.get("max_affordable_bb", payload["effective_stack_bb"])
+    spr = behind / payload["pot"]
+    assert spr >= api_config.TURN_INDEPENDENT_SPR_MIN, (
+        f"this spot is at SPR {spr:.2f}, below the threshold the finding was "
+        f"measured at - the fixture no longer exercises the gate it is for")
+    assert probe in (payload.get("aggression_confidence_reason") or ""), (
+        "a deep turn does not carry the note - advice here tested 20x further "
+        "from an independent solver than on the flop, and in a known "
+        "direction, and the player is not being told")
+
+
+def test_the_turn_reference_note_is_silent_where_the_gap_was_not_measured(client):
+    """M222. Gated on DEPTH as well as street, because it was measured
+    twice and the two arms disagree about the typical spot.
+
+    At SPR 6.17 the median gap is 0.1943 and only 3 of 24 spots agree
+    within 0.02. Repeated at SPR 0.61 - a flop bet and call rather than
+    a check through - the median is 0.0018 and 15 of 24 agree, because
+    at that depth one bet commits the stack and there is little strategy
+    left to differ about.
+
+    Quoting a measured gap where the same measurement says it is absent
+    would be worse than saying nothing, which is `_street_isolation_
+    applies`'s rule (M196) applied to a second finding. The note must
+    also stay off the flop, which has its own, much smaller figure, and
+    off the river, which nobody outside this codebase has ever checked.
+    """
+    probe = api_config.TURN_INDEPENDENT_NOTE.strip()[:50]
+    body = dict(stack_bb=100.0, players=2, hero_cards="AcKc",
+                preflop_action_path=["raise", "raise", "call_or_check"],
+                board="Jh9h4c")
+
+    flop = client.post("/advise", json=_advise_body(**body))
+    assert flop.status_code == 200, flop.json()
+    assert probe not in (flop.json().get("aggression_confidence_reason") or ""), (
+        "the TURN's note fired on the flop, where the same reference measured "
+        "a median gap of 0.0099 - twenty times smaller")
+
+    sizes = [s for s in flop.json()["modelled_bet_sizes"] if s < flop.json()["pot"] * 3]
+    assert sizes, flop.json()["modelled_bet_sizes"]
+    shallow = client.post("/advise", json=_advise_body(
+        flop_action_path=[f"raise:{max(sizes):.2f}", "call_or_check"],
+        turn_card="2s", **body))
+    assert shallow.status_code == 200, shallow.json()
+    payload = shallow.json()
+    behind = payload.get("max_affordable_bb", payload["effective_stack_bb"])
+    spr = behind / payload["pot"]
+    assert spr < api_config.TURN_INDEPENDENT_SPR_MIN, (
+        f"this line leaves SPR {spr:.2f}, at or above the threshold - the "
+        f"fixture no longer exercises the shallow half of the gate")
+    assert probe not in (payload.get("aggression_confidence_reason") or ""), (
+        f"the note fired at SPR {spr:.2f}, where the same comparison found the "
+        f"typical spot agrees to within a point or two - a warning that fires "
+        f"where the measurement says there is nothing to warn about is noise")
+

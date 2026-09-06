@@ -40,7 +40,7 @@ as evidence:
   reliability certificate (M180) — every one this product carried failed
   when measured at a larger sample.
 
-## The first measurement from outside (M221)
+## The measurements from outside (M221 flop, M222 turn)
 
 Every accuracy figure before M221 measured distance from a fuller solve
 of THIS engine's own model, so an error both arms shared was invisible —
@@ -71,6 +71,54 @@ aggressive (+0.0427); across all 28 it is **-0.0263 +/- 0.0305, 0.86
 sigma**, sign reversed between studies. Magnitude only.
 
 **Speed against the same reference: 0.48s against 165s, 340x.**
+
+### The TURN, checked the same way (M222) — the worst result here
+
+The same reference one street later, 48 spots, our ranges and our menu,
+both arms handed identical ranges. **It is 20x the flop's disagreement,
+on the street carrying 57.7% of postflop advice (M173).**
+
+| street | n | median gap | within 0.02 | over 0.10 | signed | sigma |
+|---|---|---|---|---|---|---|
+| flop | 28 | **0.0099** | 19 | 5 | -0.0263 | 0.86 |
+| turn | 24 | **0.1943** | 3 | **15** | **+0.1063** | **2.50** |
+
+**And unlike the flop there IS a direction**: we bet more, on 16 of 24,
+replicated at **+0.1535 / 2.31 sigma** on a structurally different line.
+M221's signed gap was 0.86 sigma and reversed sign between studies.
+
+**It is SPR-dependent, and the bad arm is the normal one.** Repeated at
+SPR 0.61 (a flop bet and call, against the deep arm's checked-through
+SPR 6.17) the median falls to **0.0018** with 15 of 24 within 0.02 — at
+that depth one bet commits the stack and there is little strategy left to
+differ about. But **the MEAN does not collapse with the median** (0.1613
+against 0.1844): 6 spots still exceed 0.10 and one reaches 0.978. Shallow
+turns are mostly exact and occasionally categorical; deep turns are wrong
+in the middle nearly everywhere. M199 measured **80% of real decisions at
+SPR >= 5, median 9.5**, so the representative case is the bad one.
+`TURN_INDEPENDENT_NOTE` fires on the turn at `TURN_INDEPENDENT_SPR_MIN`
+(5.0) and is silent below it — quoting a gap where the same measurement
+says it is absent is what M196's gate exists to prevent.
+
+**Mechanism, as a HYPOTHESIS**: we solve the turn's betting and average
+the river in as a runout; the reference plays the river out. A solve that
+never plays the river cannot be punished on it, so it has less reason to
+keep a checking range — F38/M151's shape one street up. It predicts the
+sign, and the sign is what was measured. Not established.
+
+**M221's texture split does NOT extend** — 0.48 sigma on one line, 0.15
+on the other, sign reversed between them. `DRAWY_BOARD_NOTE`'s flop gate
+was correctness, not caution, and M168's rule holds again.
+
+**A near-miss worth carrying**: the first run of this study reported
+median 0.3618 and "the turn is 37x worse than the flop". It was VOID —
+the standalone turn reads `TURN_STANDALONE_CLASSES_PER_SIDE` (140) and
+the study had patched only `MAX_PATH_QUERY_CLASSES_PER_SIDE`, so our arm
+solved 140 classes against a reference given 25. **Two arms solving
+different games.** M155's trap: the constant governing the path you are
+on is not always the one you patched.
+
+**Speed: 0.26s against the reference's 5.5s.**
 
 ## External tools are INSTRUMENTS, never ingredients
 

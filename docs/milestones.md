@@ -12601,3 +12601,98 @@ shipped comment says "a different implementation by different people",
 which is all the reasoning needs.
 
 **The reference is an instrument. Nothing it produced is in the engine.**
+
+
+## M222 — the turn, checked from outside, and it is the worst result here
+
+M221 checked the flop against an independent implementation and found
+good agreement. The report it produced named the turn as the largest
+remaining unknown and put +6 on measuring it. Measured, it cost five.
+
+**Method, identical to M221's** and deliberately so: the reference is
+given OUR ranges (extracted from `_derive_path_situation` at the same
+cap), OUR bet menu, and the request's own pot and stack; it solves turn
+and river in one tree where we solve the turn alone with the river
+averaged in as a runout. So the gap contains our convergence error plus
+our street isolation AT THE TURN, which nothing has ever measured.
+
+**The reference's root is the turn because it is handed a FOUR-CARD
+board**, not because a three-street dump was walked into. TexasSolver
+0.2.0 does not expose chance-node children — two runs were spent
+discovering that — and the four-card form also costs 5.6s against 134s,
+which is what makes n=24 per line affordable.
+
+### The result
+
+| street | n | mean | median | worst | within 0.02 | over 0.10 |
+|---|---|---|---|---|---|---|
+| flop (M221) | 28 | 0.0737 | **0.0099** | 0.5418 | 19 | 5 |
+| turn, SPR 6.17 | 24 | 0.1844 | **0.1943** | 0.4351 | 3 | **15** |
+| turn, SPR 0.61 | 24 | 0.1613 | **0.0018** | 0.9784 | 15 | 6 |
+
+**Twenty times the flop's median, on the street carrying 57.7% of
+postflop advice** (M173).
+
+**The direction survives, which it did not on the flop.** Deep line
+**+0.1063 +/- 0.0424 = 2.50 sigma**, more aggressive on 16 of 24;
+shallow line **+0.1535 +/- 0.0664 = 2.31 sigma**, 20 of 24. M221's
+signed gap was 0.86 sigma with the sign reversed between its two
+studies. Two lines that differ by 10x in SPR and agree on direction is
+the replication this project's bar asks for.
+
+**The magnitude is SPR-dependent and the median is not the whole story.**
+At SPR 0.61 the typical spot agrees (median 0.0018, 15/24 within 0.02)
+because one bet commits the stack — but the MEAN barely moves (0.1613
+against 0.1844) and one spot reaches 0.978. Shallow turns are mostly
+exact and occasionally categorical. The note therefore says "typical
+case", not "agrees"; an earlier draft said "agreed almost exactly" and
+was corrected before shipping, because overstating where advice is SAFE
+is the same failure as overstating where it is wrong.
+
+**Which arm is representative is not a judgement call**: M199 measured
+80% of real decisions at SPR >= 5, median 9.5.
+
+**Mechanism, stated as a hypothesis and labelled one.** We average the
+river in; the reference plays it out. A solve that cannot be punished on
+the river has less reason to keep a checking range, which predicts
+exactly the sign measured. That is an argument, not a proof.
+
+**M221's texture finding does NOT extend**: draw-live minus rainbow is
+-0.0276 (0.48 sigma) on the deep line and +0.0195 (0.15 sigma) on the
+shallow one — sign reversed, neither separable. `DRAWY_BOARD_NOTE` stays
+gated to the flop, and `test_the_two_tone_note_does_not_leak_onto_a_
+later_street` now pins a measured fact rather than an absence of one.
+
+### What ships
+
+`TURN_INDEPENDENT_NOTE`, appended to the aggression caveat on the TURN
+at `TURN_INDEPENDENT_SPR_MIN = 5.0` or deeper, silent below it — the
+same shape as `_street_isolation_applies` (M196) and for the same
+reason. It tells the player the size of the gap, its direction, and what
+to do with it: on a deep turn, treat a marginal bet as a candidate to
+check instead.
+
+Three guards, each mutation-tested with the mutation verified to have
+applied: removing the append fails the deep-turn test; widening the
+street gate to flop/river fails the silence test; removing the depth
+gate fails it too.
+
+### The void run, kept because it is how this nearly shipped wrong
+
+The first run reported **median 0.3618** and "the turn is 37x worse than
+the flop". It was measuring a range mismatch: the standalone turn reads
+`TURN_STANDALONE_CLASSES_PER_SIDE` (140), and the study had patched only
+`MAX_PATH_QUERY_CLASSES_PER_SIDE`, so our arm solved 140 classes against
+a reference handed the 25 extracted for it. **The two arms were solving
+different games.** The tell was the magnitude — 37x fits nothing else
+known about this engine. The flop study got this right and the care was
+not carried one street forward: M155's trap, in a study rather than in
+production code. Data kept as `m222_turn_VOID_range_mismatch.json`.
+
+### Cost
+
+Ours 0.26s median per spot against the reference's 5.5s, 21x. The
+reference converged to 0.42% of pot on the deep line and 0.064% on the
+shallow one.
+
+**The reference is an instrument. Nothing it produced is in the engine.**
