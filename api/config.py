@@ -478,8 +478,46 @@ MULTIWAY_RIVER_SOLVE_STANDALONE = True
 # affordable here precisely because the street is no longer chained.
 MULTIWAY_TURN_STANDALONE_ITERATIONS = 1000
 
-MULTIWAY_FLOP_MAX_RAISES = 2
-MULTIWAY_FLOP_RAISE_SIZES = ((0.33, 0.75, 2.5),)
+# M220. Facing a bet, a sized RE-RAISE - the last place in the product
+# where the only way to put chips in was all-in (F40's shape).
+#
+# Before this, a multiway player facing a bet could be advised to fold,
+# call, or shove 97.5bb into a 9bb pot, and nothing else.
+# `modelled_bet_sizes` read `[97.5]` on every multiway street.
+#
+# **M217 measured this and REFUSED it**, because one constant drives all
+# three multiway streets - they cannot be split without recreating M207 -
+# and the CHAINED river cost 1.52x, reaching 6.78s. M218 and M219 made
+# the turn and river standalone, and the cost collapsed with them:
+#
+#   street   shove-only   sized re-raise   ratio    was (chained)
+#   flop         2.43s        2.43s        1.00x    1.00x
+#   turn         1.83s        1.93s        1.06x    1.38x
+#   river        0.23s        0.24s        1.06x    1.52x @ 6.78s
+#
+# **It is used, and differently by street**, which is what says the tree
+# grew for a reason rather than for tidiness. Facing a bet:
+#
+#   flop    AhKs 0.4326   QdQh 0.3909    (strong hands raise, not shove)
+#   river   5h4s 0.5627   QdQh 0.5996    (a bluff AND a value hand bet)
+#
+# The river pattern is the one worth reading twice: M151 measured that
+# with all-in the only way to bet, a river strategy collapses into
+# check-or-shove - value hands check and bluffs jam a stack into a small
+# pot. A complete board plus a real bet size produces an actual betting
+# strategy instead. The turn uses it least (0.0003-0.0997), and it ships
+# anyway because the constant is shared and it costs 1.06x there.
+#
+# **NOT priced in bb, deliberately**, for the same reason as M214: F46/
+# M163 measured multiway seed spread p90 0.240 at 30,000 iterations, so
+# there is no converged multiway reference and a bb figure would be
+# pricing against one draw from a distribution.
+#
+# `max_raises` and `raise_sizes` MOVE TOGETHER - `_validate_raise_sizes`
+# (M203) requires exactly `max_raises - 1` entries, and changing one
+# alone is a loud 422 rather than a silent mis-model.
+MULTIWAY_FLOP_MAX_RAISES = 3
+MULTIWAY_FLOP_RAISE_SIZES = ((0.33, 0.75, 2.5), 2.0)
 
 # Measured live, at DEMO_MULTIWAY_FLOP_CLASSES' own 11-combo pool (see
 # the module docstring for the full numbers this milestone's own scoping

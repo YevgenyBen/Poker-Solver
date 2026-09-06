@@ -547,8 +547,27 @@ requests now reject unknown fields by name rather than ignoring them.
   hero force-inclusion (M51/M76), on-demand node training (M163/M164) and
   real derived ranges. **M174's rule: measure multiway through
   `/advise`.**
-  **Still open at multiway**: `MULTIWAY_FLOP_MAX_RAISES = 2`, so facing a
-  bet the only way to commit chips is all-in — F40's shape.
+  **F40 IS CLOSED AT MULTIWAY (M220).** `MULTIWAY_FLOP_RAISE_SIZES =
+  ((0.33, 0.75, 2.5), 2.0)` at `MULTIWAY_FLOP_MAX_RAISES = 3`. Facing a
+  bet, `modelled_bet_sizes` was `[97.5]` on every multiway street — fold,
+  call, or shove 97.5bb into a 9bb pot — and is now `[45.0, 97.5]`.
+  **M217 measured this and REFUSED it**: one constant drives all three
+  multiway streets (splitting recreates M207) and the CHAINED river cost
+  1.52x at 6.78s. M218/M219 made the turn and river standalone and the
+  cost collapsed to **1.00x flop / 1.06x turn / 1.06x river**.
+  **It is used, differently by street**: facing a bet, flop AhKs 0.4326
+  and QdQh 0.3909; river 5h4s **0.5627** and QdQh **0.5996** — a bluff
+  AND a value hand betting, where M151 measured that with all-in the only
+  way to bet a river strategy collapses into check-or-shove. The turn
+  uses it least (0.0003-0.0997) and ships anyway at 1.06x, because the
+  constant is shared.
+  **The ORDERING IMPROVED, which was not expected.** A wider tree costs a
+  sampled solver precision (M214's dilution mechanism), yet the
+  reference-free criterion got stronger and both streets now clear 2
+  sigma: flop **+0.3270 at 3.69 sigma** (was +0.3138 / 3.14), turn
+  **+0.2201 at 2.05 sigma** (was +0.1760 / 1.48, M218).
+  **NOT priced in bb, deliberately** — F46/M163, no converged multiway
+  reference.
   **M217 PRICED that gap and refused it, for now.** A sized re-raise
   (`((0.33, 0.75, 2.5), 2.0)` at max_raises 3) is **FREE on the multiway
   flop (2.43 -> 2.42s, median of 3) and USED 0.39-0.43 by strong hands**

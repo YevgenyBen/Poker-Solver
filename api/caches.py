@@ -599,7 +599,13 @@ _flop_multiway_path_cache = _SolveCache("flop_multiway_path", maxsize=181)
 # standalone turn keys PER TURN CARD (a four-card board is part of what
 # was solved), so it needs many more entries than the chained one did -
 # M174 recorded the same trade for the heads-up river.
-_turn_multiway_path_cache = _SolveCache("turn_multiway_path", maxsize=181)
+# M220 re-derived the count against the wider tree: the sized re-raise
+# took a standalone multiway turn entry from 0.927 MB to 1.652 MB, so
+# 168 / 1.652 = 101. The count is a BACKSTOP - `max_bytes` is what
+# actually bounds this cache (M216), and it now holds standalone turn AND
+# standalone river entries, both cheap, where before M219 it held 35 MB
+# chained-river ones.
+_turn_multiway_path_cache = _SolveCache("turn_multiway_path", maxsize=101)
 
 # M67: MultiwayEquityCache instances, shared across every multiway solve
 # that uses the same hand pool — keyed by the pool, NOT by (stack,

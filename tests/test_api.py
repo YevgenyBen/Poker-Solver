@@ -31,6 +31,7 @@ FAST_MULTIWAY_ITERATIONS = 30
 # Every other multiway test patches a menu in, so none of them would
 # notice the shipped constant being reverted; this is what does.
 SHIPPED_MULTIWAY_FLOP_RAISE_SIZES = api_config.MULTIWAY_FLOP_RAISE_SIZES
+SHIPPED_MULTIWAY_FLOP_MAX_RAISES = api_config.MULTIWAY_FLOP_MAX_RAISES
 SHIPPED_MULTIWAY_TURN_SOLVE_STANDALONE = api_config.MULTIWAY_TURN_SOLVE_STANDALONE
 SHIPPED_MULTIWAY_RIVER_SOLVE_STANDALONE = api_config.MULTIWAY_RIVER_SOLVE_STANDALONE
 # M67 made the real multiway preflop pool all 169 classes, which costs
@@ -7202,58 +7203,77 @@ def test_the_shipped_multiway_config_can_represent_a_small_bet():
         f"(M209 priced that mistake at 1.74 bb a decision heads-up)")
 
 
-def test_a_multiway_player_facing_a_bet_is_told_shoving_was_the_only_size(
+def test_the_shipped_multiway_config_offers_a_raise_that_is_not_all_in():
+    """M220. The SHIPPED-constant half, which no request-level test can
+    cover: `_disable_prewarm_and_clear_cache` sets
+    `MULTIWAY_FLOP_RAISE_SIZES = ()` for speed, so every behaviour test
+    patches a menu in and none of them would notice the real one being
+    reverted. M214 had exactly that gap.
+
+    `_validate_raise_sizes` (M203) requires exactly `max_raises - 1`
+    entries, so a second entry IS the sized re-raise level - there is no
+    way to have one without the other, and asserting the pair keeps them
+    moving together.
+    """
+    assert len(SHIPPED_MULTIWAY_FLOP_RAISE_SIZES) >= 2, (
+        f"the shipped multiway raise sizes are "
+        f"{SHIPPED_MULTIWAY_FLOP_RAISE_SIZES}: one level only, so facing a bet "
+        f"the sole way to put chips in is all-in. That is the F40 gap M220 "
+        f"closed after M218/M219 made it affordable (1.52x -> 1.06x).")
+    # Both captured at import: the fixture patches max_raises to 1 as
+    # well as zeroing the sizes, so reading one shipped value and one
+    # fixture-patched value is the exact mistake this test exists to
+    # prevent.
+    assert SHIPPED_MULTIWAY_FLOP_MAX_RAISES == len(
+        SHIPPED_MULTIWAY_FLOP_RAISE_SIZES) + 1, (
+        f"max_raises {SHIPPED_MULTIWAY_FLOP_MAX_RAISES} and "
+        f"{len(SHIPPED_MULTIWAY_FLOP_RAISE_SIZES)} raise sizes disagree - "
+        f"_validate_raise_sizes requires exactly max_raises - 1 entries, so "
+        f"these two must move together")
+
+
+def test_a_multiway_player_facing_a_bet_can_be_advised_to_raise(
         client, monkeypatch):
-    """M217. The disclosure that makes F40-at-multiway tolerable to ship with.
+    """M220. **This replaced M217's test, exactly as M217 instructed.**
 
-    `MULTIWAY_FLOP_MAX_RAISES = 2` allows exactly one sized raise level,
-    which the opening menu uses — so facing a bet the only way to put
-    chips in is all-in, on every multiway street. Measured through
-    `/advise`: `modelled_bet_sizes` is `[2.97, 6.75, 22.5, 97.5]` at the
-    opening decision and **`[97.5]`** one action later.
+    M217 documented the gap - facing a bet on any multiway street the
+    only way to put chips in was all-in, so `modelled_bet_sizes` read
+    `[97.5]` and a player could be told to shove 97.5bb into a 9bb pot
+    and nothing else - and its body said to replace it with a usage
+    assertion once the gap closed.
 
-    Adding a sized re-raise was measured and refused for now: it is FREE
-    on the multiway flop (1.00x over 3 reps) and used ~40% of the time by
-    strong hands, but the turn and river are CHAINED solves sharing that
-    tree shape, where it costs 1.38-1.52x and takes them to 5.28s and
-    6.78s while being used under 3%. Splitting the constant would
-    recreate M207 — advice on a bet the next street refuses to continue
-    from.
-
-    So the gap stands, and what makes that acceptable is that the player
-    is TOLD. This pins it, because the note is derived from the
-    response's own rows (M144) and a future tree change could silence it
-    without failing anything else.
+    Measured after closing it: facing a bet the sizes are `[45.0, 97.5]`
+    on all three multiway streets, and the raise is USED - 0.4326 by AhKs
+    and 0.3909 by QdQh on the flop, 0.5627 and 0.5996 by 5h4s and QdQh on
+    the river.
     """
     monkeypatch.setattr(api_config, "MULTIWAY_FLOP_RAISE_SIZES",
-                        ((0.33, 0.75, 2.5),))
-    monkeypatch.setattr(api_config, "MULTIWAY_FLOP_MAX_RAISES", 2)
-    common = dict(preflop_action_path=["raise", "call_or_check", "call_or_check"],
-                  hero_cards="5c4d", board="Kd7c2h", players=3, stack_bb=100.0)
-    probe = api_config.BET_SIZING_COVERAGE_NOTE.strip()[:60]
+                        ((0.33, 0.75, 2.5), 2.0))
+    monkeypatch.setattr(api_config, "MULTIWAY_FLOP_MAX_RAISES", 3)
+    body = _advise_body(
+        preflop_action_path=["raise", "call_or_check", "call_or_check"],
+        hero_cards="5c4d", board="Kd7c2h", players=3, stack_bb=100.0)
 
-    opening = client.post("/advise", json=_advise_body(**common)).json()
-    sized = [s for s in opening["modelled_bet_sizes"] if s < opening["pot"] * 3]
+    opening = client.post("/advise", json=body).json()
+    sized = [x for x in opening["modelled_bet_sizes"] if x < opening["pot"]]
     if not sized:
-        pytest.skip("no multiway bet-size menu configured")
-    assert probe not in (opening.get("aggression_confidence_reason") or ""), (
-        "the no-intermediate-size note fired at an opening decision that "
-        "models several bet sizes")
+        pytest.skip("no multiway opening menu configured")
 
-    facing = client.post("/advise", json=_advise_body(
-        flop_action_path=[f"raise:{min(sized):.2f}"], **common))
+    facing = client.post("/advise", json={
+        **body, "flop_action_path": [f"raise:{min(sized):.2f}"]})
     assert facing.status_code == 200, facing.json()
     payload = facing.json()
+    strategy = payload["hero"]["strategy"]
 
-    raises = [k for k in payload["hero"]["strategy"] if k.startswith("raise:")]
-    assert not raises, (
-        f"this test documents the gap; a sized raise {raises} is now offered "
-        f"facing a multiway bet, so F40-at-multiway is closed and this test "
-        f"should be replaced by one asserting the size is USED")
-    assert probe in (payload.get("aggression_confidence_reason") or ""), (
-        "facing a multiway bet the only way to commit chips is all-in, and the "
-        "response does not say so — a player is being told to shove 97.5bb "
-        "without being told that shoving was the only option modelled")
+    raises = [k for k in strategy if k.startswith("raise:")]
+    assert raises, (
+        f"facing a multiway bet the only actions are {sorted(strategy)} - no "
+        f"way to put chips in except all-in, which is the F40 gap M220 closed")
+
+    sizes = payload["modelled_bet_sizes"]
+    assert min(sizes) < max(sizes), (
+        f"the only modelled size facing a bet is {sizes} - a raise equal to the "
+        f"all-in is not a second option")
 
 
 def test_the_standalone_multiway_turn_solves_the_turn_board_not_the_flop(
