@@ -1500,6 +1500,33 @@ def _hand_strength_percentile(raw: dict, hero: dict | None) -> float | None:
         return None
 
 
+def _turn_independent_gap_applies(raw: dict, street: str | None) -> bool:
+    """Is this a turn decision deep enough for the measured gap to apply?
+
+    M222. Checked against an independent solver, turn advice sat a median
+    0.1943 from it against the flop's 0.0099 - 20x - and bets more, at
+    2.5 sigma replicated. But the gap is SPR-dependent: repeated at SPR
+    0.61 the median was 0.0018, because at that depth one bet commits the
+    stack and there is no strategy left to differ about.
+
+    So the note is gated on depth as well as street, the same shape as
+    `_street_isolation_applies` and for the same reason: quoting a
+    measured gap where it was measured NOT to exist would be worse than
+    saying nothing. Threshold 5.0 sits between the two arms measured
+    (0.61 and 6.17) and matches M199's finding that 80% of real decisions
+    are at SPR >= 5.
+    """
+    if street != "turn":
+        return False
+    pot = raw.get("pot")
+    behind = raw.get("max_affordable_bb", raw.get("effective_stack_bb"))
+    if not isinstance(pot, (int, float)) or not isinstance(behind, (int, float)):
+        return False
+    if pot <= 0:
+        return False
+    return behind / pot >= cfg.TURN_INDEPENDENT_SPR_MIN
+
+
 def _drawy_board_applies(raw: dict, street: str | None) -> bool:
     """Is this a flop where a flush draw is live?
 
@@ -1614,6 +1641,10 @@ def _aggression_reason(raw: dict, hero: dict | None = None) -> str:
     # the first reference outside this codebase.
     if _drawy_board_applies(raw, street):
         reason += cfg.DRAWY_BOARD_NOTE
+    # M222: the turn's own measured distance from an independent solver,
+    # which is 20x the flop's and has a direction.
+    if _turn_independent_gap_applies(raw, street):
+        reason += cfg.TURN_INDEPENDENT_NOTE
     # M185: where the measured cost actually is. Appended LAST because it
     # is the part a player can act on immediately — the notes before it
     # describe what is known about the street, this describes what is
