@@ -12433,3 +12433,95 @@ without chaining the solve.
 The caller's `flop_iterations` drives the river solve, since standalone
 there is no flop or turn solve for that budget to buy — M218's correction
 carried forward deliberately rather than rediscovered.
+
+## M220 — F40 is closed at multiway
+
+Facing a bet on any multiway street, `modelled_bet_sizes` read `[97.5]`:
+a player could be told to fold, call, or shove 97.5bb into a 9bb pot, and
+nothing else. `MULTIWAY_FLOP_RAISE_SIZES = ((0.33, 0.75, 2.5), 2.0)` at
+`MULTIWAY_FLOP_MAX_RAISES = 3` gives them `[45.0, 97.5]`.
+
+### Three milestones to make one config change affordable
+
+M217 measured this exact change and refused it. One constant drives all
+three multiway streets — splitting it recreates M207, where a bet is
+advised on and then refused a street later — and the CHAINED river cost
+1.52x, reaching 6.78s.
+
+| street | shove-only | sized re-raise | ratio | M217 (chained) |
+|---|---|---|---|---|
+| flop | 2.43s | 2.43s | 1.00x | 1.00x |
+| turn | 1.83s | 1.93s | **1.06x** | 1.38x |
+| river | 0.23s | 0.24s | **1.06x** | 1.52x @ 6.78s |
+
+M218 and M219 made the turn and river standalone; the block went with
+them. **The fix for a config change was an architecture change, two
+milestones earlier.**
+
+### Used, and differently by street
+
+Facing a bet:
+
+| street | hand | sized raise | all-in |
+|---|---|---|---|
+| flop | AhKs | **0.4326** | 0.0523 |
+| flop | QdQh | **0.3909** | 0.5233 |
+| river | 5h4s | **0.5627** | 0.3279 |
+| river | QdQh | **0.5996** | 0.4004 |
+
+The river pattern is worth reading twice: a bluff AND a value hand both
+betting. M151 measured that when all-in is the only way to bet, a river
+strategy collapses into check-or-shove — value hands check, bluffs jam a
+stack into a small pot. A complete board plus a real bet size produces an
+actual betting strategy.
+
+The turn uses it least (0.0003-0.0997) and ships anyway, because the
+constant is shared and it costs 1.06x there.
+
+### The ordering improved, which was not expected
+
+A wider tree costs a SAMPLED solver precision — that is M214's dilution
+mechanism, where tripling the root's branching divides the traversals
+reaching each branch. The reference-free criterion got stronger instead,
+and both streets now clear 2 sigma where the turn did not:
+
+| street | gap | sigma | right | was |
+|---|---|---|---|---|
+| flop | +0.3270 | **3.69** | 14/17 | +0.3138 / 3.14 (M214) |
+| turn | +0.2201 | **2.05** | 13/17 | +0.1760 / 1.48 (M218) |
+
+**Not priced in bb, deliberately** (F46/M163: no converged multiway
+reference, so a figure would price against one draw from a distribution).
+
+### The test M217 wrote to be replaced
+
+M217 shipped `test_a_multiway_player_facing_a_bet_is_told_shoving_was_
+the_only_size`, documenting the gap and asserting the disclosure note
+fired. Its body said to replace it with a usage assertion once the gap
+closed. It is replaced, and the note correctly stops firing now that a
+sized raise exists — verified on all three streets.
+
+Writing the replacement instruction into the test is what made the swap
+obvious instead of leaving a stale test asserting a defect that no longer
+exists.
+
+### Two guards, both mutation-tested
+
+`test_the_shipped_multiway_config_offers_a_raise_that_is_not_all_in`
+reads the SHIPPED constants, because `_disable_prewarm_and_clear_cache`
+zeroes the sizes AND sets `max_raises` to 1, so every behaviour test
+supplies its own config. **The first version read the shipped sizes and
+the LIVE max_raises** — comparing a shipped value against a
+fixture-patched one, in the test written to prevent exactly that. Both
+are captured at import now, and the pair is asserted together because
+`_validate_raise_sizes` requires exactly `max_raises - 1` entries.
+
+`turn_multiway_path` re-derived 181 -> 101: the sized re-raise took a
+standalone turn entry 0.927 -> 1.652 MB. The count is a backstop;
+`max_bytes` is the real bound (M216).
+
+### Caught by the docs guard
+
+`test_docs.py` failed on CLAUDE.md still claiming
+`MULTIWAY_FLOP_MAX_RAISES = 2`. That test exists because three of four
+such claims had gone stale by M96; it earned its keep again here.
