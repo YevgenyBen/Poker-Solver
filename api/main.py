@@ -1500,6 +1500,30 @@ def _hand_strength_percentile(raw: dict, hero: dict | None) -> float | None:
         return None
 
 
+def _drawy_board_applies(raw: dict, street: str | None) -> bool:
+    """Is this a flop where a flush draw is live?
+
+    M221. The disagreement with an independent solver is 7.4x larger on
+    two-tone flops than rainbow ones (2.16 sigma over 28 spots), because
+    averaging the turn in as a runout costs most where the turn changes
+    most.
+
+    **FLOP ONLY**, and that restriction is not caution for its own sake:
+    the comparison was run at the flop's opening decision, the turn and
+    river were never checked this way, and M168 is the standing example
+    of what applying one street's measurement to another costs - it
+    assumed the flop's reliability certificate transferred and the turn
+    inverted it.
+    """
+    if street != "flop":
+        return False
+    board = raw.get("board")
+    if not isinstance(board, str) or len(board) < 6:
+        return False
+    suits = [board[i + 1] for i in range(0, 6, 2)]
+    return len(set(suits)) < 3
+
+
 def _street_isolation_applies(raw: dict, street: str | None) -> bool:
     """Does the measured street-isolation bias have a known direction here?
 
@@ -1586,6 +1610,10 @@ def _aggression_reason(raw: dict, hero: dict | None = None) -> str:
     # would point a short-stacked player the wrong way.
     if _street_isolation_applies(raw, street):
         reason += cfg.STREET_ISOLATION_NOTE
+    # M221: the same limitation, quantified where it bites hardest, from
+    # the first reference outside this codebase.
+    if _drawy_board_applies(raw, street):
+        reason += cfg.DRAWY_BOARD_NOTE
     # M185: where the measured cost actually is. Appended LAST because it
     # is the part a player can act on immediately — the notes before it
     # describe what is known about the street, this describes what is

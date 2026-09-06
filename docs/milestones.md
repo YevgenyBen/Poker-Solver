@@ -12525,3 +12525,79 @@ standalone turn entry 0.927 -> 1.652 MB. The count is a backstop;
 `test_docs.py` failed on CLAUDE.md still claiming
 `MULTIWAY_FLOP_MAX_RAISES = 2`. That test exists because three of four
 such claims had gone stale by M96; it earned its keep again here.
+
+## M221 — the first finding from outside, and it reaches the player
+
+The report published at M220 listed "an independent check of the turn,
+river and multiway" as the largest thing that would move its score, and
+flagged its own risk: two outlier spots that might be systematic rather
+than a tail. This settles part of that, and the answer was a defect.
+
+### The check was run on the wrong boards
+
+The ten-spot comparison behind the report had a sampling defect I did not
+notice while running it: **nine of ten boards were rainbow.** Real flops
+are two-tone about half the time, and the single two-tone board produced
+the worst gap in the set (0.3301). The check had been run almost entirely
+on the texture where a flop-only solve should be STRONGEST — a board with
+no draw to complete is a board where seeing the turn matters least.
+
+### The hypothesis, fixed before the data
+
+We model the flop's betting and average the turn and river in as runouts.
+That should cost most where the turn changes most: a board with a live
+flush draw. 18 further spots, classified before measuring, then pooled
+with the original ten.
+
+| texture | n | mean gap | median | worst | over 0.10 |
+|---|---|---|---|---|---|
+| **two-tone** | 13 | **0.1373** | 0.0347 | 0.5418 | **4** |
+| rainbow | 15 | 0.0185 | 0.0057 | 0.1129 | 1 |
+
+**+0.1188 +/- 0.0549 = 2.16 sigma**, 7.4x on means, 6.1x on medians.
+Overall agreement across all 28 is good — median 0.0099, 19 of 28 within
+0.02 — so this is where the disagreement LIVES, not a general failure.
+
+Pre-registering mattered: M166 asserted a strength split from 27 spots
+and M167 withdrew it at 44; M168 assumed the flop's certificate
+transferred to the turn and it inverted. The direction also replicated
+across two separately-run studies.
+
+**Two caveats, both in the user-facing note.** The parametric margin is
+TAIL-SENSITIVE: dropping the single worst two-tone spot takes it to 1.81
+sigma. A rank test, which ignores magnitudes, is unaffected — two-tone
+exceeds rainbow in **144 of 195 pairings (74%)** — so the split does not
+rest on that spot. And it is FLOP ONLY.
+
+### A direction that did NOT survive
+
+The report said we might be systematically more aggressive than the
+reference (+0.0427 on the first ten). Across all 28 the signed gap is
+**-0.0263 +/- 0.0305, 0.86 sigma, more aggressive on 6 of 28** — the
+second study came back with the opposite sign. **There is no direction**,
+only a magnitude, and saying so is the whole value of having run it.
+
+### Shipped
+
+`DRAWY_BOARD_NOTE`, gated on the flop and a two-tone board, telling the
+player the measured numbers and the mechanism: when a draw can complete,
+what happens on the turn matters more, and this solve does not play the
+turn out. Three mutations caught — a silent note, a note that fires
+everywhere, and the street gate removed.
+
+Gated to the flop because the comparison ran at the flop's opening
+decision. M168 is what assuming that transfer costs.
+
+### The stone law caught its author
+
+The full suite failed on
+`test_no_shipped_module_reaches_for_an_external_solver`: the new comment
+in `api/config.py` named the reference solver, and the law forbids that
+TEXT in shipped packages, not merely the import.
+
+That is the guard working exactly as intended, on the milestone that had
+the best excuse for an exception. The name lives in this file; the
+shipped comment says "a different implementation by different people",
+which is all the reasoning needs.
+
+**The reference is an instrument. Nothing it produced is in the engine.**

@@ -7498,3 +7498,58 @@ def test_the_standalone_multiway_river_drops_seats_that_folded_earlier(
         f"the river is solved for {payload['positions']} after a player folded "
         f"on the flop - a folded seat is being given actions two streets later")
     assert payload["player_to_act"] in payload["positions"]
+
+
+def test_a_two_tone_flop_is_told_the_advice_tested_further_from_a_reference(client):
+    """M221. The first user-facing note built on an INDEPENDENT reference.
+
+    Every accuracy figure before this measured distance from a fuller
+    solve of our own model, so an error both arms shared was invisible.
+    Against TexasSolver - a different implementation, solving flop, turn
+    and river in one tree - agreement over 28 spots is good overall
+    (median 0.0099, 19/28 within 0.02) but 7.4x worse on two-tone flops
+    than rainbow ones: 0.1373 against 0.0185, at 2.16 sigma.
+
+    Gated to the FLOP, and that is not caution for its own sake: the
+    comparison was run at the flop's opening decision, and M168 is the
+    standing example of assuming one street's measurement transfers -
+    it applied the flop's reliability certificate to the turn and the
+    turn inverted it.
+    """
+    body = dict(stack_bb=100.0, players=2,
+                preflop_action_path=["raise", "raise", "call_or_check"])
+    probe = api_config.DRAWY_BOARD_NOTE.strip()[:50]
+
+    two_tone = client.post("/advise", json=_advise_body(
+        hero_cards="AcKc", board="Jh9h4c", **body))
+    assert two_tone.status_code == 200, two_tone.json()
+    assert probe in (two_tone.json().get("aggression_confidence_reason") or ""), (
+        "a two-tone flop does not carry the note - advice here tested 7.4x "
+        "further from an independent solver than on a rainbow board, and the "
+        "player is not being told")
+
+    rainbow = client.post("/advise", json=_advise_body(
+        hero_cards="AcQd", board="Kd7c2h", **body))
+    assert rainbow.status_code == 200, rainbow.json()
+    assert probe not in (rainbow.json().get("aggression_confidence_reason") or ""), (
+        "the note fired on a RAINBOW flop, where the measurement says advice is "
+        "close to the reference - a warning that fires everywhere says nothing")
+
+
+def test_the_two_tone_note_does_not_leak_onto_a_later_street(client):
+    """M221. The gate M168 exists to enforce.
+
+    The comparison behind this note was run at the FLOP's opening
+    decision. The turn and river were never checked against an
+    independent solver, so the note must not appear there - M168 assumed
+    exactly that kind of transfer and the turn came back inverted.
+    """
+    probe = api_config.DRAWY_BOARD_NOTE.strip()[:50]
+    turn = client.post("/advise", json=_advise_body(
+        stack_bb=100.0, players=2, hero_cards="AcKc", board="Jh9h4c",
+        preflop_action_path=["raise", "raise", "call_or_check"],
+        flop_action_path=["call_or_check", "call_or_check"], turn_card="2s"))
+    assert turn.status_code == 200, turn.json()
+    assert probe not in (turn.json().get("aggression_confidence_reason") or ""), (
+        "the two-tone note reached the TURN, where nothing has been measured "
+        "against an independent reference")
