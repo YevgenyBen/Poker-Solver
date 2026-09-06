@@ -40,6 +40,38 @@ as evidence:
   reliability certificate (M180) — every one this product carried failed
   when measured at a larger sample.
 
+## The first measurement from outside (M221)
+
+Every accuracy figure before M221 measured distance from a fuller solve
+of THIS engine's own model, so an error both arms shared was invisible —
+which is why they are all labelled lower bounds. M221 compared 28
+heads-up flop spots against an independent implementation that solves
+flop, turn and river in one tree, given OUR ranges and OUR bet menu, with
+the reference converged to 0.32-0.50% of pot.
+
+**Agreement is good overall and NOT evenly spread**:
+
+| texture | n | mean gap | median | worst | over 0.10 |
+|---|---|---|---|---|---|
+| two-tone | 13 | **0.1373** | 0.0347 | 0.5418 | 4 |
+| rainbow | 15 | 0.0185 | 0.0057 | 0.1129 | 1 |
+
+Median across all 28 is **0.0099** and 19 of 28 are within 0.02, but
+two-tone flops disagree **7.4x more** (+0.1188 +/- 0.0549, **2.16
+sigma**). The mechanism is street isolation seen from outside: averaging
+the turn in as a runout costs most where a draw can complete.
+`DRAWY_BOARD_NOTE` tells the player, gated on the FLOP only.
+
+**Tail-sensitive**: without the worst two-tone spot it is 1.81 sigma. A
+rank test is unaffected (74% of pairings), so the split does not rest on
+that one spot — but the parametric margin does.
+
+**No DIRECTION survived.** The first ten spots suggested we were more
+aggressive (+0.0427); across all 28 it is **-0.0263 +/- 0.0305, 0.86
+sigma**, sign reversed between studies. Magnitude only.
+
+**Speed against the same reference: 0.48s against 165s, 340x.**
+
 ## External tools are INSTRUMENTS, never ingredients
 
 **Stone law.** Independent solvers (TexasSolver, postflop-solver), bot

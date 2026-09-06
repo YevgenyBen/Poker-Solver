@@ -2161,6 +2161,67 @@ STREET_ISOLATION_COST_CI_LOW = 0.0336
 STREET_ISOLATION_COST_CI_HIGH = 0.1857
 STREET_ISOLATION_COST_WORST = 0.4123
 
+# M221. The first finding this project has that came from OUTSIDE.
+#
+# Every accuracy figure before this measured distance from a fuller solve
+# of our OWN model, so an error both arms shared was invisible - which is
+# why they were all labelled lower bounds. The reference here is a
+# different implementation by different people - named in
+# docs/milestones.md, deliberately not here - and it solves flop, turn
+# and river in ONE tree where we solve the flop alone.
+#
+# **The stone law caught this comment on its first run**, because an
+# earlier draft named the tool. Shipped code does not name external
+# solvers: the rule is enforced on TEXT as well as imports precisely
+# because a reference by name is how a dependency starts. The reasoning
+# needs only that the reference was INDEPENDENT, which is what the
+# sentence above says.
+#
+# 28 heads-up flop spots in a 3-bet pot (SPR 6.2), both sides given OUR
+# derived ranges and OUR bet menu, the reference converged to 0.32-0.50%
+# of pot. Agreement overall is good - median gap 0.0099, 19 of 28 within
+# 0.02 - but it is NOT evenly spread:
+#
+#   texture      n   mean gap   median   worst   over 0.10
+#   two-tone    13     0.1373   0.0347  0.5418           4
+#   rainbow     15     0.0185   0.0057  0.1129           1
+#
+# **+0.1188 +/- 0.0549 = 2.16 sigma**, 7.4x on means and 6.1x on medians.
+#
+# The mechanism is the one this note exists to disclose, seen from
+# outside for the first time: we model the flop's betting and average the
+# turn and river in as runouts. That costs most exactly where the turn
+# changes most - a board where a flush draw is live.
+#
+# **The hypothesis was fixed BEFORE the data**, which matters because
+# M166 asserted a strength split from 27 spots and M167 withdrew it at
+# 44, and M168 assumed the flop's certificate transferred to the turn and
+# it inverted. It also replicated across two separately-run studies.
+#
+# **Two honest caveats, both stated in the note.** The parametric margin
+# is tail-sensitive: dropping the single worst two-tone spot takes it to
+# 1.81 sigma. A rank test, which ignores magnitudes entirely, is
+# unaffected - two-tone exceeds rainbow in 144 of 195 pairings (74%) - so
+# the split does not rest on that one spot. And it is FLOP ONLY: the turn
+# and river were never compared this way, and M168 is what assuming
+# otherwise looks like.
+DRAWY_BOARD_TWO_TONE_GAP = 0.1373
+DRAWY_BOARD_RAINBOW_GAP = 0.0185
+DRAWY_BOARD_NOTE = (
+    " One thing measured specifically about a board like this one, where two cards share "
+    "a suit so a flush draw is live: advice here has tested FURTHER from an independent "
+    "solver than advice on a rainbow board. Across 28 spots checked against a different "
+    "solver entirely - one that plays out the turn and river instead of averaging them in "
+    "- the typical disagreement on a two-tone flop was about 3.5 percentage points against "
+    "0.6 on a rainbow one, and the average about seven times larger. Four of thirteen "
+    "two-tone spots disagreed by more than 10 points, against one of fifteen rainbow ones. "
+    "The reason is the same limitation described above, showing up where it costs most: "
+    "when a draw can complete, what happens on the turn matters more, and this solve does "
+    "not play the turn out. Treat a close call on a two-tone flop as closer than it looks. "
+    "The split is measured, not certain - it clears the project's evidence bar at 2.2 "
+    "standard deviations, but drops below it if the single worst spot is excluded."
+)
+
 STREET_ISOLATION_NOTE = (
     " One more thing this number cannot see: the solve behind it models the betting on "
     "this street only, and averages the turn and river in as card runouts rather than "
