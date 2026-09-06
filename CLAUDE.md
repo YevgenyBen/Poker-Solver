@@ -591,11 +591,27 @@ requests now reject unknown fields by name rather than ignoring them.
   **38x apart** (0.927 MB turn, 35.03 MB chained river), which a count
   ceiling cannot express. maxsize 10 -> 181 against the turn entry, with
   `max_bytes` doing the real bounding.
-  **STILL BLOCKED: the sized re-raise.** Now **1.05x** on the standalone
-  turn (against 1.38x chained), but `MULTIWAY_FLOP_RAISE_SIZES` drives
-  the flop, turn AND the still-chained river, where M217 measured 1.52x
-  and 6.78s. **Making the multiway river standalone unblocks it** —
-  M174's second half.
+  **M219 MADE THE MULTIWAY RIVER STANDALONE TOO — 4.51s -> 0.23s,
+  19.6x**, the largest single latency result in this project.
+  `MULTIWAY_RIVER_SOLVE_STANDALONE = True`. Chained,
+  `solve_flop_to_river_multiway` builds all three streets in one tree, so
+  a river request paid for a flop AND a turn solve it never read a
+  strategy from; standalone it solves one street on a COMPLETE board,
+  where the equity has nothing to sample at all (M154). **Chaining had
+  turned the cheapest street to solve into the most expensive** — M174
+  found the same heads-up (12.18 -> 0.65s).
+  **This UNBLOCKED the sized re-raise**, which M217 had refused. With
+  nothing chained it costs **1.00x flop / 1.06x turn / 1.06x river**
+  against 1.52x and 6.78s before. On the river it is USED most: facing a
+  bet, `5h4s` takes it 0.5627 and `QdQh` 0.5996 — a bluff and a value
+  hand both betting, instead of the check-or-shove collapse M151
+  documented heads-up.
+  **A guard of mine failed to catch a real defect and had to be
+  strengthened**: the river's pot-accounting test used a CHECKED-THROUGH
+  line, where the flop pot and turn pot are identical, so mutating the
+  solve to price the river at the flop's pot passed cleanly. **An
+  assertion that cannot distinguish the two things it compares is M214's
+  dead guard in another shape.**
   **The player IS told**: `BET_SIZING_COVERAGE_NOTE` fires on exactly the
   facing-a-bet rows (sizes `[97.5]`) and stays silent at opening
   decisions, pinned by
