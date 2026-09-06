@@ -32,6 +32,7 @@ FAST_MULTIWAY_ITERATIONS = 30
 # notice the shipped constant being reverted; this is what does.
 SHIPPED_MULTIWAY_FLOP_RAISE_SIZES = api_config.MULTIWAY_FLOP_RAISE_SIZES
 SHIPPED_MULTIWAY_TURN_SOLVE_STANDALONE = api_config.MULTIWAY_TURN_SOLVE_STANDALONE
+SHIPPED_MULTIWAY_RIVER_SOLVE_STANDALONE = api_config.MULTIWAY_RIVER_SOLVE_STANDALONE
 # M67 made the real multiway preflop pool all 169 classes, which costs
 # ~170s (6-max) / ~215s (9-max) per spot at production settings. The
 # autouse fixture clears caches between tests, so every multiway test
@@ -7363,3 +7364,117 @@ def test_the_multiway_turn_ships_as_its_own_street():
         "entry, and sampled equity where the standalone solve enumerates — "
         "so it should be a measured decision, not a default nobody noticed."
     )
+
+
+def test_the_multiway_river_ships_as_its_own_street():
+    """M219. The shipped-value guard, for the same reason M218 needed one:
+    the behaviour tests monkeypatch the flag ON, so flipping the default
+    would leave them green.
+
+    Why standalone ships: chained, `solve_flop_to_river_multiway` builds
+    all three streets in one tree, so a river request pays for a flop AND
+    a turn solve whose strategies it never reads. Measured through
+    `/advise`, **4.51s -> 0.23s (19.6x)** - the largest single latency
+    result in this project - because a COMPLETE board leaves the equity
+    nothing to sample (M154). Chaining turned the cheapest street to
+    solve into the most expensive.
+    """
+    assert SHIPPED_MULTIWAY_RIVER_SOLVE_STANDALONE is True, (
+        "the multiway river is chained again. That is a supported "
+        "configuration, but it costs 19.6x per request and samples equity a "
+        "complete board does not need - so it should be a measured decision, "
+        "not a default nobody noticed."
+    )
+
+
+def test_the_standalone_multiway_river_is_priced_at_the_turns_pot(
+        client, monkeypatch):
+    """M219. That the river is solved for the situation actually reached.
+
+    Three trees are built and none is solved: everything the river needs
+    from the earlier streets is structural, and `build_street_tree`
+    builds children lazily so walking one path materialises only that
+    path. If that accounting were wrong the river would be solved at the
+    wrong pot - a confident answer to a different question, which is the
+    failure mode M173 flagged when the same move was made heads-up.
+    """
+    monkeypatch.setattr(api_config, "MULTIWAY_RIVER_SOLVE_STANDALONE", True)
+    monkeypatch.setattr(api_config, "MULTIWAY_FLOP_RAISE_SIZES",
+                        ((0.33, 0.75, 2.5),))
+    monkeypatch.setattr(api_config, "MULTIWAY_FLOP_MAX_RAISES", 2)
+    common = dict(preflop_action_path=["raise", "call_or_check", "call_or_check"],
+                  hero_cards="5c4d", board="Kd7c2h", players=3, stack_bb=100.0)
+    checked = ["call_or_check", "call_or_check", "call_or_check"]
+
+    flop = client.post("/advise", json=_advise_body(**common)).json()
+    river = client.post("/advise", json=_advise_body(
+        flop_action_path=checked, turn_card="Ts", turn_action_path=checked,
+        river_card="8h", **common))
+    assert river.status_code == 200, river.json()
+    payload = river.json()
+
+    assert payload["street"] == "river"
+    # Checked through both streets, so the river plays for the flop's pot.
+    assert payload["pot"] == pytest.approx(flop["pot"], abs=0.01), (
+        f"the river is priced at {payload['pot']} against a flop pot of "
+        f"{flop['pot']} - two checked-through streets add nothing to the pot, "
+        f"so the accounting walked the earlier trees wrongly")
+    assert payload["modelled_bet_sizes"], "the river modelled no bet sizes at all"
+
+    # And a line where the TURN actually bets, because the check above
+    # cannot tell the turn's pot from the flop's when nothing was wagered:
+    # mutating the solve to price the river at `flop_node.pot` passed it.
+    # A bet on the turn separates them.
+    turn_open = client.post("/advise", json=_advise_body(
+        flop_action_path=checked, turn_card="Ts", **common)).json()
+    turn_sized = [x for x in turn_open["modelled_bet_sizes"] if x < turn_open["pot"]]
+    if not turn_sized:
+        return
+    bet = min(turn_sized)
+    after_turn_bet = client.post("/advise", json=_advise_body(
+        flop_action_path=checked, turn_card="Ts",
+        turn_action_path=[f"raise:{bet:.2f}"] + ["call_or_check"] * 2,
+        river_card="8h", **common))
+    assert after_turn_bet.status_code == 200, after_turn_bet.json()
+    wagered = after_turn_bet.json()["pot"]
+    assert wagered > flop["pot"] + 0.01, (
+        f"the river is priced at {wagered} after a {bet:.2f}bb turn bet was "
+        f"called, which is the flop pot {flop['pot']} - the turn's betting is "
+        f"not reaching the river's accounting")
+
+
+def test_the_standalone_multiway_river_drops_seats_that_folded_earlier(
+        client, monkeypatch):
+    """M219. Folders are dropped at EVERY street, not just the flop.
+
+    The multiway-only part, one street further than M218's version.
+    Three-handed, a fold on the flop leaves a two-player turn and a fold
+    on the turn leaves a two-player river, and `solve_flop_multiway`
+    seats every position it is handed - so a player who is out has to be
+    removed explicitly or they are given actions on a street they left.
+    """
+    monkeypatch.setattr(api_config, "MULTIWAY_RIVER_SOLVE_STANDALONE", True)
+    monkeypatch.setattr(api_config, "MULTIWAY_FLOP_RAISE_SIZES",
+                        ((0.33, 0.75, 2.5),))
+    monkeypatch.setattr(api_config, "MULTIWAY_FLOP_MAX_RAISES", 2)
+    common = dict(preflop_action_path=["raise", "call_or_check", "call_or_check"],
+                  hero_cards="5c4d", board="Kd7c2h", players=3, stack_bb=100.0)
+
+    opening = client.post("/advise", json=_advise_body(**common)).json()
+    assert len(opening["positions"]) == 3, opening["positions"]
+    sized = [s for s in opening["modelled_bet_sizes"] if s < opening["pot"]]
+    if not sized:
+        pytest.skip("no multiway bet-size menu configured")
+
+    # One folds on the FLOP; the turn and river are two-handed.
+    river = client.post("/advise", json=_advise_body(
+        flop_action_path=[f"raise:{min(sized):.2f}", "fold", "call_or_check"],
+        turn_card="Ts", turn_action_path=["call_or_check", "call_or_check"],
+        river_card="8h", **common))
+    assert river.status_code == 200, river.json()
+    payload = river.json()
+
+    assert len(payload["positions"]) == 2, (
+        f"the river is solved for {payload['positions']} after a player folded "
+        f"on the flop - a folded seat is being given actions two streets later")
+    assert payload["player_to_act"] in payload["positions"]

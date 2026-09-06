@@ -12351,3 +12351,85 @@ flop. It still cannot ship, because `MULTIWAY_FLOP_RAISE_SIZES` drives
 the flop, the turn AND the still-chained river, where M217 measured
 1.52x and 6.78s. **Making the multiway river standalone is what unblocks
 it**, and that is M174's second half.
+
+## M219 — the multiway river is its own street, and the sized re-raise is unblocked
+
+M174's second half, at multiway. `MULTIWAY_RIVER_SOLVE_STANDALONE = True`;
+`False` restores the chained path exactly.
+
+### 19.6x, the largest latency result in this project
+
+| | chained | standalone |
+|---|---|---|
+| `/advise`, river facing a bet | 4.51s | **0.23s** |
+
+Chained, `solve_flop_to_river_multiway` builds all three streets in one
+tree, so a river request pays for a flop AND a turn solve whose
+strategies it never reads. Standalone it solves one street on a COMPLETE
+board — where `NwayBoardEquityCache` has no runout to sample at all and
+compares showdowns directly (M154).
+
+**Chaining had turned the cheapest street to solve into the most
+expensive.** That is exactly what M174 found heads-up (12.18s -> 0.65s),
+and the multiway ratio is larger because three streets were being solved
+rather than two.
+
+Same pot and same actions on both arms.
+
+### It unblocks the sized re-raise
+
+M217 measured a sized re-raise as free on the multiway flop and used
+0.39-0.43 by strong hands, but refused it because
+`MULTIWAY_FLOP_RAISE_SIZES` drives all three multiway streets — they
+cannot be split without recreating M207 — and the CHAINED river cost
+1.52x, reaching 6.78s.
+
+With nothing chained:
+
+| street | shove-only | sized re-raise | ratio | was (chained) |
+|---|---|---|---|---|
+| flop | 2.43s | 2.43s | 1.00x | 1.00x |
+| turn | 1.83s | 1.93s | **1.06x** | 1.38x |
+| river | 0.23s | 0.24s | **1.06x** | 1.52x @ 6.78s |
+
+**And the river is where it is used most.** Facing a bet, `5h4s` takes
+the sized raise **0.5627** and `QdQh` **0.5996** — a bluff and a value
+hand both betting, instead of the check-or-shove collapse M151 documented
+heads-up ("value hands check, bluffs jam"). A complete board plus a real
+bet size produces an actual betting strategy.
+
+Shipped as its own change rather than bundled here: the two are
+independently revertible, and M213 is what bundling looks like when the
+costs turn out to be entangled.
+
+### Guards
+
+Three, each mutation-tested:
+
+- `test_the_multiway_river_ships_as_its_own_street` reads the SHIPPED
+  flag, because the behaviour tests monkeypatch it on — M218 needed the
+  same guard for the same reason.
+- `test_the_standalone_multiway_river_drops_seats_that_folded_earlier`:
+  folders are dropped at EVERY street. Three-handed a flop fold leaves a
+  two-player turn and a turn fold a two-player river, and
+  `solve_flop_multiway` seats every position it is handed.
+- `test_the_standalone_multiway_river_is_priced_at_the_turns_pot`, **which
+  had to be strengthened after failing to catch a real defect.** Its first
+  version checked a checked-through line, where the flop pot and the turn
+  pot are identical — so mutating the solve to price the river at
+  `flop_node.pot` passed cleanly. A line that actually bets on the turn
+  separates them. An assertion that cannot distinguish the two things it
+  is comparing is the M214 dead-guard failure in another shape.
+
+### Three trees built, none solved
+
+Everything the river needs from the earlier streets — each terminal's
+pot, who folded, what each player invested — is structural, and
+`build_street_tree` builds children lazily, so walking one action path
+materialises only that path. Each tree is built at the PREVIOUS
+terminal's own pot and remaining stack, which chains the accounting
+without chaining the solve.
+
+The caller's `flop_iterations` drives the river solve, since standalone
+there is no flop or turn solve for that budget to buy — M218's correction
+carried forward deliberately rather than rediscovered.

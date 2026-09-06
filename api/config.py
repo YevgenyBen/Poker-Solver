@@ -455,6 +455,22 @@ DEFAULT_MULTIWAY_FLOP_BOARD = "Jh7d2c"
 # as a migration aid.
 MULTIWAY_TURN_SOLVE_STANDALONE = True
 
+# M219. The multiway RIVER, likewise - M174's second half at multiway.
+# Chained, `solve_flop_to_river_multiway` builds all three streets in one
+# tree, so a river request pays for a flop and a turn solve whose
+# strategies it never reads.
+#
+# The river is the street this helps most, because a COMPLETE board
+# leaves `NwayBoardEquityCache` nothing to sample: it compares showdowns
+# directly (M154). Chaining is what turned the cheapest street to solve
+# into the most expensive.
+#
+# It also unblocks the sized re-raise. `MULTIWAY_FLOP_RAISE_SIZES` drives
+# all three multiway streets - they cannot be split without recreating
+# M207 - so M217 measured the re-raise as free on the flop and 1.52x on
+# the CHAINED river, which is what has been holding it.
+MULTIWAY_RIVER_SOLVE_STANDALONE = True
+
 # The standalone multiway turn's own iteration budget. Same value as the
 # flop cell (M214), and for the same measured reason: below ~1000 the
 # ordering facing different bet sizes points the wrong way, which is a
