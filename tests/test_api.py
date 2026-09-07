@@ -7689,6 +7689,35 @@ def test_a_deep_turn_is_told_the_advice_tested_further_from_a_reference(client):
         "direction, and the player is not being told")
 
 
+def test_the_turn_note_quotes_the_production_width_measurement(client):
+    """M232. A warning that understates the error is worse than none.
+
+    M222 measured the turn at cap 25 - the width the REFERENCE could
+    afford - and then quoted that figure to players. At the shipped cap
+    140 the same comparison gives mean 0.4235 and median 0.5268 against
+    the 0.1943 the note was built on, so the disclosure understated the
+    error by more than half.
+
+    This pins the copy to the constants, so a future re-measurement has
+    to move both together or fail here. Percentages are read off the
+    constants rather than typed, which is what stops the two drifting.
+    """
+    median_points = round(api_config.TURN_INDEPENDENT_GAP_MEDIAN * 100)
+    signed_points = round(api_config.TURN_INDEPENDENT_GAP_SIGNED * 100)
+    note = api_config.TURN_INDEPENDENT_NOTE
+
+    assert "%d percentage points" % median_points in note, (
+        "the note no longer quotes TURN_INDEPENDENT_GAP_MEDIAN (%d points) - "
+        "the copy and the measurement have drifted apart" % median_points)
+    assert "about %d " % signed_points in note, (
+        "the note no longer quotes TURN_INDEPENDENT_GAP_SIGNED (%d points), "
+        "which is the DIRECTION a player acts on" % signed_points)
+    assert api_config.TURN_INDEPENDENT_GAP_MEDIAN > 0.4, (
+        "the turn's measured gap dropped below 0.4; if that is a real "
+        "re-measurement the note's wording needs revisiting, not just the "
+        "constant")
+
+
 def test_the_turn_reference_note_is_silent_where_the_gap_was_not_measured(client):
     """M222. Gated on DEPTH as well as street, because it was measured
     twice and the two arms disagree about the typical spot.
