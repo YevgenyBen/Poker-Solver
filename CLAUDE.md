@@ -150,6 +150,41 @@ our distance from that reference GROWS. **We are solving a different game
 correctly.** It also explains why precision made the reference gap worse:
 converging harder onto the wrong model walks away from the right answer.
 
+**THE FIRST THING THAT MOVES THE TURN: ITS RANGES IGNORE THE FLOP
+(M238).** `_derive_path_situation` takes the PREFLOP action path and the
+board; the flop action path is used only to walk the flop tree for a pot
+and a stack. **So a turn after a checked-through flop is solved with
+ranges that still contain every hand that would have BET that flop.**
+
+Reweighting each position's range by its own probability of having
+checked - taken from our own flop solve, the arm the flop study found
+closest to the reference - and giving the reference the SAME narrowed
+ranges, 19 spots:
+
+| arm | mean gap | paired | sigma | better on |
+|---|---|---|---|---|
+| baseline (ranges ignore the flop) | 0.4335 | — | — | — |
+| **flop-aware ranges** | **0.2632** | **-0.1703 +/- 0.0513** | **3.32** | **15/19** |
+
+**39% of the gap closes**, and the signed over-aggression falls +0.3306
+-> +0.13. Narrowing keeps only **15% of range mass**: a checked flop
+really does cap both players, and the engine currently ignores it.
+
+**The confound, which keeps this a lead rather than a result**: BOTH
+arms were narrowed, so part of the improvement may be that narrower
+ranges are an easier problem two solvers agree on more readily. What is
+solid is that the shipped turn solves a MIS-SPECIFIED game.
+
+**Counter-intuitive and worth knowing**: narrowing makes BOTH arms bet
+MORE (the reference 0.1392 -> 0.3633 on one spot), because a capped range
+holds fewer bluff-catchers. The hypothesis going in was the opposite -
+that our uncapped ranges were what made us over-bet - and it was wrong in
+its mechanism while right about the culprit.
+
+**Cost of acting on it**: the turn would need a flop SOLVE it currently
+skips, which is exactly what M173 removed to make the turn standalone
+(9.1x). Any implementation needs its own latency gate.
+
 **THE TURN IS STRUCTURAL — three knobs, none of them move it (M232).**
 | what was tried | result |
 |---|---|

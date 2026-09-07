@@ -13100,3 +13100,53 @@ error M186 corrected when it found the biggest frequency errors sitting
 where they were cheapest, and which this round was about to repeat in a
 user-facing report.
 
+## M238 — the turn's ranges ignore the flop, and that is the first lever that works
+
+Chaining made the turn worse (M223, 2.79 sigma). Precision made it worse
+(M230, 2.04 sigma). Width was inert (M232, six configurations in
+0.42-0.50). M233 proved the residue is model error rather than tuning.
+The ranges had never been tested.
+
+**They ignore the flop entirely.** `_derive_path_situation` takes the
+preflop action path and the board; the flop action path is used only to
+walk the flop tree for a pot and a stack. A turn after a checked-through
+flop is solved with ranges that still contain every hand that would have
+bet that flop.
+
+Reweighting each position by its own probability of having checked -
+read from our own flop solve, and handing the reference the SAME
+narrowed ranges so the two arms stay on one game - over 19 spots:
+
+| arm | mean gap | paired | sigma | better on |
+|---|---|---|---|---|
+| baseline | 0.4335 | — | — | — |
+| flop-aware | **0.2632** | **-0.1703 +/- 0.0513** | **3.32** | **15/19** |
+
+**39% of the turn's gap closes** and the signed over-aggression falls
+from +0.3306 to +0.13. The narrowing keeps only **15% of range mass**.
+
+### Why this is a lead and not yet a result
+
+**Both arms were narrowed.** Part of the improvement may be that
+narrower ranges are simply an easier problem, where two solvers have
+less room to disagree. Attributing the whole 0.17 to better advice would
+be the kind of claim this project has had to withdraw before. What IS
+established is that the shipped turn solves a mis-specified game.
+
+### The mechanism was the opposite of the hypothesis
+
+Going in, the idea was that our uncapped ranges hold too many strong
+hands, making betting look good. In fact narrowing makes **both** arms
+bet MORE - the reference went 0.1392 -> 0.3633 on the first spot -
+because a capped range holds fewer bluff-catchers. The hypothesis was
+right about the culprit and wrong about the direction, which is worth
+recording: the fix is "specify the game correctly", not "make us bet
+less".
+
+### What acting on it costs
+
+The turn would need a flop SOLVE it currently skips - precisely what
+M173 removed to make the turn standalone and 9.1x faster. Any
+implementation needs its own paired latency gate, and the honest
+comparison is against a turn that is currently ~1.5s.
+
