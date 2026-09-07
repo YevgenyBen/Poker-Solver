@@ -13406,3 +13406,91 @@ in CLAUDE.md, and six studies since then quietly did not. **A written
 instruction is not a guard.** The thing that finally caught it was
 reading the recommendation list looking for what was already done -
 which is worth doing periodically for its own sake.
+
+
+## M242 — the flop facing a bet, and a 3-sigma finding that width erased
+
+M241 checked the turn and river facing a bet and found the river badly
+off. The flop was left out because **a flop reference at production
+width does not run at all** (M234: 297s at cap 25, 353s at cap 60,
+failure at 140), so it cannot be checked the way the river was.
+
+What existed was M221's 18 flop dumps at cap 25, whole trees, so the
+node after a flop bet was already in them. Read off those, 54 rows:
+
+| bet faced | n | reference folds | we fold | signed | sigma |
+|---|---|---|---|---|---|
+| 0.33x pot | 18 | 0.2510 | 0.0403 | -0.2107 | 2.38 |
+| 0.75x pot | 18 | 0.3792 | 0.3336 | -0.0456 | 0.53 |
+| 2.50x pot | 18 | 0.8515 | 0.6890 | -0.1625 | 2.70 |
+
+Pooled **-0.1396 +/- 0.0459 = 3.04 sigma**. A shippable-looking result.
+
+### It was the range width, and the reading rule was written first
+
+The flop has shipped at **cap 100** since M234, which also measured cap
+25 as the **bad** arm at the flop's opening decision (+0.1134, 2.56 sigma
+against 140) while 60 and 100 were identical to four decimals. So 18
+fresh references were built at **cap 60** - the widest this instrument
+reaches - each converged to 0.32-0.50% of pot, 452 combos a side, 96
+minutes of solver time. Scored paired on the same spots:
+
+| bet faced | n | cap 25 signed | cap 60 signed | paired shift | sigma |
+|---|---|---|---|---|---|
+| 0.33x | 18 | -0.2107 | -0.1323 | +0.0784 | 1.28 |
+| 0.75x | 18 | -0.0456 | +0.0421 | +0.0877 | 1.16 |
+| 2.50x | 18 | -0.1625 | -0.0591 | +0.1034 | 2.31 |
+| **ALL** | **54** | **-0.1396** | **-0.0498** | **+0.0898** | **2.57** |
+
+**At cap 60 the flop is not separable (1.67 sigma), its median gap is
++0.0002, and only 11 of 54 rows exceed 0.10.** Width moved the result by
++0.0898 at 2.57 sigma. The 3.04-sigma finding was measuring the width,
+not the product.
+
+**The three verdicts were written into the comparison script before the
+references finished** - holds / collapses / grows, each with what it
+would mean. That is what made this a clean negative instead of an
+argument about whether cap 25 was "close enough", and it is the same
+discipline M239 wished it had applied a milestone earlier.
+
+### The complete grid, and only one cell separates
+
+| street | 0.33x | 0.75x | 2.50x | pooled |
+|---|---|---|---|---|
+| flop (cap 60) | -0.1323 (2.01) | +0.0421 (1.08) | -0.0591 (1.49) | **-0.0498 (1.67)** |
+| turn | -0.0915 (1.63) | -0.1709 (1.91) | +0.0390 (0.45) | **-0.0745 (1.61)** |
+| **river** | **-0.3821 (5.20)** | **-0.2898 (4.32)** | -0.0765 (1.67) | **-0.2495 (6.33)** |
+
+Median gap by street: flop **+0.0002**, turn -0.0127, river **-0.1374**.
+**Facing a bet, this engine is off an independent solver on the RIVER
+and nowhere else.** M241's note is correctly scoped, and that is now a
+measurement rather than a choice - pinned by
+`test_the_river_under_fold_note_does_not_fire_on_the_flop`,
+mutation-tested.
+
+### Two things recorded rather than claimed
+
+**The flop comparison contains street isolation** - the reference plays
+three streets and we solve one - so a flop gap could never have been
+cleanly a facing-a-bet defect. The river's cannot: its board is
+complete. That asymmetry is why the river result was worth shipping and
+this one is worth only recording.
+
+**`STREET_ISOLATION_NOTE` goes silent at every flop facing-a-bet node**,
+because a bet drops SPR below the gate: measured on one board, 6.17 at
+the opening decision and 4.64 / 3.52 / 1.76 facing the three bet sizes.
+That is defensible - M195 measured the isolation effect at 0.08 sigma at
+SPR 3.3 - but with a caveat worth keeping: **M195 varied SPR by changing
+the STACK at opening decisions, and these nodes reach the same ratio by
+growing the POT at a full stack.** Same number, different situation, and
+nothing has measured the second.
+
+### A population that cannot answer the next question
+
+Two attempts to find where the gap lives both came back null: strength
+percentile (corr +0.034 flop, -0.100 turn, -0.045 river) and
+whether hero has made a pair. Both fail for one reason - **91% of the
+171 facing rows have an unpaired hero**, because these spots were drawn
+as heroes for opening-decision studies. The population cannot separate
+"air" from "the population is air". A purpose-built stratified set is
+what that question needs.

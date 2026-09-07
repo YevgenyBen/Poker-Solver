@@ -285,20 +285,29 @@ half — M188/M189 put 74% of all cost at 12% of decisions there.
 tree, so the node after `BET x` carries the other player's strategy over
 the same ranges. No new reference solves — one `/advise` per spot.
 
-117 rows, 39 spots x three bet sizes, on the **FOLD** axis (chosen in
-advance: it needs no size mapping between two menus, the raise axis does):
+171 rows, three streets x three bet sizes, on the **FOLD** axis (chosen
+in advance: it needs no size mapping between two menus, the raise axis
+does). **Only the river separates** (M241 turn/river, M242 flop):
 
-| street | bet faced | n | ref folds | we fold | signed | sigma |
-|---|---|---|---|---|---|---|
-| turn | 0.33x | 18 | 0.3359 | 0.2443 | -0.0915 | 1.63 |
-| turn | 0.75x | 18 | 0.6574 | 0.4865 | -0.1709 | 1.91 |
-| turn | 2.50x | 18 | 0.8219 | 0.8609 | +0.0390 | 0.45 |
-| **river** | **0.33x** | 21 | **0.6399** | **0.2578** | **-0.3821** | **5.20** |
-| **river** | **0.75x** | 21 | **0.8221** | **0.5323** | **-0.2898** | **4.32** |
-| river | 2.50x | 21 | 0.9578 | 0.8813 | -0.0765 | 1.67 |
+| street | 0.33x | 0.75x | 2.50x | pooled | median gap |
+|---|---|---|---|---|---|
+| flop (cap 60) | -0.1323 (2.01) | +0.0421 (1.08) | -0.0591 (1.49) | -0.0498 (1.67) | **+0.0002** |
+| turn | -0.0915 (1.63) | -0.1709 (1.91) | +0.0390 (0.45) | -0.0745 (1.61) | -0.0127 |
+| **river** | **-0.3821 (5.20)** | **-0.2898 (4.32)** | -0.0765 (1.67) | **-0.2495 (6.33)** | **-0.1374** |
 
-**The RIVER separates and the TURN does not — the opposite of the
-opening-decision result**, where the turn is the bad street. M231
+**The RIVER separates and the flop and turn do not — the opposite of the
+opening-decision result**, where the turn is the bad street.
+
+**THE FLOP'S APPARENT DEFECT WAS RANGE WIDTH (M242).** Read off M221's
+cap-25 dumps the flop looked off at **3.04 sigma**; rebuilt against 18
+fresh cap-60 references (0.32-0.50% of pot each, 96 minutes of solver
+time) the same spots give **1.67 sigma**, median +0.0002, and width
+moved it by **+0.0898 at 2.57 sigma**. M234 had already measured cap 25
+as the bad arm at the flop's OPENING decision, which is why the wider
+arm was run before anything was believed — **the three possible verdicts
+were written into the script before the references finished.**
+**Any facing-a-bet result read off an old dump inherits that dump's
+width.** M231
 improved the river's opening decision and never touched this node.
 Sometimes categorical: the reference folds ace-high **0.9761** to a
 third-pot bet where we commit **92.5bb into a 20bb pot 0.9676**.
