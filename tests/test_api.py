@@ -7567,6 +7567,39 @@ def test_the_two_tone_note_does_not_leak_onto_a_later_street(client):
         "no texture split at all (0.48 sigma / 0.15 sigma, sign reversed)")
 
 
+def test_the_flop_cap_is_where_width_stops_paying(client):
+    """M234. The flop's range cap, pinned with what decided it.
+
+    The flop is this product's latency problem: median 3.00s over 2,709
+    decisions, twice any other street, and a whole benchmark round's worst
+    decision was a flop at 4.994s against a 5s bar. So the cap is under
+    permanent pressure to come down, and the question is where it stops
+    being free.
+
+    Two references that disagree about nearly everything agree here: at
+    cap 100 our advice is indistinguishable from cap 140 (+0.0001 / 0.36
+    sigma externally, +0.0000 / 0.22 sigma against our own uncapped
+    solve), and cap 100 is 1.29x faster.
+
+    **Cap 60 is the trap.** It is 3.4x faster and its MEAN looks fine, but
+    split by what the reference does with the hand it is worse in every
+    band - +0.0268 where the reference checks, +0.0168 where it mixes,
+    +0.0033 where it bets, over 106 comparisons. A mean over one hero per
+    board could not see that, which is M141's warning in a new place.
+
+    Pinned at import, because the suite's own fixture shrinks this
+    constant to 2 for speed.
+    """
+    assert SHIPPED_MAX_PATH_QUERY_CLASSES_PER_SIDE == 100, (
+        "the flop's cap moved; 100 is where two independent references "
+        "agree width stops paying, and 60 was measured worse in every "
+        "hand-type band - re-run that study before changing it")
+    assert (SHIPPED_MAX_PATH_QUERY_CLASSES_PER_SIDE
+            > SHIPPED_RIVER_STANDALONE_CLASSES_PER_SIDE), (
+        "the flop is meant to run WIDER than the river: the river bought "
+        "its iteration budget by narrowing (M231), the flop did not")
+
+
 def test_the_river_iteration_budget_actually_reaches_the_solve(client, monkeypatch):
     """M231. The hazard that nearly voided the study that produced it.
 
