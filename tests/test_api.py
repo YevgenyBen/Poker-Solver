@@ -7795,3 +7795,134 @@ def test_the_turn_reference_note_is_silent_where_the_gap_was_not_measured(client
         f"typical spot agrees to within a point or two - a warning that fires "
         f"where the measurement says there is nothing to warn about is noise")
 
+
+
+def _river_facing(client, *, bet=None, hero="AsKh"):
+    """A river decision on a checked-through board, optionally facing a bet."""
+    body = _advise_body(
+        stack_bb=100.0, players=2, hero_cards=hero,
+        preflop_action_path=["raise", "raise", "call_or_check"],
+        board="9s4h2c", flop_action_path=["call_or_check", "call_or_check"],
+        turn_card="Qd", turn_action_path=["call_or_check", "call_or_check"],
+        river_card="7d")
+    if bet is not None:
+        body["river_action_path"] = ["raise:%.2f" % bet]
+    response = client.post("/advise", json=body)
+    assert response.status_code == 200, response.json()
+    return response.json()
+
+
+def _river_bet_menu(client):
+    """The sizes the river tree actually offers, read from a response.
+
+    Read rather than computed from the constants: M233's near-miss was a
+    study that trusted a constant's name instead of asking what the tree
+    built, and swept an illegal raise for five milestones' worth of
+    apparent significance.
+    """
+    sizes = _river_facing(client)["modelled_bet_sizes"]
+    assert len(sizes) >= 3, (
+        f"the river offers {sizes}, so this test cannot tell a small bet from an "
+        "overbet - the menu M213 shipped is what it is measuring against")
+    return sizes
+
+
+def test_a_river_player_facing_a_small_bet_is_told_this_engine_under_folds(client):
+    """M241. The first external check of a node FACING A BET.
+
+    Six external studies - flop, turn, river, two width sweeps and a
+    fresh-spot replication - all sent a checked-through flop and asked
+    about the next street's OPENING decision. None asked what happens
+    facing a bet, which is F38's blind spot and the node type M188/M189
+    measured carrying 74% of all cost.
+
+    Measured there, the river folds 0.3950 where an independent solver
+    folds 0.7310: -0.3360 +/- 0.0497 = 6.76 sigma over 42 spots,
+    under-folding on 39 of them. The note exists to be acted on - fold is
+    the serious alternative - so it must actually reach the player.
+    """
+    probe = api_config.RIVER_UNDER_FOLD_NOTE.strip()[:60]
+    sizes = _river_bet_menu(client)
+    payload = _river_facing(client, bet=sizes[0])
+
+    faced = payload["max_affordable_bb"] - payload["effective_stack_bb"]
+    fraction = faced / (payload["pot"] - faced)
+    assert fraction <= api_config.RIVER_UNDER_FOLD_MAX_BET_FRACTION, (
+        f"this bet is {fraction:.2f} of the pot, outside the band the finding "
+        "was measured in, so the test would prove nothing")
+    assert probe in payload["aggression_confidence_reason"]
+
+
+def test_the_river_under_fold_note_is_silent_against_a_large_bet(client):
+    """Facing an overbet the two solvers agreed (1.67 sigma, not separable).
+
+    Quoting a measured gap where the same measurement says it is absent
+    is exactly what M196's gate exists to prevent.
+    """
+    probe = api_config.RIVER_UNDER_FOLD_NOTE.strip()[:60]
+    sizes = _river_bet_menu(client)
+    payload = _river_facing(client, bet=sizes[2])
+
+    faced = payload["max_affordable_bb"] - payload["effective_stack_bb"]
+    fraction = faced / (payload["pot"] - faced)
+    assert fraction > api_config.RIVER_UNDER_FOLD_MAX_BET_FRACTION, (
+        f"the largest modelled bet is only {fraction:.2f} of the pot, so this "
+        "test is not exercising the overbet case it claims to")
+    assert probe not in payload["aggression_confidence_reason"]
+
+
+def test_the_river_under_fold_note_is_silent_at_an_opening_decision(client):
+    """The finding is about facing a bet. Acting first was never measured."""
+    probe = api_config.RIVER_UNDER_FOLD_NOTE.strip()[:60]
+    payload = _river_facing(client)
+    assert "fold" not in " ".join(payload["hero"]["strategy"]), (
+        "this spot is meant to be an opening decision, where folding is not "
+        "legal - if fold appears the fixture has changed underneath the test")
+    assert probe not in payload["aggression_confidence_reason"]
+
+
+def test_the_river_under_fold_note_does_not_fire_on_the_turn(client):
+    """The turn did not separate at ANY bet size (1.63 / 1.91 / 0.45 sigma).
+
+    M168 is the standing example of what applying one street's
+    measurement to another costs: it assumed the flop's reliability
+    certificate transferred and the turn inverted it.
+    """
+    probe = api_config.RIVER_UNDER_FOLD_NOTE.strip()[:60]
+    opening = client.post("/advise", json=_advise_body(
+        stack_bb=100.0, players=2, hero_cards="AsKh",
+        preflop_action_path=["raise", "raise", "call_or_check"],
+        board="9s4h2c", flop_action_path=["call_or_check", "call_or_check"],
+        turn_card="Qd"))
+    assert opening.status_code == 200, opening.json()
+    sizes = opening.json()["modelled_bet_sizes"]
+
+    facing = client.post("/advise", json=_advise_body(
+        stack_bb=100.0, players=2, hero_cards="AsKh",
+        preflop_action_path=["raise", "raise", "call_or_check"],
+        board="9s4h2c", flop_action_path=["call_or_check", "call_or_check"],
+        turn_card="Qd", turn_action_path=["raise:%.2f" % sizes[0]]))
+    assert facing.status_code == 200, facing.json()
+    payload = facing.json()
+    assert any(a == "fold" for a in payload["hero"]["strategy"]), (
+        "this turn node is meant to be facing a bet")
+    assert probe not in payload["aggression_confidence_reason"]
+
+
+def test_the_river_under_fold_note_quotes_its_own_measurement(client):
+    """The copy must move if the measurement does.
+
+    M232's correction is why: the turn's warning quoted a figure measured
+    at a width the product does not run and understated the error by more
+    than half. A disclosure people calibrate on is the last place that is
+    acceptable.
+    """
+    note = api_config.RIVER_UNDER_FOLD_NOTE
+    assert str(api_config.RIVER_UNDER_FOLD_SPOTS) in note
+    assert "%d%%" % round(api_config.RIVER_UNDER_FOLD_REFERENCE_FOLDS * 100) in note
+    assert "%d%%" % round(api_config.RIVER_UNDER_FOLD_WE_FOLD * 100) in note
+    assert "three quarters" in note, (
+        "the note names the bet size it is gated on, and that gate is "
+        f"{api_config.RIVER_UNDER_FOLD_MAX_BET_FRACTION} of the pot")
+    assert api_config.RIVER_UNDER_FOLD_WE_FOLD < api_config.RIVER_UNDER_FOLD_REFERENCE_FOLDS, (
+        "the whole finding is that this engine folds LESS than the reference")

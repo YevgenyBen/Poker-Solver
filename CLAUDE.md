@@ -271,6 +271,55 @@ UNKNOWN. Saying "0.39 away" and letting a reader infer "expensive" would
 be the same error M186 corrected when it found the biggest frequency
 errors sitting where they were cheapest.
 
+### FACING A BET had never been checked from outside — until M241
+
+**Every external comparison before this one measured an OPENING
+decision.** M221 (flop), M222 (turn), M224 (river), M225 and M230
+(width), M236 (replication) all send a checked-through flop and ask
+about the next street's first decision. **F38's entry below says in so
+many words that any postflop measurement must cover nodes facing a bet,
+and six external studies quietly did not.** It is also the expensive
+half — M188/M189 put 74% of all cost at 12% of decisions there.
+
+**The reference was already in the dumps**: a solver dump holds the whole
+tree, so the node after `BET x` carries the other player's strategy over
+the same ranges. No new reference solves — one `/advise` per spot.
+
+117 rows, 39 spots x three bet sizes, on the **FOLD** axis (chosen in
+advance: it needs no size mapping between two menus, the raise axis does):
+
+| street | bet faced | n | ref folds | we fold | signed | sigma |
+|---|---|---|---|---|---|---|
+| turn | 0.33x | 18 | 0.3359 | 0.2443 | -0.0915 | 1.63 |
+| turn | 0.75x | 18 | 0.6574 | 0.4865 | -0.1709 | 1.91 |
+| turn | 2.50x | 18 | 0.8219 | 0.8609 | +0.0390 | 0.45 |
+| **river** | **0.33x** | 21 | **0.6399** | **0.2578** | **-0.3821** | **5.20** |
+| **river** | **0.75x** | 21 | **0.8221** | **0.5323** | **-0.2898** | **4.32** |
+| river | 2.50x | 21 | 0.9578 | 0.8813 | -0.0765 | 1.67 |
+
+**The RIVER separates and the TURN does not — the opposite of the
+opening-decision result**, where the turn is the bad street. M231
+improved the river's opening decision and never touched this node.
+Sometimes categorical: the reference folds ace-high **0.9761** to a
+third-pot bet where we commit **92.5bb into a 20bb pot 0.9676**.
+
+**The control that mattered: the RE-RAISE menus diverge one action
+deeper.** Opening menus agree — all any study here checks — but facing a
+5bb bet the reference could raise to 20bb and we to 9.90bb, which is
+M222's void run in miniature. A cheaper raise should draw mass out of
+folding, so the finding could have been a menu artifact. Matching it was
+predicted to shrink the gap and **widened** it (-0.3821 -> -0.3846).
+**Any facing-a-bet comparison must match the menu at the FACING node,
+not just at the root.**
+
+Shipped: `RIVER_UNDER_FOLD_NOTE`, gated on river + facing a bet +
+`RIVER_UNDER_FOLD_MAX_BET_FRACTION` (0.75). Pooled there, n=42:
+reference folds 0.7310, we fold 0.3950, **-0.3360 +/- 0.0497 = 6.76
+sigma**, 39 of 42, split-half 3.75 / 6.14. The overbet row and the turn
+are deliberately excluded (M168). The gate reads the RESPONSE, so a
+multi-bet street overstates the fraction and the note goes quiet — it
+fails toward silence.
+
 ### The checks REPLICATE on fresh spots (M236) — n=42 per street
 
 M222/M224's figures rested on ~21 spots each and carry a user-facing
