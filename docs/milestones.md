@@ -12982,3 +12982,43 @@ measurement.** M70 said it across sessions, M191 said it across hours,
 and this says it across a single afternoon in which the user opened
 another program.
 
+## M235 — the chained solver is not broken, and M223 stands
+
+M233's write-up left a question open: M223 concluded that chaining the
+river into the turn is a regression, but that conclusion assumed our
+chained solver is CORRECT. A sound two-street CFR should not converge to
+betting everything, and ours runs to 0.997 aggression under both payoff
+conventions. If the implementation were broken, M223 measured our code
+rather than chaining, and the turn's fix would still be live.
+
+One hypothesis died before it was tested: the exact solver AVERAGES over
+every branch of a chance node every iteration (cfr.py's own docstring),
+so 44 river branches are not splitting a budget. Each gets the full
+count.
+
+Measured directly on a real chained solve, 624 river branch decision
+nodes:
+
+| iterations | turn aggression | river aggression | river TVD from uniform | uniform branches | trained rows |
+|---|---|---|---|---|---|
+| 20 | 0.7023 | 0.7798 | 0.2154 | **0 of 624** | 153 of 276 |
+| 150 | 0.9791 | 0.7093 | 0.2553 | **0 of 624** | 153 of 276 |
+| 400 | 0.9971 | 0.7059 | 0.2600 | **0 of 624** | 153 of 276 |
+
+**Every river branch is trained and none is uniform**, to exactly the
+same 153 of 276 rows a standalone river solve reaches on the same spot.
+The turn is not betting into phantom river play, and the runaway is a
+property of the model rather than of untrained branches.
+
+**So M223's conclusion stands and is now load-bearing rather than
+assumed**: chaining is a regression at 2.79 sigma, and the reason is not
+that our chain is broken.
+
+**A comparison deliberately NOT made.** The chained river's aggression
+(0.71) and the independent reference's river figure (0.2086) are
+different quantities - ours is a mean over every combo at one node,
+theirs is one hero's aggression averaged over spots. Setting them side by
+side would have produced a striking number and no knowledge. The
+populations have to match before a ratio means anything, which is the
+same discipline M188 applied to weighting cells by occurrence.
+
