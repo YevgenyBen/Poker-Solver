@@ -13055,3 +13055,48 @@ but did NOT remove its direction: it still bets more than an independent
 solver, now measurably. The report said the river was "largely repaired"
 and that remains true of the magnitude; the direction survives.
 
+## M237 — pricing the gaps, and a correction to this whole round
+
+Every study in this round measured a FREQUENCY distance. This project's
+own thesis says that is the wrong unit: `ev.py` opens with "a frequency
+gap costs nothing when the actions it is split between are close in
+value", and M183 measured the median postflop decision costing 0.0071 bb
+while five spots carried 79% of all loss. The turn's 0.3947 and the
+river's 0.1145 were not yet findings about money.
+
+Priced with `ev.py`, 39 spots per street, everything held fixed except
+hero's mix at the one decision. The counterfactual is the thing actually
+measured: bet as often as the reference does, sized as we already size -
+which avoids inventing a size mapping between two solvers' menus.
+
+| street | n | mean loss | median | worst | value spread | freq gap | corr(gap, loss) |
+|---|---|---|---|---|---|---|---|
+| turn | 39 | **-0.0266 bb** | -0.0472 | +0.1424 | 1.49 | 0.3852 | **-0.321** |
+| river | 39 | **-0.0024 bb** | +0.0018 | +0.0786 | 2.62 | 0.1205 | -0.171 |
+
+The turn's 0.39 frequency gap prices at about nothing. Only 8 of 39 turn
+spots and 1 of 39 river spots cost more than 0.10 bb. The correlation
+between frequency gap and cost is NEGATIVE on both streets.
+
+### Reading the negative sign correctly
+
+It is not "we beat the reference". M233 measured our turn at 0.562% of
+pot exploitable at the shipped 250 iterations - about 0.084 bb on a 15bb
+pot - so a 0.027 bb gain from betting less sits inside our own
+convergence slack. It says our row is slightly sub-optimal in OUR model,
+which is a different and much smaller claim.
+
+### The limitation, which is the finding
+
+This prices the gap inside our own model - our tree, our equity table,
+our opponent strategy. M233 established that the turn's gap IS model
+error. **So a model error was priced with the model that has it.** A
+correct price needs the reference's own EV machinery, and its dumps
+expose strategies rather than values.
+
+So the turn's cost to a player remains UNKNOWN. What is established is
+that **0.39 must not be read as a money figure** - which is exactly the
+error M186 corrected when it found the biggest frequency errors sitting
+where they were cheapest, and which this round was about to repeat in a
+user-facing report.
+

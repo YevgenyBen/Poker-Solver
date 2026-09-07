@@ -187,6 +187,43 @@ spend another milestone on a turn CONFIGURATION.**
 model: the bet menu, the range derivation, or the fact that we solve one
 street at a time. The note now says so to the player, in those words.
 
+### THE FREQUENCY GAPS COST ALMOST NOTHING IN CHIPS (M237) — and that is a limited claim
+
+Every study in this round measured a FREQUENCY distance, which this
+project's own thesis says is the wrong unit (`ev.py`'s opening line, and
+M183's median decision costing 0.0071 bb while five spots carried 79% of
+all loss). Priced with `ev.py` on 39 spots per street - same opponent
+reach, same continuation, same equity table, only hero's mix moving, the
+alternative being "bet as often as the reference does, sized as we
+already size":
+
+| street | n | mean loss | median | worst | value spread | freq gap | corr(gap, loss) |
+|---|---|---|---|---|---|---|---|
+| turn | 39 | **-0.0266 bb** | -0.0472 | +0.1424 | 1.49 | 0.3852 | **-0.321** |
+| river | 39 | **-0.0024 bb** | +0.0018 | +0.0786 | 2.62 | 0.1205 | -0.171 |
+
+**The turn's 0.39 frequency gap prices at about nothing**, and the
+correlation between frequency gap and cost is NEGATIVE on both streets -
+bigger frequency errors are if anything cheaper. M183's finding,
+replicated on a new population.
+
+**The negative sign is NOT "we beat the reference".** M233 measured our
+turn at 0.562% of pot exploitable at the shipped 250 iterations, which on
+a 15bb pot is ~0.084 bb. A 0.027 bb gain from betting less sits inside
+that slack, so it says our row is slightly sub-optimal in OUR OWN model.
+
+**The limitation is the point, and it is severe.** This prices the gap
+using our tree, our equity table and our opponent strategy - and M233
+established the turn's gap IS model error. So a model error was priced
+with the model that has it. A correct price needs the reference's own EV
+machinery, which its dumps do not expose.
+
+**What this does establish**: the turn's 0.39 must NOT be read as a money
+figure. It is a large, replicated disagreement whose cost to a player is
+UNKNOWN. Saying "0.39 away" and letting a reader infer "expensive" would
+be the same error M186 corrected when it found the biggest frequency
+errors sitting where they were cheapest.
+
 ### The checks REPLICATE on fresh spots (M236) — n=42 per street
 
 M222/M224's figures rested on ~21 spots each and carry a user-facing
