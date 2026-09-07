@@ -13150,3 +13150,52 @@ M173 removed to make the turn standalone and 9.1x faster. Any
 implementation needs its own paired latency gate, and the honest
 comparison is against a turn that is currently ~1.5s.
 
+## M239 — M238 withdrawn, and the number it leaves behind
+
+M238 reported flop-aware ranges closing 39% of the turn's gap at 3.32
+sigma, and flagged the confound in its own write-up: **both arms were
+narrowed**, so the improvement might be that narrower ranges are simply
+an easier problem. That confound was testable from data already
+collected, and it was the entire effect.
+
+Scoring both of OUR arms against the SAME reference - the narrowed one,
+which is the better-specified game - over the same 19 spots:
+
+| our arm | mean gap | median |
+|---|---|---|
+| shipped (flop-ignorant ranges) | 0.2613 | 0.3330 |
+| flop-aware ranges | 0.2632 | 0.3229 |
+
+**Paired +0.0019 +/- 0.0704 = 0.03 sigma**, better on 8 of 19. Nothing.
+And against the unnarrowed reference, narrowing our ranges is WORSE
+(+0.1578 +/- 0.0630, 2.51 sigma, better on 4 of 19).
+
+So M238's headline is withdrawn. **Range derivation is not the turn's
+fix**, and it joins chaining (worse), precision (worse) and width
+(inert). Four levers, none of them move it.
+
+### The finding that replaces it
+
+The same table says something more useful than the claim it kills. Our
+SHIPPED engine sits **0.2613** from the flop-aware reference and
+**0.4335** from the flop-ignorant one. **The turn's headline gap is
+inflated by about 40% by measuring on a game neither player would
+actually be in** - a checked-through flop caps both ranges, and the
+comparison that produced 0.4335 gave both solvers ranges that ignore it.
+
+Neither specification is obviously the right one to quote. The narrowed
+reference is more realistic but is built from OUR flop solve's check
+frequencies, so it is not independent of the thing being measured. What
+is not defensible is quoting a number without saying which was used,
+and every figure in this round used the flop-ignorant one.
+
+### The lesson, which is the same one twice in a day
+
+M233's near-miss was a 5.59 sigma improvement that was an illegal raise.
+This was a 3.32 sigma improvement that was a moving reference. Both were
+caught by a control that was named in the write-up BEFORE the result was
+believed - and in this case the control cost nothing, because the data
+to run it had already been collected. **State the confound while the
+result still looks good; it is the only time anyone is motivated to
+test it.**
+
