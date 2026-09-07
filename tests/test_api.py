@@ -34,6 +34,13 @@ SHIPPED_MULTIWAY_FLOP_RAISE_SIZES = api_config.MULTIWAY_FLOP_RAISE_SIZES
 SHIPPED_MULTIWAY_FLOP_MAX_RAISES = api_config.MULTIWAY_FLOP_MAX_RAISES
 SHIPPED_MULTIWAY_TURN_SOLVE_STANDALONE = api_config.MULTIWAY_TURN_SOLVE_STANDALONE
 SHIPPED_MULTIWAY_RIVER_SOLVE_STANDALONE = api_config.MULTIWAY_RIVER_SOLVE_STANDALONE
+# M231. Same reason: the fixture shrinks MAX_PATH_QUERY_CLASSES_PER_SIDE
+# to 2 for speed, so a guard comparing the river's cap against the LIVE
+# value compares it against the test harness rather than the product.
+SHIPPED_MAX_PATH_QUERY_CLASSES_PER_SIDE = api_config.MAX_PATH_QUERY_CLASSES_PER_SIDE
+SHIPPED_RIVER_STANDALONE_CLASSES_PER_SIDE = api_config.RIVER_STANDALONE_CLASSES_PER_SIDE
+SHIPPED_RIVER_STANDALONE_ITERATIONS = api_config.RIVER_STANDALONE_ITERATIONS
+SHIPPED_TURN_STANDALONE_ITERATIONS = api_config.TURN_STANDALONE_ITERATIONS
 # M67 made the real multiway preflop pool all 169 classes, which costs
 # ~170s (6-max) / ~215s (9-max) per spot at production settings. The
 # autouse fixture clears caches between tests, so every multiway test
@@ -7558,6 +7565,90 @@ def test_the_two_tone_note_does_not_leak_onto_a_later_street(client):
     assert probe not in (turn.json().get("aggression_confidence_reason") or ""), (
         "the two-tone note reached the TURN, where the same reference measured "
         "no texture split at all (0.48 sigma / 0.15 sigma, sign reversed)")
+
+
+def test_the_river_iteration_budget_actually_reaches_the_solve(client, monkeypatch):
+    """M231. The hazard that nearly voided the study that produced it.
+
+    A street's solve key carries the CALLER's iteration budget, not
+    `cfg.RIVER_STANDALONE_ITERATIONS`. So two requests differing only in
+    that constant share a cache entry, and the second silently replays
+    the first. In the study that measured this change, the first run
+    reported no effect for exactly that reason, and clearing the cache
+    between arms is what made the 3.63 sigma result appear.
+
+    A refactor that reintroduced the shared key would not fail any test
+    that only reads the config - the constant would still say 1000 while
+    every answer came from a 250-iteration solve. This asserts the
+    BEHAVIOUR: a different budget must produce a different strategy.
+    """
+    body = {
+        "stack_bb": 20.0,
+        "preflop_action_path": ["raise", "call_or_check"],
+        "players": 2,
+        "hero_cards": "6hKh",
+        "board": "9d6dKs",
+        "flop_action_path": ["call_or_check", "call_or_check"],
+        "turn_card": "As",
+        "turn_action_path": ["call_or_check", "call_or_check"],
+        "river_card": "Ts",
+    }
+    monkeypatch.setattr(api_config, "RIVER_STANDALONE_CLASSES_PER_SIDE", 12)
+
+    rows = {}
+    for iterations in (20, 2000):
+        monkeypatch.setattr(api_config, "RIVER_STANDALONE_ITERATIONS", iterations)
+        api_main._SolveCache.clear_all()
+        response = client.post("/advise", json=body)
+        assert response.status_code == 200, response.json()
+        rows[iterations] = response.json()["hero"]["strategy"]
+
+    assert rows[20] != rows[2000], (
+        "a 100x change in the river's iteration budget produced a "
+        "byte-identical strategy - the budget is not reaching the solve, "
+        "which is what a cache key that ignores it looks like")
+
+
+def test_the_rivers_width_and_precision_were_measured_as_a_pair(client):
+    """M231. These two constants are one decision, not two.
+
+    Against an independent solver the river's range width is inert past
+    60 classes once the solve is converged (140/100/60 land within 0.002
+    of each other) while precision is worth 3.63 sigma. Trading one for
+    the other is what makes the change free: cap 60 at 1000 iterations
+    runs at 1.01x the speed of cap 140 at 250.
+
+    Either constant moved alone breaks that. Raising the cap back without
+    dropping iterations reinstates a 4.2s river decision - the arm a
+    paired session benchmark refused for having 1.4% of headroom under
+    the 5s bar on a machine measured drifting 1.7x. Raising iterations
+    without the cap is the same arm by another route.
+
+    So this pins the PAIR and says why, rather than pinning two numbers
+    that look independent and are not.
+
+    It reads the values captured at IMPORT, because the suite's own
+    fixture shrinks MAX_PATH_QUERY_CLASSES_PER_SIDE to 2 for speed - the
+    first version of this guard compared the river's cap against the test
+    harness and failed on a correct configuration.
+    """
+    assert SHIPPED_RIVER_STANDALONE_CLASSES_PER_SIDE == 60, (
+        "the river's cap moved; if that is deliberate, re-run the paired "
+        "width-vs-precision study, because the iteration budget below was "
+        "chosen to be affordable at THIS width")
+    assert SHIPPED_RIVER_STANDALONE_ITERATIONS == 1000, (
+        "the river's iteration budget moved; if that is deliberate, re-run "
+        "the paired latency benchmark, because 1000 was affordable only "
+        "because the cap paid for it")
+    assert (SHIPPED_RIVER_STANDALONE_CLASSES_PER_SIDE
+            < SHIPPED_MAX_PATH_QUERY_CLASSES_PER_SIDE), (
+        "the river is meant to run NARROWER than the flop - that is where "
+        "its iteration budget comes from")
+    assert (SHIPPED_RIVER_STANDALONE_ITERATIONS
+            > SHIPPED_TURN_STANDALONE_ITERATIONS), (
+        "the river is meant to run MORE converged than the turn: precision "
+        "closes the river's independent gap (3.63 sigma) and does nothing "
+        "for the turn's (0.77 sigma)")
 
 
 def test_a_deep_turn_is_told_the_advice_tested_further_from_a_reference(client):

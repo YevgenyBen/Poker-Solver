@@ -120,6 +120,108 @@ on is not always the one you patched.
 
 **Speed: 0.26s against the reference's 5.5s.**
 
+### The RIVER, checked from outside (M224) — and it is not street isolation
+
+The last street nobody outside this codebase had ever looked at, checked
+the same way, 24 spots:
+
+| street | n | median gap | within 0.02 | over 0.10 | signed | sigma |
+|---|---|---|---|---|---|---|
+| flop | 28 | **0.0099** | 19 | 5 | -0.0263 | 0.86 |
+| turn | 24 | 0.1943 | 3 | 15 | +0.1063 | 2.50 |
+| **river** | 24 | **0.1799** | **0** | **18** | **+0.1416** | **2.82** |
+
+**Not one spot in 24 agrees within 0.02**, and we bet more on 19 of 24.
+
+**This KILLS M222's mechanism.** The river's board is complete: there is
+no runout to average, both arms solve one street, and equity is exact on
+both sides (M154). Street isolation cannot explain a gap that is LARGER
+here than on the turn. The hypothesis M222 labelled as a hypothesis is
+withdrawn.
+
+**What it looks like up close**: on Kd8d3c/5d/9h the reference bets AA
+0.834, KQ 0.800 and AK 0.689 while checking a set of nines **0.997** — it
+TRAPS. We bet the set 0.7448. The engine does not keep strong hands in a
+checking range, which is M177's internal finding reached from outside.
+
+### Width is INERT and the studies were not measuring a toy (M225)
+
+Every independent check ran at `COMPARISON_CAP = 25` while the product
+ships at 140 — an objection that could have voided all three. Re-run at
+the shipped width on 21 river spots: **paired +0.0476 +/- 0.0382 = 1.25
+sigma**, 12 of 21 WORSE wide, and the over-aggression is **stronger**:
+**+0.1909 at 3.71 sigma, more aggressive on 18 of 21**. The findings
+describe the shipped product.
+
+### CHAINING THE RIVER INTO THE TURN IS A REGRESSION (M223) — do not retry
+
+M222 named a mechanism and the report put +5-8 on fixing it. Built from
+existing primitives (`solve_flop_turn` handed a FOUR-card board is
+exactly a turn->river chain) and measured on 24 spots:
+
+| arm | mean gap | paired | sigma | closer/further |
+|---|---|---|---|---|
+| shipped (turn alone) | 0.1844 | — | — | — |
+| chained | 0.3557 | **+0.1713** | **2.79** | 10/14 |
+| chained, true payoff | 0.3975 | **+0.2131** | **3.22** | 9/15 |
+
+**Separably WORSE, at 237x the latency**, and a converged chain runs to
+**0.997 aggression** — it bets everything. Cost at production width is
+177s at 5 iterations and 333s at 20, against the standalone turn's 2.50s,
+with a marginal iteration of **10.4s**: nothing like M198's flop chain
+where iterations were nearly free. **Do not price chained work by
+analogy.**
+
+**F45 evidence, the first there has ever been.** Correcting the dead-pot
+convention (valuing each player's OWN payoff) makes a chained solve
+CONVERGE — TVD(150,400) **0.0003** against the shipped convention's
+**0.0991** — and converge to the same degenerate answer. So the
+convention affects convergence, which F45 called unadjudicated; but no
+shipped answer depends on it, because all four `*_SOLVE_STANDALONE` flags
+are True and `/advise` never chains streets. Recorded, not changed.
+
+### PRECISION IS NOT A DEAD AXIS — it was measured with the wrong ruler (M226/M231)
+
+M152 and M190 both declared the iteration budget dead. **Both scored it
+against a fuller solve of our OWN model, where a convergence error both
+arms share cancels out.** M211 said the same thing from the other side
+using exploitability, which needs no reference.
+
+Against an independent solver, 250 -> 1000 iterations:
+
+| street | paired | sigma | closer on |
+|---|---|---|---|
+| turn | -0.0228 | 0.77 | 15/24 |
+| **river** | **-0.1274** | **3.63** | **19/21** |
+
+On the river the signed over-aggression goes **+0.1909 -> +0.0463**. Most
+of what looked structural was an unconverged solve. **4000 is WORSE than
+1000** (0.1482 vs 0.1313, non-monotone — M141's conservation law), so
+1000 is a setting and not a direction. **The TURN does not respond**;
+the two streets are wrong for different reasons.
+
+**And it is FREE, because width pays for it.** Every arm scored against
+the same cap-140 reference:
+
+| cap | iters | mean gap | sigma vs shipped | speed |
+|---|---|---|---|---|
+| 140 | 250 | 0.2587 | — | 1.00x |
+| 140 | 1000 | 0.1313 | 3.63 | 0.28x |
+| 100 | 1000 | 0.1314 | 3.62 | 0.32x |
+| **60** | **1000** | **0.1294** | **3.61** | **1.01x** |
+| 25 | 1000 | 0.2048 | 0.87 | 1.32x |
+
+`RIVER_STANDALONE_CLASSES_PER_SIDE = 60` and
+`RIVER_STANDALONE_ITERATIONS = 1000`. **They are ONE decision**: cap 140
+at 1000 iterations puts the river's median decision at 4.32s with a worst
+case of 4.93s against the 5s bar — 1.4% of headroom on a machine measured
+drifting 1.7x, which is M213's refusal reproduced. Cap 60 buys the same
+accuracy at 1.01x the shipped latency.
+**Why M190/M191 pointed the other way**: they swept the cap at 250
+iterations, where extra width was compensating for an unconverged solve.
+Converge first and width past 60 stops paying.
+
+
 ## External tools are INSTRUMENTS, never ingredients
 
 **Stone law.** Independent solvers (TexasSolver, postflop-solver), bot
@@ -575,8 +677,10 @@ requests now reject unknown fields by name rather than ignoring them.
   **The menu costs 1.4-1.6x; the iterations cost 4-5x.** M212's warning
   was true and quantified rather than assumed: the ~0.5 exploitability
   points given up is worth **~0.03 bb** against a capability worth up to
-  **1.74 bb**. `TURN_STANDALONE_ITERATIONS = 250` and
-  `RIVER_STANDALONE_ITERATIONS = 250`. **menu@500 is strictly better on
+  **1.74 bb**. `TURN_STANDALONE_ITERATIONS = 250` and, at the time,
+  `RIVER_STANDALONE_ITERATIONS` 250 as well — **M231 later took the river
+  to 1000**, paid for by narrowing its range cap, on evidence M213 could
+  not have had: an independent reference. **menu@500 is strictly better on
   BOTH axes** and was still left out, because 2.77s cold breaches 5s in
   the slower machine state two of four seeds ran in — it is the first
   thing to try if these streets get cheaper. **An isolated solve and a
