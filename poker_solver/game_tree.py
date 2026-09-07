@@ -485,7 +485,11 @@ def resolve_action(node: "DecisionNode", kind: str, size: float | None = None) -
 
 
 def _validate_raise_sizes(raise_sizes: tuple) -> None:
-    """Each entry is a positive multiplier, or a non-empty tuple of them.
+    """Each entry is a valid multiplier, or a non-empty tuple of them.
+
+    Valid means positive everywhere, and for levels after the first -
+    which multiply the previous bet rather than the pot - strictly
+    greater than 1.0, because a raise has to exceed what it raises.
 
     Checked rather than trusted because a malformed menu does not fail —
     an empty tuple silently removes every sized raise at that level, and
@@ -505,6 +509,28 @@ def _validate_raise_sizes(raise_sizes: tuple) -> None:
                 raise ValueError(
                     f"raise_sizes[{level - 1}] contains {multiplier!r}; "
                     "every multiplier must be a positive number"
+                )
+            # M233. Levels after the first multiply THE PREVIOUS BET
+            # (see _raise_total_sizes), so a multiplier of 1.0 or less
+            # builds a "raise" no larger than the bet it faces - which
+            # is not a raise. The tree constructs it happily and every
+            # legality invariant passes, because none of them compares a
+            # raise against what it is raising.
+            #
+            # Found by nearly shipping it: a study read this entry as a
+            # multiple of the POT, swept it down to 0.6, and measured a
+            # 5.59 sigma "improvement" that was the solver exploiting an
+            # illegal 2.97bb raise against a 4.95bb bet. The check that
+            # caught it was reading `modelled_bet_sizes` out of a real
+            # response; this makes that unnecessary.
+            if level > 1 and multiplier <= 1.0:
+                raise ValueError(
+                    f"raise_sizes[{level - 1}] contains {multiplier!r}, but "
+                    "every entry after the first multiplies the PREVIOUS BET - "
+                    "so a multiplier at or below 1.0 raises to no more than the "
+                    "bet being faced, which is not a legal raise. (Real poker is "
+                    "stricter still: a min-raise must raise BY the previous "
+                    "increment.)"
                 )
 
 

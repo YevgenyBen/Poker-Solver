@@ -134,6 +134,22 @@ one failure mode a warning may not have. `TURN_INDEPENDENT_GAP_MEDIAN` is
 now 0.5268 and the copy is pinned to the constants by
 `test_the_turn_note_quotes_the_production_width_measurement`.
 
+**THE TURN'S GAP IS MODEL ERROR, PROVEN WITHOUT A REFERENCE (M233).**
+Exploitability needs no reference and has no shared blind spot, so it
+separates "we solve our model badly" from "our model is not the game".
+10 turn spots at production width:
+
+| iterations | exploitability | distance from the reference |
+|---|---|---|
+| 250 | 0.562% of pot | 0.3742 |
+| **1000** | **0.083%** | **0.4351** |
+
+At 1000 iterations we sit **0.083% of pot from equilibrium — an order of
+magnitude tighter than the independent reference's own 0.32-0.50%** — and
+our distance from that reference GROWS. **We are solving a different game
+correctly.** It also explains why precision made the reference gap worse:
+converging harder onto the wrong model walks away from the right answer.
+
 **THE TURN IS STRUCTURAL — three knobs, none of them move it (M232).**
 | what was tried | result |
 |---|---|
@@ -141,7 +157,33 @@ now 0.5268 and the copy is pinned to the constants by
 | more precision (M226/M230) | **worse** at production width, +0.0811 at 2.04 sigma |
 | range width, 25/60/100/140 (M232) | **inert** — every arm lands in 0.42-0.50 |
 Best paired arm is cap 25 at -0.0075 (0.13 sigma), i.e. nothing. **Do not
-spend another milestone on a turn CONFIGURATION.** What is left is the
+spend another milestone on a turn CONFIGURATION.**
+
+- **`raise_sizes` AFTER THE FIRST ENTRY MULTIPLIES THE PREVIOUS BET, NOT
+  THE POT — and a value <= 1.0 builds an illegal raise (M233).**
+  `_raise_total_sizes` sets `reference = open_size_reference if
+  raise_number == 1 else previous_bet`. So in
+  `((0.33, 0.75, 2.5), 2.0)` the 2.0 means **raise to twice the bet
+  faced** — for a third-pot bet that is 0.66x pot, a normal sizing — and
+  NOT "two pots".
+  **A near-miss worth the entry.** A study read that 2.0 as a pot
+  multiple, believed our re-raise was 3x the reference's, swept it down,
+  and measured **-0.0694 +/- 0.0124 = 5.59 sigma "better"** at 0.6 and
+  -0.2224 at 0.4. Every one of those arms was raising to LESS than the
+  bet it faced (2.97bb against a 4.95bb bet at 0.6), which the tree
+  builds happily: **all eight of M117's legality invariants pass, because
+  none of them compares a raise against what it is raising.** The trend
+  even flattened around 0.2-0.3 in the way a real optimum would.
+  What caught it was reading `modelled_bet_sizes` out of a real response
+  instead of trusting the constant. `_validate_raise_sizes` now rejects
+  it at construction, mutation-tested both ways.
+  **Two consequences.** The reference at `raise_pct=60` was ALREADY
+  approximately matched to our tree, so the comparisons behind M222/M230
+  were fair; and M232's user-facing direction (**we bet more, +0.3306**)
+  STANDS — the "sign flip" that appeared when the reference was set to
+  `raise_pct=200` was a genuine MISmatch, giving the reference a
+  two-pot raise, not a correction.
+ What is left is the
 model: the bet menu, the range derivation, or the fact that we solve one
 street at a time. The note now says so to the player, in those words.
 

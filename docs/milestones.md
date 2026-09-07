@@ -12808,3 +12808,72 @@ product. M225 asked this question for the river and the answer was
 benign (width inert, 1.25 sigma); nobody asked it for the turn, and there
 the answer was a factor of two.
 
+## M233 — the turn is solving a different game, and a 5.59 sigma near-miss
+
+### The finding
+
+Every knob had failed on the turn and the question underneath them had
+never been asked directly: are we solving our own model badly, or is our
+model not the game? Exploitability answers that without a reference,
+because it measures what a best-responding opponent wins against our
+strategy inside our own tree.
+
+| iterations | exploitability | reference gap |
+|---|---|---|
+| 250 | 0.562% of pot | 0.3742 |
+| 1000 | **0.083%** | **0.4351** |
+
+At 1000 iterations the turn is **0.083% of pot from its own
+equilibrium**, tighter than the independent reference's 0.32-0.50%, and
+its distance from that reference is LARGER than at 250. **We solve our
+model to near-equilibrium and still disagree, so the disagreement is the
+model.** That closes the turn as a configuration problem for good, and it
+retro-explains M230: more precision moved the reference gap the wrong way
+because converging onto the wrong model walks away from the right answer.
+
+### The near-miss, which is the more useful half
+
+`raise_sizes[0]` is a multiple of the pot; **every entry after it
+multiplies the previous bet** (`_raise_total_sizes`). A study read the
+turn's `2.0` as "two pots", concluded our re-raise was three times the
+reference's 60%, and swept it downward. The numbers were beautiful:
+**-0.0694 +/- 0.0124 = 5.59 sigma at 0.6x, better on 18 of 21**, monotone
+through 1.0 and 0.8, deepening to -0.2224 at 0.4, and then FLATTENING at
+0.2-0.3 exactly as a real optimum would.
+
+All of it was the solver exploiting an illegal action. At 0.6 the "raise"
+was 2.97bb against a 4.95bb bet - raising to less than a call. The tree
+builds that without complaint and **all eight of M117's legality
+invariants pass, because none of them compares a raise against what it is
+raising.**
+
+Three things saved it, in order: a control (the RIVER's identical
+constant showed no benefit, 0.88 sigma - if the effect were merely
+"matching the reference helps", the river would have moved too); the
+suspicion that a trend which never turns is an artifact; and finally
+reading `modelled_bet_sizes` out of a real `/advise` response rather than
+trusting the constant's name.
+
+`_validate_raise_sizes` now rejects a re-raise multiplier at or below
+1.0, with the reason in the error text. Mutation-tested both ways -
+removing the check, and applying it to the opening level too, which would
+break every shipped menu since opening multipliers are pot fractions.
+
+### What this corrects in the record
+
+**M234 and M235 are VOID.** M234 set the reference to `raise_pct=200`
+believing it matched our tree; it did not - it gave the reference a
+two-pot raise, which is why its aggression jumped to ~1.0 and the signed
+gap "flipped" to -0.2462. The reference at 60% was already the
+approximate match.
+
+**So M232's shipped direction stands**: we bet more than the reference,
++0.3306 at production width. It was almost withdrawn on the strength of a
+mismatched comparison, which would have replaced a correct warning with
+no warning.
+
+**The rule this earns**: when a sweep of one constant produces a large,
+clean, monotone effect, check that every arm still builds a LEGAL game
+before believing it. The nine dead reweightings of M130-M141 all failed
+honestly; this one would have succeeded dishonestly.
+

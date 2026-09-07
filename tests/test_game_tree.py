@@ -3,6 +3,7 @@ from itertools import combinations
 import pytest
 
 from poker_solver.game_tree import (
+    _validate_raise_sizes,
     ALL_IN,
     BB,
     BTN,
@@ -1144,3 +1145,55 @@ def test_a_bare_kind_still_resolves_for_every_shipped_configuration():
         positions=("OOP", "IP"), pot=10.0, stack_bb=100.0,
         raise_sizes=(2.5, 3.0, 2.2), max_raises=4))
     assert str(resolve_action(root, RAISE)) == "raise:25.00"
+
+
+def test_a_reraise_multiplier_at_or_below_one_is_not_a_raise():
+    """M233. The check that would have caught a near-miss in minutes.
+
+    `raise_sizes[0]` is a multiple of the POT (postflop) or the big blind
+    (preflop), but every entry after it multiplies THE PREVIOUS BET - see
+    `_raise_total_sizes`. So 0.6 at a re-raise level does not mean "0.6 of
+    the pot", it means "raise to 0.6 of the bet you are facing", which is
+    less than calling.
+
+    The tree built that happily and all eight legality invariants passed,
+    because none of them compares a raise against what it is raising. A
+    study swept this entry down to 0.6 believing it was a pot fraction,
+    measured a 5.59 sigma "improvement" against an independent solver, and
+    was one step from shipping it; the improvement was the solver making
+    use of a 2.97bb raise against a 4.95bb bet.
+
+    Guarding the CONSTRUCTOR rather than the sweep, because the next
+    person to misread it will not be running that study.
+    """
+    for bad in (0.6, 1.0):
+        with pytest.raises(ValueError, match="not a legal raise"):
+            StreetConfig(positions=("OOP", "IP"), pot=10.0, stack_bb=100.0,
+                         raise_sizes=((0.33, 0.75, 2.5), bad), max_raises=3)
+
+    # The opening entry is a POT fraction and must stay free to be small.
+    StreetConfig(positions=("OOP", "IP"), pot=10.0, stack_bb=100.0,
+                 raise_sizes=((0.33, 0.75, 2.5), 2.0), max_raises=3)
+
+
+def test_every_shipped_raise_menu_offers_real_raises():
+    """M233. The same rule, applied to what actually ships.
+
+    A menu is only checked when a tree is built with it, so a constant
+    that no test happens to construct could carry an illegal size for a
+    long time. This walks the shipped menus directly.
+    """
+    from api import config as cfg
+
+    for name in ("FLOP_RAISE_SIZES", "TURN_STANDALONE_RAISE_SIZES",
+                 "RIVER_STANDALONE_RAISE_SIZES", "MULTIWAY_FLOP_RAISE_SIZES",
+                 "FLOP_TURN_RAISE_SIZES"):
+        sizes = getattr(cfg, name)
+        if not sizes:
+            continue
+        _validate_raise_sizes(sizes)
+        for level, entry in enumerate(sizes[1:], start=2):
+            for multiplier in (entry if isinstance(entry, tuple) else (entry,)):
+                assert multiplier > 1.0, (
+                    "%s level %d offers %r, which raises to no more than the "
+                    "bet it faces" % (name, level, multiplier))
