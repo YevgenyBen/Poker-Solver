@@ -12779,3 +12779,32 @@ configuration**: it compared the river's cap against the LIVE
 MAX_PATH_QUERY_CLASSES_PER_SIDE, which the suite's own fixture shrinks to
 2 for speed. It now reads values captured at import, the same fix M220
 made for the multiway sizes.
+
+## M232 — the turn's warning was understating its own measurement
+
+M222 measured the turn against an independent solver at cap 25, because
+that is what the REFERENCE could afford, and then put that number in
+front of players. At the shipped cap 140 the same comparison gives mean
+**0.4235** and median **0.5268** against the published 0.1943.
+
+A warning that understates the error by more than half is worse than a
+warning that is absent, because a player calibrates on it. The copy now
+quotes the production-width figures (53 points typical, +33 points of
+over-betting) and `test_the_turn_note_quotes_the_production_width_
+measurement` derives the percentages FROM the constants, so the two
+cannot drift apart again without failing.
+
+**It also records that the turn is structural.** Three explanations were
+tested to destruction: chaining the river in is worse (2.79 sigma), more
+precision is worse at production width (2.04 sigma), and range width from
+25 to 140 is inert (every arm 0.42-0.50, best paired arm 0.13 sigma). The
+note tells the player that too - not as detail, but because "we tested
+three fixes and none worked" is the difference between a caveat and an
+excuse.
+
+**Generalisable lesson**: a measurement taken at whatever setting the
+INSTRUMENT could afford is not automatically a measurement of the
+product. M225 asked this question for the river and the answer was
+benign (width inert, 1.25 sigma); nobody asked it for the turn, and there
+the answer was a factor of two.
+

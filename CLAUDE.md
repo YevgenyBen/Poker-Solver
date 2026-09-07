@@ -120,6 +120,31 @@ on is not always the one you patched.
 
 **Speed: 0.26s against the reference's 5.5s.**
 
+**M232 CORRECTED the figure the player is given.** M222 measured the turn
+at cap 25 — the width the REFERENCE could afford — and quoted it. At the
+shipped cap 140, against a reference handed the same 140-class ranges:
+
+| arm | mean | median | over 0.10 | signed |
+|---|---|---|---|---|
+| cap 25 / 250 (what M222 published) | 0.1942 | 0.1994 | 14/21 | — |
+| **cap 140 / 250 (shipped)** | **0.4235** | **0.5268** | **17/21** | **+0.3306** |
+
+**The disclosure understated the error by more than half**, which is the
+one failure mode a warning may not have. `TURN_INDEPENDENT_GAP_MEDIAN` is
+now 0.5268 and the copy is pinned to the constants by
+`test_the_turn_note_quotes_the_production_width_measurement`.
+
+**THE TURN IS STRUCTURAL — three knobs, none of them move it (M232).**
+| what was tried | result |
+|---|---|
+| model the river inside the turn (M223) | **worse**, +0.1713 at 2.79 sigma, 237x cost |
+| more precision (M226/M230) | **worse** at production width, +0.0811 at 2.04 sigma |
+| range width, 25/60/100/140 (M232) | **inert** — every arm lands in 0.42-0.50 |
+Best paired arm is cap 25 at -0.0075 (0.13 sigma), i.e. nothing. **Do not
+spend another milestone on a turn CONFIGURATION.** What is left is the
+model: the bet menu, the range derivation, or the fact that we solve one
+street at a time. The note now says so to the player, in those words.
+
 ### The RIVER, checked from outside (M224) — and it is not street isolation
 
 The last street nobody outside this codebase had ever looked at, checked

@@ -2258,25 +2258,35 @@ STREET_ISOLATION_COST_WORST = 0.4123
 # arm solved 140 classes against a reference given 25. The two sides were
 # solving different games. The tell was the magnitude - 37x fits nothing
 # else known about this engine.
-TURN_INDEPENDENT_GAP_MEDIAN = 0.1943
+# M232 corrected these to PRODUCTION WIDTH. M222 measured the turn at
+# cap 25 - the width the reference could afford - and the note quoted
+# that figure to players. Re-measured at the shipped cap 140, against a
+# reference given the same 140-class ranges, the gap is more than twice
+# as large: mean 0.4235, median 0.5268, 17 of 21 spots over 0.10, signed
+# +0.3306. A warning that understates the error by half is the one
+# failure mode a warning may not have.
+TURN_INDEPENDENT_GAP_MEDIAN = 0.5268
+TURN_INDEPENDENT_GAP_MEAN = 0.4235
+TURN_INDEPENDENT_GAP_SIGNED = 0.3306
 TURN_INDEPENDENT_GAP_FLOP_MEDIAN = 0.0099
 TURN_INDEPENDENT_SPR_MIN = 5.0
 TURN_INDEPENDENT_NOTE = (
     " A warning specific to the turn, and it is the sharpest one here. Checked against a "
     "different solver entirely - one that plays the river out instead of averaging it in - "
-    "turn advice sat about 19 percentage points away from it on the typical spot, against "
-    "1 point on the flop. Only 3 of 24 turn spots agreed within 2 points, where 19 of 28 "
-    "flop spots did. The disagreement has a direction: this engine BETS MORE than the "
-    "reference, by about 11 points on average, and that held on a second set of spots "
-    "built differently. The likely reason is the limitation described above showing up "
-    "where it bites hardest - a solve that never plays the river out cannot be punished "
-    "on the river, so it has less reason to keep a checking range. On the turn, with money "
+    "turn advice sat about 53 percentage points away from it on the typical spot, against "
+    "1 point on the flop. Only 4 of 21 turn spots agreed within 10 points. The "
+    "disagreement has a direction: this engine BETS MORE than the reference, by about 33 "
+    "points on average, and that direction held on a second set of spots built differently. "
+    "Three explanations were tested and all three failed: modelling the river inside the "
+    "turn made it WORSE, more solving precision made it worse, and every range width from "
+    "25 to 140 classes landed in the same place. So this is a difference in the model "
+    "itself, not a setting, and it is disclosed rather than fixed. On the turn, with money "
     "still behind, treat a marginal bet from this engine as a candidate to check instead. "
     "This does NOT apply when the pot is already large relative to the stack: repeated at a "
-    "stack of well under one pot, the typical spot agreed to within a point or two, because at "
-    "that depth one bet commits and there is little strategy left to differ about - though a "
-    "handful of spots there still disagreed sharply, so this is the typical case and not "
-    "every case."
+    "stack of well under one pot, the typical spot agreed to within a point or two, because "
+    "at that depth one bet commits and there is little strategy left to differ about - "
+    "though a handful of spots there still disagreed sharply, so this is the typical case "
+    "and not every case."
 )
 
 # M221. The first finding this project has that came from OUTSIDE.
