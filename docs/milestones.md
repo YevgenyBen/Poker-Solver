@@ -13199,3 +13199,98 @@ to run it had already been collected. **State the confound while the
 result still looks good; it is the only time anyone is motivated to
 test it.**
 
+## M240 — latency in reference units, and the drift is worse than recorded
+
+The report's last open recommendation, and the one this project has
+broken most often: **measure latency against a reference workload, not
+in bare seconds.** M70 set the rule after finding identical work running
+1.7x slower between two milestones. It has been enforced by "run an
+interleaved A/B", which works when there are two arms and does nothing
+for a single-arm number - a cold-request cost, a per-street breakdown.
+Those are exactly the numbers that have gone wrong: M190 published a
+flop at 3.19s that measured 2.04s later, M234's gate flagged 20
+decisions over 5s that a paired run showed as 130 in the OLD arm, and a
+cost study produced a negative marginal cost before it was discarded.
+
+`bench/reference_units.py` (deliberately outside the shipped packages -
+nothing under `poker_solver/` or `api/` imports it). A **reference unit
+is one run of a fixed engine workload**: a fixed board, a fixed 90-combo
+pool, a fixed seed, ~0.28s. Time the thing you care about, time the
+reference beside it, report the ratio. `DriftClock.report()` gives the
+drift the run itself saw, so a study prints what the machine did rather
+than silently pricing it in.
+
+Two properties, both asserted by tests rather than assumed: it is the
+**same work every time** (`reference_result()` is byte-identical run to
+run, so a change in its cost is a change in the machine), and it is
+**made of the work being normalised** (a real `solve_flop`, so it pays
+for an equity table AND a CFR solve - the two cost centres M217 measured
+inverting three times; a reference built from one would mis-normalise
+the other).
+
+### Validated by INDUCING drift, not waiting for it
+
+The unit tests prove the arithmetic cancels a uniform slowdown. They
+cannot prove this machine's drift IS uniform - and if it hit the equity
+table and the tree walk differently, the instrument would mis-correct
+while looking like it worked. So the same measured workload (a different
+board, a wider pool, a different tree - nothing normalised against
+itself) was run quiet, under full CPU contention on all 24 cores, then
+quiet again:
+
+| comparison | in seconds | in reference units |
+|---|---|---|
+| quiet -> loaded | **4.82x slower** | **0.944x** |
+| quiet -> quiet, same run | **1.32x slower** | **0.986x** |
+
+**It removes 98.3% of the induced slowdown.** Whole-run spread falls
+from 0.7575 to 0.3264.
+
+**The second row is the finding, and it was not induced.** Two phases a
+study would call identical - same code, same machine, no load, a 2s
+settle between them - differ by **32% in seconds and 1.4% in units**.
+That is M70's problem happening inside one run, and it is the shape that
+has produced this project's bad latency numbers.
+
+**The drift is worse than anything previously recorded here.** The
+reference ranged **0.271s to 2.629s within the single run, a 9.7x
+spread**, against the 1.7x M70 measured between milestones.
+
+### What it costs, stated because it is a real cost
+
+On a machine holding still, units are **noisier** than seconds - 4%
+against 0.6% in the quiet phase - because a ratio carries the
+reference's own variation, and under contention a single reading is
+noisier still (CV 0.46 against 0.27). **Normalising buys a correct level
+at the price of per-measurement precision**, so a study must quote a
+median over several measurements and never a lone unit reading.
+
+`recalibrate_after_seconds` defaults to **0.0** - a fresh reference
+before every measurement - because that is the setting the validation
+ran at. Shipping a different default would mean quoting a validation for
+a configuration nobody measured. Cost is one unit per measurement, under
+10% of a typical study, and a rate held even briefly can be badly wrong
+given the 9.7x spread above.
+
+### A guard caught its own author
+
+The study's first draft passed `raise_sizes=(0.33, 0.75, 2.5)` to a flop
+solve - the M203 menu written as a flat tuple. `_validate_raise_sizes`,
+added in M233 after a 5.59-sigma artifact that turned out to be illegal
+raises, rejected it at construction: entries after the first multiply
+the PREVIOUS BET, so 0.75 there is a raise to less than the bet faced.
+The harness would otherwise have measured a tree that cannot occur.
+**The guard fired on a scratchpad script three milestones after the
+mistake it was written for.**
+
+### Status of the report's other recommendations
+
+Reviewed alongside this one. R1 (river cap 60 / 1000 iterations) shipped
+in M231; R2 (chaining the river into the turn) is recorded as
+measured-and-refused; R3 (a river disclosure) is superseded, the fix
+having shrunk the gap below the level a warning would inform at; R4 (why
+the turn is wrong) is answered - the gap is model error, now with a
+FOURTH failed fix since (M238/M239's flop-aware ranges, 0.03 sigma); R5
+(the flop's cap against an outside reference) shipped in M234 as 140 ->
+100; R6 (the dead-pot convention) is recorded in CLAUDE.md's F45 entry
+with M223's first real evidence. **Every recommendation is now closed.**

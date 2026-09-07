@@ -2753,12 +2753,27 @@ slower than when M68 measured them (9-max/3k: 418s vs 249s; 6-max/12k:
 sessions are not comparable**, and `docs/milestones.md` is full of them.
 M68's headline "1.95x" was withdrawn in M70 for exactly this reason.
 
+**And the drift is far worse than 1.7x, and happens INSIDE one run
+(M240).** Measured directly: a fixed workload ranged **0.271s to 2.629s
+within a single run, a 9.7x spread** — and two *quiet* phases of that
+run, no load applied, differed by **32%**. Any single-arm number timed
+across more than a few seconds is suspect by default.
+
 When making a speed claim, do one of these — never a bare before/after
 across sessions:
 - **Interleaved A/B in one process** (old and new implementation,
   alternating). This is what produced M70's trustworthy 6.06x and 1.38x.
-- **Normalize against a reference workload** measured in the same run,
-  and report "reference units" alongside seconds.
+- **Normalize against a reference workload** — `bench/reference_units.py`,
+  built and validated in M240. `DriftClock.measure(fn)` returns seconds
+  AND reference units, and `report()` names the drift the run saw.
+  Validated by INDUCING drift: under full CPU contention the same work
+  reads **4.82x slower in seconds and 0.944x in units**, removing 98.3%
+  of the slowdown. Use it for anything an A/B cannot cover — a
+  single-arm cost, a per-street breakdown, a cache-fill rate.
+  **Its cost is precision**: on a still machine units are noisier than
+  seconds (4% against 0.6%), because a ratio carries the reference's own
+  variation. Quote a median over several measurements, never a lone
+  reading.
 
 ### Verification
 
