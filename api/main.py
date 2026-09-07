@@ -1527,6 +1527,41 @@ def _turn_independent_gap_applies(raw: dict, street: str | None) -> bool:
     return behind / pot >= cfg.TURN_INDEPENDENT_SPR_MIN
 
 
+def _river_under_folds_applies(raw: dict, street: str | None) -> bool:
+    """Is this a river decision facing a bet small enough for M241's gap?
+
+    M241. Facing a bet of at most `RIVER_UNDER_FOLD_MAX_BET_FRACTION` of
+    the pot on the river, this engine folds 0.3950 where an independent
+    solver folds 0.7310 - 6.76 sigma over 42 spots. Facing an OVERBET the
+    two agree (1.67 sigma) and the turn is not separable at any size, so
+    both are excluded: M168 is what quoting one street's measurement at
+    another costs.
+
+    The bet faced is derived from the response rather than the request,
+    the same way `_is_facing_a_bet` derives its own signal (M144's rule).
+    `max_affordable_bb` is the stack entering this street and
+    `effective_stack_bb` is what is left after the bet, so their
+    difference is what hero faces. With more than one bet already in this
+    street that difference is the total rather than the last bet, which
+    OVERSTATES the fraction and makes the note fire less often - a gate
+    quoting a specific measurement should fail toward silence.
+    """
+    if street != "river":
+        return False
+    if not _is_facing_a_bet(raw):
+        return False
+    pot = raw.get("pot")
+    entering = raw.get("max_affordable_bb")
+    behind = raw.get("effective_stack_bb")
+    if not all(isinstance(v, (int, float)) for v in (pot, entering, behind)):
+        return False
+    faced = entering - behind
+    pot_before_the_bet = pot - faced
+    if faced <= 0 or pot_before_the_bet <= 0:
+        return False
+    return faced / pot_before_the_bet <= cfg.RIVER_UNDER_FOLD_MAX_BET_FRACTION
+
+
 def _drawy_board_applies(raw: dict, street: str | None) -> bool:
     """Is this a flop where a flush draw is live?
 
@@ -1651,6 +1686,12 @@ def _aggression_reason(raw: dict, hero: dict | None = None) -> str:
     # known about this decision.
     if _is_facing_a_bet(raw):
         reason += cfg.FACING_A_BET_COST_NOTE
+        # M241: the first external check of a facing-a-bet node, and the
+        # only cell that separated. Nested here rather than beside the
+        # other street notes because it is a property of THIS decision,
+        # not of the street.
+        if _river_under_folds_applies(raw, street):
+            reason += cfg.RIVER_UNDER_FOLD_NOTE
         # M189: graded, not replaced. The coarse note covers all
         # facing-a-bet decisions because even out-of-band ones average
         # ~0.3 bb against an opening decision's 0.03. This adds the

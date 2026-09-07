@@ -2317,6 +2317,76 @@ TURN_INDEPENDENT_NOTE = (
     "and not every case."
 )
 
+# M241. The first external check of a node FACING A BET, and the blind
+# spot it closed had been open for six studies.
+#
+# Every external comparison before this one - flop, turn, river, the
+# width sweeps, the fresh-spot replication - sent a checked-through flop
+# and asked about the next street's OPENING decision. Not one asked what
+# happens facing a bet, which is the node type M188/M189 measured
+# carrying 74% of all cost at 12% of decisions. That is F38's blind spot
+# exactly, and this file has said since F38 that any postflop accuracy
+# study must cover those nodes.
+#
+# Measured over 117 rows, 39 spots x three bet sizes, the FOLD axis -
+# chosen before the data existed because it needs no size mapping
+# between two solvers' menus, which the raise axis does:
+#
+#   street  bet faced   n   reference folds   we fold   signed   sigma
+#   turn    0.33x pot   18       0.3359        0.2443   -0.0915   1.63
+#   turn    0.75x pot   18       0.6574        0.4865   -0.1709   1.91
+#   turn    2.50x pot   18       0.8219        0.8609   +0.0390   0.45
+#   river   0.33x pot   21       0.6399        0.2578   -0.3821   5.20
+#   river   0.75x pot   21       0.8221        0.5323   -0.2898   4.32
+#   river   2.50x pot   21       0.9578        0.8813   -0.0765   1.67
+#
+# **The river is the separable one and the turn is not**, which is the
+# opposite of what the opening-decision studies would predict - and the
+# river is the street M231 improved, because that fix only ever touched
+# the opening decision.
+#
+# The note covers exactly the two rows that separate: river, facing a bet
+# at or below 0.75x the pot. Pooled there, n=42: the reference folds
+# 0.7310 and we fold 0.3950, signed -0.3360 +/- 0.0497 = 6.76 sigma,
+# under-folding on 39 of 42 spots, split-half 3.75 / 6.14 sigma. The
+# overbet row is NOT covered (1.67 sigma) and neither is the turn - M168
+# is the standing example of what quoting one measurement where another
+# was taken costs.
+#
+# Four controls, because a result this large is more likely to be a
+# harness error than a discovery:
+#   - the player mapping was verified empirically, by recomputing the
+#     reference's root row and reproducing the stored opening-decision
+#     figure exactly;
+#   - our nodes at these spots are trained and confident, and our fold
+#     frequency moves with the bet size, so this is not M209's pre-menu
+#     defect;
+#   - hero was already in the reference's range on 0 of 21 spots, so the
+#     two arms held the same range;
+#   - the RE-RAISE menus diverged one action deeper (theirs 20bb where
+#     ours was 9.90bb facing the same 5bb bet) - two arms solving
+#     different games, which is what voided M222's first run. Matching it
+#     was predicted to shrink the gap and slightly WIDENED it: the
+#     reference folds 0.6399 with its own raise and 0.6424 with ours.
+RIVER_UNDER_FOLD_MAX_BET_FRACTION = 0.75
+RIVER_UNDER_FOLD_REFERENCE_FOLDS = 0.7310
+RIVER_UNDER_FOLD_WE_FOLD = 0.3950
+RIVER_UNDER_FOLD_SPOTS = 42
+RIVER_UNDER_FOLD_NOTE = (
+    " A warning specific to this decision: facing a bet of up to three quarters of the pot "
+    "on the river, this engine has measured folding far LESS often than an independent "
+    "solver does. Over 42 such spots the reference folded about 73% of the time and this "
+    "engine folded about 40% - it under-folded on 39 of the 42. The disagreement is "
+    "sometimes total rather than a matter of degree: on several spots the reference folds a "
+    "hand more than 96% of the time where this engine commits the whole stack with it. So "
+    "when this engine tells you to call or raise a small river bet with a hand that is not "
+    "clearly strong, treat FOLDING as the serious alternative. This is a difference in the "
+    "model, not a setting - it survived matching the ranges and matching the raise sizes "
+    "between the two solvers - and it is disclosed rather than fixed. It does NOT apply "
+    "against a large bet: facing an overbet the two agreed closely, and it was not "
+    "separable on the turn at any size."
+)
+
 # M221. The first finding this project has that came from OUTSIDE.
 #
 # Every accuracy figure before this measured distance from a fuller solve

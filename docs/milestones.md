@@ -13294,3 +13294,115 @@ FOURTH failed fix since (M238/M239's flop-aware ranges, 0.03 sigma); R5
 (the flop's cap against an outside reference) shipped in M234 as 140 ->
 100; R6 (the dead-pot convention) is recorded in CLAUDE.md's F45 entry
 with M223's first real evidence. **Every recommendation is now closed.**
+
+
+## M241 — the first external check of a node FACING A BET
+
+Going over the report's recommendations closed the last one (M240) and
+exposed something none of the seven names. **Every external comparison
+this project has ever run - M221 flop, M222 turn, M224 river, M225 and
+M230 width, M236 replication - sends a checked-through flop and asks
+about the next street's OPENING decision.** Not one asks what happens
+facing a bet.
+
+That is F38's blind spot exactly. F38's own entry ends "**any future
+postflop measurement must cover nodes facing a bet**", written after the
+product was found recommending a 97.5bb shove with nine-high 57% of the
+time against a correct fold of 0.9869. Six external studies later, none
+had. And it is the expensive half: M188/M189 measured facing-a-bet nodes
+carrying **74% of all cost at 12% of decisions**. So every number in the
+accuracy programme, and every number in the published report, describes
+the cheap half of the decision space.
+
+**The reference had been sitting in the dumps all along.** A solver dump
+contains the whole tree, so the node after `BET x` holds the other
+player's strategy over the same ranges, including a FOLD frequency. The
+study needed **no new reference solves** - one `/advise` call per spot.
+
+117 rows, 39 spots x three bet sizes. The **FOLD** axis, chosen before
+the data existed because it needs no size mapping between two solvers'
+menus - which the raise axis does:
+
+| street | bet faced | n | reference folds | we fold | signed | sigma |
+|---|---|---|---|---|---|---|
+| turn | 0.33x pot | 18 | 0.3359 | 0.2443 | -0.0915 | 1.63 |
+| turn | 0.75x pot | 18 | 0.6574 | 0.4865 | -0.1709 | 1.91 |
+| turn | 2.50x pot | 18 | 0.8219 | 0.8609 | +0.0390 | 0.45 |
+| **river** | **0.33x pot** | 21 | **0.6399** | **0.2578** | **-0.3821** | **5.20** |
+| **river** | **0.75x pot** | 21 | **0.8221** | **0.5323** | **-0.2898** | **4.32** |
+| river | 2.50x pot | 21 | 0.9578 | 0.8813 | -0.0765 | 1.67 |
+
+Pooled, we under-fold by **-0.1687 +/- 0.0310 = 5.44 sigma on 92 of 117
+rows**.
+
+**The river separates and the turn does not, which is the opposite of
+what the opening-decision studies predict.** The turn is the street that
+bets too much acting first (+0.2895 at 5.36 sigma, M236); the RIVER -
+the street M231 improved - is the one that will not fold facing a small
+bet. M231 shrank the river's opening-decision gap and never touched this
+node, because nobody had measured it.
+
+The disagreement is **sometimes categorical rather than a matter of
+degree**: on `9s4h2c Qd 7d` the reference folds ace-king high **0.9761**
+facing a third-pot bet and this engine commits **92.5bb into a 20bb pot
+0.9676** of the time. Six of 117 rows are that shape. It is F38's defect
+at a node type F38 itself told us to measure.
+
+### Four controls, because a result this large is likelier to be a harness error
+
+- **The player mapping was verified empirically, not argued.**
+  Recomputing the reference's ROOT row for the original hero reproduces
+  the stored opening-decision figure to four decimals (0.0000 against
+  0.0000), which establishes that the root is the player compared
+  before and the child node is the other one.
+- **Our nodes are solved**: `trained` true, `solver_confidence` high, and
+  our fold frequency moves with the bet size - so this is not M209's
+  pre-menu defect, where one 2.5x node answered every question.
+- **The ranges match**: hero needed force-inclusion on **0 of 21** spots,
+  so both arms held the same range. Re-solving to confirm returned the
+  reference's number unchanged.
+- **The RE-RAISE menus did NOT match, and that is the control that
+  mattered.** The opening menus agree - which is all any study here has
+  ever checked - but one action deeper the reference could raise to 20bb
+  facing a 5bb bet where we could raise to 9.90bb. **Two arms solving
+  different games is what voided M222's first run.** A cheaper raise
+  should pull mass out of folding, so "we under-fold" and "our re-raise
+  is half the price" could have been one sentence. Matching it was
+  predicted to shrink the gap and slightly **WIDENED** it: the reference
+  folds 0.6399 with its own raise and 0.6424 with ours, and the gap goes
+  -0.3821 -> **-0.3846 at 5.23 sigma**. The prediction was wrong in
+  direction and is recorded that way.
+
+**Replicates by split-half** on the gated population: -0.2949 (3.75
+sigma) and -0.3771 (6.14 sigma). That is M189's bar, which M166 failed.
+
+### Shipped: the player is told, gated to exactly what was measured
+
+`RIVER_UNDER_FOLD_NOTE`, fired by `_river_under_folds_applies` on the
+river, facing a bet, at or below `RIVER_UNDER_FOLD_MAX_BET_FRACTION`
+(0.75). Pooled over that band, n=42: the reference folds **0.7310** and
+we fold **0.3950**, signed **-0.3360 +/- 0.0497 = 6.76 sigma**,
+under-folding on **39 of 42**.
+
+**The overbet row is deliberately NOT covered** (1.67 sigma) and neither
+is the turn at any size. M168 is the standing example of what quoting
+one street's measurement at another costs.
+
+The gate reads the RESPONSE, not the request (M144's rule): the bet
+faced is `max_affordable_bb - effective_stack_bb`, the stack entering
+the street less what is behind after the bet. With more than one bet
+already in the street that overstates the fraction and the note fires
+less often - **a gate quoting a specific measurement should fail toward
+silence**.
+
+Five guards, every one mutation-tested in both directions: ignoring the
+bet size, ignoring the street, never appending the note, and letting the
+copy drift from the constants each fail exactly one test and no others.
+
+### The lesson, which is the same one twice
+
+F38 told this project to measure facing-a-bet nodes and it was recorded
+in CLAUDE.md, and six studies since then quietly did not. **A written
+instruction is not a guard.** The thing that finally caught it was
+reading the recommendation list looking for what was already done -
+which is worth doing periodically for its own sake.
