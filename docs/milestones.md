@@ -12877,3 +12877,77 @@ clean, monotone effect, check that every arm still builds a LEGAL game
 before believing it. The nine dead reweightings of M130-M141 all failed
 honestly; this one would have succeeded dishonestly.
 
+## M234 — the flop's cap, and the speed-up that was not free
+
+The flop is the product's latency problem: median 3.00s over 2,709
+decisions, twice any other street, and a whole benchmark round's worst
+decision was a flop at 4.994s against the 5s bar. So its range cap is
+under permanent pressure, and the river had just shown (M231) that width
+can be traded for something better.
+
+**An external reference at production width is not available.** Measured
+directly: a flop reference solves in 297s at cap 25 and 353s at cap 60,
+and at cap 140 (1,107 combos) it does not run at all. That is why M221
+used cap 25, and it means the flop cannot be adjudicated the way the
+river was.
+
+So both available references were used, and they agree:
+
+| cap | vs an independent solver (cap-25 reference) | vs our own uncapped solve |
+|---|---|---|
+| 26 | - | 0.2563 (+0.1134, 2.56 sigma) |
+| 60 | 0.1197 (+0.0014, 0.56 sigma) | 0.1463 (+0.0034, 1.43 sigma) |
+| **100** | **0.1184 (+0.0001, 0.36 sigma)** | **0.1429 (+0.0000, 0.22 sigma)** |
+| 140 | 0.1183 | 0.1429 |
+
+The external reference's bias runs TOWARD narrow arms (it is built at cap
+25) and it still found no advantage for cap 60 - which is the argument
+that width past 100 is genuinely inert rather than an artifact.
+
+### Cap 60 was the prize and the bands refused it
+
+3.4x faster, and its mean is within noise. Split by what the reference
+does with the hand, over 106 hero/board comparisons, it is worse
+**in every band**:
+
+| band | n | cap 60 vs 140 |
+|---|---|---|
+| reference checks (<0.05) | 3 | +0.0268 (1.64 sigma) |
+| mixes (0.05-0.95) | 17 | +0.0168 (1.17 sigma) |
+| reference bets (>0.95) | 86 | +0.0033 (1.82 sigma) |
+
+Not M141's conservation law trading one hand type for another - uniformly
+worse, in a way a mean over one hero per board cannot see. Cap 100 is
+identical to 140 in every band to the fourth decimal.
+
+**Shipped: 140 -> 100**, 1.29x on the slowest street at no measured cost.
+
+### M172 does not replicate
+
+M172 measured cap 60 as the WORST arm tested (0.2685) and cap 140 as much
+the best (0.0956). Today cap 26 is the bad one and 60/100/140 are close.
+The engine changed underneath that finding, so it was a hypothesis about
+this engine rather than a measurement of it. **A configuration finding
+has a shelf life; re-measure before citing one across a rewrite.**
+
+### A refuted prediction, recorded because it was made in advance
+
+Three results suggested a unifying law: precision helps the river (0
+streets averaged in, -0.1274 at 3.63 sigma), hurts the turn (1 street,
++0.0811 at 2.04 sigma), and drives our uncapped flop solve to ~1.0
+aggression (2 streets). The prediction was that converging the flop
+further would move it AWAY from the independent reference.
+
+It does not. 250 -> 2500 iterations raises flop aggression 0.8701 ->
+0.9642 exactly as predicted, and the median gap FALLS 0.0215 -> 0.0009.
+The reason is visible once the references are compared street by street:
+the flop reference is itself highly aggressive (mean 0.8903, median
+0.9998, 14 of 18 above 0.95), so betting almost always IS right there.
+
+What survives is narrower and more useful: **the reference's betting
+frequency collapses from flop to turn to river (0.8903 -> 0.3294 ->
+0.2086) and ours does not collapse with it.** On a checked-through flop
+the correct turn play is mostly checking and this engine bets far more.
+That is the turn's model error stated properly, and it is why chaining,
+precision and width all failed to move it.
+

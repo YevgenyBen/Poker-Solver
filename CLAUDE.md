@@ -1642,7 +1642,33 @@ requests now reject unknown fields by name rather than ignoring them.
   states are worthless here.**
   10,607 decisions across both benchmarks, **zero defects**.
 
-- **RANGE CAPS ARE 140 EVERYWHERE (M190), adopted on MONEY after being
+- **RANGE CAPS ARE NO LONGER UNIFORM (M231/M234): flop 100, turn 140,
+  river 60.** Each was set by measurement against an outside reference,
+  and they disagree because the streets do.
+  | street | cap | why |
+  |---|---|---|
+  | flop | **100** | width past 100 is inert on TWO references; cap 60 is worse in every hand-type band |
+  | turn | 140 | unchanged - nothing about the turn responds to width (M232) |
+  | river | **60** | narrowing PAYS for 1000 iterations, which is worth 3.61 sigma (M231) |
+  **The flop's 140 -> 100 (M234)** is a 1.29x speed-up on the product's
+  slowest street (median 3.00s, worst 4.994s against a 5s bar) at a
+  measured accuracy cost of +0.0001 externally (0.36 sigma) and +0.0000
+  internally (0.22 sigma).
+  **Cap 60 was the tempting one and it is NOT safe.** 3.4x faster, and its
+  MEAN looks fine - but split by what the reference does with the hand,
+  over 106 comparisons, it is worse in EVERY band: +0.0268 where the
+  reference checks, +0.0168 where it mixes, +0.0033 where it bets. A mean
+  over one hero per board cannot see that. **Judge a cap by hand type, not
+  by its mean** - M141's warning, in a new place.
+  **M172's contrary finding does not replicate**: it measured cap 60 as
+  the WORST arm (0.2685 against cap 26's 0.2005) and cap 140 as much
+  better; today cap 26 is the bad one (+0.1134, 2.56 sigma) and 60/100/140
+  are close. The engine changed underneath it (M207's menu, M173/M174's
+  standalone streets, M158's warm starts, M176's equity builder), so that
+  was a hypothesis about this engine rather than a measurement of it.
+
+- **(SUPERSEDED for the flop and river by M231/M234) RANGE CAPS ARE 140
+  EVERYWHERE (M190), adopted on MONEY after being
   rejected on frequency.** M180 rejected cap 140 for the flop at 0.97
   sigma on pooled frequency error. Re-scored on **EV loss over the 297
   costly-band spots** (facing a bet, strength 0.55-0.90) that carry 79%

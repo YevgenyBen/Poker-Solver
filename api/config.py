@@ -677,7 +677,35 @@ FLOP_QUERY_ITERATIONS = DEFAULT_FLOP_ITERATIONS
 # **2.7%** of the 1.87 bb effect being measured.
 #
 # Cost: 1.06s -> 1.54s isolated (1.45x), flop median ~1.53s -> ~2.2s.
-MAX_PATH_QUERY_CLASSES_PER_SIDE = 140
+# M234 took this 140 -> 100. The flop is the product's latency problem -
+# median 3.00s over 2,709 decisions, twice any other street, and the worst
+# decision of a whole benchmark round was a flop at 4.994s against the 5s
+# bar this project holds itself to.
+#
+# Width past 100 buys nothing, on TWO references that disagree about
+# almost everything else:
+#
+#   cap  | ours vs an independent solver | ours vs our own uncapped solve
+#    26  |              -               |  0.2563   (+0.1134, 2.56 sigma)
+#    60  |  0.1197  (+0.0014, 0.56 sig) |  0.1463   (+0.0034, 1.43 sigma)
+#   100  |  0.1184  (+0.0001, 0.36 sig) |  0.1429   (+0.0000, 0.22 sigma)
+#   140  |  0.1183                      |  0.1429
+#
+# **Cap 60 was the tempting one - 3.4x faster - and it is NOT safe.**
+# Split by what the reference does with the hand, over 106 hero/board
+# comparisons, cap 60 is worse in EVERY band (+0.0268 where the reference
+# checks, +0.0168 where it mixes, +0.0033 where it bets). That is not
+# M141's conservation law moving error between hand types; it is
+# uniformly worse. Cap 100 is identical to 140 in every band, to the
+# fourth decimal.
+#
+# **M172's contrary finding does not replicate.** It measured cap 60 as
+# the WORST arm (0.2685 against cap 26's 0.2005) and cap 140 as much
+# better. Today cap 26 is the bad one and 60/100/140 are close. The
+# engine changed underneath it - the bet menu (M207), standalone streets
+# (M173/M174), warm starts (M158), the equity builder (M176) - so that
+# was a hypothesis about this engine, not a measurement of it.
+MAX_PATH_QUERY_CLASSES_PER_SIDE = 100
 MAX_PATH_LENGTH = 20
 # Flop-stage iterations, fixed — not exposed, unlike the preflop-stage
 # iterations request field below. This part of the pipeline sits behind
