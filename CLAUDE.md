@@ -187,6 +187,32 @@ spend another milestone on a turn CONFIGURATION.**
 model: the bet menu, the range derivation, or the fact that we solve one
 street at a time. The note now says so to the player, in those words.
 
+### The checks REPLICATE on fresh spots (M236) — n=42 per street
+
+M222/M224's figures rested on ~21 spots each and carry a user-facing
+warning and a shipped configuration between them. Repeated on 24
+completely fresh boards and heroes, none reused, each street measured at
+the width it actually SHIPS at (turn 140, river 60 after M231):
+
+| street | set | n | mean | median | over 0.10 | signed | sigma |
+|---|---|---|---|---|---|---|---|
+| turn | original | 21 | 0.4235 | 0.5268 | 17 | +0.3306 | 4.23 |
+| turn | **fresh** | 21 | 0.3659 | 0.4367 | 19 | **+0.2484** | **3.29** |
+| turn | **pooled** | **42** | **0.3947** | **0.4446** | **36** | **+0.2895** | **5.36** |
+| river | original | 21 | 0.1294 | 0.0730 | 9 | +0.0442 | 1.15 |
+| river | **fresh** | 21 | 0.0997 | 0.1073 | 11 | **+0.0610** | **2.29** |
+| river | **pooled** | **42** | **0.1145** | **0.0772** | **20** | **+0.0526** | **2.28** |
+
+Same magnitude, same direction, same significance on spots sharing
+nothing with the originals. **The turn is 0.39 from an independent
+solver and bets more at 5.36 sigma; the river, after M231's fix, is
+0.11 and bets more at 2.28 sigma.** Both survive replication, which is
+the bar M166 failed and M189 passed.
+
+Worth noting the river's signed gap goes from 1.15 sigma to 2.29 on
+fresh spots and 2.28 pooled - it is now separable where it was not. The
+fix reduced the river's error; it did not remove its direction.
+
 ### The RIVER, checked from outside (M224) — and it is not street isolation
 
 The last street nobody outside this codebase had ever looked at, checked
