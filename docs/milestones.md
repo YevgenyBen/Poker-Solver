@@ -13022,3 +13022,36 @@ side would have produced a striking number and no knowledge. The
 populations have to match before a ratio means anything, which is the
 same discipline M188 applied to weighting cells by occurrence.
 
+## M236 — the independent checks replicate on fresh spots
+
+The report's two headline accuracy numbers each rested on about 21
+spots, and between them they justify a user-facing warning (the turn)
+and a shipped configuration (the river). Both were thin, and the
+references are cheap at production width - 8s a spot for the turn, 4.4s
+for the river - so the sample was roughly doubled.
+
+24 fresh boards and heroes, none reused from either original set,
+validated for card collisions before running, each street measured at
+the width it actually SHIPS at (turn 140, river 60 after M231):
+
+| street | set | n | mean | median | over 0.10 | signed | sigma |
+|---|---|---|---|---|---|---|---|
+| turn | original | 21 | 0.4235 | 0.5268 | 17 | +0.3306 | 4.23 |
+| turn | fresh | 21 | 0.3659 | 0.4367 | 19 | +0.2484 | 3.29 |
+| turn | **pooled** | **42** | **0.3947** | **0.4446** | **36** | **+0.2895** | **5.36** |
+| river | original | 21 | 0.1294 | 0.0730 | 9 | +0.0442 | 1.15 |
+| river | fresh | 21 | 0.0997 | 0.1073 | 11 | +0.0610 | 2.29 |
+| river | **pooled** | **42** | **0.1145** | **0.0772** | **20** | **+0.0526** | **2.28** |
+
+**Both replicate.** Same magnitude, same direction, same significance,
+on spots sharing nothing with the originals. This is the bar M166 failed
+(a strength split asserted from 27 spots and withdrawn at 44) and M189
+passed (split-half before shipping).
+
+**One thing changed and is worth stating.** The river's SIGNED gap was
+1.15 sigma on the original set - not separable - and is 2.29 on fresh
+spots, 2.28 pooled. M231's fix reduced the river's error substantially
+but did NOT remove its direction: it still bets more than an independent
+solver, now measurably. The report said the river was "largely repaired"
+and that remains true of the magnitude; the direction survives.
+
