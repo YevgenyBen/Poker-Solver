@@ -831,7 +831,28 @@ PATH_QUERY_ITERATIONS = 250
 # the four benchmark seeds. It is the first thing to try if the streets
 # get cheaper.
 TURN_STANDALONE_ITERATIONS = 250
-RIVER_STANDALONE_ITERATIONS = 250
+# M231. The river alone goes to 1000, paid for by dropping its range cap
+# to 60 (see RIVER_STANDALONE_CLASSES_PER_SIDE) - so this is not the
+# iteration rise M213 refused, which was turn AND river at an unchanged
+# width and cost 4-5x.
+#
+# **The axis was declared dead twice and both verdicts were instrument
+# error.** M152 and M190 scored precision against a fuller solve of our
+# own model; when both arms share a convergence error it cancels, and the
+# effect is invisible by construction. M211 said the same from the other
+# side - measured as exploitability, which needs no reference at all, the
+# same step cuts distance from equilibrium tenfold on this street.
+#
+# Against an independent solver, 250 -> 1000 on the river is **-0.1274
+# +/- 0.0351 = 3.63 sigma, closer on 19 of 21 spots**, and the
+# over-aggression that looked structural nearly vanishes: the signed gap
+# goes +0.1909 -> +0.0463. 4000 is NOT better (0.1482, non-monotone -
+# M141's conservation law again), so 1000 is a setting, not a direction.
+#
+# **The TURN does not respond** (-0.0228, 0.77 sigma) and keeps 250. Two
+# streets, two different causes; do not move them together on the
+# strength of this.
+RIVER_STANDALONE_ITERATIONS = 1000
 
 FLOP_TURN_MAX_RAISES = 3
 # M205. The heads-up FLOP's bet sizes, which until now were an invisible
@@ -1104,7 +1125,33 @@ RIVER_SOLVE_STANDALONE = True
 #
 # Cost: 0.07s -> 0.63s isolated (8.3x), river median ~0.11s -> ~0.67s —
 # still the second-cheapest street after preflop.
-RIVER_STANDALONE_CLASSES_PER_SIDE = 140
+#
+# **M231 took it back to 60, and the two constants below it move
+# TOGETHER.** M190's evidence was real and was measured against a fuller
+# solve of OUR OWN model, where a convergence error both arms share
+# cancels out. Against an INDEPENDENT solver given our ranges and our
+# menu, width past 60 buys nothing at all once the solve is converged:
+#
+#   cap / iters | mean gap to the reference | speed
+#   140 /  250  |          0.2587           | 1.00x   (what shipped)
+#   140 / 1000  |          0.1313           | 0.28x
+#   100 / 1000  |          0.1314           | 0.32x
+#    60 / 1000  |          0.1294           | 1.01x   <- shipped now
+#    25 / 1000  |          0.2048           | 1.32x
+#
+# 140, 100 and 60 land within 0.002 of each other; 25 is genuinely too
+# thin (0.87 sigma against the shipped arm, where 60 is 3.61). So there
+# is a real floor between 25 and 60, and a real ceiling at 60.
+#
+# **Why the earlier measurement pointed the other way**: M190/M191 swept
+# the cap at 250 iterations, where the solve has not converged, and extra
+# width was quietly compensating for that. Converge the solve first and
+# the width stops paying - which is why this is not a reversal of M190 so
+# much as a correction of what it was holding fixed.
+#
+# Paired against the shipped arm on 21 river spots: **-0.1293 +/- 0.0358
+# = 3.61 sigma, better on 19 of 21, at 1.01x the latency.**
+RIVER_STANDALONE_CLASSES_PER_SIDE = 60
 # The river's own size menu, which only a standalone solve can set
 # without widening the flop and turn. M151 measured that ONE normal size
 # changes the ACTION on the river, both ways - a top pair went from

@@ -12696,3 +12696,86 @@ reference converged to 0.42% of pot on the deep line and 0.064% on the
 shallow one.
 
 **The reference is an instrument. Nothing it produced is in the engine.**
+
+
+## M223-M231 — a benchmark round that reversed two standing conclusions
+
+Twenty play sessions, 76 spots against an independent implementation
+across all three postflop streets, and two axes this project had closed
+reopened by measuring them with an instrument that does not share their
+blind spot.
+
+### M224 — the river, from outside, for the first time
+
+24 spots, same method as M221/M222. Median gap **0.1799**, **0 of 24**
+within 0.02, 18 over 0.10, signed **+0.1416 at 2.82 sigma**.
+
+**It kills M222's proposed mechanism.** The river board is complete, so
+there is no runout to average and no street isolation to blame, and the
+gap is bigger than the turn's. Up close the disagreement has a shape: the
+reference TRAPS (bets AA 0.834 / KQ 0.800 / AK 0.689, checks a set of
+nines 0.997) and we bet the set 0.7448.
+
+Two harness bugs were caught before they became findings: two spots
+reused a hero card as the river card (fixed by moving the RIVER card, so
+each still tests the hand it was chosen for), and the reference's own
+strategy was verified against the raw dump before the pattern was
+believed - it is a coherent strategy, not an artifact.
+
+### M225 — the objection that could have voided everything
+
+Every independent check ran at cap 25; the product ships at 140. Re-run
+wide: **paired +0.0476 +/- 0.0382 = 1.25 sigma**, 12 of 21 worse wide,
+signed **+0.1909 at 3.71 sigma**. Width does not explain the gap.
+
+**Its first run was void** and the reason is worth carrying: it reused a
+helper that hardcoded the narrow cap, so our arm solved 140 classes while
+the reference was handed 25 - M222's void run, one study later, in code
+written by someone who had just documented it. `ours()` now takes the cap
+and the study asserts the pool is actually wide.
+
+### M223 — chaining the river into the turn, priced and refused
+
+`solve_flop_turn` handed a four-card board IS a turn->river chain, so no
+new engine code was needed. Cost at production width: 177s at 5
+iterations, 333s at 20, marginal iteration **10.4s**, against the
+standalone turn's 2.50s.
+
+**And it is worse**: +0.1713 +/- 0.0614 = **2.79 sigma** further from the
+reference on 24 spots, +0.2131 / 3.22 sigma with the payoff convention
+corrected. A converged chain runs to **0.997 aggression**.
+
+**F45 gets its first evidence.** The corrected convention makes the
+chained solve converge - TVD(150,400) **0.0003** against **0.0991** - and
+converge to the same degenerate answer. No shipped answer depends on it;
+recorded, not changed.
+
+The cost ladder built for this was **discarded**: it produced a NEGATIVE
+marginal cost (366s at 5 iterations, 299s at 20) because the machine
+drifted mid-run. Replaced by a ratio design, which is the only kind of
+timing claim this machine supports.
+
+### M226/M227/M229/M231 — precision, and why it was missed twice
+
+M152 and M190 both scored the iteration budget against a fuller solve of
+our own model, where a shared convergence error cancels. Against an
+independent solver the river moves **-0.1274 +/- 0.0351 = 3.63 sigma**
+(19 of 21 closer) and the turn does not move at all (0.77 sigma).
+
+Raising iterations alone is unaffordable - river median 1.25s -> 4.32s,
+worst 4.93s against a 5s bar, on a machine that drifted 1.13 -> 1.78s
+within a single benchmark run. But M225 had already shown width is inert,
+so the seconds were re-spent: **cap 60 at 1000 iterations gives the whole
+gain at 1.01x the shipped latency**.
+
+Guards: the pair is pinned as a PAIR (either constant alone reinstates
+the 4.2s arm), and a behavioural test asserts the budget actually reaches
+the solve - the study's own first run measured nothing because the solve
+cache keys on the caller's budget, not the constant, so arm two replayed
+arm one. All three mutations caught.
+
+**The first version of the pinning guard failed on a correct
+configuration**: it compared the river's cap against the LIVE
+MAX_PATH_QUERY_CLASSES_PER_SIDE, which the suite's own fixture shrinks to
+2 for speed. It now reads values captured at import, the same fix M220
+made for the multiway sizes.
