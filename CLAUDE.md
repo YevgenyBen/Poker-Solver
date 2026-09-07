@@ -150,8 +150,10 @@ our distance from that reference GROWS. **We are solving a different game
 correctly.** It also explains why precision made the reference gap worse:
 converging harder onto the wrong model walks away from the right answer.
 
-**THE FIRST THING THAT MOVES THE TURN: ITS RANGES IGNORE THE FLOP
-(M238).** `_derive_path_situation` takes the PREFLOP action path and the
+**M238 IS WITHDRAWN — flop-aware ranges do NOT improve the advice
+(M239). What survives is that the turn's headline gap is
+SPECIFICATION-DEPENDENT.** The engine's ranges ignore the flop
+(M238's one durable observation): `_derive_path_situation` takes the PREFLOP action path and the
 board; the flop action path is used only to walk the flop tree for a pot
 and a stack. **So a turn after a checked-through flop is solved with
 ranges that still contain every hand that would have BET that flop.**
@@ -161,19 +163,29 @@ checked - taken from our own flop solve, the arm the flop study found
 closest to the reference - and giving the reference the SAME narrowed
 ranges, 19 spots:
 
-| arm | mean gap | paired | sigma | better on |
-|---|---|---|---|---|
-| baseline (ranges ignore the flop) | 0.4335 | — | — | — |
-| **flop-aware ranges** | **0.2632** | **-0.1703 +/- 0.0513** | **3.32** | **15/19** |
+M238 narrowed BOTH arms and measured the gap falling 0.4335 -> 0.2632
+(3.32 sigma), and flagged the obvious confound: both arms moved. **The
+confound was the entire effect.** Scoring both of OUR arms against the
+SAME narrowed reference, 19 spots:
 
-**39% of the gap closes**, and the signed over-aggression falls +0.3306
--> +0.13. Narrowing keeps only **15% of range mass**: a checked flop
-really does cap both players, and the engine currently ignores it.
+| our arm | mean gap to the narrowed reference |
+|---|---|
+| shipped (flop-ignorant ranges) | 0.2613 |
+| flop-aware ranges | 0.2632 |
 
-**The confound, which keeps this a lead rather than a result**: BOTH
-arms were narrowed, so part of the improvement may be that narrower
-ranges are an easier problem two solvers agree on more readily. What is
-solid is that the shipped turn solves a MIS-SPECIFIED game.
+**Paired +0.0019 +/- 0.0704 = 0.03 sigma**, better on 8 of 19. Narrowing
+our ranges changes our answer and does not move it toward the reference
+at all. Against the UNNARROWED reference it is actively worse (+0.1578,
+2.51 sigma). **Range derivation joins chaining, precision and width on
+the list of things that are not the fix.**
+
+**What DOES survive, and it is worth more than the withdrawn claim**:
+our shipped engine sits **0.2613** from the flop-AWARE reference and
+**0.4335** from the flop-ignorant one. The turn's headline gap is
+inflated by ~40% by comparing on a game neither player would actually be
+in. Both specifications are defensible - the narrowed one uses OUR flop
+solve's check frequencies, so it is not independent of us - but the
+number quoted must say which was used.
 
 **Counter-intuitive and worth knowing**: narrowing makes BOTH arms bet
 MORE (the reference 0.1392 -> 0.3633 on one spot), because a capped range
