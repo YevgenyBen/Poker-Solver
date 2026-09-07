@@ -7926,3 +7926,37 @@ def test_the_river_under_fold_note_quotes_its_own_measurement(client):
         f"{api_config.RIVER_UNDER_FOLD_MAX_BET_FRACTION} of the pot")
     assert api_config.RIVER_UNDER_FOLD_WE_FOLD < api_config.RIVER_UNDER_FOLD_REFERENCE_FOLDS, (
         "the whole finding is that this engine folds LESS than the reference")
+
+
+def test_the_river_under_fold_note_does_not_fire_on_the_flop(client):
+    """M242. The flop was checked facing a bet and did NOT separate.
+
+    M241 shipped the under-folding note for the river. The flop was
+    measured the same way afterwards, against 18 independent references
+    rebuilt at a wider matched width (cap 60, each converged to
+    0.32-0.50% of pot): pooled **-0.0498 +/- 0.0298 = 1.67 sigma**, with
+    a median gap of **+0.0002** and under-folding on only 17 of 54 rows.
+
+    At the narrower cap 25 the same spots gave -0.1396 at 3.04 sigma, and
+    width moved it by +0.0898 at 2.57 sigma - so the apparent flop defect
+    was the range width M234 had already measured as the bad arm, not the
+    product. That is why this note is a RIVER note and must stay one.
+    """
+    probe = api_config.RIVER_UNDER_FOLD_NOTE.strip()[:60]
+    opening = client.post("/advise", json=_advise_body(
+        stack_bb=100.0, players=2, hero_cards="AcKc",
+        preflop_action_path=["raise", "raise", "call_or_check"],
+        board="Jh9h4c"))
+    assert opening.status_code == 200, opening.json()
+    sizes = opening.json()["modelled_bet_sizes"]
+    assert len(sizes) >= 2, f"the flop offers {sizes}, so it cannot be bet into"
+
+    facing = client.post("/advise", json=_advise_body(
+        stack_bb=100.0, players=2, hero_cards="AcKc",
+        preflop_action_path=["raise", "raise", "call_or_check"],
+        board="Jh9h4c", flop_action_path=["raise:%.2f" % sizes[0]]))
+    assert facing.status_code == 200, facing.json()
+    payload = facing.json()
+    assert any(a == "fold" for a in payload["hero"]["strategy"]), (
+        "this flop node is meant to be facing a bet, where folding is legal")
+    assert probe not in payload["aggression_confidence_reason"]
