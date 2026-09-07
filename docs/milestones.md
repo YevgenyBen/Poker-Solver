@@ -12951,3 +12951,34 @@ the correct turn play is mostly checking and this engine bets far more.
 That is the turn's model error stated properly, and it is why chaining,
 precision and width all failed to move it.
 
+## M234 (post-ship) — the paired gate, and a scare that was the machine
+
+M234 shipped the flop's cap on accuracy evidence and an ISOLATED timing
+of 1.29x. It never got a session gate, and the first unpaired session on
+the new configuration looked alarming: **20 decisions over 5s and a worst
+of 10.96s**, against the previous round's 0 and 4.99s.
+
+It was the machine. The user's own applications had picked up work in the
+meantime. Paired arms in the same state, 2 seeds, alternating order:
+
+| arm | p50 | p90 | over 5s | flop p50 | defects |
+|---|---|---|---|---|---|
+| flop cap 140 (old) | 2.478s | 5.485s | **130** | 5.268s | 1 |
+| flop cap 100 (new) | 2.460s | 4.454s | **41** | **4.133s** | 1 |
+
+The OLD arm is three times worse on the metric that raised the alarm.
+Cap 100 cuts slow decisions 130 -> 41 and the flop median 5.268 ->
+4.133s (1.27x, against the 1.29x the isolated measurement predicted).
+
+**Two things worth keeping.** The harness's own verdict line said "REFUSE
+- a decision crossed 5s", which is wrong here: it compares against an
+absolute bar that the MACHINE was violating in both arms. An automated
+gate needs a paired reading, not a threshold, whenever the environment is
+not controlled.
+
+And the general rule, which this project keeps re-learning in new
+disguises: **an unpaired latency number on this machine is not a
+measurement.** M70 said it across sessions, M191 said it across hours,
+and this says it across a single afternoon in which the user opened
+another program.
+
