@@ -7797,14 +7797,24 @@ def test_the_turn_reference_note_is_silent_where_the_gap_was_not_measured(client
 
 
 
-def _river_facing(client, *, bet=None, hero="AsKh"):
+#: A river spot where this engine's own row is genuinely SPLIT (top
+#: action ~0.55), which is the population M243 measured the gap in. The
+#: old fixture (AsKh on 9s4h2c/Qd/7d) shoves ~0.97 of the time, so it is
+#: kept below as the DECISIVE case the note must stay silent on.
+_MIXED_RIVER = dict(hero="Kd7d", board="3d7h2h", turn_card="Td", river_card="As")
+_DECISIVE_RIVER = dict(hero="AsKh", board="9s4h2c", turn_card="Qd", river_card="7d")
+
+
+def _river_facing(client, *, bet=None, spot=None):
     """A river decision on a checked-through board, optionally facing a bet."""
+    spot = dict(spot or _MIXED_RIVER)
     body = _advise_body(
-        stack_bb=100.0, players=2, hero_cards=hero,
+        stack_bb=100.0, players=2, hero_cards=spot["hero"],
         preflop_action_path=["raise", "raise", "call_or_check"],
-        board="9s4h2c", flop_action_path=["call_or_check", "call_or_check"],
-        turn_card="Qd", turn_action_path=["call_or_check", "call_or_check"],
-        river_card="7d")
+        board=spot["board"], flop_action_path=["call_or_check", "call_or_check"],
+        turn_card=spot["turn_card"],
+        turn_action_path=["call_or_check", "call_or_check"],
+        river_card=spot["river_card"])
     if bet is not None:
         body["river_action_path"] = ["raise:%.2f" % bet]
     response = client.post("/advise", json=body)
@@ -7850,6 +7860,10 @@ def test_a_river_player_facing_a_small_bet_is_told_this_engine_under_folds(clien
     assert fraction <= api_config.RIVER_UNDER_FOLD_MAX_BET_FRACTION, (
         f"this bet is {fraction:.2f} of the pot, outside the band the finding "
         "was measured in, so the test would prove nothing")
+    top = max(payload["hero"]["strategy"].values())
+    assert top < api_config.RIVER_UNDER_FOLD_MIXED_MAX_TOP_ACTION, (
+        f"this row's top action is {top:.3f}, so it is not the split decision "
+        "M243 measured the gap in and the test would prove nothing")
     assert probe in payload["aggression_confidence_reason"]
 
 
@@ -7921,9 +7935,13 @@ def test_the_river_under_fold_note_quotes_its_own_measurement(client):
     assert str(api_config.RIVER_UNDER_FOLD_SPOTS) in note
     assert "%d%%" % round(api_config.RIVER_UNDER_FOLD_REFERENCE_FOLDS * 100) in note
     assert "%d%%" % round(api_config.RIVER_UNDER_FOLD_WE_FOLD * 100) in note
-    assert "three quarters" in note, (
-        "the note names the bet size it is gated on, and that gate is "
-        f"{api_config.RIVER_UNDER_FOLD_MAX_BET_FRACTION} of the pot")
+    assert "close" in note.lower(), (
+        "the note is gated on hero's row being SPLIT, and must say so - without "
+        "that it reads as a claim about every river decision, which M243 "
+        "measured at 0.53 sigma, i.e. absent")
+    assert "unknown" in note.lower(), (
+        "a close decision is one where the actions are worth almost the same, "
+        "so the cost of this frequency gap is not established (M183)")
     assert api_config.RIVER_UNDER_FOLD_WE_FOLD < api_config.RIVER_UNDER_FOLD_REFERENCE_FOLDS, (
         "the whole finding is that this engine folds LESS than the reference")
 
@@ -7959,4 +7977,31 @@ def test_the_river_under_fold_note_does_not_fire_on_the_flop(client):
     payload = facing.json()
     assert any(a == "fold" for a in payload["hero"]["strategy"]), (
         "this flop node is meant to be facing a bet, where folding is legal")
+    assert probe not in payload["aggression_confidence_reason"]
+
+
+def test_the_river_under_fold_note_is_silent_on_a_decisive_row(client):
+    """M243. The note is gated on hero's row being SPLIT, not on the street.
+
+    Without that gate it fired on every river facing-a-bet decision while
+    quoting a figure measured on a population unintentionally loaded with
+    close spots. On 50 fresh in-range spots the ungated effect is
+    **-0.0149 at 0.53 sigma** - absent. Gated on hero's top action being
+    under 0.80 it is -0.3295 at 5.96 sigma, and where it stays silent
+    -0.0250 at 1.10 sigma.
+
+    This spot is the old fixture: facing the same small bet, this engine
+    commits ~0.97 of the time. A decisive row is exactly where the two
+    solvers agree, so the note must say nothing.
+    """
+    probe = api_config.RIVER_UNDER_FOLD_NOTE.strip()[:60]
+    sizes = _river_bet_menu(client)
+    payload = _river_facing(client, bet=sizes[0], spot=_DECISIVE_RIVER)
+
+    top = max(payload["hero"]["strategy"].values())
+    assert top >= api_config.RIVER_UNDER_FOLD_MIXED_MAX_TOP_ACTION, (
+        f"this row's top action is {top:.3f}, so it is NOT decisive and this "
+        "test is not exercising the case it claims to")
+    assert any(a == "fold" for a in payload["hero"]["strategy"]), (
+        "this spot is meant to be facing a bet")
     assert probe not in payload["aggression_confidence_reason"]

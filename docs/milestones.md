@@ -13494,3 +13494,107 @@ whether hero has made a pair. Both fail for one reason - **91% of the
 as heroes for opening-decision studies. The population cannot separate
 "air" from "the population is air". A purpose-built stratified set is
 what that question needs.
+
+
+## M243 — the river note was over-claiming, and I found it by checking my own study
+
+M241 shipped a warning: facing a bet of up to three quarters of the pot
+on the river, this engine folds 0.3950 where an independent solver folds
+0.7310, 6.76 sigma over 42 spots. M242 confirmed the flop and turn do
+not separate. The remaining question was WHERE the river's gap lives,
+which is the difference between a warning read once and one acted on.
+
+Answering it broke the note.
+
+### Flaw 1: the range-membership check was vacuous
+
+`_derive_path_situation(hero_combo=X)` **force-includes X into both
+positions' ranges** (M51/M76, and correct for a request). So a check of
+the form "is hero in `position_ranges[ip]`?" made after passing a hero
+answers yes by construction.
+
+The hand-type study made exactly that check, reported **"forced on 0 of
+50"**, and drew its air class from hands like `3d6s` - which a
+raise-raise-call preflop line cannot hold. Both arms were being asked
+about an impossible holding and improvising differently. **To ask the
+question, derive with `hero_combo=None`.**
+
+It reaches M241: **7 of its 21 river spots hold force-included heroes,
+and they are the spots that produced the headline** (`AsKh`, `AsKs`,
+`AcKd`, `QdQs`).
+
+| | n | ref folds | we fold | signed | sigma |
+|---|---|---|---|---|---|
+| hero naturally in range | 28 | 0.7740 | 0.5568 | **-0.2172** | 5.36 |
+| hero force-included | 14 | 0.6450 | 0.0715 | **-0.5736** | 5.74 |
+
+The effect survives on the valid subset. The published figure was a
+blend of the two, quoted as though it were the typical case - **M232's
+failure mode, committed by the same session that corrected M232.**
+
+### Flaw 2: on a representative population there is no effect at all
+
+50 fresh river spots, heroes drawn only from hands the range holds, ten
+per class:
+
+| class | n | ref folds | we fold | signed | sigma |
+|---|---|---|---|---|---|
+| air | 10 | 0.9309 | 0.9010 | -0.0299 | 1.68 |
+| weak pair | 10 | 0.2394 | 0.2316 | -0.0078 | 0.06 |
+| top pair | 10 | 0.0000 | 0.0000 | -0.0000 | - |
+| two pair+ | 10 | 0.0615 | 0.0246 | -0.0369 | 1.00 |
+| nutted | 10 | 0.0000 | 0.0001 | +0.0001 | - |
+
+**Pooled -0.0149 at 0.53 sigma**, and no hand type separates. So the
+note was firing on every river facing-a-bet decision while describing a
+population it had found by accident.
+
+### What survives, and it is sharper than what it replaces
+
+The two in-range populations disagree because M241's spots are loaded
+with CLOSE decisions. Over 78 in-range rows, how mixed the reference's
+own row is correlates **+0.628** with the size of the gap:
+
+| the reference's decision | n | mean gap |
+|---|---|---|
+| near-pure | 62 | **0.0502** |
+| partly mixed | 6 | 0.4432 |
+| genuinely close | 10 | 0.4004 |
+
+The reference is not available at runtime. **Hero's own row is, and it
+carries nearly the same signal (+0.520):**
+
+| gate | fires on | signed | sigma | silent rows |
+|---|---|---|---|---|
+| top action < 0.80 | **21%** | **-0.3295** | **5.96** | -0.0250 (1.10) |
+| top action < 0.90 | 32% | -0.2158 | 3.75 | -0.0270 (1.24) |
+| top action < 0.95 | 38% | -0.1913 | 3.90 | -0.0226 (0.96) |
+
+`RIVER_UNDER_FOLD_MIXED_MAX_TOP_ACTION = 0.80` - the hardest
+concentration, and where it is silent the gap is not separable from
+zero. Split-half on the firing rows: **-0.2538 (5.69 sigma) / -0.4052
+(4.17 sigma)**. Copy now quotes reference 0.7078 / ours 0.3783 over 16
+spots.
+
+**And the copy says the cost is unknown.** A close decision is by
+definition one where the actions are worth almost the same, so this is a
+large frequency disagreement whose price in chips is probably small -
+M183's finding, and M237 priced the river's whole frequency gap at
+-0.0024 bb. A warning that implied a big loss would be its own error.
+
+Seven guards, mutation-tested: removing the mixedness gate and loosening
+its threshold to 1.01 each fail exactly the test that exists for them.
+
+### The lesson
+
+**A check written after the thing it checks for has already happened is
+not a check.** It passed 50 times and meant nothing. What caught it was
+not the test suite but asking a question the study was not built to
+answer - where does the gap live - and finding the population could not
+support it.
+
+And the sequence is worth recording: M241 shipped a real finding, M243
+narrowed it to a fifth of the decisions it fired on. **Both were the
+same session.** The note is better now not because the first version was
+careless but because it was checked again by someone motivated to find
+it wrong.
