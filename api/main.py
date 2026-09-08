@@ -1527,15 +1527,47 @@ def _turn_independent_gap_applies(raw: dict, street: str | None) -> bool:
     return behind / pot >= cfg.TURN_INDEPENDENT_SPR_MIN
 
 
-def _river_under_folds_applies(raw: dict, street: str | None) -> bool:
+def _hero_row_is_mixed(raw: dict, hero: dict | None = None) -> bool:
+    """Is hero splitting between actions here rather than settling on one?
+
+    M243. The river's disagreement with an independent solver lives at
+    CLOSE decisions: how mixed the reference's own row is correlates
+    +0.628 with the size of the gap. The reference is not available at
+    runtime, but hero's own row is, and it carries nearly the same signal
+    (+0.520). Gating on it turns a note that fired on every river
+    facing-a-bet decision into one that fires on the 21% where the
+    disagreement actually is - and where it stays silent the gap is
+    -0.0250 at 1.10 sigma, which is nothing.
+
+    Read from hero's own row, not from the config, for M144's reason: the
+    row is what the tree actually offered.
+    """
+    source = hero if isinstance(hero, dict) else (raw.get("hero") or {})
+    row = source.get("strategy") if isinstance(source, dict) else None
+    if not row:
+        return False
+    weights = [float(w) for w in row.values()]
+    if not weights:
+        return False
+    return max(weights) < cfg.RIVER_UNDER_FOLD_MIXED_MAX_TOP_ACTION
+
+
+def _river_under_folds_applies(raw: dict, street: str | None,
+                               hero: dict | None = None) -> bool:
     """Is this a river decision facing a bet small enough for M241's gap?
 
-    M241. Facing a bet of at most `RIVER_UNDER_FOLD_MAX_BET_FRACTION` of
-    the pot on the river, this engine folds 0.3950 where an independent
-    solver folds 0.7310 - 6.76 sigma over 42 spots. Facing an OVERBET the
-    two agree (1.67 sigma) and the turn is not separable at any size, so
-    both are excluded: M168 is what quoting one street's measurement at
-    another costs.
+    M241, CORRECTED BY M243. Facing a bet of at most
+    `RIVER_UNDER_FOLD_MAX_BET_FRACTION` of the pot on the river, AT A
+    DECISION THIS ENGINE IS SPLITTING, it folds 0.3783 where an
+    independent solver folds 0.7078 - 5.96 sigma over 16 spots.
+
+    The mixedness gate is not caution: without it this fired on every
+    river facing-a-bet decision while quoting a figure measured on a
+    population unintentionally loaded with close spots. On 50 fresh
+    in-range spots the ungated effect is -0.0149 at 0.53 sigma, i.e.
+    absent. Facing an OVERBET the two agree (1.67 sigma) and the turn is
+    not separable at any size, so both stay excluded - M168 is what
+    quoting one street's measurement at another costs.
 
     The bet faced is derived from the response rather than the request,
     the same way `_is_facing_a_bet` derives its own signal (M144's rule).
@@ -1549,6 +1581,8 @@ def _river_under_folds_applies(raw: dict, street: str | None) -> bool:
     if street != "river":
         return False
     if not _is_facing_a_bet(raw):
+        return False
+    if not _hero_row_is_mixed(raw, hero):
         return False
     pot = raw.get("pot")
     entering = raw.get("max_affordable_bb")
@@ -1690,7 +1724,7 @@ def _aggression_reason(raw: dict, hero: dict | None = None) -> str:
         # only cell that separated. Nested here rather than beside the
         # other street notes because it is a property of THIS decision,
         # not of the street.
-        if _river_under_folds_applies(raw, street):
+        if _river_under_folds_applies(raw, street, hero):
             reason += cfg.RIVER_UNDER_FOLD_NOTE
         # M189: graded, not replaced. The coarse note covers all
         # facing-a-bet decisions because even out-of-band ones average

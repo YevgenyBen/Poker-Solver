@@ -2368,23 +2368,68 @@ TURN_INDEPENDENT_NOTE = (
 #     different games, which is what voided M222's first run. Matching it
 #     was predicted to shrink the gap and slightly WIDENED it: the
 #     reference folds 0.6399 with its own raise and 0.6424 with ours.
+# M243 CORRECTED THIS NOTE, and the correction is larger than the note.
+#
+# **Two flaws, both mine, found by asking where the gap lived.**
+#
+# 1. `_derive_path_situation(hero_combo=X)` FORCE-INCLUDES X into both
+#    positions' ranges (M51/M76), so a "was hero in range?" check made
+#    after passing a hero answers yes by construction. M241 never made
+#    that check at all; a follow-up study made it, got "forced on 0 of
+#    50", and drew a whole class from hands like `3d6s` that a
+#    raise-raise-call line cannot hold. Asking a solver about an
+#    impossible holding measures how it improvises, not how it plays.
+#    **7 of M241's 21 river spots hold force-included heroes**, and they
+#    are the spots that produced the headline. Split:
+#      hero naturally in range   n=28  -0.2172  5.36 sigma
+#      hero force-included       n=14  -0.5736  5.74 sigma
+#    Force-inclusion is CORRECT for a request - a player really does hold
+#    what they ask about - so those rows are real product behaviour. What
+#    was wrong was quoting a figure blended from both as the typical case.
+#
+# 2. On 50 fresh river spots drawn from hands the range actually holds,
+#    the under-folding **does not reproduce at all**: pooled -0.0149 at
+#    0.53 sigma, and no hand type separates (air, weak pair, top pair,
+#    two pair+, nutted all null). M241's spots were unintentionally
+#    loaded with CLOSE decisions.
+#
+# **What survives, and it is sharper than what it replaces.** Over 78
+# in-range rows, how mixed the reference's own decision is correlates
+# **+0.628** with the size of the disagreement:
+#      reference near-pure   n=62  mean |gap| 0.0502
+#      partly mixed          n= 6  mean |gap| 0.4432
+#      genuinely close       n=10  mean |gap| 0.4004
+# The reference's mix is not available at runtime, but OURS is, and it
+# works nearly as well (+0.520). Gating on hero's own top action:
+#      top action < 0.80  fires on 21%,  -0.3295  5.96 sigma
+#      top action < 0.90  fires on 32%,  -0.2158  3.75 sigma
+#      top action < 0.95  fires on 38%,  -0.1913  3.90 sigma
+# 0.80 is adopted: it concentrates the effect hardest, and where it is
+# SILENT the gap is -0.0250 at 1.10 sigma - not separable, so the note
+# now says nothing on the 79% of river decisions this engine gets right.
+# Split-half on the firing rows: -0.2538 (5.69 sigma) / -0.4052 (4.17).
+#
+# **M183's caveat applies and is in the copy**: solvers mix at
+# near-indifference, so the decisions this fires on are also the ones
+# where being wrong costs least. It is a real disagreement of unknown
+# price, not a known loss.
 RIVER_UNDER_FOLD_MAX_BET_FRACTION = 0.75
-RIVER_UNDER_FOLD_REFERENCE_FOLDS = 0.7310
-RIVER_UNDER_FOLD_WE_FOLD = 0.3950
-RIVER_UNDER_FOLD_SPOTS = 42
+RIVER_UNDER_FOLD_MIXED_MAX_TOP_ACTION = 0.80
+RIVER_UNDER_FOLD_REFERENCE_FOLDS = 0.7078
+RIVER_UNDER_FOLD_WE_FOLD = 0.3783
+RIVER_UNDER_FOLD_SPOTS = 16
 RIVER_UNDER_FOLD_NOTE = (
-    " A warning specific to this decision: facing a bet of up to three quarters of the pot "
-    "on the river, this engine has measured folding far LESS often than an independent "
-    "solver does. Over 42 such spots the reference folded about 73% of the time and this "
-    "engine folded about 40% - it under-folded on 39 of the 42. The disagreement is "
-    "sometimes total rather than a matter of degree: on several spots the reference folds a "
-    "hand more than 96% of the time where this engine commits the whole stack with it. So "
-    "when this engine tells you to call or raise a small river bet with a hand that is not "
-    "clearly strong, treat FOLDING as the serious alternative. This is a difference in the "
-    "model, not a setting - it survived matching the ranges and matching the raise sizes "
-    "between the two solvers - and it is disclosed rather than fixed. It does NOT apply "
-    "against a large bet: facing an overbet the two agreed closely, and it was not "
-    "separable on the turn at any size."
+    " A warning specific to this decision: it is a CLOSE one - this engine is splitting "
+    "between actions rather than settling on one - and close river decisions facing a small "
+    "bet are exactly where it has measured furthest from an independent solver. Over 16 such "
+    "spots the reference folded about 71% of the time and this engine folded about 38%; it "
+    "under-folded on 14 of the 16. So when it leans toward calling or raising here, treat "
+    "FOLDING as the serious alternative. Two things keep this honest. On river decisions that "
+    "are NOT close - about four in five - the two solvers agree to within a few points, and "
+    "this note stays silent there. And a close decision is by definition one where the actions "
+    "are worth almost the same, so this is a large disagreement about frequency whose cost in "
+    "chips is unknown and is probably small. It is a difference in the model, not a setting - "
+    "it survived matching the ranges and the raise sizes between the two solvers."
 )
 
 # M221. The first finding this project has that came from OUTSIDE.

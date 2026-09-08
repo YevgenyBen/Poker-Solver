@@ -321,13 +321,48 @@ predicted to shrink the gap and **widened** it (-0.3821 -> -0.3846).
 **Any facing-a-bet comparison must match the menu at the FACING node,
 not just at the root.**
 
-Shipped: `RIVER_UNDER_FOLD_NOTE`, gated on river + facing a bet +
-`RIVER_UNDER_FOLD_MAX_BET_FRACTION` (0.75). Pooled there, n=42:
-reference folds 0.7310, we fold 0.3950, **-0.3360 +/- 0.0497 = 6.76
-sigma**, 39 of 42, split-half 3.75 / 6.14. The overbet row and the turn
-are deliberately excluded (M168). The gate reads the RESPONSE, so a
-multi-bet street overstates the fraction and the note goes quiet — it
-fails toward silence.
+**M243 CORRECTED THIS NOTE AND THE CORRECTION IS BIGGER THAN THE NOTE.**
+Two flaws, both found by asking where the gap lived:
+
+**1. `_derive_path_situation(hero_combo=X)` FORCE-INCLUDES X into both
+positions' ranges**, so any "was hero in range?" check made after
+passing a hero answers yes by construction. A follow-up study made
+exactly that check, reported "forced on 0 of 50", and drew a whole class
+from hands like `3d6s` that a raise-raise-call line cannot hold —
+measuring how two solvers improvise on an impossible holding. **7 of
+M241's 21 river spots hold force-included heroes, and they are the ones
+that produced the headline**: naturally in range n=28 gives -0.2172
+(5.36 sigma), force-included n=14 gives **-0.5736**. Force-inclusion is
+CORRECT for a request (a player really holds what they ask about), so
+those rows are real behaviour — quoting a blend of both as the typical
+case is what was wrong. **To ask whether a hand is in range, derive with
+`hero_combo=None`.**
+
+**2. On 50 fresh in-range spots the under-folding does not reproduce at
+all** — pooled **-0.0149 at 0.53 sigma**, and no hand type separates
+(air / weak pair / top pair / two pair+ / nutted all null). M241's spots
+were unintentionally loaded with CLOSE decisions.
+
+**What survives is sharper than what it replaces.** Over 78 in-range
+rows, how mixed the REFERENCE's row is correlates **+0.628** with the
+gap (near-pure |gap| 0.0502, genuinely close 0.4004). The reference is
+not available at runtime; hero's own row is, and carries +0.520. Gating
+on hero's top action:
+
+| gate | fires on | signed | sigma |
+|---|---|---|---|
+| top action < 0.80 | **21%** | **-0.3295** | **5.96** |
+| top action < 0.90 | 32% | -0.2158 | 3.75 |
+| top action < 0.95 | 38% | -0.1913 | 3.90 |
+
+`RIVER_UNDER_FOLD_MIXED_MAX_TOP_ACTION = 0.80`: where it is SILENT the
+gap is -0.0250 at 1.10 sigma, so the note now says nothing on the ~79%
+of river decisions this engine gets right. Split-half on the firing
+rows: -0.2538 (5.69) / -0.4052 (4.17). Copy quotes reference 0.7078 /
+ours 0.3783 over 16 spots, **and says the cost is unknown** — M183's
+rule, since a close decision is by definition one where the actions are
+worth almost the same. The overbet row and the turn stay excluded
+(M168). The gate reads the RESPONSE, so it fails toward silence.
 
 ### The checks REPLICATE on fresh spots (M236) — n=42 per street
 
