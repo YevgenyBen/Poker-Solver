@@ -1387,6 +1387,60 @@ MULTIWAY_BRANCH_TRAIN_ITERATIONS = 100
 # nine positions each receive a third of what six do at the same budget,
 # and the gap does not close with more: T7s's fold rate measured 0.117 at
 # 3,000 iterations and only 0.301 at 9,000, against 6-max's 0.94.
+# M245. MULTIWAY POSTFLOP ADVICE IS NOT REPRODUCIBLE, and until now
+# nothing said so - the response reported `solver_confidence: "high"`.
+#
+# Asked the same question twice, changing only the solver's random seed,
+# at the SHIPPED configuration, through `/advise`. 306 seed pairs over 18
+# three-handed spots:
+#
+#   street   pairs   median TVD    p90    worst   top action CHANGES
+#   flop      102      0.3002    0.5637  0.8660         45%
+#   turn      102      0.3109    0.6432  0.9002         41%
+#   river     102      0.4772    0.7985  0.9119         75%
+#
+# **Two in five flop and turn decisions, and three in four river
+# decisions, recommend a DIFFERENT ACTION when the same spot is solved
+# again.** Not a frequency wobble - a different answer.
+#
+# **The river was expected to be the clean one and is the worst.** It is
+# a standalone solve on a complete board where equity is EXACT
+# (M154/M219), so it has one fewer sampling source than the flop. It was
+# measured rather than assumed precisely because M168 is what assuming
+# one street's result for another costs - and the assumption would have
+# excluded the worst street from this warning.
+#
+# **Width is not the cause and cannot be the fix.** Scored against an
+# uncapped 169-class solve, cap 8 sits 0.3243 away while the uncapped
+# solve differs from ITSELF under another seed by 0.3008 - an excess of
+# +0.0235 at 0.39 sigma. Caps 16/26/40 land at 0.91x/1.12x/1.22x that
+# floor, NON-MONOTONE: cap 40 is the widest arm, nearest the reference,
+# and furthest from it. Only noise does that. Widening to 26 would have
+# cost 2.2x latency on the flop for nothing.
+#
+# **Nor is the iteration budget** - F46/M163 measured the spread still at
+# 0.240 with 150x the shipped iterations - **nor ensemble averaging**,
+# which M169 built and left off because the worst cases, the ones a
+# player notices, survive it at every K.
+#
+# So this is disclosed, not fixed. The figures below are the SHIPPED
+# ones: quoting the uncapped floor instead would repeat M232 exactly.
+MULTIWAY_SEED_PAIRS = 306
+MULTIWAY_SEED_MEDIAN_TVD = 0.3605
+MULTIWAY_SEED_ACTION_FLIP_FLOP = 0.45
+MULTIWAY_SEED_ACTION_FLIP_TURN = 0.41
+MULTIWAY_SEED_ACTION_FLIP_RIVER = 0.75
+MULTIWAY_REPRODUCIBILITY_REASON = (
+    "This is a multiway pot - three or more players saw this street - and multiway advice "
+    "here is NOT REPRODUCIBLE. Solving the same spot again, changing nothing but the "
+    "solver's internal random draw, gives a different recommended ACTION about 45% of the "
+    "time on the flop, 41% on the turn and 75% on the river, measured over 306 comparisons. "
+    "The answer you are reading is one draw from a range of answers, not a solved result. "
+    "More computation does not fix this and neither does modelling more hands - both were "
+    "measured. Use the shape of the advice, not its exact frequency, and treat a marginal "
+    "recommendation here as genuinely unsettled."
+)
+
 LOW_CONFIDENCE_TABLE_SIZES = {
     9: (
         "9-max preflop is the least converged table size: iterations divide among "

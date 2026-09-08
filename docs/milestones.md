@@ -13680,3 +13680,119 @@ Worth noting the direction of travel. The note has now been narrowed
 (M243) and softened (M244) since it shipped, and it is a better warning
 each time - not because the earlier versions were careless, but because
 nobody stopped after the version that looked good.
+
+
+## M245 — multiway advice is not reproducible, and nothing said so
+
+The question was where to spend effort now that accuracy sits at 18/40.
+Heads-up is close to exhausted: the flop agrees with an independent
+solver, the river is fixed and its residual narrowed to close decisions
+(M241/M243), and the turn is proven model error where four fixes failed
+(M232/M233/M239). That leaves multiway - the format most players use,
+never checked against anything outside this codebase.
+
+The obvious target was RANGE WIDTH. Heads-up runs 100 / 140 / 60 classes
+a side; multiway runs **8**, frozen in M76 on a latency argument its own
+comment states: cap 8 kept "a cold flop under ~45s", and "10 is measured
+and available if the latency budget ever grows". The budget then grew
+enormously (M162's 28x equity, M218/M219's standalone turn and river)
+and nobody went back. M172 had already shown this axis paying: widening
+the flop 26 -> 100 HALVED its error, the biggest accuracy gain here.
+
+### Width is inert, and the noise floor is why
+
+Cost first, on a warm preflop leg as M76 measured it:
+
+| cap | flop | turn | river |
+|---|---|---|---|
+| 8 | 1.35s | 1.02s | 0.34s |
+| 16 | 1.93s | 1.48s | 0.40s |
+| 26 | 2.99s | 2.28s | 0.46s |
+| 40 | 4.26s | 3.03s | 0.51s |
+
+Cap 26 costs what the heads-up flop already ships at. **So it was
+affordable, and it is still wrong.** M172's method - score capped arms
+against an UNCAPPED solve of the same model - is now possible for
+multiway (169 classes, 11.09s), and the answer needs the noise floor
+beside it, because F46 says these solves are seed-dominated:
+
+| arm | distance from the uncapped solve | vs noise floor |
+|---|---|---|
+| **cap 8 (shipped)** | 0.3243 | 1.08x |
+| cap 16 | 0.2751 | 0.91x |
+| cap 26 | 0.3381 | 1.12x |
+| cap 40 | 0.3668 | 1.22x |
+| *the uncapped solve vs ITSELF, another seed* | **0.3008** | 1.00x |
+
+Cap 8 is **+0.0235 over the floor at 0.39 sigma**. The tell is cap 40:
+the widest arm, nearest the reference, and FURTHEST from it. Only noise
+is non-monotone like that. **Widening to 26 would have cost 2.2x latency
+on the flop for nothing** - and the cost evidence alone would have
+justified shipping it.
+
+### What the floor actually means for a player
+
+Measured at the SHIPPED configuration, through `/advise`, changing
+nothing but the solver's random seed - 306 seed pairs over 18
+three-handed spots:
+
+| street | pairs | median TVD | p90 | worst | **top action CHANGES** |
+|---|---|---|---|---|---|
+| flop | 102 | 0.3002 | 0.5637 | 0.8660 | **45%** |
+| turn | 102 | 0.3109 | 0.6432 | 0.9002 | **41%** |
+| river | 102 | **0.4772** | 0.7985 | 0.9119 | **75%** |
+
+**Two in five flop and turn decisions, and three in four river
+decisions, recommend a DIFFERENT ACTION when the same spot is solved
+again.** Not a frequency wobble - a different answer. The response
+reported `solver_confidence: "high"` over all of it.
+
+**The river was expected to be the clean street and is the worst.** It
+is a standalone solve on a complete board where equity is EXACT
+(M154/M219), one fewer sampling source than the flop. It was measured
+rather than assumed because M168 is what assuming costs - and the
+assumption would have excluded the worst street from the warning.
+
+### Shipped: the disclosure, and the headline signal corrected
+
+`MULTIWAY_REPRODUCIBILITY_REASON` now feeds `_solver_confidence`, which
+returns **"low"** on any postflop street with three or more live
+players. That is the F41/F47 family in its largest form: a headline
+signal vouching for one draw from a distribution.
+
+**The gate reads the response's own `positions`, not the request's
+`players`** (M144's rule). A 6-max hand that folds to two live players
+takes the HEADS-UP postflop cell - a different solver with different
+behaviour - and `players` cannot tell them apart. The live count can.
+
+Also corrected by implication: the long caveat a multiway player already
+received is built ENTIRELY from heads-up studies - the 56-spot flop
+certification, the open-ended-draw finding, the nine-high shove, the
+street-isolation gap. Not one sentence of it was about multiway, and
+none of it mentioned that the answer is unstable.
+
+Five guards, mutation-tested: dropping the live-count threshold to 2,
+never appending the reason, and letting the copy drift from the
+constants each fail exactly the test written for them.
+
+### Why this is disclosed rather than fixed
+
+Every lever was already measured and none reaches it. **Width**: this
+milestone, inert at 0.39 sigma. **Iterations**: F46/M163 measured the
+spread still at 0.240 with 150x the shipped budget. **Ensemble
+averaging**: M169 built it and left it off because the extreme
+disagreements - the ones a player would notice - survive at every K
+while only the middle tightens.
+
+### Two harness errors, both caught before they became findings
+
+**Clearing every cache** made each request re-pay a ~66s cold multiway
+preflop solve that production prewarms, reporting 78s for cap 8 - a cost
+no player meets, which would have made widening look unaffordable.
+
+**Then not clearing them** served cap-8 answers to the wider arms,
+because **the range cap is a config constant and is therefore in no
+cache key**. All three wider caps came back at 0.27s, faster than cap 8.
+That reads as "widening is free" and is a cache hit. M155's rule in a
+new place: patching where a value is defined does nothing about what has
+already been computed from it.

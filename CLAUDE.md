@@ -1321,6 +1321,43 @@ requests now reject unknown fields by name rather than ignoring them.
   every strategy exactly uniform** — always, not occasionally, and since
   the feature shipped. Heads-up is unaffected: its exact solver
   enumerates every card eagerly.
+- **MULTIWAY POSTFLOP ADVICE IS NOT REPRODUCIBLE, and the player is now
+  told (M245).** Same spot, same request, only the solver's random seed
+  changed, at the shipped configuration, 306 seed pairs:
+
+  | street | median TVD | p90 | worst | **top action CHANGES** |
+  |---|---|---|---|---|
+  | flop | 0.3002 | 0.5637 | 0.8660 | **45%** |
+  | turn | 0.3109 | 0.6432 | 0.9002 | **41%** |
+  | river | **0.4772** | 0.7985 | 0.9119 | **75%** |
+
+  `_solver_confidence` now returns **"low"** on any postflop street with
+  3+ live players, gated on the response's own `positions` — a 6-max
+  hand folding to two takes the HEADS-UP cell and `players` cannot tell
+  them apart. **The river was expected to be cleanest (exact equity,
+  M154/M219) and is the WORST** — measured, not assumed, which is the
+  only reason it is covered.
+  **Every lever is already measured and none reaches it**: width is
+  inert (below), iterations leave 0.240 at 150x the budget (F46/M163),
+  and M169's ensembles leave the worst cases untouched at every K. So it
+  is disclosed, not fixed.
+
+- **MULTIWAY RANGE WIDTH IS INERT — do not widen it (M245).** The cap of
+  8 was frozen in M76 on a latency argument ("a cold flop under ~45s")
+  that expired years of speedups ago, and cap 26 now costs 2.99s, what
+  the heads-up flop already ships at. It buys **nothing**. Scored against
+  an uncapped 169-class solve, cap 8 sits 0.3243 away while that solve
+  differs from ITSELF under another seed by 0.3008 — **+0.0235 at 0.39
+  sigma**. Caps 16/26/40 land at 0.91x/1.12x/1.22x the noise floor,
+  **non-monotone: cap 40 is the widest arm and the furthest from the
+  reference.** M172's flop result does not transfer.
+  **Two harness traps here, both of which produced a plausible wrong
+  answer first**: clearing every cache makes each request re-pay the ~66s
+  cold preflop solve production prewarms (78s for cap 8, a cost no player
+  meets); and NOT clearing them serves the previous cap's answer, because
+  **the cap is a config constant and is in no cache key** — all three
+  wider arms came back faster than cap 8.
+
 - **Multiway POSTFLOP still answers an easier question than heads-up.**
   M67 fixed the preflop leg (all 169 classes now), but postflop path
   queries cap derived ranges per position
