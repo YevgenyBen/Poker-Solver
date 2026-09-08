@@ -13598,3 +13598,85 @@ narrowed it to a fifth of the decisions it fired on. **Both were the
 same session.** The note is better now not because the first version was
 careless but because it was checked again by someone motivated to find
 it wrong.
+
+
+## M244 — trying to price the river note, and finding out that I cannot
+
+M243's river warning ends by telling the player the cost in chips is
+unknown "and is probably small". That was an inference from M183 -
+solvers mix at near-indifference, so the biggest frequency errors sit
+where they are cheapest - and **an inference has no business sitting in
+a warning when a measurement is affordable.** The reference solves for
+the 16 firing spots were already on disk, so `ev.py` could price it.
+
+### The pricing does not work, and that is the result
+
+Matching the reference's fold frequency, everything else held fixed:
+
+| | value |
+|---|---|
+| mean loss | **-0.9644 bb** |
+| median | -0.7234 |
+| worst | +0.2041 |
+| corr(frequency gap, loss) | **-0.745** |
+
+Read literally this says following our own note would cost a blind a
+decision. It says nothing of the kind. **A model always prefers its own
+answer**, so pricing a suspected model error inside the model that has
+it can only ever come out this way - and the correlation makes the
+mechanism explicit: the further the reference is from us, the more our
+own EV machinery likes us. M237 stated this limitation; M244 is what it
+looks like when the answer actually matters.
+
+**The control confirms the mechanism rather than the finding.** On 45
+non-firing spots - where we and the reference already agree - matching
+its fold rate costs +0.1009 bb with a median of exactly 0.0. The
+penalty appears only where there is a disagreement to move across.
+
+### The reference-free half DID work, and refuted my hypothesis
+
+The first look at the firing spots showed the actions in our own support
+differing by a median 1.24 bb on a 20bb pot, and the obvious reading was
+alarming: **if we mix roughly evenly between actions our own model
+values a blind apart, our mixing is inconsistent with our own values** -
+a defect visible without any reference at all.
+
+The control killed it. Restricted to nodes that actually mix (two or
+more actions at 5% or more):
+
+| | n | median support spread | as % of pot |
+|---|---|---|---|
+| note FIRES (close decisions) | 14 | 1.5413 bb | **6.84%** |
+| note SILENT (decisive rows) | 9 | 3.3650 bb | **16.87%** |
+
+**Among mixing nodes, the ones this note fires on are the CLOSER ones**,
+which is M183's mechanism showing up directly rather than being assumed.
+The hypothesis was backwards, and it took a control to see it - the
+firing rows look alarming in isolation and reassuring in comparison.
+
+### What shipped
+
+The clause "and is probably small" is **removed**. The note now says the
+cost is genuinely unknown, explains in one sentence why the obvious
+measurement settles nothing, and offers the support-spread comparison as
+what it is: *"more likely a cheap disagreement than an expensive one,
+but that is an argument and not a measurement."*
+
+Pinned by `test_the_river_under_fold_note_quotes_its_own_measurement`,
+which now fails if the clause returns - mutation-tested by putting it
+back.
+
+### The rule this is the third instance of
+
+M232 corrected a note quoting a figure measured at the wrong width.
+M243 corrected the same note for quoting a figure from a population
+found by accident. M244 removes a clause from it that was reasoning
+wearing the clothes of a result. **All three are the same failure: a
+warning is the last place a comfortable guess may sit**, and all three
+were found by asking a further question of work that already looked
+finished.
+
+Worth noting the direction of travel. The note has now been narrowed
+(M243) and softened (M244) since it shipped, and it is a better warning
+each time - not because the earlier versions were careless, but because
+nobody stopped after the version that looked good.

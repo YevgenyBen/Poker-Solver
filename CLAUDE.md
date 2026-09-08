@@ -359,9 +359,15 @@ on hero's top action:
 gap is -0.0250 at 1.10 sigma, so the note now says nothing on the ~79%
 of river decisions this engine gets right. Split-half on the firing
 rows: -0.2538 (5.69) / -0.4052 (4.17). Copy quotes reference 0.7078 /
-ours 0.3783 over 16 spots, **and says the cost is unknown** — M183's
-rule, since a close decision is by definition one where the actions are
-worth almost the same. The overbet row and the turn stay excluded
+ours 0.3783 over 16 spots, **and says the cost is unknown** — M244 tried
+to price it and could not: matching the reference's fold rate scores
+**-0.9644 bb** against our own model, with corr(gap, loss) **-0.745**,
+because a model always prefers its own answer. **A model cannot referee
+a disagreement about itself.** What the reference-free half shows is
+that among nodes that MIX, the ones this fires on are the closer ones
+(support spread **6.84% of pot against 16.87%**) — the reverse of the
+hypothesis that went in, which was that mixing at nodes a blind apart
+meant our mix was internally inconsistent. The overbet row and the turn stay excluded
 (M168). The gate reads the RESPONSE, so it fails toward silence.
 
 ### The checks REPLICATE on fresh spots (M236) — n=42 per street
