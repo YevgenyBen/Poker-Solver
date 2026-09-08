@@ -13987,3 +13987,84 @@ worth a milestone rather than the milestone.
 thing that could close the direction: anatomy before cost, cost before
 effect, effect before predictability, and a determinism check before
 believing any of it. Three of the four could have ended it in minutes.
+
+
+## M248 — the leaf correction has a portable key, and it is worth about half
+
+M247 established that valuing a turn leaf by playing the river out
+instead of averaging equity changes hand values by **sd ~1.8 bb on a
+15bb pot (12%)**, deterministically, and that neither hand equity nor
+equity swing across runouts predicts it (0-2% each). The lever was real
+and the delivery mechanism unknown. This finds the key.
+
+### What the correction actually is: polarisation
+
+Grouped by made-hand category, on two boards independently:
+
+| category | Ac9d4h 2s | Qs7h2c 9d |
+|---|---|---|
+| trips | **+5.56** (sd 0.68) | **+5.49** (sd 0.58) |
+| two pair | +1.60 | +0.92 |
+| high card | +0.69 | -0.44 |
+| pair | **-0.69** | **-0.68** |
+
+Strong made hands GAIN from being able to extract on the river; one-pair
+hands LOSE from paying off. That is why equity missed it entirely -
+equity is high for trips AND for a good pair, and what separates them is
+the ability to extract, not the probability of winning.
+
+### A fine key fits 93% and transfers 0% - caught before it was believed
+
+| key | in-sample R2 | cross-board R2 | key found on |
+|---|---|---|---|
+| made-hand category | 53% / 35% | +26% / +43% | 100% |
+| **full five-card rank tuple** | **93% / 74%** | **+1% / +0%** | **3% / 1%** |
+| board-relative class | 58% / 53% | +32% / +42% | 56% / 100% |
+
+**The 93% is the number that would have been quoted.** It comes from
+keys like "a pair of nines with A-4-2 kickers", which do not exist on
+another board - so the key misses 97-99% of hands and predicts nothing.
+In-sample fit was measuring the key's granularity, not its usefulness.
+M134 found the same thing about full rank tuples in a different role,
+and this is a second instance in a new one.
+
+### The portable key, cross-validated
+
+A **board-relative** class - overpair / top pair / second pair / low pair
+/ board pair / two pair / trips+ / nutted / high card by overcard count -
+is portable by construction. **Nine keys.** Leave-one-out over five
+boards, each held out and predicted by a table built from the other
+four:
+
+| held out | R2 | key coverage |
+|---|---|---|
+| Ac9d4h 2s | +51.7% | 100% |
+| Qs7h2c 9d | +45.7% | 100% |
+| Kh8c5d 3h | +46.8% | 100% |
+| Jd6s3h 8c | +45.1% | 100% |
+| Tc9d2s 5h | +38.0% | 100% |
+| **mean** | **+45.4%** | **100%** |
+
+The lever replicates too: per-hand sd 1.75 / 1.86 / 1.75 / 1.84 / 1.62
+across the five boards.
+
+### What this means for the design, stated conservatively
+
+**A nine-entry portable table captures about 45% of a correction worth
+12% of pot.** The residual is ~1.33 bb, still ~9% of pot, and it is
+board-specific - so a table is a partial fix, not the whole one, and
+anyone budgeting for this should budget for capturing half.
+
+**Untested, and it is the next thing**: whether applying this correction
+inside a turn solve actually moves the 0.39 gap toward the independent
+solver. Everything here measures the correction's SIZE and PREDICTABILITY,
+not its effect on the strategy. M247's own caution applies - the leaf
+value changing does not by itself prove the advice changes, and the four
+previous turn fixes all looked reasonable before they were measured.
+
+### Method note
+
+The transfer test is the whole milestone. Every number before it pointed
+at a fine key, and the fine key is worthless. **In-sample fit on a
+categorical key measures how many categories there are.** Holding a
+board out is what separates a key from a lookup of the answer.
