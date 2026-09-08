@@ -3602,6 +3602,11 @@ def _advise_preflop(request, iterations: int, hero_combo=None) -> dict:
         # rather than assumed and stays correct whatever the pool is.
         "hero_key": hero_key,
         "hero_in_range": None if hero_key is None else hero_key in strategy,
+        # M251: what a call costs HERE, so the response can be judged on
+        # the price it is offering rather than on the action names alone.
+        # Derived from the node the answer came from, which is what keeps
+        # it true if the tree's sizes move (M144's rule).
+        "to_call_bb": max(node.invested.values()) - node.invested[node.player_to_act],
     }
 
 

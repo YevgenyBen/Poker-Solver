@@ -1508,6 +1508,65 @@ LOW_CONFIDENCE_TABLE_SIZES = {
 # budgets where a converged solve puts it near 0.03 (M72-M74, M97), and
 # the equity estimates the choice rests on carry an error of +/-55bb of
 # EV in a six-way 100bb pot (M98).
+# M251: what a weak hand is told once a multiway preflop pot has folded
+# down to TWO live players and it faces a re-raise.
+#
+# Measured through /advise on nodes enumerated off the real tree, asking
+# 72o / 83o / 92o / T2o / 62o what to do, at 100bb:
+#
+#   multiway, TWO live      n=22   CONTINUES 0.9823   22 of 22 over 0.90
+#   multiway, 3+ live       n=60   continues 0.3899    3 of 60 over 0.90
+#   heads-up (exact solver) n= 2   continues 0.5126    0 of  2 over 0.90
+#
+# Held against the same PRICE - the equity a call needs, from the tree's
+# own pot and amount owed - the separation is total:
+#
+#   price >= 0.23, two live   n=17  0.9779   17 of 17 over 0.90
+#   price >= 0.23, 3+ live    n=23  0.0832    0 of 23 over 0.90
+#
+# It holds at path lengths 4 through 8 and at both 3-max and 6-max, so it
+# is NOT the depth confound it first looked like: an earlier pass had the
+# two arms differing in depth as well as live count, and the wider
+# enumeration separated them.
+#
+# **Concretely**: BB facing a 4-bet, `7c2d` comes back call 0.9697 /
+# fold 0.0269, at solver_confidence "high". The call needs 27.27% equity
+# (9.00 owed into a 24.00 pot); 72o has 34.43% against a UNIFORM range
+# and 21.10% against QQ+/AK. Calling only breaks even once the opponent
+# is 4-betting the top 23.2% of all hands - and 13.9% for T2o - where a
+# real 4-bet range is a few percent. Premiums at the same node are
+# correct (AA all-in 0.9996), which is why a categorical check on strong
+# hands passes and F38's axis is the one that fails.
+#
+# The gate needs more than the live count, because "everyone folded to
+# the small blind" is also a two-live preflop node and this study did not
+# measure one - warning where nothing was measured is what M196's gate
+# exists to prevent.
+#
+# **The PRICE cannot do that job, which a test caught before this
+# shipped.** An unraised small blind owes 0.5 into a 1.5 pot, which is a
+# price of 0.25 - inside the measured band (0.2222-0.2727), because pot
+# odds are a ratio and a blind completion has the same ratio as a 4-bet.
+# What separates them is the absolute size of what is owed: 9.0bb at
+# every measured node against half a blind. 3.0 sits well above any blind
+# completion or limp and well below the measured 9.0.
+PREFLOP_TWO_LIVE_MIN_TO_CALL_BB = 3.0
+PREFLOP_TWO_LIVE_TRASH_CONTINUES = 0.9823
+PREFLOP_TWO_LIVE_NODES = 22
+PREFLOP_MANY_LIVE_TRASH_CONTINUES = 0.3899
+
+PREFLOP_TWO_LIVE_REASON = (
+    "Everyone else has folded, so this is now a two-player pot — and that is where this "
+    "engine's weak-hand folding breaks down. Measured over 22 such spots, hands as weak "
+    "as 72o are told to continue against a re-raise 98% of the time; at the same price "
+    "with three or more players still live, the same hands continue 39% of the time and "
+    "almost never above 90%. The call here typically needs about 27% equity, which 72o "
+    "has against a random hand and not against anyone's re-raising range — it would take "
+    "an opponent re-raising the top 23% of all hands to make it break even. Strong hands "
+    "are still handled correctly, so treat the raise/all-in numbers as usable and do NOT "
+    "trust this node's advice to continue with a weak one."
+)
+
 SIZING_CAVEAT_TABLE_SIZES = {
     3: True,
     6: True,
@@ -1548,8 +1607,11 @@ SIZING_CAVEAT_REASON = (
     "non-fold actions (limp / raise / all-in) moves with the random seed — at 6-max, "
     "AA's all-in frequency has measured anywhere from 0.03 to 0.92 where a converged "
     "solve puts it near 0.03. The fold-vs-play call is sounder but is NOT a positional "
-    "range chart: individual hands are classified sensibly (premiums are never folded, "
-    "trash is), while the opening range does not widen with position at all — at 6-max "
+    "range chart. Individual hands are classified sensibly while three or more players "
+    "are live — premiums are never folded, trash is — but NOT once everyone else has "
+    "folded and you face a re-raise heads-up, where hands as weak as 72o are told to "
+    "continue 98% of the time (measured over 22 spots) and folding is correct. The "
+    "opening range also does not widen with position at all — at 6-max "
     "the fold frequency is flat across UTG, MP, CO and BTN, where real GTO play widens "
     "from roughly 15% of hands under the gun to roughly 45% on the button. Treat this "
     "as a strong hint about whether a hand is playable, not as a guide to how position "

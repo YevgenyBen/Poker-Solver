@@ -14330,3 +14330,139 @@ already separates cleanly by depth: 3-bettor 0.1433 premium, 4-bettor
 that by however many raise-count buckets it needs. Recorded because "the
 route is circular" is where this milestone ends, and that is a statement
 about one particular route.
+
+## M251 — a multiway pot that folds down to two tells 72o to call a 4-bet
+
+M250 ended by locating M149's blocker in `_mccfr_terminal_value`. The
+obvious follow-up was whether M150's shipped on-demand trainer — which
+fires on live requests and was validated on **two hands** — is already
+serving users the distorted answers M250 measured. It is not, and
+looking for it found something worse that has nothing to do with the
+trainer.
+
+### What a weak hand is told
+
+Nodes enumerated off the real tree, asked through `/advise` at 100bb,
+hero 72o / 83o / 92o / T2o / 62o, scoring how often the advice is
+anything other than fold:
+
+| arm | n | trash CONTINUES | over 0.90 |
+|---|---|---|---|
+| multiway preflop, **two live** | 22 | **0.9823** | **22 of 22** |
+| multiway preflop, 3+ live | 60 | 0.3899 | 3 of 60 |
+| heads-up, the exact solver | 2 | 0.5126 | 0 of 2 |
+
+Concretely, BB facing a 4-bet:
+
+    7c2d   fold 0.0269   call 0.9697   all-in 0.0033
+
+**Call a 4-bet with seven-deuce, 97% of the time**, reported at
+`solver_confidence: "high"`. Premiums at the same node are correct (AA
+all-in 0.9996), so a categorical check on strong hands passes — F38's
+axis, in the preflop cell this time.
+
+### How wrong, priced from the engine's own equity table
+
+The call needs **27.27%** equity (9.00 owed into a 24.00 pot, from the
+tree). Against a UNIFORM range 72o has **34.43%**; against QQ+/AK it has
+**21.10%**. Widening the opponent's range from the top until the call
+breaks even:
+
+| hand | 4-bet range needed to justify calling |
+|---|---|
+| 72o | top **23.2%** of all hands |
+| 83o | 19.3% |
+| 92o | 16.0% |
+| T2o | **13.9%** |
+
+A real 4-bet range at 100bb is a few percent. **The engine is answering
+correctly about a game nobody is playing** — the same uniform-range
+defect M149 named and M250 confirmed, surfacing here as a categorically
+wrong recommendation rather than a range statistic.
+
+### The confound was real and the finding survived it
+
+The first pass had 2-live paths running 7 actions and 3-live paths 6,
+so "two live" and "one level deeper" were not separated — M150 measured
+learned rows falling to 3% at depth 7 and 0% at depth 8+, which is a
+completely adequate rival explanation. Re-enumerated across path lengths
+3-8 at 3-max, 6-max and heads-up, 84 nodes:
+
+| axis | correlation with trash continuing |
+|---|---|
+| live count | **-0.676** |
+| path length | +0.415 |
+| price | -0.343 |
+
+Depth is real and secondary. **Live count survives within every path
+length** (-0.95, -0.90, -0.45, -0.87, -0.75 at lengths 4-8), and the
+two-live cell spans lengths 4 through 8 and both table sizes.
+
+Held at matched PRICE the separation is total:
+
+| price >= 0.23 | n | continues | over 0.90 |
+|---|---|---|---|
+| two live | 17 | **0.9779** | **17 of 17** |
+| 3+ live | 23 | **0.0832** | **0 of 23** |
+
+### Two user-facing changes
+
+**1. `SIZING_CAVEAT_REASON` was FALSE, and this is its third
+correction.** It fires on every 3/6/9-max preflop response and said:
+
+> The fold-vs-play call is sounder but is NOT a positional range chart:
+> individual hands are classified sensibly (**premiums are never folded,
+> trash is**) ...
+
+M110 wrote a claim, M111 withdrew it, M123 found the caveat still
+carrying it. What survived all of that is the clause above — and it is
+wrong exactly where the engine fails, so the caveat was pointing the
+player at the broken half. It now scopes the claim to three or more live
+and states what happens otherwise. **The claim is kept, not deleted**:
+it is true at 3+ live and a test asserts it still appears.
+
+**2. `solver_confidence` goes low at that node**, via
+`PREFLOP_TWO_LIVE_REASON`. Third time a headline signal has been caught
+vouching for something it should not (F41, F47, now this).
+
+### The gate, and the mistake a test caught before it shipped
+
+The condition is: preflop, multiway origin, exactly **two** live in the
+response's own `positions` (M144 — a 6-max hand that folds to two cannot
+be identified from `players`), and facing a real raise.
+
+The first version expressed "a real raise" as a PRICE, at or above 0.20,
+taken from the measured band of 0.2222-0.2727. **A test written for the
+opposite reason caught it**: an unraised small blind owes 0.5 into a 1.5
+pot — a price of **0.25**, inside the measured band. Pot odds are a
+ratio and a ratio cannot tell a blind completion from a 4-bet. The gate
+now reads the absolute amount owed (`PREFLOP_TWO_LIVE_MIN_TO_CALL_BB =
+3.0`, against 9.0 at every measured node and 0.5 at a completion).
+
+Scoped this way on purpose: a two-live preflop node also covers
+"everyone folded to the small blind", which this study never measured,
+and firing a 22-node finding over a spot outside those 22 is what M196's
+gate exists to prevent.
+
+Five guards, all mutation-tested: removing the warning, firing it with
+three live, dropping the minimum owed, firing it heads-up, and restoring
+the false caveat clause each fail a test.
+
+### What was NOT established
+
+**The mechanism.** The uniform-range arithmetic fits and is not proven —
+it explains why continuing looks profitable, and does not explain why
+the same engine folds correctly at 3+ live where the price is often
+*worse* (0.3457 at the length-6 nodes, where trash folds 0.996).
+
+**Heads-up is not clean either, and is deliberately left alone.**
+The exact solver continues with trash 0.5832 and 0.4419 at the identical
+price (pot 24.00, owed 9.00) — better than 0.98 and not obviously right.
+n=2, on a code path this study did not set out to measure. Recorded so
+the next person does not read this milestone as a clean bill of health
+for heads-up; not warned about, because two nodes is not a finding.
+
+**Nothing was fixed.** The advice at these nodes is still wrong; the
+response now says so. M250 established that the range derivation cannot
+be repaired without fixing terminal pricing first, so disclosure is what
+is available.

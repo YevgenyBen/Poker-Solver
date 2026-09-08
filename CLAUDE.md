@@ -1829,6 +1829,49 @@ requests now reject unknown fields by name rather than ignoring them.
   is why M250 could use it: it is blind to a rescaling and not to a
   re-composition.)
 
+- **A MULTIWAY POT THAT FOLDS DOWN TO TWO TELLS 72o TO CALL A 4-BET
+  (M251).** The sharpest categorical failure measured here. Through
+  `/advise` at 100bb, asking 72o/83o/92o/T2o/62o how to act:
+  | arm | n | trash CONTINUES | over 0.90 |
+  |---|---|---|---|
+  | multiway preflop, **two live** | 22 | **0.9823** | **22 of 22** |
+  | multiway preflop, 3+ live | 60 | 0.3899 | 3 of 60 |
+  | heads-up, exact solver | 2 | 0.5126 | 0 of 2 |
+  BB facing a 4-bet returns `7c2d` **fold 0.0269 / call 0.9697**, at
+  `solver_confidence: "high"`. Premiums are correct at the same node (AA
+  all-in 0.9996), so a categorical check on strong hands PASSES — F38's
+  axis, in the preflop cell.
+  **Priced from our own equity table**: the call needs 27.27% (9.00 owed
+  into a 24.00 pot); 72o has 34.43% against a UNIFORM range and 21.10%
+  against QQ+/AK, and only breaks even once the opponent 4-bets the top
+  **23.2%** of all hands (T2o: 13.9%). Real 4-bet ranges are a few
+  percent. **The engine answers correctly about a game nobody is
+  playing** — M149's uniform-range defect, surfacing as advice.
+  **The depth confound was real and the finding survived it.** Over 84
+  nodes at path lengths 3-8: corr(live) **-0.676**, corr(depth) +0.415,
+  corr(price) -0.343, and live count holds WITHIN every path length
+  (-0.45 to -0.95). At matched price >= 0.23 it is **17 of 17 against 0
+  of 23**.
+  **`SIZING_CAVEAT_REASON` was FALSE and is corrected — its THIRD
+  correction** (M110 wrote it, M111 withdrew it, M123 found it still
+  there). It told every 3/6/9-max preflop user that "individual hands are
+  classified sensibly (premiums are never folded, trash is)" — pointing
+  the player at the half that fails. Now scoped to 3+ live, with the
+  two-live behaviour stated. `PREFLOP_TWO_LIVE_REASON` also drops
+  `solver_confidence` to low there.
+  **The gate reads the AMOUNT OWED, not the price, and a test caught
+  why**: an unraised small blind owes 0.5 into a 1.5 pot — a price of
+  0.25, inside the measured band of 0.2222-0.2727, because a ratio
+  cannot tell a blind completion from a 4-bet.
+  `PREFLOP_TWO_LIVE_MIN_TO_CALL_BB = 3.0` against 9.0 at every measured
+  node.
+  **Heads-up is NOT clean either and is deliberately not warned about**:
+  the exact solver continues with trash 0.5832 / 0.4419 at the identical
+  price. n=2, on a path this study did not set out to measure — recorded
+  so nobody reads M251 as a clean bill of health for heads-up.
+  **Nothing was fixed** — M250 established the ranges cannot be repaired
+  before terminal pricing is, so this is disclosure.
+
 - **`trained` / `range_confidence` / `source` exist because output can
   look confident and be fabricated.** Don't strip them for tidiness.
 - **A repeat flop request WARM-STARTS from the cached canonical solve

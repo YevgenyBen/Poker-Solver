@@ -8324,6 +8324,126 @@ def test_the_reproducibility_warning_is_silent_when_only_two_players_are_live(cl
     assert probe not in (payload["solver_confidence_reason"] or "")
 
 
+def test_a_player_left_heads_up_in_a_multiway_pot_is_warned_about_weak_hands(client):
+    """M251. The sharpest categorical failure this project has measured.
+
+    Once a multiway preflop pot folds down to two live and someone faces
+    a re-raise, weak hands stop folding: over 22 such nodes, 72o-class
+    hands are told to CONTINUE 0.9823 of the time, 22 of 22 above 0.90.
+    At the same price with three or more live it is 0.3899 and 3 of 60.
+    Restricted to nodes priced at or above 0.23 the separation is total -
+    17 of 17 against 0 of 23.
+
+    Concretely: BB facing a 4-bet gets `7c2d` -> call 0.9697 / fold
+    0.0269. The call needs 27.27% equity; 72o has 34.43% against a random
+    hand and 21.10% against QQ+/AK, and only breaks even once the
+    opponent re-raises the top 23.2% of all hands.
+
+    It was reported at `solver_confidence: "high"`, which is F41/F47's
+    shape a third time - a headline signal vouching for an answer that is
+    categorically wrong.
+    """
+    probe = api_config.PREFLOP_TWO_LIVE_REASON.strip()[:60]
+    response = client.post("/advise", json=_advise_body(
+        stack_bb=100.0, players=6, hero_cards="7c2d",
+        preflop_action_path=["fold", "fold", "fold", "fold",
+                             "raise", "raise", "raise"]))
+    assert response.status_code == 200, response.json()
+    payload = response.json()
+
+    assert len(payload["positions"]) == 2, (
+        f"this spot has {payload['positions']} live, so it is not the cell "
+        "M251 measured and the test would prove nothing")
+    assert payload["solver_confidence"] == "low"
+    assert probe in (payload["solver_confidence_reason"] or "")
+
+
+def test_the_two_live_warning_is_silent_while_three_players_are_live(client):
+    """M251. Three or more live is the arm that folds trash correctly.
+
+    0 of 23 nodes at the same price go above 0.90, against 17 of 17 with
+    two live - so a warning that fired on both would be describing a
+    population it does not apply to, which is M196's failure mode.
+    """
+    probe = api_config.PREFLOP_TWO_LIVE_REASON.strip()[:60]
+    response = client.post("/advise", json=_advise_body(
+        stack_bb=100.0, players=6, hero_cards="7c2d",
+        preflop_action_path=["fold", "fold", "fold", "raise", "raise",
+                             "raise"]))
+    assert response.status_code == 200, response.json()
+    payload = response.json()
+    assert len(payload["positions"]) >= 3
+    assert probe not in (payload["solver_confidence_reason"] or "")
+
+
+def test_the_two_live_warning_needs_a_real_price_not_just_two_seats(client):
+    """M251. "Everyone folded to the small blind" is also a two-live
+    preflop node, and this study never measured one.
+
+    **Pot odds cannot draw that line, and this test is why the gate does
+    not use them**: an unraised small blind owes 0.5 into a 1.5 pot, a
+    price of 0.25, which is inside the measured band (0.2222-0.2727). A
+    ratio does not know a blind completion from a 4-bet. What separates
+    them is the absolute amount owed - 9.0bb at every measured node.
+
+    Quoting a 22-node finding over a spot outside those 22 is exactly
+    what M196's gate exists to prevent.
+    """
+    from api import main as api_main
+
+    two_live_cheap = {"street": "preflop", "positions": ["SB", "BB"],
+                      "pot": 1.5, "to_call_bb": 0.5}
+    two_live_expensive = {"street": "preflop", "positions": ["UTG", "BB"],
+                          "pot": 24.0, "to_call_bb": 9.0}
+    assert not api_main._is_two_live_multiway_preflop(two_live_cheap, 6), (
+        "an unraised two-live pot is outside the measured population"
+    )
+    assert api_main._is_two_live_multiway_preflop(two_live_expensive, 6)
+    # And the axes it must not fire on.
+    assert not api_main._is_two_live_multiway_preflop(
+        {**two_live_expensive, "street": "flop"}, 6)
+    assert not api_main._is_two_live_multiway_preflop(two_live_expensive, 2), (
+        "heads-up runs the exact solver, which was measured at 0.51 here "
+        "rather than 0.98 - a different question"
+    )
+    assert not api_main._is_two_live_multiway_preflop(
+        {**two_live_expensive, "positions": ["UTG", "SB", "BB"]}, 6)
+
+
+def test_the_two_live_warning_quotes_its_own_measurement():
+    """M251. The copy has to move when the measurement does.
+
+    M232's rule: a warning may not quote a figure taken at a width or a
+    population the product does not run. Both numbers in the sentence are
+    the measured ones, and both are pinned here.
+    """
+    reason = api_config.PREFLOP_TWO_LIVE_REASON
+    assert str(api_config.PREFLOP_TWO_LIVE_NODES) in reason
+    assert f"{round(api_config.PREFLOP_TWO_LIVE_TRASH_CONTINUES * 100)}%" in reason
+    assert f"{round(api_config.PREFLOP_MANY_LIVE_TRASH_CONTINUES * 100)}%" in reason
+
+
+def test_the_sizing_caveat_no_longer_claims_trash_is_always_folded():
+    """M251, and the THIRD correction to this one paragraph.
+
+    M110 wrote "the button opens tighter than under the gun", M111
+    withdrew it, and M123 found the caveat still saying it. What survived
+    every round was "individual hands are classified sensibly (premiums
+    are never folded, trash is)" - and at a two-live node facing a
+    re-raise trash is NOT folded, it continues 98% of the time.
+
+    A caveat that points the player at the sound half is worse than no
+    caveat when that half is the broken one.
+    """
+    reason = api_config.SIZING_CAVEAT_REASON
+    assert "premiums are never folded, trash is" in reason, (
+        "the claim still holds with three or more live and should still "
+        "be stated - what M251 corrected is its SCOPE, not its truth"
+    )
+    assert "three or more players are live" in reason
+    assert "re-raise" in reason
+    assert "98%" in reason
+
 def test_the_reproducibility_warning_quotes_its_own_measurement(client):
     """The copy moves if the measurement does (M232's rule)."""
     note = api_config.MULTIWAY_REPRODUCIBILITY_REASON
