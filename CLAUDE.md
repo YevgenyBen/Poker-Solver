@@ -1774,17 +1774,60 @@ requests now reject unknown fields by name rather than ignoring them.
   (sd 5.3e-17 -> 0.221).
   **Not a corner case**: 534 of 568 (94%) legal 6-max lines ending a
   betting round with 3+ live contain at least one all-prior node.
-  **Not shipped — it is a latency question.** Wiring it into the single
-  derivation site costs **3.29-3.75s per line** at the shipped 200-node
-  budget (0.93-2.43s at 50), once then cached, on top of a ~1.0-1.35s
-  cold multiway flop. That reaches the 5s bar, so M213's rule applies: a
-  paired benchmark first.
+  **Not a corner case**, and **NOT a latency question either — M250 built
+  it and REFUSED it on accuracy, so the benchmark M246 asked for was
+  never reached.** The change works exactly as predicted: through
+  `_derive_path_situation` (the real production derivation, M164's rule)
+  a line's ratio spread goes 0.0 -> **0.235 / 0.411** while a control
+  line carrying no unlearned node comes back byte-identical. **And the
+  direction is wrong.** Premium share of every seat whose range moved
+  (8 seats, over the 4 of 6 lines carrying an unlearned node), as a
+  multiple of a uniform range:
+  | | multiple of uniform |
+  |---|---|
+  | median before | 0.80x |
+  | **median after** | **0.017x** |
+  | heads-up's 4-bet CALLER (exact solver, the target) | **1.67x** |
+  | moved toward that target | **1 of 8** |
+  **The cause is visible in one node and it is M98.** Trained, it gives
+  AA, KK, QQ and AKs rows **identical to four decimals** — all_in 0.9985
+  / fold 0.0008 / call 0.0008 — while 72o, 83o, 92o and T2o CALL a 4-bet
+  **43-57%** of the time. `_mccfr_terminal_value` prices every showdown
+  at `equity * pot - invested`, so the all-in is priced correctly and
+  every smaller action is scored as if the hand ended: everything strong
+  converges onto jamming, nothing above the threshold separates, and the
+  calling range is whatever is left. The one seat that improved is the
+  seat that **4-BETS** (0.713 -> 1.494) — the trained node is right about
+  who jams and wrong about who calls.
+  **So the uniform prior was MASKING M98's defect, and the gate is not a
+  bug but a mask.** M149's blocker has not expired; it has moved one
+  layer down, from a gate to the pricing behind it.
+  **And this makes the M112-M116 route CIRCULAR**, which was not visible
+  before: the continuation table exists to fix terminal pricing, and the
+  range strength it must be keyed and built by is wrong *because of*
+  terminal pricing. `_mccfr_terminal_value` has to price a non-all-in
+  action before either is worth attempting.
+  **One route out is recorded and UNTESTED**: source both halves from
+  outside the multiway solve — key on RAISE COUNT (structural, read off
+  the tree, no strategy involved) and build each entry from a HEADS-UP
+  range of that depth, where composition is trustworthy and already
+  separates (3-bettor 0.1433 premium, 4-bettor 0.3298, 4-bet caller
+  0.0553, uniform 0.0332). Not costed; M250's entry has the shape.
+  `PREFLOP_PATH_NODE_TRAINING = False` keeps the code, the tests and the
+  numbers (M169's precedent), restores the old behaviour byte-identically
+  in one constant, and is pinned in both directions by
+  `test_the_shipped_gate_leaves_a_visited_but_unlearned_node_alone`.
+  Cost, for the record and NOT a measurement (single-armed, shared
+  cache): deriving a line with unlearned nodes on it went 0.004s ->
+  **1.567s / 3.844s**, consistent with M246's 3.29-3.75s.
   **Two metrics lie about this and both were used getting here**: premium
   share is IDENTICAL to four decimals while the distribution moves 0.667
   per class (M149's own metric), and max absolute difference reads
   "hugely different" for what is a pure rescaling. **The test is whether
   the deep range is a uniform SCALING of the shallow one — ratio spread,
-  not level.**
+  not level.** (Premium share DOES separate once a node is trained, which
+  is why M250 could use it: it is blind to a rescaling and not to a
+  re-composition.)
 
 - **`trained` / `range_confidence` / `source` exist because output can
   look confident and be fabricated.** Don't strip them for tidiness.

@@ -5186,6 +5186,253 @@ def test_the_prior_test_is_exact_not_approximate():
     assert not solving._row_is_the_prior({})
 
 
+def test_a_visited_node_whose_every_row_is_the_prior_is_still_trained():
+    """M246/M250. The trainer's gate made F43's own mistake.
+
+    `not any(trained.values())` asks whether the node was VISITED, and
+    F43 established that visited is not learned: `current_strategy()`
+    returns the prior whenever every regret is <= 0. Measured at the
+    6-max node where BTN calls a 4-bet, **101 of 169 hands marked
+    trained and all 169 rows exactly the prior** - so the trainer built
+    to repair F43 declined to fire on F43's own shape, and the range
+    derived through that node came out a flat rescaling of the shallower
+    one (M246: ratio sd 5.3e-17 across all 169 classes).
+
+    Asserted on the gate rather than end to end, because the shape has to
+    be presented deliberately: whether a given fixture node happens to be
+    in it is a property of the budget, not of the code under test. The
+    solve itself is stubbed out - what is being tested is whether the
+    decision to solve is taken.
+
+    The flag is enabled here on purpose. M250 measured what firing on
+    this shape does to the derived ranges and REFUSED it (see
+    cfg.PREFLOP_PATH_NODE_TRAINING); this pins the mechanism so the next
+    attempt does not have to rebuild it, and the test below pins the
+    shipped default.
+    """
+    from api import config as cfg
+    from api import solving
+
+    result = solving._get_or_solve_multiway(100.0, 3)
+    node = result.root
+    hands = list(result.hands)
+    actions = list(node.legal_actions)
+    prior_row = {str(a): 1.0 / len(actions) for a in actions}
+
+    class _Shim:
+        """The real result, presenting one node in the F43 shape."""
+
+        def __init__(self, rows, trained):
+            self._rows, self._trained = rows, trained
+            self.hands, self.config = result.hands, result.config
+            self.node_data = dict(result.node_data)
+
+        def strategy_at(self, _node):
+            return self._rows
+
+        def trained_hands(self, _node):
+            return self._trained
+
+    every_row_prior = {str(h): dict(prior_row) for h in hands}
+    # Visited, per `trained_hands` - and nothing learned.
+    all_visited = {str(h): True for h in hands}
+
+    calls = []
+    flag_on = mock.patch.object(cfg, "PREFLOP_PATH_NODE_TRAINING", True)
+    with flag_on, mock.patch.object(solving, "mccfr_solve",
+                           side_effect=lambda *a, **k: calls.append(1) or {}), \
+            mock.patch.object(solving, "_get_multiway_equity_cache",
+                              return_value=object()):
+        fired = solving._ensure_preflop_node_trained(
+            _Shim(every_row_prior, all_visited), node, 3)
+        assert fired, (
+            "a node whose every row is the uniform prior was left alone "
+            "because `trained` said it had been visited - F43, in the "
+            "trainer that exists because of F43"
+        )
+        assert calls, "it reported work without solving anything"
+
+        # The other direction: one hand that genuinely learned something
+        # means the node is not the defect, and must not be re-solved.
+        learned = dict(every_row_prior)
+        first = str(hands[0])
+        learned[first] = {str(a): (1.0 if i == 0 else 0.0)
+                          for i, a in enumerate(actions)}
+        calls.clear()
+        assert not solving._ensure_preflop_node_trained(
+            _Shim(learned, all_visited), node, 3), (
+            "a node that learned something was solved again - every "
+            "request on the line would pay for it"
+        )
+        assert not calls
+
+
+def test_the_shipped_gate_leaves_a_visited_but_unlearned_node_alone():
+    """M250. The refusal itself, pinned.
+
+    Firing on this shape re-composes the derived ranges in the WRONG
+    direction: premium share of a seat that calls at depth goes from
+    0.80x a uniform range to **0.017x**, against heads-up's trustworthy
+    1.67x, having moved toward that calibration on 1 of 8 seats. The
+    trained node gives AA, KK, QQ and AKs rows identical to four
+    decimals (all_in 0.9985) while trash calls a 4-bet 43-57% of the
+    time - M98's terminal pricing, which the uniform prior was masking.
+
+    So the shipped default must not fire, and flipping it has to be
+    deliberate.
+    """
+    from api import config as cfg
+    from api import solving
+
+    assert cfg.PREFLOP_PATH_NODE_TRAINING is False, (
+        "M250 measured this on and refused it - read the constant's own "
+        "comment before turning it back on"
+    )
+
+    result = solving._get_or_solve_multiway(100.0, 3)
+    node = result.root
+    hands = list(result.hands)
+    actions = list(node.legal_actions)
+    prior_row = {str(a): 1.0 / len(actions) for a in actions}
+
+    class _Shim:
+        def __init__(self):
+            self.hands, self.config = result.hands, result.config
+            self.node_data = dict(result.node_data)
+
+        def strategy_at(self, _node):
+            return {str(h): dict(prior_row) for h in hands}
+
+        def trained_hands(self, _node):
+            return {str(h): True for h in hands}
+
+    with mock.patch.object(solving, "mccfr_solve") as solve:
+        assert not solving._ensure_preflop_node_trained(_Shim(), node, 3)
+        assert not solve.called, (
+            "the shipped gate solved a visited-but-unlearned node - M250 "
+            "measured that answer as worse than the prior it replaces"
+        )
+
+
+def test_every_row_is_the_prior_is_weaker_than_the_visited_check():
+    """M250. The new condition must subsume the old one, not replace it.
+
+    A node nobody visited also has every row at the prior, so the
+    unvisited case stays covered; the point of the new test is the case
+    the old one MISSES - visited, and still at the prior.
+    """
+    from api import solving
+
+    prior = {"fold": 1 / 3, "call": 1 / 3, "raise": 1 / 3}
+    decided = {"fold": 0.9, "call": 0.05, "raise": 0.05}
+    assert solving._every_row_is_the_prior({"AA": prior, "72o": dict(prior)})
+    assert not solving._every_row_is_the_prior({"AA": decided, "72o": prior})
+    assert not solving._every_row_is_the_prior({}), (
+        "an empty node has nothing to train and must not trigger a solve"
+    )
+
+
+def test_the_path_trainer_visits_every_decision_node_on_the_way():
+    """M250, and the other half of M150.
+
+    M150 wired the trainer into `_advise_preflop` - where a client asks
+    about a PREFLOP decision. A postflop request never goes there: it
+    walks the same path to derive its ranges, reading a strategy at
+    every node on the way. An unlearned node there contributes the
+    uniform prior to `continuing_frequencies`, and multiplying a range
+    by a constant leaves its composition exactly as it was one action
+    earlier - which is M149's defect and, per M246, the case for
+    **534 of 568 (94%)** legal 6-max lines.
+
+    So the node needing repair is not the one being advised; it is every
+    node the ranges pass through.
+    """
+    from api import config as cfg
+    from api import solving
+
+    result = solving._get_or_solve_multiway(100.0, 3)
+    path = ["fold", "raise", "call_or_check"]
+    actions, _node = solving._resolve_action_path(result.root, path)
+
+    seen = []
+    flag_on = mock.patch.object(cfg, "PREFLOP_PATH_NODE_TRAINING", True)
+    with flag_on, mock.patch.object(solving, "_ensure_preflop_node_trained",
+                           side_effect=lambda r, n, p, *a: seen.append(n) or False):
+        solving._train_unlearned_nodes_on_path(result, actions, 3)
+
+    assert len(seen) == len(actions), (
+        f"walked {len(seen)} of {len(actions)} nodes - a node that is "
+        "skipped is a node whose prior silently enters the derived range"
+    )
+    assert len(set(id(n) for n in seen)) == len(seen), "a node was visited twice"
+
+
+def test_the_path_trainer_leaves_heads_up_alone_and_obeys_its_flag():
+    """M250. Heads-up has nothing to fix (M150), and the change is
+    revertible in one constant - the `*_SOLVE_STANDALONE` pattern.
+    """
+    from api import config as cfg
+    from api import solving
+
+    result = solving._get_or_solve_multiway(100.0, 3)
+    actions, _node = solving._resolve_action_path(
+        result.root, ["fold", "raise", "call_or_check"])
+
+    with mock.patch.object(solving, "_ensure_preflop_node_trained") as trainer:
+        with mock.patch.object(cfg, "PREFLOP_PATH_NODE_TRAINING", True):
+            assert solving._train_unlearned_nodes_on_path(result, actions, 2) == 0
+            assert not trainer.called, "heads-up paid for a check it cannot need"
+
+        with mock.patch.object(cfg, "PREFLOP_PATH_NODE_TRAINING", False):
+            assert solving._train_unlearned_nodes_on_path(result, actions, 3) == 0
+            assert not trainer.called, (
+                "the flag does not restore the pre-M250 behaviour"
+            )
+
+
+def test_the_range_derivation_trains_the_path_before_it_reads_it():
+    """M250. Order matters: training AFTER the walk fixes nothing.
+
+    `derive_ranges_from_path` reads `continuing_frequencies` at each
+    node as it goes, so a repair applied afterwards lands on a range
+    that has already been derived from the prior. This pins the call
+    site and its position relative to the read.
+    """
+    from api import solving
+
+    order = []
+    real_derive = solving.derive_ranges_from_path
+
+    def _record_train(*args, **kwargs):
+        order.append("train")
+        return 0
+
+    def _record_derive(*args, **kwargs):
+        order.append("derive")
+        return real_derive(*args, **kwargs)
+
+    with mock.patch.object(solving, "_train_unlearned_nodes_on_path",
+                           side_effect=_record_train), \
+            mock.patch.object(solving, "derive_ranges_from_path",
+                              side_effect=_record_derive):
+        try:
+            solving._derive_path_situation(
+                action_kinds=["fold", "raise", "call_or_check"],
+                stack_bb=100.0, board_cards=tuple(solving.parse_cards("Ah7d2c")),
+                iterations=200, players=3, multiway=True,
+                sibling_endpoint="/solve_flop_from_path",
+                max_classes_per_position=4,
+                path_field_name="preflop_action_path")
+        except ValueError:
+            # Whether this particular fixture line reaches a solvable
+            # situation is beside the point - the two calls above happen
+            # before any of that.
+            pass
+
+    assert order[:2] == ["train", "derive"], (
+        f"expected the path to be trained before it is read, got {order}"
+    )
+
 def test_the_injected_equity_builder_honours_its_seed():
     """M153 / F44. `equity_seed` was silently dropped on the flop path.
 

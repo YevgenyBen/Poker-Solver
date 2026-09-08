@@ -2741,6 +2741,50 @@ MULTIWAY_FLOP_NODE_TRAIN_ITERATIONS = 400
 
 PREFLOP_DEEP_NODE_TRAIN_ITERATIONS = 200
 
+# M250: whether the deep-node trainer also fires on a node that was
+# VISITED but learned nothing, and runs at every node along a path whose
+# RANGES are being derived rather than only where advice is asked for.
+#
+# **False, and that is a measured refusal, not an oversight.**
+#
+# M150 wired `_ensure_preflop_node_trained` into `_advise_preflop`, the
+# one place a client asks about a preflop decision. A POSTFLOP request
+# never goes there - it walks the same path to DERIVE its ranges - so an
+# unlearned node on the way silently contributes a uniform prior, and
+# `derive_ranges_from_path` turns that into a flat rescaling of the
+# shallower range (M149; M246 measured ratio sd 5.3e-17 over all 169
+# classes, and 534 of 568 legal 6-max lines carrying such a node).
+#
+# Turning this on does exactly what M246 predicted - the derived range
+# stops being a rescaling (ratio spread 0.0 -> 0.235 / 0.411, with a
+# line carrying no unlearned node coming back byte-identical). **And it
+# re-composes in the wrong direction.** Premium share of the seat that
+# CALLS at depth, against a uniform range's 0.0332:
+#
+#   median, 8 seats over 5 lines   0.80x uniform -> 0.017x
+#   heads-up's 4-bet caller        1.67x  (exact solver, trustworthy)
+#   moved toward that calibration  1 of 8
+#
+# The cause is visible in one node. Trained, it gives AA, KK, QQ and AKs
+# rows identical to four decimals - all_in 0.9985 / fold 0.0008 / call
+# 0.0008 - while 72o, 83o, 92o and T2o CALL a 4-bet 43-57% of the time.
+# That is M98's terminal pricing, not a new defect: an all-in is priced
+# correctly and every smaller action is scored as if the hand ended, so
+# everything strong converges onto jamming and nothing else separates.
+# The seat taking the AGGRESSIVE deep action comes out roughly right
+# (0.71x -> 1.49x, against the calibration's 1.67x); it is the CALLING
+# ranges that collapse.
+#
+# **So the uniform prior was masking M98's defect, and this removes the
+# mask.** M149's blocker has not expired - it has been relocated one
+# layer down, from a gate to the pricing behind it.
+#
+# Kept behind a flag rather than deleted, on M169's precedent: the code
+# is the reproduction, and the next attempt should not have to rebuild
+# it. Do not turn it on before `_mccfr_terminal_value` prices a
+# non-all-in action correctly.
+PREFLOP_PATH_NODE_TRAINING = False
+
 UNIFORM_ROW_REASON = (
     "Your hand's numbers here are an even split across every action, which is the "
     "solver's starting assumption rather than anything it worked out — the hand was "

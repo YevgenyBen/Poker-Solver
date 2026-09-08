@@ -14148,3 +14148,185 @@ preserves `eq[i,j] + eq[j,i] == 1` exactly and shifts hand i's value by
 `c_i - c_bar`. The corrections sum to ~0 because the river game is
 zero-sum, which is why the antisymmetric form is the right shape rather
 than a convenient one. The builder asserts the invariant on every call.
+
+## M250 — the deep-node gate is not a bug, it is a mask: removing it makes the ranges worse
+
+M246 ended with a concrete, costed, working change and one sentence
+holding it back: "the code is reverted; this milestone is the
+measurement, not the change." It had found that
+`_ensure_preflop_node_trained`'s gate, `not any(trained.values())`,
+tests whether a node was **VISITED** — F43's own mistake, in the trainer
+that exists because of F43 — and that at the 6-max node where BTN calls
+a 4-bet **101 of 169 hands are marked trained while all 169 rows are
+exactly the prior**. Training that node re-composes the derived range
+(ratio sd 5.3e-17 -> 0.221). It called the remaining question latency:
+3.29-3.75s per line, needing a paired benchmark per M213.
+
+**The latency question was never reached, because the accuracy question
+answered first and answered no.**
+
+### The change, and it works exactly as M246 predicted
+
+Two halves, both behind `PREFLOP_PATH_NODE_TRAINING`:
+
+  * `_every_row_is_the_prior(strategy)` added to the trainer's gate, so
+    a node that was visited and learned nothing qualifies;
+  * `_train_unlearned_nodes_on_path`, called from
+    `_derive_path_situation` **before** `derive_ranges_from_path` —
+    because a postflop request never calls `_advise_preflop` at all. It
+    walks the same preflop path to DERIVE its ranges, reading a strategy
+    at every node on the way, and a prior there becomes a flat rescaling
+    of the shallower range. M150 fixed the node a client asks ABOUT;
+    the nodes that matter for a board request are the ones the ranges
+    pass THROUGH.
+
+Measured through `_derive_path_situation`, the function every postflop
+request actually uses (M164's rule), on 6-max lines that close with 3+
+live:
+
+| line | unlearned nodes | ratio spread before -> after |
+|---|---|---|
+| BTN open / SB 3bet / BB call / BTN call (control) | 0 | 0.0636 -> **0.0636** |
+| BTN open / SB 3bet / BB 4bet / BTN call / SB call | 2 | 0.0 -> **0.2353** |
+| CO open / BTN 3bet / BB 4bet / CO call / BTN call | 3 | 0.0 -> **0.4109** |
+
+The control is byte-identical, which is the negative control this needed:
+a line with no unlearned node on it must not move, and does not.
+
+### And it re-composes in the WRONG DIRECTION
+
+There is no converged multiway reference (F46/M163) and M245 measured
+multiway postflop advice flipping its top action 41-75% between seeds,
+so "score it against the truth" was never available. What is available
+is the **heads-up calibration**: the exact solver enumerates every hand
+at every node, so heads-up composition is trustworthy, and M246 recorded
+its 4-bettor at 0.3298 premium and its 4-bet CALLER at 0.0553 — against
+a uniform range's 0.0332.
+
+Premium share (AA/KK/QQ/AKs) of every seat whose range moved — 8
+seats, over the 4 of 6 lines that carried an unlearned node — as a
+multiple of uniform:
+
+| | multiple of uniform |
+|---|---|
+| median, before | 0.80x |
+| **median, after** | **0.017x** |
+| heads-up's 4-bet caller (the target) | **1.67x** |
+| moved toward that target | **1 of 8** |
+
+Individual seats go 0.828 -> 0.023, 1.958 -> 0.002, 1.540 -> 0.010,
+0.773 -> 0.001. A range that calls a 4-bet comes out with essentially
+no premium hands in it at all.
+
+**The calibration's one soft spot, stated rather than buried**: it is a
+HEADS-UP number and these are 6-max lines. The nodes compared are 2-3
+handed by the time a 4-bet has been called, so it is close but not the
+same game, and a 6-max 4-bet caller could legitimately differ from a
+heads-up one. It cannot legitimately differ by **100x**, and the
+mechanism below does not rest on the calibration at all.
+
+### The cause is visible in one node, and it is M98
+
+The rows at a newly-trained node, read straight off it:
+
+| hand | fold | call | all-in 100bb |
+|---|---|---|---|
+| AA | 0.0008 | 0.0008 | **0.9985** |
+| KK | 0.0008 | 0.0008 | **0.9985** |
+| QQ | 0.0008 | 0.0008 | **0.9985** |
+| AKs | 0.0008 | 0.0008 | **0.9985** |
+| 72o | 0.4733 | **0.4473** | 0.0794 |
+| 83o | 0.4088 | **0.5498** | 0.0414 |
+| 92o | 0.4017 | **0.4293** | 0.1690 |
+| T2o | 0.3751 | **0.5669** | 0.0580 |
+
+**Four different premium hands with identical rows to four decimals**,
+and trash calling a 4-bet 43-57% of the time. That is not a solve
+distinguishing hands; it is M98's terminal pricing —
+`_mccfr_terminal_value` prices every showdown as `equity * pot -
+invested`, so the all-in is priced correctly and every smaller action is
+scored as if the hand ended immediately. Everything strong enough
+converges onto jamming, nothing above the threshold separates from
+anything else, and what is left in the calling range is the trash.
+
+The one seat that moved toward the calibration is the seat that **4-BETS**
+(0.713 -> 1.494, against the target's 1.666), and M246 had already
+observed that aggressive deep actions re-compose correctly. The trained
+node is right about who jams and wrong about who calls, which is exactly
+the shape M98 describes.
+
+### What this changes
+
+**M149's blocker has not expired. It has been relocated.** M246 called
+the gate "the mechanism, and it is one line". It is the proximate cause;
+what is behind it is the terminal pricing, and **the uniform prior was
+masking it**. Removing the mask does not produce a better range, it
+produces a range that is wrong in a known direction instead of
+uninformative.
+
+It also makes the M112-M116 route circular, which was not visible
+before. The plan was: repair deep nodes -> get real range strength ->
+build M116's continuation table keyed by range strength. But the
+continuation table exists to FIX terminal pricing, and the ranges it
+would now be keyed and built from are wrong BECAUSE of terminal pricing.
+**The two cannot be ordered this way round.** `_mccfr_terminal_value`
+has to price a non-all-in action before either is worth attempting.
+
+### Shipped as a refusal
+
+`PREFLOP_PATH_NODE_TRAINING = False`. The code, the tests and the
+measurement stay — M169's precedent, where seed-averaging was built,
+measured, and left off with its numbers recorded so the next attempt
+starts from the finding rather than from scratch. One constant restores
+the pre-M250 behaviour byte-identically, and
+`test_the_shipped_gate_leaves_a_visited_but_unlearned_node_alone` pins
+the default in both directions.
+
+Four guards, all mutation-tested: reverting the gate to the visited
+check, dropping the call from `_derive_path_situation`, moving it AFTER
+`derive_ranges_from_path` (training a path once its ranges have been
+read fixes nothing), and training only the root each fail exactly one
+test.
+
+### What was deliberately not measured
+
+**The latency benchmark M246 asked for was not run.** It answers "what
+does this cost", and the change is not going in at any price. Costing a
+change already refused on accuracy is work that cannot alter a decision.
+(For the record: the two lines carrying unlearned nodes cost **1.567s
+and 3.844s** to derive, against 0.004s unpatched, consistent with M246's
+3.29-3.75s at the same budget. That is an observation, not a
+measurement — single-armed, on a machine M240 measured drifting 9.7x
+inside one run, and the arms share one cached preflop result so a line
+trained earlier makes a later one look cheaper.)
+
+**M214/M220's ordering criterion was considered and rejected as an
+adjudicator**: it needs no reference, which is why it is the standard
+multiway check, but M218 measured it as not separable at n=17 and M245
+measured the underlying advice flipping its top action on 41-75% of
+spots between seeds. A criterion that cannot separate its own arms
+cannot referee a range change at any sample this milestone could afford.
+
+### A route out of the circle, untested and written down anyway
+
+The circularity above closes the obvious door, and it does not close
+every one. The trap is that both halves of M116's prescription — key the
+continuation table BY range strength, and build each entry WITH a range
+of that strength — currently source that strength from the multiway
+solve, which is the thing being fixed.
+
+**Both halves can be sourced from outside it.** The key can be
+STRUCTURAL: M112 already keys on (log2 SPR, live-seat count), and the
+number of raises on the path is available from the tree alone, needs no
+strategy at all, and is a proxy for range strength that no amount of
+mispricing can corrupt. The building range can come from HEADS-UP, whose
+composition is trustworthy for the same reason it is the calibration
+above — the exact solver enumerates every hand at every node. Heads-up
+already separates cleanly by depth: 3-bettor 0.1433 premium, 4-bettor
+0.3298, 4-bet caller 0.0553, against a uniform 0.0332.
+
+**Not measured, and not a small milestone** — M112 costed the table at
+~10 min of offline precompute per (depth, table size), and this multiplies
+that by however many raise-count buckets it needs. Recorded because "the
+route is circular" is where this milestone ends, and that is a statement
+about one particular route.
