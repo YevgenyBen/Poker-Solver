@@ -7940,8 +7940,14 @@ def test_the_river_under_fold_note_quotes_its_own_measurement(client):
         "that it reads as a claim about every river decision, which M243 "
         "measured at 0.53 sigma, i.e. absent")
     assert "unknown" in note.lower(), (
-        "a close decision is one where the actions are worth almost the same, "
-        "so the cost of this frequency gap is not established (M183)")
+        "the cost of this frequency gap is not established: M244 priced it and "
+        "got -0.9644 bb, which only says our own model prefers our own row")
+    assert "probably small" not in note.lower(), (
+        "M244 removed that clause. It was an inference from M183, and the one "
+        "measurement bearing on it - the spread between the values of the "
+        "actions actually being mixed, 6.84% of pot - supports 'more likely "
+        "cheap' and not 'probably small'. A warning may not carry a comforting "
+        "guess dressed as a finding (M232's rule)")
     assert api_config.RIVER_UNDER_FOLD_WE_FOLD < api_config.RIVER_UNDER_FOLD_REFERENCE_FOLDS, (
         "the whole finding is that this engine folds LESS than the reference")
 

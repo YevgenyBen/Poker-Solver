@@ -2413,6 +2413,29 @@ TURN_INDEPENDENT_NOTE = (
 # near-indifference, so the decisions this fires on are also the ones
 # where being wrong costs least. It is a real disagreement of unknown
 # price, not a known loss.
+# M244 tried to replace the note's "probably small" with a number and
+# could not, which is itself the finding.
+#
+# `ev.py` prices EV(reference row) - EV(our row) with everything else
+# held fixed. On the 16 firing spots, matching the reference's fold
+# frequency scores **-0.9644 bb** - i.e. our own model says following our
+# own note would cost a blind - and corr(frequency gap, loss) is
+# **-0.745**: the further the reference is from us, the more our model
+# prefers us. **A model cannot referee a disagreement about itself**, and
+# no amount of care in the harness changes that. M237 said this; M244
+# demonstrates it on a population where the answer matters.
+#
+# The reference-free half did work. Restricted to nodes that actually
+# mix (two or more actions at 5% or more), the spread between the values
+# of the actions in the support is:
+#     note FIRES (close decisions)   n=14  median 1.5413 bb   6.84% of pot
+#     note SILENT (decisive rows)    n= 9  median 3.3650 bb  16.87% of pot
+# **The hypothesis going in was the opposite** - that mixing at nodes
+# whose actions differ by over a blind meant our mix was inconsistent
+# with our own values. The control refuted it: among mixing nodes the
+# ones this note fires on are the CLOSER ones, which is M183's mechanism
+# showing up directly. It is still not literal indifference, so the copy
+# says "more likely cheap than expensive" and calls that an argument.
 RIVER_UNDER_FOLD_MAX_BET_FRACTION = 0.75
 RIVER_UNDER_FOLD_MIXED_MAX_TOP_ACTION = 0.80
 RIVER_UNDER_FOLD_REFERENCE_FOLDS = 0.7078
@@ -2426,10 +2449,14 @@ RIVER_UNDER_FOLD_NOTE = (
     "under-folded on 14 of the 16. So when it leans toward calling or raising here, treat "
     "FOLDING as the serious alternative. Two things keep this honest. On river decisions that "
     "are NOT close - about four in five - the two solvers agree to within a few points, and "
-    "this note stays silent there. And a close decision is by definition one where the actions "
-    "are worth almost the same, so this is a large disagreement about frequency whose cost in "
-    "chips is unknown and is probably small. It is a difference in the model, not a setting - "
-    "it survived matching the ranges and the raise sizes between the two solvers."
+    "this note stays silent there. And the cost of this in chips is genuinely UNKNOWN: priced "
+    "inside this engine's own model the disagreement comes out in its favour, which is what "
+    "any model says about departing from its own answer, so that number settles nothing. What "
+    "can be said is that the actions being chosen between here are closer in value than at a "
+    "typical mixed decision - about 7% of the pot apart against 17% - so this is more likely a "
+    "cheap disagreement than an expensive one, but that is an argument and not a measurement. "
+    "It is a difference in the model, not a setting - it survived matching the ranges and the "
+    "raise sizes between the two solvers."
 )
 
 # M221. The first finding this project has that came from OUTSIDE.
