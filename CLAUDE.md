@@ -1737,6 +1737,31 @@ requests now reject unknown fields by name rather than ignoring them.
   premium**. So the continuation table cannot be built per-spot until
   deep multiway preflop nodes are actually solved. **Don't spend another
   milestone on the table.**
+  **M246 DIAGNOSED THIS AND IT IS ONE CONDITION.** The blocker is PARTLY
+  gone: replicated today, the seat that 4-BETS re-composes (ratio spread
+  0.094-2.010) while the seat that CALLS the 4-bet has its range
+  multiplied by **exactly 1/3 across all 169 classes, sd 5.3e-17** — a
+  uniform scaling, M149's defect, still live.
+  **The cause is `_ensure_preflop_node_trained`'s node-level gate**,
+  `not any(trained.values())` — whether the node was **VISITED**. F43
+  established visited is not learned, and **this trainer exists because
+  of F43 while its own gate makes F43's mistake**: at the node where BTN
+  calls, **101 of 169 hands are marked trained and all 169 rows are
+  exactly the prior**, so it declines. Training it re-composes the range
+  (sd 5.3e-17 -> 0.221).
+  **Not a corner case**: 534 of 568 (94%) legal 6-max lines ending a
+  betting round with 3+ live contain at least one all-prior node.
+  **Not shipped — it is a latency question.** Wiring it into the single
+  derivation site costs **3.29-3.75s per line** at the shipped 200-node
+  budget (0.93-2.43s at 50), once then cached, on top of a ~1.0-1.35s
+  cold multiway flop. That reaches the 5s bar, so M213's rule applies: a
+  paired benchmark first.
+  **Two metrics lie about this and both were used getting here**: premium
+  share is IDENTICAL to four decimals while the distribution moves 0.667
+  per class (M149's own metric), and max absolute difference reads
+  "hugely different" for what is a pure rescaling. **The test is whether
+  the deep range is a uniform SCALING of the shallow one — ratio spread,
+  not level.**
 
 - **`trained` / `range_confidence` / `source` exist because output can
   look confident and be fabricated.** Don't strip them for tidiness.

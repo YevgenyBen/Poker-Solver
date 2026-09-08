@@ -13796,3 +13796,103 @@ cache key**. All three wider caps came back at 0.27s, faster than cap 8.
 That reads as "widening is free" and is a cache hit. M155's rule in a
 new place: patching where a value is defined does nothing about what has
 already been computed from it.
+
+
+## M246 — M149's blocker, precisely diagnosed: the trainer's gate makes F43's mistake
+
+M245 left the largest untouched defect as the obvious next target:
+multiway PREFLOP, where M98 showed AA jamming 0.649 at 6-max and M110/
+M111 showed position not learned at all among non-blind seats. It
+affects every hand a 6-max player plays.
+
+M112-M116 built the fix and it failed; M116 diagnosed why (key the
+continuation table by range strength AND build each entry with a range
+of that strength). **M149 then declared it blocked upstream**: deep
+multiway preflop nodes return the uniform prior, so
+`derive_ranges_from_path` multiplies every class by the same constant
+and composition never changes. Then M150 shipped
+`_ensure_preflop_node_trained`, which solves deep nodes on demand -
+so M149's premise might have expired the way M76's did (M245) and
+M156's did (M170).
+
+**Replicated on today's engine**, `BTN open / SB 3bet / BB 4bet / BTN
+call` at 6-max, comparing each seat's derived range against the same
+seat's range one action earlier:
+
+| seat | what changed for it | ratio across all 169 classes | reading |
+|---|---|---|---|
+| SB | nothing | exactly 1.0000, sd 0 | correctly unchanged |
+| BB | called a 3-bet -> **4-BET it** | 0.094 to 2.010, sd 0.333 | **genuinely re-composed** |
+| BTN | opened -> opened then **CALLED a 4-bet** | **exactly 1/3, sd 5.3e-17** | uniform scaling |
+
+**Partially expired.** The seat taking an aggressive deep action now
+differentiates - M150's trainer reaches that node. The seat that CALLS
+at the deepest node still gets its range multiplied by a flat 1/3, which
+is the uniform prior over fold/call/raise. M149's defect, still live for
+the case that matters.
+
+### Two metrics that lie about this, both used along the way
+
+**Premium share is blind to it.** BTN's premium share is 0.0275 in both
+lines, identical to four decimals, while the underlying distribution
+moves by up to 0.667 per class. M149's own measurement was a premium
+share, so its conclusion rested on a statistic that cannot see the
+thing it was describing.
+
+**Absolute difference is blind the other way.** BTN's max per-class
+difference is 0.667, which reads as "hugely different" and is a uniform
+rescaling of the same shape. **The right test is whether the deep range
+is a uniform SCALING of the shallow one** - ratio spread, not level.
+
+### The mechanism, and it is one line
+
+`_ensure_preflop_node_trained`'s node-level trigger is
+`not any(trained.values())` - whether the node was **VISITED**. F43
+established that visited is not learned: `current_strategy()` returns
+the prior whenever every regret is <= 0, so a hand can be reached
+repeatedly and still average to exactly the prior. **This trainer exists
+BECAUSE of F43 and its own gate makes F43's mistake.**
+
+Measured at the node where BTN calls the 4-bet: **101 of 169 hands
+marked trained, and all 169 rows exactly the prior.** The gate declines,
+and the derived range is the shallower one rescaled.
+
+Training that node re-composes the range: ratio sd **5.3e-17 -> 0.221**.
+
+### It is NOT a corner case
+
+Enumerating every legal 6-max preflop line that ends a betting round
+with three or more players live: **534 of 568 (94%) contain at least one
+node whose every row is the prior.** So nearly every multiway postflop
+request derives its ranges through at least one uniform-prior node.
+
+### Measured, working, and NOT SHIPPED - it needs a latency milestone
+
+Wiring the trainer into the one derivation site works. Its cost, once
+per line and cached in the shared preflop result:
+
+| deep-node budget | cost per line | re-composes? |
+|---|---|---|
+| 50 iterations | 0.93 - 2.43s | yes (ratio sd 0.199) |
+| **200 (shipped)** | **3.29 - 3.75s** | yes (sd 0.221) |
+
+On top of a cold multiway flop at ~1.0-1.35s that reaches or passes the
+5s bar, on a machine M240 measured drifting 9.7x inside a single run.
+**M213 refused a change for exactly this reason**, and its rule - a
+paired benchmark before any latency change - applies here. The code is
+reverted; this milestone is the measurement, not the change.
+
+**One caveat for whoever picks it up**: at 50 iterations one line fired
+on TWO nodes where 200 fired on one, which suggests a budget that small
+can leave a node still at the prior so the next one also qualifies. Any
+cheaper budget needs that checked, not assumed.
+
+### Why this is worth recording even with nothing shipped
+
+M149 said "the continuation table cannot be built per-spot until deep
+multiway preflop nodes are actually solved" and closed with **"Don't
+spend another milestone on the table."** That was right about the table
+and wrong about the reason being permanent. The blocker is a
+one-condition gate testing the wrong property, its removal is
+demonstrated to work, and its only obstacle is a latency budget that has
+its own well-established process.
