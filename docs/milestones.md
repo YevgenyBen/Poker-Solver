@@ -14068,3 +14068,83 @@ The transfer test is the whole milestone. Every number before it pointed
 at a fine key, and the fine key is worthless. **In-sample fit on a
 categorical key measures how many categories there are.** Holding a
 board out is what separates a key from a lookup of the answer.
+
+
+## M249 — the leaf correction is applied, and it makes the turn WORSE
+
+M247 sized the turn's leaf correction (sd ~1.8 bb, 12% of pot,
+deterministic) and M248 found a portable ten-key board-relative table
+capturing 45.2% of it leave-one-out. Both measured SIZE and
+PREDICTABILITY. **This measures EFFECT**, which is the only thing that
+decides whether any of it ships.
+
+### It fails, and the pre-registered rule says so
+
+The correction folded into the leaf values, scored against the
+independent solver on 35 spots sharing no board with the training set:
+
+| | value |
+|---|---|
+| mean gap, shipped | 0.3920 |
+| mean gap, corrected | 0.4423 |
+| **paired delta** | **+0.0503 +/- 0.0230 = 2.18 sigma** |
+| closer on | 8 of 35 |
+| further on | **27 of 35** |
+
+The rule was fixed before the run: smaller at 2 sigma is an improvement,
+larger at 2 sigma is the fifth failed turn fix. **It is the fifth failed
+turn fix**, after chaining (M223), precision (M226/M230), width (M232)
+and flop-aware ranges (M239).
+
+### Why it fails is visible and worth more than the failure
+
+| | aggression |
+|---|---|
+| shipped | 0.5897 |
+| corrected | **0.7045** |
+| the reference | **0.3076** |
+
+**The correction makes us bet MORE, and betting too much is the entire
+defect.** That is mechanically what it must do: it rewards trips by
++5.5 bb and penalises one pair by -0.7 bb, so betting becomes more
+attractive exactly where we were already too aggressive.
+
+**Hypothesis, NOT established**: the correction was computed as the
+value of playing the river out WITH OUR OWN RIVER SOLVER - and M241/M243
+measured that solver under-folding against the same reference. So the
+"value of playing the river" is inflated for hands that can bet, and
+feeding it back as a leaf value amplifies the same bias one street
+earlier. That is M237's lesson in a new place: a model error priced with
+the model that has it. It predicts the sign, and the sign is what was
+measured, but nothing here isolates it.
+
+If that hypothesis is right the direction is not dead - it needs leaf
+values from a river model that does not itself over-bet, which this
+engine does not currently have. **The stone law forbids taking them from
+the reference**: it is an instrument, never an ingredient.
+
+### The guard that caught a leak, and the leak it caught
+
+The first run ABORTED on its own train/test check: **four of the five
+training boards were among the 42 reference spots**, because M247's
+boards were drawn from the same lists. Scoring a fitted table on boards
+it was fitted to would have measured memorisation - which is exactly
+what M248 had just caught when the full rank tuple fitted 93% in-sample
+and transferred 0%. The second run holds them out; 42 spots become 35.
+
+**Writing the overlap check before the experiment is what made this a
+two-minute correction rather than a published result.**
+
+### One piece of machinery worth keeping
+
+Injecting a per-hand value into a solve is not free-form.
+`_terminal_value_vector` expresses every terminal in the FIRST
+position's payoff and negates for the second (F45), so a correction must
+be antisymmetric or the second position's values go silently wrong:
+
+    eq'[i,j] = eq[i,j] + (c_i - c_j) / pot
+
+preserves `eq[i,j] + eq[j,i] == 1` exactly and shifts hand i's value by
+`c_i - c_bar`. The corrections sum to ~0 because the river game is
+zero-sum, which is why the antisymmetric form is the right shape rather
+than a convenient one. The builder asserts the invariant on every call.
