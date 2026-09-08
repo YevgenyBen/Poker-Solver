@@ -1399,6 +1399,39 @@ def _is_multiway_postflop(raw: dict, street: str | None) -> bool:
     return isinstance(positions, (list, tuple)) and len(positions) >= 3
 
 
+def _is_two_live_multiway_preflop(raw: dict, players: int) -> bool:
+    """A multiway preflop pot that has folded down to two, facing a raise.
+
+    M251. This is the cell where weak-hand folding fails: 22 of 22 such
+    nodes tell 72o-class hands to continue against a re-raise (mean
+    0.9823), against 3 of 60 at the same depths with three or more live
+    (0.3899). Held at matched PRICE the separation is total - 17 of 17
+    against 0 of 23.
+
+    Read off the RESPONSE, not the request (M144): `positions` is who is
+    still live, the same field `_is_multiway_postflop` uses and for the
+    same reason - a 6-max hand that folds to two takes a different code
+    path and `players` cannot tell them apart.
+
+    Gated on what is OWED as well as the seat count, because "everyone
+    folded to the small blind" is also a two-live preflop node and this
+    study never measured one. Firing where nothing was measured is what
+    M196's gate exists to prevent.
+
+    Pot odds cannot draw that line and a test caught it: an unraised
+    small blind owes 0.5 into a 1.5 pot, a price of 0.25, which sits
+    inside the measured band because a ratio does not know the difference
+    between a blind completion and a 4-bet. The absolute amount does -
+    9.0bb at every measured node.
+    """
+    if raw.get("street") != "preflop" or players < 3:
+        return False
+    if len(raw.get("positions") or []) != 2:
+        return False
+    owed = raw.get("to_call_bb")
+    return bool(owed) and owed >= cfg.PREFLOP_TWO_LIVE_MIN_TO_CALL_BB
+
+
 def _solver_confidence(raw: dict, players: int, hero: dict | None = None,
                        street: str | None = None):
     """(level, reason) for the headline confidence signal.
@@ -1419,6 +1452,11 @@ def _solver_confidence(raw: dict, players: int, hero: dict | None = None,
     # one draw from a distribution.
     if _is_multiway_postflop(raw, street):
         reasons.append(cfg.MULTIWAY_REPRODUCIBILITY_REASON)
+    # M251: the preflop counterpart, and a sharper failure than the
+    # postflop one - not "the answer moves between seeds" but "the answer
+    # is categorically wrong for weak hands", 22 nodes of 22.
+    if _is_two_live_multiway_preflop(raw, players):
+        reasons.append(cfg.PREFLOP_TWO_LIVE_REASON)
     if _node_is_untrained(raw):
         reasons.append(cfg.UNTRAINED_NODE_REASON)
     elif _hero_row_is_the_prior(hero):
