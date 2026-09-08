@@ -13896,3 +13896,94 @@ and wrong about the reason being permanent. The blocker is a
 one-condition gate testing the wrong property, its removal is
 demonstrated to work, and its only obstacle is a latency budget that has
 its own well-established process.
+
+
+## M247 — a leaf value function for the turn: real, sized, and not cheap
+
+M232/M233 established the turn's gap as model error and four fixes have
+failed on it (chaining M223, precision M226/M230, width M232,
+flop-aware ranges M239). The remaining structural difference from the
+independent solver is street isolation: it plays the river out, we
+average it in as equity at the terminal. **Chaining re-plays the river
+inside every CFR iteration and was worse at 237x the cost; the
+alternative is depth-limited solving - value the leaf with an ESTIMATE,
+computed once.** That is M112-M116's continuation table one street
+later.
+
+This costs the direction before building it, the way M112 costed the
+preflop version. **Four measurements, each chosen as the cheapest thing
+that could stop the next.**
+
+### 1. The leaves collapse, which is the precondition
+
+A turn tree at the shipped configuration: **28 decision nodes, 53
+terminals, 27 of them showdowns** - and those 27 collapse to **8
+distinct leaf situations**, keyed the way M112 keyed preflop (log2 SPR,
+pot). Identical across all five spots measured. M112's 15,254 preflop
+terminals collapsed to 27; the same shape holds here.
+
+### 2. The exact value is 400x the budget
+
+One river solve at shipped settings: **1.07s**. A leaf needs every
+runout: 48 rivers = **51.4s**. A turn spot needs 8 leaves = **6.9
+minutes**, against a turn budget of 1-2s. **Per-request is out.** Only
+an offline table survives, which is M116's open question.
+
+### 3. But would a correct value change anything? YES
+
+CFR compares action values, so a correction identical at every leaf
+cancels out of every regret difference - which is exactly why F45's
+dead-pot offset has never mattered within a street. So the decisive
+question is whether the correction VARIES by hand.
+
+Computed for the checked-through leaf, `river-play value - equity
+value`, over every hand in the range:
+
+| spot | hands | mean | sd | range | sd as % of pot |
+|---|---|---|---|---|---|
+| Ac9d4h 2s | 425 | +0.2613 bb | 1.7538 | 9.42 | **11.7%** |
+| Qs7h2c 9d | 458 | -0.3040 bb | 1.8603 | 9.81 | **12.4%** |
+
+**The mean is near zero and the spread is 9.4bb on a 15bb pot.** Equity
+at the leaf is roughly unbiased in aggregate and wrong hand by hand -
+precisely the error that changes WHICH hands bet without looking wrong
+on average. It is consistent with M234's observation that the
+reference's betting frequency collapses across streets and ours does
+not follow it down.
+
+**This is the first positive structural result the turn has produced.**
+Four previous attempts returned null or worse.
+
+### 4. It is deterministic, and no cheap feature predicts it
+
+**Not noise**: two independent runs give mean and sd identical to four
+decimals. Turn and river equity are both exact on 4- and 5-card boards
+(M154) and CFR+ is deterministic given the table, so this is expected -
+and was checked rather than assumed, because M245 had just found a
+different multiway quantity to be 41-75% noise.
+
+**And not cheaply predictable.** Two obvious features, both free:
+
+| feature | correlation | variance explained |
+|---|---|---|
+| hand equity vs the range | -0.123 / +0.026 | **2% / 0%** |
+| equity SWING across the 48 runouts | +0.156 / +0.029 | **2% / 0%** |
+
+The poker intuition - that it is equity realisation rather than equity
+level - is the second row, and it does no better than the first.
+
+### Where this leaves the direction
+
+**The lever is real and sized at ~12% of pot in per-hand dispersion. The
+delivery mechanism is unresolved.** A fitted formula on the two obvious
+features is dead; what remains is M116's range-strength-keyed offline
+table, which needs its own costing and carries M116's own warning that
+changing the range an entry is BUILT from moves it by up to 0.23 of pot.
+
+Nothing shipped. This is the measurement that says the direction is
+worth a milestone rather than the milestone.
+
+**A note on method.** Every step here was picked to be the cheapest
+thing that could close the direction: anatomy before cost, cost before
+effect, effect before predictability, and a determinism check before
+believing any of it. Three of the four could have ended it in minutes.
