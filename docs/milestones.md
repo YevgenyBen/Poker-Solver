@@ -14466,3 +14466,116 @@ for heads-up; not warned about, because two nodes is not a finding.
 response now says so. M250 established that the range derivation cannot
 be repaired without fixing terminal pricing first, so disclosure is what
 is available.
+
+## M252 — a wide benchmark, and the instrument was in worse shape than the product
+
+Fifty milestones of disclosure, and nobody had asked how often a player
+meets any of it. Every accuracy study here picks a spot set designed to
+contain the thing being studied — correct for measuring a defect, and
+useless for ranking defects against each other. CLAUDE.md's own thesis
+says weight by occurrence before quoting a per-hand claim.
+
+**1,730 `/advise` decisions across two independently generated
+populations.** Full write-up in `docs/audit-2026-09-08.md`.
+
+### Exposure
+
+| disclosure | aggressive arm | as it comes |
+|---|---|---|
+| **multiway postflop is not reproducible** (M245) | **20.05%** | **19.83%** |
+| two-live preflop, weak hands (M251) | 1.13% | 0.48% |
+| hero's row is the prior (F43) | 0.23% | 0.00% |
+| nothing trained at the node (F41) | 0.23% | 0.00% |
+| *(no reason named)* | 78.60% | 79.69% |
+
+**One decision in five is served with "this answer is not
+reproducible"**, and it barely moves between two very differently shaped
+populations — which is what makes it trustworthy rather than an artifact
+of the generator. M251's cell, by contrast, moves 1.13% -> 0.48%, so
+that one IS generator-sensitive and is reported as such.
+
+### F51 — `aggression_confidence` is a function of street and nothing else
+
+**low on 528 of 528 postflop decisions in one arm and 482 of 482 in the
+other; high on 360 of 360 preflop, both arms.** A client switching on
+the level shows the same badge on every postflop answer.
+
+The level is not wrong — no postflop street has ever been certified. It
+is honest and uninformative at once. Over 67 postflop decisions the
+**level took one value and the reason string took 25 distinct forms**:
+all the per-decision signal is there and none of it is machine-readable.
+
+**Fixed by `advisory_notes`**, a stable id per fired caveat.
+`_advisory_notes` returns `(id, text)` pairs and `_aggression_reason`
+joins their text, so prose and list are one computation read twice — a
+test asserts the join reproduces the paragraph character for character,
+because two derivations of the same gates would drift the moment one is
+edited (M144's failure). M166's own argument, one level up: it added
+`hand_strength_percentile` so a caller could act "without parsing prose".
+
+### THE INSTRUMENT HAD THREE DEFECTS AND THE PRODUCT HAD NONE
+
+Zero correctness defects in 1,730 decisions. The benchmark, meanwhile:
+
+**(a) The generator could not reach the defects.** Every session ever
+run drew preflop action from a list whose deepest entry held ONE raise,
+so preflop advice was never once asked at a 3-bet node — and M251's
+defect lives at a 4-bet. **The harness even had a guard for it**: trash
+folding under **0.02** while facing action, against M251's measured
+**0.0269**. A threshold just below the defect, over a population that
+could not reach it.
+
+**(b) Streets were closed with a fixed number of actions, not one per
+live player.** Across 85 recorded sessions **1,552 of 24,150 attempted
+requests (6.4%) were refused**, from two causes: 1,167 flop rejections
+where an assembled preflop line did not close the betting, and **346
+turn plus 39 river** where a flop was closed with two checks regardless
+of live count. Two checks close a street only heads-up; three-handed the
+betting stays open, so **the multiway turn and river spots were dropped
+rather than measured** — which is why M245 had to build its own harness
+to study them.
+
+**(c) `TestClient` never runs the app's lifespan.** The first run
+recorded a **72.6-second** preflop request and five more over five
+seconds. Every one was a first-touch multiway solve at a depth
+production prewarms — `MULTIWAY_PREWARM_STACK_DEPTHS` is exactly the
+100/50/20bb the benchmark used. **That would have been reported as a
+serious user-facing latency defect and it is an artifact.** The old
+harness carried this warm-up with a comment explaining the trap; it did
+not carry over because it lived in a script rather than a module.
+
+All three are now `bench/spot_population.py` and `bench/server_warmup.py`
+with 11 tests, including one asserting against a real street tree that
+two checks do NOT close a three-handed street. Refusal rate **6.4% ->
+1.5-3.0%**; the new population puts 30-61% of decisions at depths the
+old one never produced.
+
+### Latency, warmed
+
+| arm | p50 | p90 | p99 | max | over 5s |
+|---|---|---|---|---|---|
+| aggressive | 0.726 | 1.952 | 3.347 | 4.307 | **0 of 888** |
+| as it comes | 0.783 | 2.239 | 3.484 | **5.613** | **1 of 842** |
+
+The single breach is a 6-max flop with six live at 100bb. M234 measured
+the flop's worst at 4.994s and called the headroom 1.4% "on a machine
+measured drifting 1.7x"; M240 later measured **9.7x drift inside one
+run**. One breach on that machine is evidence of neither a regression
+nor safety — R3 is to re-measure it in reference units, the instrument
+M240 built for exactly this.
+
+### Open, and deliberately not executed
+
+**R2: M251's gate covers 10 of 22 occurrences of its own cell** (4 of 22
+in the other arm). The remainder sits at 0-1 raises, below
+`PREFLOP_TWO_LIVE_MIN_TO_CALL_BB`, which is the gate working as designed.
+Several unwarned rows look alarming — 85o folding 0.0, Q9o 0.0002 — and
+**that is NOT claimed as a defect**: two live preflop with no raise is a
+blind-versus-blind spot where playing very wide is correct, and M127
+made exactly this mistake once, flagging 84o defending in the big blind
+when 84o really does have the equity. The cell is unmeasured, not wrong.
+
+**Explicitly not recommended**: anything aimed at the 20% exposure.
+M245 measured width (inert), iterations (0.240 at 150x budget) and
+ensembles (worst cases untouched at every K). A fifth configuration
+attempt would be M232's mistake in a new place.

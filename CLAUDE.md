@@ -596,6 +596,12 @@ requests now reject unknown fields by name rather than ignoring them.
       main.py              routes, validation, response shaping, app wiring
       schemas.py           Pydantic request/response models
 
+    bench/                 measuring instruments — NOT shipped, and nothing
+                           under poker_solver/ or api/ may import them
+      reference_units.py   latency in drift-normalised units (M240)
+      spot_population.py   walks the real tree to build legal spots (M252)
+      server_warmup.py     TestClient runs no lifespan; warm before timing (M252)
+
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools
 
@@ -1872,6 +1878,21 @@ requests now reject unknown fields by name rather than ignoring them.
   **Nothing was fixed** — M250 established the ranges cannot be repaired
   before terminal pricing is, so this is disclosure.
 
+- **`aggression_confidence` IS A FUNCTION OF STREET AND NOTHING ELSE
+  (F51, M252)** — measured "low" on **528 of 528** postflop decisions in
+  one benchmark arm and 482 of 482 in the other, "high" on 360 of 360
+  preflop in both. It is not WRONG (no postflop street has ever been
+  certified) and it cannot tell one decision from another. Over 67
+  decisions the level took **one** value while its reason string took
+  **25 distinct forms**. **`advisory_notes` is where the per-decision
+  signal now lives** — a stable id per fired caveat, from the same
+  computation as the prose (`_advisory_notes` returns `(id, text)`;
+  `_aggression_reason` joins the text), pinned by a test asserting the
+  join reproduces the paragraph exactly. **Do not try to make the level
+  vary**: grading it would mean claiming a postflop cell where
+  aggression is reliable, and M167/M168/M177/M180 are four refusals to
+  grant one.
+
 - **`trained` / `range_confidence` / `source` exist because output can
   look confident and be fabricated.** Don't strip them for tidiness.
 - **A repeat flop request WARM-STARTS from the cached canonical solve
@@ -3029,6 +3050,28 @@ within a single run, a 9.7x spread** — and two *quiet* phases of that
 run, no load applied, differed by **32%**. Any single-arm number timed
 across more than a few seconds is suspect by default.
 
+**A BENCHMARK MEASURES THE POPULATION IT GENERATES, AND ONLY THAT
+(M252).** Three defects in the instrument, all now fixed in `bench/`:
+
+- **The spot generator was capped at ONE raise.** Every session ever run
+  drew from `rng.choice([[], [], ["raise"], ["fold"]*(n-2) + ["raise"]])`,
+  so preflop advice was never once asked at a 3-bet node — and M251's
+  defect lives at a 4-bet. The harness even had a guard for it (trash
+  folding under **0.02** facing action) against a measured **0.0269**:
+  a threshold just below the defect, over a population that could not
+  reach it. Use `bench.spot_population.preflop_walk`.
+- **Streets were closed with a fixed number of actions, not one per live
+  player.** **1,552 of 24,150 requests (6.4%) across 85 recorded sessions
+  were refused** — 1,167 flop (an assembled preflop line that never
+  closed) and **346 turn / 39 river** (a flop closed with two checks,
+  which only works heads-up), so **multiway turn and river spots were
+  dropped, not measured**. Use `closing_path(live_players)`.
+- **`TestClient(app)` never runs the app's lifespan**, so nothing is
+  prewarmed. A run without `bench.server_warmup.warm_multiway` recorded a
+  **72.6s** preflop request that would have been reported as a
+  user-facing defect and is entirely an artifact — production prewarms
+  exactly those depths.
+
 When making a speed claim, do one of these — never a bare before/after
 across sessions:
 - **Interleaved A/B in one process** (old and new implementation,
@@ -3062,7 +3105,13 @@ deliberately not checked.
 - **`docs/milestones.md`** — the full milestone log (M8-present): what
   was built, every measured number, and the corrections later
   milestones made to earlier claims.
-- **`docs/audit-2026-08-23.md`** — the latest whole-project audit
+- **`docs/audit-2026-09-08.md`** — the latest whole-project audit
+  (M252): a wide benchmark over 1,730 real decisions, the first
+  measurement of how often a player MEETS each disclosed defect
+  (multiway postflop irreproducibility fires on **20%**; everything else
+  is under 1.2%), zero product defects, and three defects in the
+  benchmark itself.
+- **`docs/audit-2026-08-23.md`** — the previous whole-project audit
   (M101): static checks, live-play simulation against the real API, and
   cold-vs-warm benchmarks. Four findings, all acted on.
 - **`docs/project-audit-2026-08-21.md`** — earlier whole-project audit:

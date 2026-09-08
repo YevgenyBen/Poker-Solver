@@ -236,6 +236,14 @@ class AdviseResponse(BaseModel):
     # so a caller can act on it without parsing prose. None preflop
     # (no board) and whenever hero's cards are absent.
     hand_strength_percentile: float | None = None
+    #: M252: stable ids for the caveats that applied to THIS decision.
+    #: `aggression_confidence` is a function of street and nothing else
+    #: (measured "low" on 528 of 528 postflop decisions), so it cannot
+    #: distinguish one answer from another; this can. Empty preflop.
+    #: The ids are API surface and stay stable; the prose they stand for
+    #: is re-measured and rewritten routinely, which is why they are
+    #: separate.
+    advisory_notes: list[str] = []
 
 
 class SolveResponse(BaseModel):

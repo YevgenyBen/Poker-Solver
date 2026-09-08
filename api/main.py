@@ -1315,6 +1315,16 @@ async def advise_endpoint(request: AdviseRequest):
                 if raw.get("street") != "preflop"
                 else None
             ),
+            # M252: which caveats actually applied, by stable id. The
+            # LEVEL above is a function of street and nothing else - it
+            # measured "low" on 528 of 528 postflop decisions - so this
+            # is where a caller finds what changed between one decision
+            # and the next. Same computation as the prose, read twice.
+            "advisory_notes": (
+                [name for name, _text in _advisory_notes(raw, hero)]
+                if raw.get("street") != "preflop"
+                else []
+            ),
             # M144/F40: what the tree could actually offer here. Derived
             # from the response's own rows, not from config, so it stays
             # honest if the sizing constants change.
@@ -1709,7 +1719,37 @@ def _street_isolation_applies(raw: dict, street: str | None) -> bool:
 
 
 def _aggression_reason(raw: dict, hero: dict | None = None) -> str:
-    """The postflop caveat, calibrated to hero's own hand where possible.
+    """The postflop caveat text — every note that applies, joined.
+
+    Derived from `_advisory_notes` so the prose and the structured list
+    cannot drift: they are one computation with two readings.
+    """
+    return "".join(text for _name, text in _advisory_notes(raw, hero))
+
+
+def _advisory_notes(raw: dict, hero: dict | None = None) -> list:
+    """(id, text) for every postflop caveat that applies, in reading order.
+
+    M252. The wide benchmark measured `aggression_confidence` at "low" on
+    **528 of 528** postflop decisions in one arm and 482 of 482 in the
+    other — it is a pure function of street, so a client switching on the
+    LEVEL shows the same badge on every postflop answer. The level is not
+    wrong (no postflop street has ever been certified —
+    `CERTIFY_RELIABILITY_ON_STREETS` is empty) but it cannot tell one
+    decision from another.
+
+    The information a caller needs is all here and was locked in prose:
+    up to ten notes gated on street, hand-strength band, SPR, board
+    texture, whether hero faces a bet, and M189's costly band. Naming
+    them is M166's argument applied one level up — that milestone added
+    `hand_strength_percentile` as a field precisely so "a caller can act
+    on it directly instead of parsing prose."
+
+    The ids are part of the API and must stay stable; the text they carry
+    is free to be re-measured and rewritten, which is the point of
+    separating them.
+
+    Calibrated to hero's own hand where possible.
 
     M166: the blanket caveat told every player the same thing, while the
     measured error splits sharply by hand strength - nothing in the upper
@@ -1720,7 +1760,7 @@ def _aggression_reason(raw: dict, hero: dict | None = None) -> str:
     The band note goes FIRST because it is the part that changes between
     requests; the standing caveat that follows does not.
     """
-    reason = cfg.POSTFLOP_AGGRESSION_CAVEAT_REASON
+    notes = []
     percentile = _hand_strength_percentile(raw, hero)
     # Certification is FLOP-ONLY. M167 measured the threshold on flop spots
     # and applied it to every street; M168 checked the turn and refused it
@@ -1746,9 +1786,11 @@ def _aggression_reason(raw: dict, hero: dict | None = None) -> str:
         # the flop has" wording is self-contradictory there); the river is
         # measured with a one-sided strength signal; the turn is measured
         # with no usable signal at all.
-        reason = ({"flop": cfg.FLOP_MEASURED_NOTE,
-                   "river": cfg.RIVER_MEASURED_NOTE}.get(
-                      street, cfg.UNMEASURED_STREET_NOTE)) + reason
+        name, text = {
+            "flop": ("flop-measured", cfg.FLOP_MEASURED_NOTE),
+            "river": ("river-measured", cfg.RIVER_MEASURED_NOTE),
+        }.get(street, ("street-unmeasured", cfg.UNMEASURED_STREET_NOTE))
+        notes.append((name, text))
     elif percentile is not None:
         # M167: certify where reliability was MEASURED, and say "not known"
         # elsewhere. M166 had this the other way round - it asserted that
@@ -1756,46 +1798,48 @@ def _aggression_reason(raw: dict, hero: dict | None = None) -> str:
         # gave a strength/error correlation of -0.130. The one thing that
         # held was the top of the range being clean.
         if percentile >= cfg.RELIABLE_HAND_STRENGTH_PERCENTILE:
-            reason = cfg.RELIABLE_HAND_NOTE + reason
+            notes.append(("reliable-hand", cfg.RELIABLE_HAND_NOTE))
         else:
-            reason = cfg.UNCERTAIN_HAND_NOTE + reason
+            notes.append(("uncertain-hand", cfg.UNCERTAIN_HAND_NOTE))
+    notes.append(("standing-aggression-caveat",
+                  cfg.POSTFLOP_AGGRESSION_CAVEAT_REASON))
     if _has_no_intermediate_bet_size(raw):
-        reason += cfg.BET_SIZING_COVERAGE_NOTE
+        notes.append(("bet-sizing-coverage", cfg.BET_SIZING_COVERAGE_NOTE))
     # M196: the structural gap, disclosed where its direction is known.
     # Gated on BOTH street and depth, and neither gate is cosmetic - the
     # flop is the only street whose isolation gap has been measured, and
     # below SPR 5 the measured direction reverses, so an ungated note
     # would point a short-stacked player the wrong way.
     if _street_isolation_applies(raw, street):
-        reason += cfg.STREET_ISOLATION_NOTE
+        notes.append(("street-isolation", cfg.STREET_ISOLATION_NOTE))
     # M221: the same limitation, quantified where it bites hardest, from
     # the first reference outside this codebase.
     if _drawy_board_applies(raw, street):
-        reason += cfg.DRAWY_BOARD_NOTE
+        notes.append(("drawy-board", cfg.DRAWY_BOARD_NOTE))
     # M222: the turn's own measured distance from an independent solver,
     # which is 20x the flop's and has a direction.
     if _turn_independent_gap_applies(raw, street):
-        reason += cfg.TURN_INDEPENDENT_NOTE
+        notes.append(("turn-independent", cfg.TURN_INDEPENDENT_NOTE))
     # M185: where the measured cost actually is. Appended LAST because it
     # is the part a player can act on immediately — the notes before it
     # describe what is known about the street, this describes what is
     # known about this decision.
     if _is_facing_a_bet(raw):
-        reason += cfg.FACING_A_BET_COST_NOTE
+        notes.append(("facing-a-bet-cost", cfg.FACING_A_BET_COST_NOTE))
         # M241: the first external check of a facing-a-bet node, and the
         # only cell that separated. Nested here rather than beside the
         # other street notes because it is a property of THIS decision,
         # not of the street.
         if _river_under_folds_applies(raw, street, hero):
-            reason += cfg.RIVER_UNDER_FOLD_NOTE
+            notes.append(("river-under-fold", cfg.RIVER_UNDER_FOLD_NOTE))
         # M189: graded, not replaced. The coarse note covers all
         # facing-a-bet decisions because even out-of-band ones average
         # ~0.3 bb against an opening decision's 0.03. This adds the
         # sharper half: 12% of postflop decisions carrying 74% of cost.
         if (percentile is not None
                 and cfg.COSTLY_BAND_LOW <= percentile < cfg.COSTLY_BAND_HIGH):
-            reason += cfg.COSTLY_BAND_NOTE
-    return reason
+            notes.append(("costly-band", cfg.COSTLY_BAND_NOTE))
+    return notes
 
 
 @app.post(
