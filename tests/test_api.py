@@ -8069,6 +8069,92 @@ def _river_facing(client, *, bet=None, spot=None):
     return response.json()
 
 
+
+def test_the_advisory_notes_say_exactly_what_the_prose_says(client):
+    """M252. The list and the paragraph are one computation, read twice.
+
+    Two derivations of the same gates would drift the moment one is
+    edited — the failure M144 names. This pins that joining the notes'
+    own text reproduces `aggression_confidence_reason` character for
+    character, so the structured field can never quietly describe a
+    different set of caveats than the prose a player reads.
+    """
+    from api import main as api_main
+
+    payload = _river_facing(client, bet=_river_bet_menu(client)[0])
+    assert payload["advisory_notes"], "a river decision named no caveats at all"
+
+    raw = {"street": payload["street"], "positions": payload["positions"],
+           "pot": payload["pot"],
+           "effective_stack_bb": payload["effective_stack_bb"],
+           "max_affordable_bb": payload["max_affordable_bb"],
+           "strategy": payload.get("strategy") or {},
+           "hero": payload.get("hero")}
+    notes = api_main._advisory_notes(raw, payload.get("hero"))
+    assert [name for name, _text in notes] == payload["advisory_notes"]
+    assert "".join(text for _name, text in notes) == \
+        api_main._aggression_reason(raw, payload.get("hero"))
+
+
+def test_advisory_notes_are_empty_preflop_and_present_postflop(client):
+    """Preflop has no aggression caveat, so it must name no notes —
+    an empty list rather than a missing field, so a client can iterate
+    it unconditionally."""
+    preflop = client.post("/advise", json=_advise_body(
+        stack_bb=100.0, players=2, hero_cards="AhKs",
+        preflop_action_path=[])).json()
+    assert preflop["advisory_notes"] == []
+    assert preflop["aggression_confidence"] == "high"
+
+    postflop = _river_facing(client)
+    assert postflop["advisory_notes"]
+    assert postflop["aggression_confidence"] == "low"
+
+
+def test_a_gated_note_appears_in_the_list_only_when_it_fires(client):
+    """M252/M243. The list has to track the gates, not the street.
+
+    The river under-fold note fires on a MIXED row facing a small bet and
+    stays silent on a decisive one (M243 narrowed it from every
+    facing-a-bet decision to the 21% where hero's top action is under
+    0.80). If the id appeared on both, the structured field would be
+    telling a player something the prose deliberately does not.
+    """
+    small = _river_bet_menu(client)[0]
+    mixed = _river_facing(client, bet=small, spot=_MIXED_RIVER)
+    decisive = _river_facing(client, bet=small, spot=_DECISIVE_RIVER)
+    assert "river-under-fold" in mixed["advisory_notes"]
+    assert "river-under-fold" not in decisive["advisory_notes"]
+    # Both still carry the caveat that applies to every postflop answer.
+    for payload in (mixed, decisive):
+        assert "standing-aggression-caveat" in payload["advisory_notes"]
+
+
+def test_the_aggression_level_is_a_function_of_street_and_is_known_to_be(client):
+    """M252, pinning F51 so a future change to it is deliberate.
+
+    The wide benchmark measured `aggression_confidence` at "low" on 528
+    of 528 postflop decisions in one arm and 482 of 482 in the other. The
+    level is not wrong — no postflop street has ever been certified, and
+    `CERTIFY_RELIABILITY_ON_STREETS` is empty — but it cannot tell one
+    decision from another, which is why `advisory_notes` exists.
+
+    If a street is ever certified, this test fails and the person doing
+    it has to decide what the level should mean.
+    """
+    assert api_config.CERTIFY_RELIABILITY_ON_STREETS == (), (
+        "a street was certified — the aggression level can now vary, and "
+        "M252's reason for adding advisory_notes needs revisiting"
+    )
+    small = _river_bet_menu(client)[0]
+    mixed = _river_facing(client, bet=small, spot=_MIXED_RIVER)
+    decisive = _river_facing(client, bet=small, spot=_DECISIVE_RIVER)
+    assert mixed["aggression_confidence"] == decisive["aggression_confidence"]
+    assert mixed["advisory_notes"] != decisive["advisory_notes"], (
+        "the level is constant AND the notes are identical — then nothing "
+        "distinguishes these two decisions and M252 achieved nothing"
+    )
+
 def _river_bet_menu(client):
     """The sizes the river tree actually offers, read from a response.
 
