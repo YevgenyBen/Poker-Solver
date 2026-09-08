@@ -234,6 +234,29 @@ spend another milestone on a turn CONFIGURATION.**
 model: the bet menu, the range derivation, or the fact that we solve one
 street at a time. The note now says so to the player, in those words.
 
+**M247 COSTED THE ONE REMAINING STRUCTURAL FIX AND IT IS ALIVE.** Not
+chaining (M223 re-plays the river inside every iteration and was worse
+at 237x); depth-limited solving — value the leaf with an ESTIMATE
+computed once, M112-M116's continuation table one street later.
+
+| question | answer |
+|---|---|
+| do turn leaves collapse? | **yes — 27 showdowns → 8 situations**, identical across spots |
+| exact leaf value cost? | 1.07s/river × 48 = 51s/leaf, **6.9 min/spot** — 400x the budget |
+| would a correct value change anything? | **yes — sd 1.75-1.86 bb, 12% of pot, range 9.4bb** |
+| is it noise? | **no — two runs identical to 4 decimals** |
+| does a cheap feature predict it? | **no** — equity 0-2%, equity-SWING across runouts 0-2% |
+
+**The correction's mean is ~0 while its spread is 9.4bb on a 15bb pot**:
+equity-at-the-leaf is unbiased in aggregate and wrong hand by hand,
+which is the error shape that changes WHICH hands bet. **First positive
+structural result the turn has produced** after four null-or-worse
+attempts.
+**Per-request is impossible and a fitted formula on the obvious features
+is dead.** What remains is M116's range-strength-keyed OFFLINE table,
+uncosted, and carrying M116's warning that the range an entry is built
+from moves it by up to 0.23 of pot.
+
 ### THE FREQUENCY GAPS COST ALMOST NOTHING IN CHIPS (M237) — and that is a limited claim
 
 Every study in this round measured a FREQUENCY distance, which this
