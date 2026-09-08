@@ -8011,3 +8011,81 @@ def test_the_river_under_fold_note_is_silent_on_a_decisive_row(client):
     assert any(a == "fold" for a in payload["hero"]["strategy"]), (
         "this spot is meant to be facing a bet")
     assert probe not in payload["aggression_confidence_reason"]
+
+
+def _multiway_postflop_body(street, **extra):
+    """A three-handed postflop decision: UTG opens, MP and CO call."""
+    body = _advise_body(
+        stack_bb=100.0, players=6, hero_cards="AhKs", board="Jh7d2c",
+        preflop_action_path=["raise", "call_or_check", "call_or_check",
+                             "fold", "fold", "fold"])
+    if street in ("turn", "river"):
+        body["flop_action_path"] = ["call_or_check"] * 3
+        body["turn_card"] = "9s"
+    if street == "river":
+        body["turn_action_path"] = ["call_or_check"] * 3
+        body["river_card"] = "4d"
+    body.update(extra)
+    return body
+
+
+@pytest.mark.parametrize("street", ["flop", "turn", "river"])
+def test_a_multiway_player_is_told_the_answer_is_not_reproducible(client, street):
+    """M245. The same multiway spot solved again recommends a DIFFERENT
+    action 41-75% of the time, and nothing said so.
+
+    Measured through /advise at the shipped configuration over 306 seed
+    pairs: the recommended action changes on 45% of flop comparisons,
+    41% of turn, and **75% of river**. The response reported
+    `solver_confidence: "high"` over all of it - the F41/F47 failure in
+    its largest form, a headline signal vouching for one draw from a
+    distribution.
+
+    All three streets are covered because all three were measured. The
+    river was expected to be the clean one - it is a standalone solve on
+    a complete board where equity is exact - and is the worst; assuming
+    otherwise would have excluded it (M168).
+    """
+    probe = api_config.MULTIWAY_REPRODUCIBILITY_REASON.strip()[:60]
+    response = client.post("/advise", json=_multiway_postflop_body(street))
+    assert response.status_code == 200, response.json()
+    payload = response.json()
+
+    assert len(payload["positions"]) >= 3, (
+        f"this spot has {payload['positions']} live, so it is not the "
+        "multiway solver and the test would prove nothing")
+    assert payload["solver_confidence"] == "low"
+    assert probe in (payload["solver_confidence_reason"] or "")
+
+
+def test_the_reproducibility_warning_is_silent_when_only_two_players_are_live(client):
+    """A 6-max hand that folds to two takes the HEADS-UP postflop cell.
+
+    That is a different solver, and `players` cannot distinguish it - only
+    the live count can, which is why the gate reads the response's own
+    `positions` (M144's rule).
+    """
+    probe = api_config.MULTIWAY_REPRODUCIBILITY_REASON.strip()[:60]
+    response = client.post("/advise", json=_advise_body(
+        stack_bb=100.0, players=6, hero_cards="AhKs", board="Jh7d2c",
+        preflop_action_path=["raise", "call_or_check", "fold", "fold",
+                             "fold", "fold"]))
+    assert response.status_code == 200, response.json()
+    payload = response.json()
+    assert len(payload["positions"]) == 2, (
+        "this spot is meant to fold down to a heads-up postflop cell")
+    assert probe not in (payload["solver_confidence_reason"] or "")
+
+
+def test_the_reproducibility_warning_quotes_its_own_measurement(client):
+    """The copy moves if the measurement does (M232's rule)."""
+    note = api_config.MULTIWAY_REPRODUCIBILITY_REASON
+    for value in (api_config.MULTIWAY_SEED_ACTION_FLIP_FLOP,
+                  api_config.MULTIWAY_SEED_ACTION_FLIP_TURN,
+                  api_config.MULTIWAY_SEED_ACTION_FLIP_RIVER):
+        assert "%d%%" % round(value * 100) in note
+    assert str(api_config.MULTIWAY_SEED_PAIRS) in note
+    assert api_config.MULTIWAY_SEED_ACTION_FLIP_RIVER > \
+        api_config.MULTIWAY_SEED_ACTION_FLIP_FLOP, (
+            "the river measured WORST, which is why it is named separately "
+            "rather than folded into one average")

@@ -1263,8 +1263,10 @@ async def advise_endpoint(request: AdviseRequest):
             # problem is that its preflop solve divides iterations among
             # nine seats, and that has already happened by the time
             # anyone folds. See cfg.LOW_CONFIDENCE_TABLE_SIZES.
-            "solver_confidence": _solver_confidence(raw, request.players, hero)[0],
-            "solver_confidence_reason": _solver_confidence(raw, request.players, hero)[1],
+            "solver_confidence": _solver_confidence(
+                raw, request.players, hero, street)[0],
+            "solver_confidence_reason": _solver_confidence(
+                raw, request.players, hero, street)[1],
             # M98: scoped to the sizing axis, and only preflop. A
             # multiway preflop solve answers "play or fold" reliably and
             # "which size" unreliably; reporting one number for both hid
@@ -1382,7 +1384,23 @@ def _hero_row_is_the_prior(hero: dict | None) -> bool:
     return max(values) - min(values) < 1e-9
 
 
-def _solver_confidence(raw: dict, players: int, hero: dict | None = None):
+def _is_multiway_postflop(raw: dict, street: str | None) -> bool:
+    """Three or more players live on a postflop street.
+
+    M245. Read from the response's own `positions` (M144's rule), not
+    from the request's `players`: a 6-max hand that folds to two live
+    players takes the HEADS-UP postflop cell, which is a different solver
+    with different behaviour, and `players` cannot tell them apart. The
+    live count can.
+    """
+    if street not in ("flop", "turn", "river"):
+        return False
+    positions = raw.get("positions")
+    return isinstance(positions, (list, tuple)) and len(positions) >= 3
+
+
+def _solver_confidence(raw: dict, players: int, hero: dict | None = None,
+                       street: str | None = None):
     """(level, reason) for the headline confidence signal.
 
     M145/F41: this used to depend only on TABLE SIZE, so a node whose
@@ -1395,6 +1413,12 @@ def _solver_confidence(raw: dict, players: int, hero: dict | None = None):
     table_size_reason = cfg.LOW_CONFIDENCE_TABLE_SIZES.get(players)
     if table_size_reason:
         reasons.append(table_size_reason)
+    # M245: the same spot solved again recommends a DIFFERENT ACTION 41-75%
+    # of the time. A headline signal that reads "high" over that is the
+    # F41/F47 failure in its largest form - vouching for an answer that is
+    # one draw from a distribution.
+    if _is_multiway_postflop(raw, street):
+        reasons.append(cfg.MULTIWAY_REPRODUCIBILITY_REASON)
     if _node_is_untrained(raw):
         reasons.append(cfg.UNTRAINED_NODE_REASON)
     elif _hero_row_is_the_prior(hero):
