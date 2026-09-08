@@ -1037,6 +1037,10 @@ def _derive_path_situation(
 
     preflop_result = _get_or_solve_preflop_raw(stack_bb, iterations, players=players)
     actions, _node = _resolve_action_path(preflop_result.root, action_kinds)
+    # M250: repair any node on this path that never learned anything
+    # BEFORE reading frequencies off it. Cached in the shared preflop
+    # result, so a line pays for this once.
+    _train_unlearned_nodes_on_path(preflop_result, actions, players)
     path_scenario = derive_ranges_from_path(preflop_result, actions)
 
     # Known, deliberate gap (M29/M42/M44): path_scenario.trained — whether
@@ -3259,6 +3263,22 @@ def _row_is_the_prior(row: dict) -> bool:
     return len(values) > 1 and max(values) - min(values) < 1e-9
 
 
+def _every_row_is_the_prior(strategy: dict) -> bool:
+    """True when EVERY hand at a node is still the uniform prior.
+
+    M246/M250. `not any(trained.values())` asks whether the node was
+    VISITED, and F43 established that visited is not learned - measured
+    at the node where BTN calls a 4-bet, **101 of 169 hands marked
+    trained and all 169 rows exactly the prior**. A trainer built to
+    repair F43 was gated on F43's own mistake.
+
+    This is the condition that actually describes "nothing here was
+    learned", and it is strictly weaker than the trained check: a node
+    that was never visited also has every row at the prior.
+    """
+    return bool(strategy) and all(_row_is_the_prior(row) for row in strategy.values())
+
+
 def _ensure_exact_node_trained(result, node, equity_table, hero_key=None) -> bool:
     """Solve ONE exact-solver subtree on demand. Returns whether it did work.
 
@@ -3426,20 +3446,32 @@ def _ensure_preflop_node_trained(result, node, players: int, hero_key=None) -> b
     """
     if players == 2:
         return False
-    strategy = result.strategy_at(node)
-    if not strategy:
-        return False
-    # Fire on the user-visible defect, not on every imperfect node:
-    # hero's own row being the prior, or nothing trained at all. Firing
-    # whenever any row is uniform would trigger on most deep nodes and
-    # buy little for the hand actually being asked about.
-    trained = result.trained_hands(node)
-    hero_row = strategy.get(hero_key) if hero_key else None
-    needs_work = (
-        (hero_row is not None and _row_is_the_prior(hero_row))
-        or not any(trained.values())
-    )
-    if not needs_work:
+
+    def needs_work() -> bool:
+        """Re-read the node and decide. Called twice on purpose - once
+        before taking the lock and once under it (see below)."""
+        strategy = result.strategy_at(node)
+        if not strategy:
+            return False
+        # Fire on the user-visible defect, not on every imperfect node:
+        # hero's own row being the prior, nothing trained at all, or
+        # (M250) every row still the prior. Firing whenever ANY row is
+        # uniform would trigger on most deep nodes and buy little for the
+        # hand actually being asked about.
+        hero_row = strategy.get(hero_key) if hero_key else None
+        if hero_row is not None and _row_is_the_prior(hero_row):
+            return True
+        if not any(result.trained_hands(node).values()):
+            return True
+        # M250: visited-but-unlearned is F43's shape, and the gate that
+        # misses it is the one M246 diagnosed as "the mechanism, and it
+        # is one line". Firing on it is MEASURED AND REFUSED - see the
+        # constant. Behind the flag so the whole milestone is one
+        # switch and the pre-M250 behaviour is byte-identical.
+        return (cfg.PREFLOP_PATH_NODE_TRAINING
+                and _every_row_is_the_prior(strategy))
+
+    if not needs_work():
         return False
 
     hands = list(result.hands)
@@ -3451,9 +3483,13 @@ def _ensure_preflop_node_trained(result, node, players: int, hero_key=None) -> b
     with _multiway_cache.lock:
         # Re-check under the lock: a concurrent request may have trained
         # this same node already, and the solve is not free.
-        if hero_row is not None and not _row_is_the_prior(
-            result.strategy_at(node).get(hero_key, hero_row)
-        ):
+        #
+        # M250 re-checks the WHOLE condition rather than hero's row
+        # alone. The old form was a no-op whenever hero_key was None,
+        # which is exactly how the path trainer below calls this - so
+        # without it two concurrent requests on the same line would each
+        # pay for the same subtree.
+        if not needs_work():
             return False
         node_data = mccfr_solve(
             node, hands, live, equity_cache,
@@ -3465,6 +3501,42 @@ def _ensure_preflop_node_trained(result, node, players: int, hero_key=None) -> b
         # this overwrites exactly the rows it just improved.
         result.node_data.update(node_data)
     return True
+
+
+def _train_unlearned_nodes_on_path(result, action_path, players: int) -> int:
+    """Train every node ALONG a preflop path that never learned anything.
+    Returns how many were trained.
+
+    M250, and the other half of M150. That milestone wired
+    `_ensure_preflop_node_trained` into `_advise_preflop` - the one place
+    a client asks about a preflop decision - and stopped there. But a
+    POSTFLOP request never calls `_advise_preflop` at all: it walks the
+    same preflop path to DERIVE its ranges, reading a strategy at every
+    node on the way. An unlearned node there contributes the uniform
+    prior to `continuing_frequencies`, and multiplying a range by a
+    constant leaves its composition exactly as it was one action
+    earlier - M149's defect, re-measured in M246 at ratio sd 5.3e-17.
+
+    So the node that needs training is not the one being advised; it is
+    every node the RANGES pass through. Heads-up is excluded for the
+    same reason as M150: its exact solver enumerates every hand at every
+    node.
+
+    No `hero_key` is passed. This asks the node-level question only -
+    did anything here learn anything - because the range derivation is
+    about the whole population, not about hero's row.
+    """
+    if players == 2 or not cfg.PREFLOP_PATH_NODE_TRAINING:
+        return 0
+    node = result.root
+    trained = 0
+    for action in action_path:
+        if not isinstance(node, DecisionNode):
+            break
+        if _ensure_preflop_node_trained(result, node, players):
+            trained += 1
+        node = node.children[action]
+    return trained
 
 
 def _advise_preflop(request, iterations: int, hero_combo=None) -> dict:
