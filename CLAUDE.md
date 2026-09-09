@@ -600,7 +600,8 @@ requests now reject unknown fields by name rather than ignoring them.
                            under poker_solver/ or api/ may import them
       reference_units.py   latency in drift-normalised units (M240)
       spot_population.py   walks the real tree to build legal spots (M252)
-      server_warmup.py     TestClient runs no lifespan; warm before timing (M252)
+      server_warmup.py     TestClient runs no lifespan; warm before timing,
+                           and clear_postflop_caches() keeps it warm (M252/M253)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools
@@ -3050,6 +3051,23 @@ within a single run, a 9.7x spread** — and two *quiet* phases of that
 run, no load applied, differed by **32%**. Any single-arm number timed
 across more than a few seconds is suspect by default.
 
+**A PRE-REGISTERED RULE DOES NOT PROTECT THE METHOD'S OWN ASSUMPTIONS
+(M253).** M253 priced two-live preflop nodes by asking how wide an
+opponent's range must be for a call to break even, wrote the reading
+rule before the run, and got a clean answer: 1 of 80 shallow rows wrong,
+so leave M251's gate alone. **That rested entirely on a weak hand
+realising 100% of its RAW equity**, which it does not - it has three
+streets to play. Sweeping a realisation factor, the verdict flips at
+about **0.87**, and plausible values sit at 0.80-0.90:
+| realisation | 1.00 | 0.90 | **0.86** | 0.80 |
+|---|---|---|---|---|
+| shallow rows wrong of 80 | 1 | 18 | **39** | 41 |
+The rule protected against a motivated reading of the DATA and not
+against an unexamined input. **Pre-register the rule AND sweep the
+assumption its input depends on.** (M251's own deep cell is unaffected -
+82-103 wrong of 128 at every factor - so the tool has the resolution for
+a large gap and not for a small one.)
+
 **A BENCHMARK MEASURES THE POPULATION IT GENERATES, AND ONLY THAT
 (M252).** Three defects in the instrument, all now fixed in `bench/`:
 
@@ -3066,6 +3084,13 @@ across more than a few seconds is suspect by default.
   closed) and **346 turn / 39 river** (a flop closed with two checks,
   which only works heads-up), so **multiway turn and river spots were
   dropped, not measured**. Use `closing_path(live_players)`.
+- **A postflop measurement must clear POSTFLOP caches only** — use
+  `bench.server_warmup.clear_postflop_caches()`. Rebuilt from scratch
+  three times (M242, M245, M253) and got wrong twice in opposite
+  directions: clearing everything re-pays a 30-60s preflop solve inside
+  the timing, and clearing nothing serves the previous arm's answer —
+  and since range caps are config constants in no cache key, **the wrong
+  arm comes back FASTER and reads as a speed-up**.
 - **`TestClient(app)` never runs the app's lifespan**, so nothing is
   prewarmed. A run without `bench.server_warmup.warm_multiway` recorded a
   **72.6s** preflop request that would have been reported as a

@@ -14579,3 +14579,158 @@ when 84o really does have the equity. The cell is unmeasured, not wrong.
 M245 measured width (inert), iterations (0.240 at 150x budget) and
 ensembles (worst cases untouched at every K). A fifth configuration
 attempt would be M232's mistake in a new place.
+
+## M253 — R2 is UNRESOLVED, and my own pre-registered rule would have shipped the wrong answer
+
+M252's audit left two open recommendations. This closes one and fails to
+close the other, which is the more useful half.
+
+### R2: should M251's warning cover shallow two-live nodes?
+
+M252 measured M251's gate firing on 10 of 22 real occurrences of its own
+cell, with the remainder at 0-1 raises. Several unwarned rows looked
+alarming - 85o continuing 1.0000, Q9o 0.9998 - and M252 explicitly
+declined to call them defects, because **M127 flagged exactly that shape
+once and was wrong**: it called 84o defending in the big blind a defect
+when 84o has 30.3% equity against a button opening ~87% of hands and
+needs ~30%.
+
+So the question needs the PRICE, not the fold frequency. For each node
+and hand: **how wide would the opponent's range have to be for
+continuing to break even?** Call it X. Continuing is right when the real
+range is wider than X, and what the range plausibly is comes from the
+ACTION - an open at two live is 40-90% of hands, a 3-bet 8-15%, a 4-bet
+2-4%. Both equities come from the engine's own 169x169 table.
+
+**The deep cell was re-measured as a control, and it reproduced M251:**
+
+| raises faced | rows | price | X needed | plausible width | continues where the price forbids it |
+|---|---|---|---|---|---|
+| 0 | 16 | 0.250 | 0.035-0.122 | 0.40-0.90 | **0 of 16** |
+| 1 | 64 | 0.273-0.300 | 0.039-0.741 | 0.20-0.60 | **1 of 64** |
+| 2 | 64 | 0.313-0.333 | 0.127-1.000 | 0.08-0.15 | **55 of 64** |
+| 3 | 64 | 0.254-0.273 | 0.035-0.232 | 0.02-0.06 | **48 of 64** |
+
+103 of 128 deep rows wrong, 1 of 80 shallow. The pre-registered rule -
+written before the run - said widen only above 40%, so it fired
+**LEAVE the gate**, and the gate warns on 64 of 64 at both deep raise
+counts and 0 of 80 shallow, which is exactly the scoping M251 intended.
+
+### And then the assumption underneath it was checked
+
+**The break-even calculation assumes a weak hand realises its RAW
+equity.** It does not: it has to play three more streets, often out of
+position. Requiring `price / r` instead of `price`, for a realisation
+factor r:
+
+| realisation | shallow wrong of 80 | rule says |
+|---|---|---|
+| 1.00 | 1 (1.2%) | leave |
+| 0.95 | 8 (10.0%) | leave |
+| 0.90 | 18 (22.5%) | leave |
+| 0.88 | 30 (37.5%) | leave |
+| **0.86** | **39 (48.8%)** | **WIDEN** |
+| 0.80 | 41 (51.2%) | WIDEN |
+
+**The verdict flips at a realisation factor of about 0.87**, and typical
+figures for a weak offsuit hand out of position sit around 0.80-0.90 -
+so the flip lands in the middle of the plausible range, which is the
+worst place for it. **Nothing in this project measures that number.**
+
+**R2 is therefore unresolved and the gate is unchanged for want of
+evidence, not because it was shown to be right.** M251's copy is
+untouched: it describes the deep cell, which is what it measured.
+
+**M251 itself is unaffected** - the deep cell is 82-103 wrong of 128 at
+every factor from 0.80 to 1.00, so no realisation assumption rescues it.
+The break-even tool had the resolution for a gap that large and does not
+have it here.
+
+### The method lesson, which is the point of the entry
+
+A pre-registered reading rule protects against a motivated reading of
+the DATA. **It does not protect against an unexamined assumption in the
+METHOD.** The rule fired cleanly on 1 of 80 and I would have recorded
+"the shallow cell is priced correctly and M252's alarm was M127's
+mistake repeated" - a tidy, quotable finding, resting entirely on weak
+hands realising 100% of their equity.
+
+The sensitivity sweep was run afterwards, on no rule's instruction, and
+inverted the answer. **Pre-register the rule AND sweep the assumption
+the rule's input depends on.**
+
+### What would settle it
+
+Equity realisation is measurable in principle - solve the postflop game
+and compare realised EV against raw equity - but the engine whose
+accuracy is in question is the one that would do the solving, which is
+M244's problem in a smaller form. An outside reference could price it;
+this study could not.
+
+### Instrument: a third rebuild made durable
+
+`bench.server_warmup.clear_postflop_caches()`. A selective clear has now
+been rebuilt from scratch three times (M242, M245, and here) and got
+wrong twice in opposite directions: clearing EVERYTHING makes each
+request re-pay a 30-60s multiway preflop solve production prewarms
+(M252's error, one milestone old when I repeated it in this milestone's
+own R3 script); clearing NOTHING serves the previous arm's answer, and
+since range caps are config constants appearing in no cache key, the
+wrong arm comes back FASTER and reads as a speed-up.
+
+Preflop caches are named explicitly and **everything else is cleared by
+default**, because that is the safe direction: forgetting to clear a new
+postflop cache understates cost silently, while wrongly clearing a
+preflop one is loud. A test asserts an unclassified newcomer is cleared
+rather than kept.
+
+### R3: the flop's five-second breach is REAL, and the bar is a machine question
+
+M252 recorded one decision of 1,730 above five seconds — a 6-max flop
+with six players live, 5.613s — and could not say whether that was a
+regression or the machine drifting. Two measurements settle it.
+
+**First, M252's own data, split by how many players are live** (flop
+decisions only):
+
+| live | weighted arm | unweighted arm |
+|---|---|---|
+| 2 | p50 1.655, max 2.901 (n=122) | p50 2.101, max 2.807 (n=105) |
+| 3 | p50 0.828, max 1.336 (n=32) | p50 0.900, max 1.247 (n=41) |
+| 4 | p50 1.605, max 2.159 (n=22) | p50 1.829, max 2.551 (n=9) |
+| 5 | p50 2.016, max 3.120 (n=4) | p50 3.325, max **4.332** (n=5) |
+| **6** | 1.553 (**n=1**) | **5.613** (**n=1**) |
+
+**The breach was not a fluke, it was the worst shape sampled twice.**
+Cost climbs with live count from four players up, and six-live flops
+were 1 of 181 and 1 of 161 flop decisions — about 0.6%.
+
+**Second, that shape measured directly**, 40 cold six-live flops timed
+with `bench.reference_units` so the machine is visible:
+
+| | seconds | reference units |
+|---|---|---|
+| p50 | **7.429** | **11.413** |
+| p90 | 8.173 | 12.696 |
+| max | 8.602 | 13.069 |
+| over 5s | **38 of 40** | — |
+
+The machine drifted **2.65x** inside the run (0.2711 to 0.7188s per
+unit), and **five seconds is 18.44 units at this run's fastest** against
+a p50 of 11.4. So the same work is **~3.1s on a still machine and ~7.4s
+on this one's typical state**, and 5s corresponds to 18.4 units when it
+is fast and 7.7 when it is slow.
+
+**The answer to R3 is that the question was posed wrong.** The work is
+11.4 units and does not move; whether that clears a WALL-CLOCK bar is a
+property of the machine, and this machine sits on both sides of it
+within a single run. Not a regression — the cost is what a six-way flop
+costs — and not safe either.
+
+**What is actionable**: cost scales with live count and nothing caps it.
+`MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION` caps width PER POSITION,
+so a six-handed flop pays for six of them. A cap on total work rather
+than per-seat work is the shape of a fix, and it is unmeasured. The
+exposure is ~0.6% of flop decisions, so this is a tail item, not a
+priority — recorded with its number so the next person does not have to
+re-derive it.

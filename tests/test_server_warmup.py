@@ -74,3 +74,48 @@ def test_an_empty_depth_list_is_not_silently_the_default(depths):
         assert not solve.called
     else:
         assert solve.called
+
+
+def test_clearing_postflop_caches_keeps_the_preflop_solves():
+    """The whole point: a postflop measurement must not re-pay a 30-60s
+    multiway preflop solve that production prewarms.
+
+    Rebuilt from scratch three times before it lived here, and got wrong
+    twice — once by clearing everything (every request pays the preflop
+    solve) and once by clearing nothing (the previous arm's answer is
+    served, and since range caps are config constants that appear in no
+    cache key, the wrong arm comes back FASTER and reads as a speed-up).
+    """
+    from api.caches import _SolveCache
+    from bench.server_warmup import PREFLOP_CACHES, clear_postflop_caches
+
+    cleared = clear_postflop_caches()
+    registered = {c.name for c in _SolveCache._registry}
+
+    assert set(cleared).isdisjoint(PREFLOP_CACHES), (
+        "a preflop cache was cleared - the next measurement pays a full "
+        "preflop solve inside the timing"
+    )
+    assert set(cleared) | PREFLOP_CACHES >= registered, (
+        f"unclassified caches: {registered - set(cleared) - PREFLOP_CACHES}. "
+        "Every cache must be either kept or cleared deliberately"
+    )
+    assert cleared, "nothing was cleared, so the next arm reads stale answers"
+
+
+def test_a_new_cache_is_cleared_by_default_not_kept():
+    """The safe direction, asserted rather than assumed.
+
+    Forgetting to clear a new postflop cache measures a warm one and
+    understates the cost - a silent wrong answer. Wrongly clearing a
+    preflop cache is loud. So anything unclassified must be CLEARED.
+    """
+    from api.caches import _SolveCache
+    from bench.server_warmup import PREFLOP_CACHES, clear_postflop_caches
+
+    newcomer = _SolveCache("a_brand_new_postflop_cache", maxsize=2)
+    try:
+        assert newcomer.name not in PREFLOP_CACHES
+        assert newcomer.name in clear_postflop_caches()
+    finally:
+        _SolveCache._registry.remove(newcomer)

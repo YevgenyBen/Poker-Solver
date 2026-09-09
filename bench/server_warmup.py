@@ -55,3 +55,36 @@ def warm_multiway(depths=None, table_sizes=(3, 6), verbose: bool = True) -> dict
                 print(f"  warm {players}-max {depth:g}bb: {elapsed:.1f}s",
                       flush=True)
     return timings
+
+#: The caches holding PREFLOP solves, which a postflop measurement must
+#: not throw away. Named explicitly, and everything else is treated as
+#: postflop — so a cache added later is cleared by default. That is the
+#: safe direction: forgetting to clear a new postflop cache measures a
+#: warm one and understates the cost, while wrongly clearing a preflop
+#: cache is loud (a 30-60s solve inside the measurement).
+PREFLOP_CACHES = frozenset({"multiway", "preflop_raw", "multiway_equity"})
+
+
+def clear_postflop_caches() -> list:
+    """Empty every postflop cache, keeping the preflop solves warm.
+
+    Returns the names cleared, so a caller can assert it did something.
+
+    **This has now been rebuilt from scratch three times** (M242, M245,
+    and again here), and got it wrong at least twice: clearing everything
+    makes each request re-pay a 30-60s multiway preflop solve that
+    production prewarms, which is the same error `warm_multiway` exists
+    to prevent; clearing nothing serves the previous arm's answer, and
+    range caps are config constants that appear in no cache key, so the
+    wrong arm comes back FASTER and looks like a speed-up.
+    """
+    from api.caches import _SolveCache
+
+    cleared = []
+    for cache in _SolveCache._registry:
+        if cache.name in PREFLOP_CACHES:
+            continue
+        with cache.lock:
+            cache.clear()
+        cleared.append(cache.name)
+    return sorted(cleared)
