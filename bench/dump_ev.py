@@ -285,6 +285,66 @@ class Walk:
             node = child
         return node, board, reach, street_in, total_in
 
+    def action_values(self, node, board, reach, street_in=(0.0, 0.0),
+                      total_in=(0.0, 0.0)):
+        """Hero's EV for EACH action here, the reference's line below.
+
+        The quantity `price_row` needs and could not see. A row's EV is
+        the average of these under that row's weights, so the best of
+        them bounds every row at this node - including the reference's
+        own.
+        """
+        out = {}
+        for label in node.get("actions") or []:
+            got = self._child_value(node, label, board, reach, street_in,
+                                    total_in)
+            if got is not None:
+                out[label] = got
+        return out
+
+    def regret_of_row(self, node, board, reach, row, street_in=(0.0, 0.0),
+                      total_in=(0.0, 0.0)):
+        """`(regret, reference_slack, best_label)` - the honest version.
+
+        **This exists because `price_row` measured two things at once and
+        M257 caught it from an impossible number.** Scoring our row as
+        `EV(reference row) - EV(our row)` assumes the reference's row is
+        the best available answer at this node. Over a whole range it
+        very nearly is - the solves here converge to 0.19-0.49% of pot -
+        but that is an AVERAGE, and one hand's row can sit much further
+        from its own best response. Measured: a four-bet pot priced
+        `8d8c` at **-2.36 bb with 0.2% of mass remapped**, i.e. our row
+        beating the reference's inside the reference's own game, which a
+        converged row makes impossible. What it means is that the
+        reference had not converged FOR THAT HAND.
+
+        So the difference of two rows is our error MINUS the reference's
+        own per-hand slack, and a negative result says nothing about us.
+
+        `regret = max_a Q(a) - EV(our row)` is **non-negative by
+        construction** and depends on the reference only through the
+        game it defines, not through how well it solved one hand.
+        `reference_slack` is the same quantity for the reference's own
+        row: it measures the instrument, and a row whose slack is the
+        size of our regret is a row this dump cannot resolve.
+        """
+        values = self.action_values(node, board, reach, street_in, total_in)
+        if not values:
+            return None
+        best_label = max(values, key=values.get)
+        best = values[best_label]
+        ours = self.price_row(node, board, reach, row, street_in, total_in)
+        if ours is None:
+            return None
+        reference = strategy_at(node).get(self.hero_key)
+        slack = None
+        if reference:
+            ref_ev = self.price_row(node, board, reach, reference, street_in,
+                                    total_in)
+            if ref_ev is not None:
+                slack = best - ref_ev
+        return best - ours, slack, best_label
+
     def price_row(self, node, board, reach, row, street_in=(0.0, 0.0),
                   total_in=(0.0, 0.0)):
         """Hero's EV playing `row` HERE, and the reference's line below.

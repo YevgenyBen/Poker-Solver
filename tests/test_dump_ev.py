@@ -433,3 +433,76 @@ def test_pricing_the_reference_row_reproduces_the_full_walk():
         "price_row and value disagree on the same row, so a pricing study "
         "would be comparing two different computations"
     )
+
+
+def _mixed_tree():
+    """A node where checking and betting differ, so a row can be wrong."""
+    return _action(HERO, ["CHECK", "BET 8.000000"], {"KhKd": [0.5, 0.5]},
+                   children={
+                       "CHECK": _action(VILLAIN, ["CHECK"],
+                                        {c: [1.0] for c in VILLAIN_COMBOS},
+                                        children={"CHECK": _chance()}),
+                       "BET 8.000000": _action(
+                           VILLAIN, ["CALL"],
+                           {c: [1.0] for c in VILLAIN_COMBOS},
+                           children={"CALL": _chance()})})
+
+
+def test_the_best_action_bounds_every_row_including_the_references_own():
+    """M257's correction, as a property.
+
+    `price_row` scores our row as `EV(reference) - EV(ours)`, which
+    assumes the reference's row is the best answer available at the
+    node. Over a range it nearly is; for ONE HAND it need not be, and a
+    real four-bet pot priced `8d8c` at -2.36 bb with 0.2% of mass
+    remapped - our row beating the reference's inside the reference's
+    own game. Against the best action instead, no row can score below
+    zero, so the sign stops carrying the instrument's error.
+    """
+    walk, board, reach = _walk([0.75, 0.75]), ("8h", "6h", "2s", "Td"), _reach(1.0, 1.0)
+    tree = _mixed_tree()
+    values = walk.action_values(tree, board, reach)
+    assert set(values) == {"CHECK", "BET 8.000000"}
+
+    best = max(values.values())
+    for row in ({"CHECK": 1.0}, {"BET 8.000000": 1.0},
+                {"CHECK": 0.5, "BET 8.000000": 0.5},
+                {"CHECK": 0.9, "BET 8.000000": 0.1}):
+        assert walk.price_row(tree, board, reach, row) <= best + 1e-9
+
+
+def test_regret_is_never_negative_and_is_zero_on_the_best_action():
+    walk, board, reach = _walk([0.75, 0.75]), ("8h", "6h", "2s", "Td"), _reach(1.0, 1.0)
+    tree = _mixed_tree()
+    best_label = max(walk.action_values(tree, board, reach),
+                     key=walk.action_values(tree, board, reach).get)
+
+    regret, _slack, named = walk.regret_of_row(tree, board, reach,
+                                               {best_label: 1.0})
+    assert named == best_label
+    assert regret == pytest.approx(0.0)
+
+    worst = "CHECK" if best_label != "CHECK" else "BET 8.000000"
+    regret_worst, _s, _n = walk.regret_of_row(tree, board, reach, {worst: 1.0})
+    assert regret_worst > 0.0
+
+
+def test_the_references_own_slack_is_reported_and_is_what_price_row_hid():
+    """The reference here MIXES 50/50 where one action is better, so its
+    own row carries slack - exactly the unconverged-for-one-hand case
+    that made a real measurement come out negative. `price_row` cannot
+    see it; `regret_of_row` returns it, so a row the dump cannot resolve
+    can be recognised instead of published."""
+    walk, board, reach = _walk([0.75, 0.75]), ("8h", "6h", "2s", "Td"), _reach(1.0, 1.0)
+    tree = _mixed_tree()
+
+    regret, slack, _label = walk.regret_of_row(tree, board, reach,
+                                               {"CHECK": 1.0})
+    assert slack > 0.0, "a 50/50 row over unequal actions is not optimal"
+
+    # The identity that makes the two metrics comparable: the old
+    # difference is exactly our regret minus the reference's own slack.
+    ours = walk.price_row(tree, board, reach, {"CHECK": 1.0})
+    reference = walk.price_row(tree, board, reach,
+                               {"CHECK": 0.5, "BET 8.000000": 0.5})
+    assert (reference - ours) == pytest.approx(regret - slack)
