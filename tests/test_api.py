@@ -8346,6 +8346,159 @@ def test_the_river_under_fold_note_is_silent_on_a_decisive_row(client):
     assert probe not in payload["aggression_confidence_reason"]
 
 
+
+def _mw_raw(street, top_action, positions=("UTG", "MP", "CO")):
+    """A multiway postflop response whose hero row is as split as asked."""
+    rest = (1.0 - top_action) / 2.0
+    return {"street": street, "positions": list(positions),
+            "hero": {"strategy": {"fold": rest, "call_or_check": rest,
+                                  "raise:9.00": top_action}}}
+
+
+def test_a_decisive_multiway_row_is_quoted_its_own_measurement():
+    """M254. The blanket warning was false for half the decisions it fired on.
+
+    M252 measured this warning's exposure at **one decision in five** -
+    by a wide margin the most-met disclosed defect here - and it said the
+    same thing to every multiway postflop decision. M245's own figures
+    implied that could not be right: with the top action changing on
+    45%/41%/75% of comparisons, roughly half those decisions are stable
+    and were being told 45% when the truth for them is near zero.
+
+    Over 90 spots re-solved under four seeds, a decision whose own row is
+    decisive held its recommended action on **34 of 37 spots**, against
+    46% changing where the row is split - 8.50 sigma, split-half 6.62 and
+    5.55.
+    """
+    from api import main as api_main
+
+    assert api_main._multiway_answer_is_stable(_mw_raw("flop", 0.97), "flop")
+    assert api_main._multiway_answer_is_stable(_mw_raw("turn", 0.91), "turn")
+    assert not api_main._multiway_answer_is_stable(_mw_raw("flop", 0.55), "flop")
+    assert not api_main._multiway_answer_is_stable(_mw_raw("turn", 0.80), "turn")
+
+
+def test_the_river_is_never_quoted_the_stable_measurement():
+    """M254. Measured, not cautious.
+
+    The river's DECISIVE rows still flip 0.30 of the time, against the
+    flop's 0.0000 and the turn's 0.0667, so there is no stable half there
+    to find. The predictor is not merely a proxy for the street - the
+    split/decisive gap holds WITHIN each street (5.61 / 2.57 / 2.84
+    sigma) - but the river has no quiet cell for it to select.
+    """
+    from api import main as api_main
+
+    assert not api_main._multiway_answer_is_stable(_mw_raw("river", 0.99), "river")
+    assert api_main._multiway_answer_is_stable(_mw_raw("turn", 0.99), "turn"), (
+        "the turn's decisive rows ARE the quiet cell - excluding them too "
+        "would throw away the whole finding"
+    )
+
+
+def test_the_stable_branch_is_still_low_confidence():
+    """M254. Multiway has no converged reference of ANY kind (F46/M163),
+    so 'high' is not available to claim - what M254 changes is which
+    measurement the player is quoted, not whether they are warned.
+
+    Getting this wrong would undo M245, which exists because
+    `solver_confidence: high` over a coin-flip answer is F41/F47's
+    failure in its largest form.
+    """
+    from api import config as api_cfg
+    from api import main as api_main
+
+    level, reason = api_main._solver_confidence(
+        _mw_raw("flop", 0.97), players=6,
+        hero=_mw_raw("flop", 0.97)["hero"], street="flop")
+    assert level == "low", "a multiway answer reported high confidence"
+    assert "It held on 34 of 37" in (reason or "")
+    assert "NOT REPRODUCIBLE" not in (reason or "")
+
+
+def test_a_split_multiway_row_still_gets_the_full_warning():
+    """M254. The narrowing must not quiet the decisions that need it."""
+    from api import config as api_cfg
+    from api import main as api_main
+
+    raw = _mw_raw("flop", 0.45)
+    level, reason = api_main._solver_confidence(
+        raw, players=6, hero=raw["hero"], street="flop")
+    assert level == "low"
+    assert "NOT REPRODUCIBLE" in (reason or "")
+    assert "It held on 34 of 37" not in (reason or "")
+
+
+def test_neither_multiway_reason_reaches_a_two_player_pot():
+    """M254, inheriting M245's gate: a 6-max hand that folds to two takes
+    the HEADS-UP solver, and `players` cannot tell them apart - only the
+    response's own `positions` can."""
+    from api import config as api_cfg
+    from api import main as api_main
+
+    heads_up = _mw_raw("flop", 0.97, positions=("BTN", "BB"))
+    level, reason = api_main._solver_confidence(
+        heads_up, players=6, hero=heads_up["hero"], street="flop")
+    assert "It held on 34 of 37" not in (reason or "")
+    assert "NOT REPRODUCIBLE" not in (reason or "")
+
+
+def test_the_two_mixedness_thresholds_stay_independent():
+    """M254. Two notes read the same signal at different calibrations.
+
+    The river's under-fold note was measured at a top action under 0.80
+    and this one at 0.90; they describe different things about different
+    populations. Sharing the READER and not the constant is what stops a
+    recalibration of one from silently moving the other - and a test that
+    only checked behaviour at 0.97 would not notice if they merged.
+    """
+    from api import config as api_cfg
+    from api import main as api_main
+
+    assert api_cfg.RIVER_UNDER_FOLD_MIXED_MAX_TOP_ACTION == 0.80
+    assert api_cfg.MULTIWAY_STABLE_MAX_TOP_ACTION == 0.90
+
+    between = _mw_raw("flop", 0.85)
+    assert not api_main._hero_row_is_mixed(between), (
+        "0.85 is decisive by the river's 0.80 calibration"
+    )
+    assert not api_main._multiway_answer_is_stable(between, "flop"), (
+        "and split by the multiway 0.90 one - if both agree here the two "
+        "thresholds have been collapsed into one"
+    )
+
+
+def test_both_multiway_reasons_quote_their_own_measurements():
+    """M232's rule: a warning may not quote a figure taken at a
+    population the decision in front of it is not in. That rule is the
+    entire reason M254 exists, so both branches are pinned to their own
+    constants."""
+    stable = api_config.MULTIWAY_STABLE_REASON
+    unstable = api_config.MULTIWAY_REPRODUCIBILITY_REASON
+
+    # The stable note quotes COUNTS, not a rate: at 22 of 22 on the flop a
+    # percentage would read "0% change", which claims more than 22 spots
+    # can support.
+    assert "%d of %d" % (api_config.MULTIWAY_STABLE_HELD_SPOTS,
+                         api_config.MULTIWAY_STABLE_SPOTS) in stable
+    assert "%d of %d" % (api_config.MULTIWAY_STABLE_TURN_HELD,
+                         api_config.MULTIWAY_STABLE_TURN_SPOTS) in stable
+
+    # The unstable note quotes per street, never one average - see
+    # test_the_reproducibility_warning_quotes_its_own_measurement for why.
+    for value in (api_config.MULTIWAY_UNSTABLE_FLIP_FLOP,
+                  api_config.MULTIWAY_UNSTABLE_FLIP_TURN,
+                  api_config.MULTIWAY_UNSTABLE_FLIP_RIVER):
+        assert "%d%%" % round(value * 100) in unstable
+    assert "%d%%" % round(api_config.MULTIWAY_UNSTABLE_ACTION_CHANGES * 100)         not in unstable, (
+            "the firing cell's average is river-weighted and overstates a "
+            "split turn decision by 1.6x - it must not be the quoted figure"
+        )
+    assert "45%" not in unstable, (
+        "M245's blanket per-street figures describe the population this "
+        "note no longer fires on"
+    )
+
 def _multiway_postflop_body(street, **extra):
     """A three-handed postflop decision: UTG opens, MP and CO call."""
     body = _advise_body(
@@ -8531,14 +8684,32 @@ def test_the_sizing_caveat_no_longer_claims_trash_is_always_folded():
     assert "98%" in reason
 
 def test_the_reproducibility_warning_quotes_its_own_measurement(client):
-    """The copy moves if the measurement does (M232's rule)."""
+    """The copy moves if the measurement does (M232's rule).
+
+    **This guard failed the build when M254 rewrote the note, and it was
+    right to.** The first draft led with the firing cell's 0.4591
+    average, which is dominated by river spots because the river always
+    fires - while a split TURN decision measures 0.2889. Quoting a flat
+    46% there would have overstated it by 1.6x: M232's failure inside the
+    milestone written to fix M232's failure.
+
+    So both notes are pinned per street, and M245's blanket figures are
+    deliberately absent - they describe a population this note no longer
+    fires on.
+    """
     note = api_config.MULTIWAY_REPRODUCIBILITY_REASON
-    for value in (api_config.MULTIWAY_SEED_ACTION_FLIP_FLOP,
-                  api_config.MULTIWAY_SEED_ACTION_FLIP_TURN,
-                  api_config.MULTIWAY_SEED_ACTION_FLIP_RIVER):
+    for value in (api_config.MULTIWAY_UNSTABLE_FLIP_FLOP,
+                  api_config.MULTIWAY_UNSTABLE_FLIP_TURN,
+                  api_config.MULTIWAY_UNSTABLE_FLIP_RIVER):
         assert "%d%%" % round(value * 100) in note
-    assert str(api_config.MULTIWAY_SEED_PAIRS) in note
-    assert api_config.MULTIWAY_SEED_ACTION_FLIP_RIVER > \
-        api_config.MULTIWAY_SEED_ACTION_FLIP_FLOP, (
+    assert api_config.MULTIWAY_UNSTABLE_FLIP_RIVER > \
+        api_config.MULTIWAY_UNSTABLE_FLIP_TURN, (
             "the river measured WORST, which is why it is named separately "
             "rather than folded into one average")
+
+    stable = api_config.MULTIWAY_STABLE_REASON
+    assert "%d of %d" % (api_config.MULTIWAY_STABLE_HELD_SPOTS,
+                         api_config.MULTIWAY_STABLE_SPOTS) in stable
+    assert "%d of %d" % (api_config.MULTIWAY_STABLE_TURN_HELD,
+                         api_config.MULTIWAY_STABLE_TURN_SPOTS) in stable
+    assert str(api_config.MULTIWAY_STABLE_FLOP_SPOTS) in stable

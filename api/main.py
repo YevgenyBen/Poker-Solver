@@ -1461,7 +1461,13 @@ def _solver_confidence(raw: dict, players: int, hero: dict | None = None,
     # F41/F47 failure in its largest form - vouching for an answer that is
     # one draw from a distribution.
     if _is_multiway_postflop(raw, street):
-        reasons.append(cfg.MULTIWAY_REPRODUCIBILITY_REASON)
+        # M254: same confidence either way - multiway has no converged
+        # reference to claim "high" against - but the figure quoted is
+        # the one measured on decisions like this one, not the blanket
+        # average over a population half of which behaves differently.
+        reasons.append(cfg.MULTIWAY_STABLE_REASON
+                       if _multiway_answer_is_stable(raw, street, hero)
+                       else cfg.MULTIWAY_REPRODUCIBILITY_REASON)
     # M251: the preflop counterpart, and a sharper failure than the
     # postflop one - not "the answer moves between seeds" but "the answer
     # is categorically wrong for weak hands", 22 nodes of 22.
@@ -1622,6 +1628,53 @@ def _hero_row_is_mixed(raw: dict, hero: dict | None = None) -> bool:
     if not weights:
         return False
     return max(weights) < cfg.RIVER_UNDER_FOLD_MIXED_MAX_TOP_ACTION
+
+
+def _hero_top_action_mass(raw: dict, hero: dict | None = None):
+    """How much weight hero's own row puts on its single best action.
+
+    M254. The same signal `_hero_row_is_mixed` reads, returned as a
+    number so a second caller can apply its own threshold - the river's
+    note was calibrated at 0.80 and the multiway one at 0.90, and they
+    are different measurements of different things. Sharing the reader
+    and not the constant is what keeps one recalibration from silently
+    moving the other.
+    """
+    source = hero if isinstance(hero, dict) else (raw.get("hero") or {})
+    row = source.get("strategy") if isinstance(source, dict) else None
+    if not row:
+        return None
+    weights = [float(w) for w in row.values()]
+    return max(weights) if weights else None
+
+
+def _multiway_answer_is_stable(raw: dict, street: str | None,
+                               hero: dict | None = None) -> bool:
+    """Is THIS multiway answer one of the reproducible ones?
+
+    M254. The irreproducibility warning fires on one decision in five
+    (M252) and said the same thing to all of them, while M245's own
+    figures implied half were stable. Measured over 90 spots re-solved
+    under four seeds, a decision whose own row is decisive holds its
+    recommended action on **34 of 37 spots** - against 0.4961 changing
+    where the row is split. (Not the firing cell's 0.4591 average: that
+    one is river-weighted, and quoting it to a split TURN decision, whose
+    cell measures 0.2889, is the mistake M245's guard caught in this
+    milestone's own first draft.)
+
+    **The river is excluded whatever its row looks like.** Its decisive
+    rows still flip 0.30 of the time, against the flop's 0.0000 and the
+    turn's 0.0667, so there is no quiet cell there to find. That is a
+    measurement, not caution: the same split/decisive gap holds WITHIN
+    every street (5.61 / 2.57 / 2.84 sigma), so the predictor is not a
+    proxy for the street - the river simply has no stable half.
+    """
+    if not _is_multiway_postflop(raw, street):
+        return False
+    if (street or raw.get("street")) == "river":
+        return False
+    top = _hero_top_action_mass(raw, hero)
+    return top is not None and top >= cfg.MULTIWAY_STABLE_MAX_TOP_ACTION
 
 
 def _river_under_folds_applies(raw: dict, street: str | None,

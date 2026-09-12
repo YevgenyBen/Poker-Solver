@@ -1361,10 +1361,45 @@ requests now reject unknown fields by name rather than ignoring them.
   | turn | 0.3109 | 0.6432 | 0.9002 | **41%** |
   | river | **0.4772** | 0.7985 | 0.9119 | **75%** |
 
-  `_solver_confidence` now returns **"low"** on any postflop street with
+  `_solver_confidence` returns **"low"** on any postflop street with
   3+ live players, gated on the response's own `positions` — a 6-max
   hand folding to two takes the HEADS-UP cell and `players` cannot tell
-  them apart. **The river was expected to be cleanest (exact equity,
+  them apart.
+  **M254 GRADED THE TEXT, because the blanket version was false for half
+  the decisions it fired on.** M252 put this warning's exposure at **one
+  decision in five**, the most-met disclosed defect here by a wide margin,
+  and the figures above already implied half those decisions are STABLE
+  and were being quoted 45% when the truth for them is near zero — M232's
+  failure in the costliest place. M243's predictor carries it: over 90
+  spots re-solved under four seeds, with the predictor read off the
+  SHIPPED answer only,
+  | gate: split row OR the river | fires on | action changes | TVD |
+  |---|---|---|---|
+  | firing | 59% | **0.4591** | 0.4086 |
+  | silent | 41% | **0.0270** | 0.0725 |
+  **8.50 sigma** on the action changing, 10.32 on TVD, split-half
+  6.62 / 5.55, and the recommendation **held on 34 of 37 silent spots**.
+  **The street confound was broken**: within the flop the split/decisive
+  gap is +0.5000 (5.61 sigma), turn +0.2222 (2.57), river +0.3500 (2.84)
+  — but the river's DECISIVE rows still flip 0.30 against the flop's
+  0.0000, so the river is excluded whatever its row looks like. Not
+  fragile to the threshold: 0.70-0.99 all separate at 5.3-8.5 sigma.
+  **Confidence stays LOW on both branches** — multiway has no converged
+  reference to claim "high" against, and quieting it would undo M245.
+  **Two notes now read one signal at two calibrations** (river 0.80,
+  multiway 0.90): they share `_hero_top_action_mass` and NOT the
+  constant, pinned by
+  `test_the_two_mixedness_thresholds_stay_independent`.
+  **Both notes quote PER STREET and the first draft did not** — it led
+  with the firing cell's 0.4591 average, which is river-weighted, where a
+  split TURN decision measures 0.2889. M245's own guard failed the build
+  over it. Firing: 50% flop / **29% turn** / 53% river. Silent: held
+  **22 of 22** on the flop, 12 of 15 on the turn — quoted as COUNTS,
+  because at 22 of 22 a percentage reads "0%" and claims more than 22
+  spots support.
+  **Nothing became more reproducible** — 41% of these decisions are now
+  correctly described instead of incorrectly, and the exposure figure
+  does not move. **The river was expected to be cleanest (exact equity,
   M154/M219) and is the WORST** — measured, not assumed, which is the
   only reason it is covered.
   **Every lever is already measured and none reaches it**: width is
