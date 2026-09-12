@@ -294,6 +294,27 @@ UNKNOWN. Saying "0.39 away" and letting a reader infer "expensive" would
 be the same error M186 corrected when it found the biggest frequency
 errors sitting where they were cheapest.
 
+**M255 CORRECTED THE BLOCKER, AND IT STOOD FOR FOURTEEN MILESTONES.**
+"the dumps do not expose EV" is true and the conclusion was too strong:
+**EV does not have to come from the solver.** The tree, both players'
+strategies and exact showdown evaluation determine it, and none of the
+three is this engine's opinion — M202's own argument. What was missing
+was the strategies past the flop, and `write_params` had always passed
+`set_dump_rounds 1`. Measured on one spot, narrow ranges:
+| rounds | dump | solve | contains |
+|---|---|---|---|
+| 1 | **0.10 MB** | 54s | the flop only |
+| 2 | **24.14 MB** | 52s | + all 52 turn cards, real per-combo strategies |
+| 3 | **3.98 GB** | 207s | + the river |
+Exploitability is identical across all three (depth of dump cannot
+change the solve) and **solve time barely moves — the cost is
+serialisation**, which is why it never showed up in the solver's own
+timings. **A flop-and-turn study is affordable; a river one is 165x.**
+**The reading trap, which caught M255 first**: a chance node files its
+subtree under **`dealcards`**, not `childrens`. Following only
+`childrens` finds **47 nodes in a file with 12,995** — 0.4%, no error,
+a plausible count. Use `bench.solver_dump`.
+
 ### FACING A BET had never been checked from outside — until M241
 
 **Every external comparison before this one measured an OPENING
@@ -602,6 +623,8 @@ requests now reject unknown fields by name rather than ignoring them.
       spot_population.py   walks the real tree to build legal spots (M252)
       server_warmup.py     TestClient runs no lifespan; warm before timing,
                            and clear_postflop_caches() keeps it warm (M252/M253)
+      solver_dump.py       read a reference dump past the flop — chance nodes
+                           file their subtree under `dealcards` (M255)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools
