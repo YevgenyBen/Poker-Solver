@@ -679,6 +679,9 @@ requests now reject unknown fields by name rather than ignoring them.
                            and equity realisation from it (M256)
       reference_solver.py  drive the independent solver and REFUSE a run
                            that failed while looking like data (M257)
+      dump_control.py      check a dump walk against the solver's OWN
+                           reported exploitability - the only control a
+                           wrong input cannot satisfy (M257)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools
@@ -3179,6 +3182,29 @@ against an unexamined input. **Pre-register the rule AND sweep the
 assumption its input depends on.** (M251's own deep cell is unaffected -
 82-103 wrong of 128 at every factor - so the tool has the resolution for
 a large gap and not for a small one.)
+
+**EVERY CONTROL M256 BUILT WAS INTERNAL, AND A WRONG INPUT PASSES ALL OF
+THEM (M257).** Exact pairwise conservation - `EV(h|v) + EV(v|h) == pot` -
+took that walker's error from 0.80% to 0.00%, and then passed at 0.00%
+while the opponent's range was flat, because conservation holds for ANY
+reach weights so long as both sides use the same ones. **M219's dead
+guard in another shape.**
+
+**Use `bench.dump_control` before believing any figure off a dump.** The
+solver reports its own exploitability for the strategy it dumped, and
+that figure is not derived from our walk, so it can referee it. The
+bound: at an epsilon-equilibrium **no single-node deviation can gain
+more than epsilon**, and the reference's own per-hand regret at a node
+is such a deviation - strictly weaker than the full best response - so
+its range-weighted mean must land **at or below** the reported figure.
+Measured on a converged spot (reported 0.256% of pot): **0.711 bb =
+2.155%, a ratio of 8.4x**, so the walk overstates. Leading suspect is
+the leaf - a two-round dump has no river, so a turn leaf is valued at
+`equity * pot` while the strategy being scored was optimised against
+river play the solver DID run and merely did not serialise.
+
+**Three instrument defects in one campaign (F56, F58, F59), each found
+by a number that could not be true rather than by a test.**
 
 **THE REFERENCE SOLVER FAILS UNDER LOAD AND SAYS SOMETHING THAT LOOKS
 LIKE DATA (M257).** Not a crash and not an error code: it prints an
