@@ -14734,3 +14734,131 @@ than per-seat work is the shape of a fix, and it is unmeasured. The
 exposure is ~0.6% of flop decisions, so this is a tail item, not a
 priority — recorded with its number so the next person does not have to
 re-derive it.
+
+## M254 — the highest-exposure warning in the product was false for half the decisions it fired on
+
+M252 measured exposure for the first time and the ranking was not close:
+the multiway-irreproducibility warning fires on **one decision in five**,
+and every other disclosed defect is under 1.2%. It is, by a wide margin,
+the thing a player actually meets.
+
+And it said the same thing to all of them. **M245's own numbers already
+implied that could not be right** — the top action changes on 45% of flop
+comparisons, 41% of turn and 75% of river, so roughly half those
+decisions are STABLE and were being told 45% when the truth for them is
+near zero. That is M232's failure, in the one place it costs the most:
+a warning quoting a figure taken at a population the decision in front of
+it is not in.
+
+### The predictor, and it is M243's
+
+The river's under-fold note began as "every facing-a-bet decision" and
+was narrowed to the 21% where **this engine's own row is split**, taking
+the gap from -0.1374 to -0.3295 at 5.96 sigma. The same signal was tried
+here, read off the SHIPPED answer only — an average across seeds is
+information no request has.
+
+90 spots walked off the real tree, each solved at the shipped seed and
+then at three others:
+
+| predictor | vs action flipping | vs total variation |
+|---|---|---|
+| **how decisive our own row is** | **-0.513** | **-0.533** |
+| margin between top two actions | -0.509 | -0.542 |
+| hand strength | +0.220 | +0.240 |
+| number of actions | -0.007 | +0.067 |
+| live players | -0.030 | -0.029 |
+| SPR | +0.027 | +0.028 |
+
+### The street confound was real, checked, and broken
+
+Flip rate by street is **0.133 flop / 0.178 turn / 0.533 river**, so
+"split row" could simply have been a proxy for "river". Held within each
+street it is not:
+
+| street | split row | decisive row | within-street |
+|---|---|---|---|
+| flop | 0.5000 | **0.0000** (22 spots) | +0.5000 (5.61 sigma) |
+| turn | 0.2889 | 0.0667 | +0.2222 (2.57 sigma) |
+| river | 0.6500 | **0.3000** | +0.3500 (2.84 sigma) |
+
+**And the river has no quiet half.** Its decisive rows still flip 0.30 of
+the time against the flop's 0.0000, so the gate excludes the river
+whatever its row looks like — a measurement, not caution.
+
+### The gate
+
+Fire when the row is split **or** the street is the river:
+
+| | fires on | action changes | total variation |
+|---|---|---|---|
+| firing | 53 of 90 (59%) | **0.4591** | 0.4086 |
+| silent | 37 of 90 (41%) | **0.0270** | 0.0725 |
+
+**8.50 sigma on the action changing, 10.32 on total variation**, and the
+recommendation held on **34 of 37** silent spots across three re-solves.
+Split-half 6.62 / 5.55 — the bar M166 failed and M189 passed.
+
+**Not fragile to a threshold picked from the data**, which is the obvious
+objection: every value from 0.70 to 0.99 separates at 5.3-8.5 sigma with
+a quiet side of 28-58%. 0.90 is the best of them and not a cliff.
+
+### What actually changed, and what deliberately did not
+
+**Confidence stays LOW on both branches.** Multiway has no converged
+reference of any kind (F46/M163), so "high" is not available to claim,
+and quieting it would undo M245 — which exists because
+`solver_confidence: high` over a coin-flip answer is F41/F47's failure in
+its largest form. What changes is **which measurement the player is
+quoted**: `MULTIWAY_STABLE_REASON` on the quiet cell, the corrected
+`MULTIWAY_REPRODUCIBILITY_REASON` on the rest.
+
+The blanket note's own figures were corrected too. It quoted 45/41/75 over
+306 comparisons — the numbers for a population it no longer fires on — and
+now quotes **46%**, measured on the cell it does.
+
+**Two notes now read the same signal at different calibrations**: the
+river's at a top action under 0.80 (M243) and this one at 0.90. They
+share the READER and not the constant, so recalibrating one cannot
+silently move the other, and
+`test_the_two_mixedness_thresholds_stay_independent` fails if they are
+ever collapsed — a test written specifically because one probing only at
+0.97 would not notice.
+
+Four guards, all mutation-tested: never grading, letting the river count
+as stable, collapsing the thresholds, and ignoring mixedness each fail a
+test.
+
+### The first draft of the copy was wrong, and M245's guard failed the build over it
+
+The note led with the firing cell's **0.4591** average. That average is
+dominated by river spots, because the river always fires - and a split
+TURN decision measures **0.2889**. A flat 46% would have overstated it by
+**1.6x**: M232's failure, inside the milestone written to fix M232's
+failure, on the copy that milestone exists to correct.
+
+`test_the_reproducibility_warning_quotes_its_own_measurement` - M245's,
+not new - failed on it, because it pins the note to per-street constants
+and the rewrite had replaced them with one number. Both notes now quote
+per street:
+
+| cell | flop | turn | river |
+|---|---|---|---|
+| action changes, firing | 50% (n=8) | **29%** (n=15) | 53% (n=30) |
+| action held, silent | **22 of 22** | 12 of 15 | *(never silent)* |
+
+The stable note quotes COUNTS rather than a rate on purpose: at 22 of 22
+a percentage reads "0% change", which claims more than 22 spots can
+support.
+
+### What this does NOT claim
+
+**Nothing is more reproducible than it was.** The instability is
+untouched; 41% of multiway postflop decisions are now correctly described
+as the stable ones rather than incorrectly described as coin flips. The
+exposure figure M252 measured does not move — every multiway postflop
+decision still carries a warning and still reports low confidence.
+
+**The frequencies still move on the quiet side** (0.0725), and the note
+says so. What holds there is the recommended ACTION, which is the thing
+the old copy was making a false claim about.

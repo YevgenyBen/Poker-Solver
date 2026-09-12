@@ -1430,11 +1430,88 @@ MULTIWAY_SEED_MEDIAN_TVD = 0.3605
 MULTIWAY_SEED_ACTION_FLIP_FLOP = 0.45
 MULTIWAY_SEED_ACTION_FLIP_TURN = 0.41
 MULTIWAY_SEED_ACTION_FLIP_RIVER = 0.75
+# M254: the multiway irreproducibility warning is GRADED, because the
+# blanket version quoted a figure that is false for half the decisions it
+# fires on.
+#
+# M252 measured its exposure at **one decision in five** - by a wide
+# margin the most-met disclosed defect in this product - and it fired on
+# every multiway postflop decision without distinction. M245's own
+# numbers already implied that could not be right: the top action changes
+# on 45%/41%/75% of comparisons, so roughly half of those decisions are
+# STABLE and were being told 45% when the truth for them is near zero.
+#
+# Measured on 90 spots walked off the real tree, each solved at the
+# shipped seed and then at three others, with the predictor read from the
+# SHIPPED answer only - an average over seeds is information no request
+# has. M243's predictor, how split this engine's own row is, carries it
+# here too:
+#
+#   gate                        fires on   action changes   silent side
+#   split row, or the river        59%         0.4591          0.0270
+#
+# **8.50 sigma** on the action changing and 10.32 on total variation
+# distance, split-half 6.62 / 5.55. On the quiet side the recommendation
+# held on **34 of 37 spots** across three re-solves.
+#
+# **The street confound was checked and broken.** Mixedness is not a proxy
+# for "river": within the flop the split/decisive gap is +0.5000 (5.61
+# sigma), within the turn +0.2222 (2.57), within the river +0.3500 (2.84).
+# But the RIVER's decisive rows still flip 0.30 of the time against the
+# flop's 0.0000 and the turn's 0.0667, so the river is never quiet and the
+# gate fires there whatever the row looks like.
+#
+# Not fragile to the threshold, which was picked from this data: every
+# value from 0.70 to 0.99 separates at 5.3-8.5 sigma with a quiet side of
+# 28-58%.
+#
+# **Confidence stays LOW on both branches.** Multiway has no converged
+# reference of any kind (F46/M163), so "high" is not available to claim.
+# What changes is which measurement the player is quoted - M232's rule,
+# that a warning may not quote a figure taken at a population the decision
+# in front of it is not in.
+#
+# **Both notes quote PER STREET, and the first draft did not.** It led
+# with the firing cell's 0.4591 average, and M245's own guard failed the
+# build over it - correctly, because that average is dominated by river
+# spots (the river always fires) while the turn's firing cell measures
+# 0.2889. A flat 46% would have overstated a split turn decision by 1.6x,
+# which is M232's failure inside the milestone that exists to fix M232's
+# failure.
+MULTIWAY_STABLE_MAX_TOP_ACTION = 0.90
+MULTIWAY_INSTABILITY_SPOTS = 90
+MULTIWAY_UNSTABLE_ACTION_CHANGES = 0.4591
+MULTIWAY_UNSTABLE_FLIP_FLOP = 0.50
+MULTIWAY_UNSTABLE_FLIP_TURN = 0.2889
+MULTIWAY_UNSTABLE_FLIP_RIVER = 0.5333
+MULTIWAY_STABLE_ACTION_CHANGES = 0.0270
+MULTIWAY_STABLE_HELD_SPOTS = 34
+MULTIWAY_STABLE_SPOTS = 37
+MULTIWAY_STABLE_FLOP_HELD = 22
+MULTIWAY_STABLE_FLOP_SPOTS = 22
+MULTIWAY_STABLE_TURN_HELD = 12
+MULTIWAY_STABLE_TURN_SPOTS = 15
+MULTIWAY_STABLE_TVD = 0.0725
+
+MULTIWAY_STABLE_REASON = (
+    "This is a multiway pot - three or more players saw this street - and multiway advice has "
+    "no converged reference of any kind, so none of it should be read as GTO. On this "
+    "particular decision, though, the instability that affects multiway answers generally is "
+    "measured to be small: this engine is settled on one action here rather than split between "
+    "several, and on decisions like it the recommended ACTION survives being solved again with "
+    "a different random draw. It held on 34 of 37 such spots - on the flop it did not change "
+    "once in 22, and on the turn it held on 12 of 15. The exact frequencies still move by "
+    "roughly 0.07, so lean on the recommendation itself rather than on the precise percentages "
+    "beside it."
+)
+
 MULTIWAY_REPRODUCIBILITY_REASON = (
     "This is a multiway pot - three or more players saw this street - and multiway advice "
     "here is NOT REPRODUCIBLE. Solving the same spot again, changing nothing but the "
-    "solver's internal random draw, gives a different recommended ACTION about 45% of the "
-    "time on the flop, 41% on the turn and 75% on the river, measured over 306 comparisons. "
+    "solver's internal random draw, gives a different recommended ACTION 50% of the time on "
+    "the flop, 29% on the turn and 53% on the river - measured on decisions like this one, "
+    "where either this engine is split between actions or the street is the river, which is "
+    "unstable even when it looks decided. "
     "The answer you are reading is one draw from a range of answers, not a solved result. "
     "More computation does not fix this and neither does modelling more hands - both were "
     "measured. Use the shape of the advice, not its exact frequency, and treat a marginal "
