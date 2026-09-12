@@ -655,6 +655,8 @@ requests now reject unknown fields by name rather than ignoring them.
                            file their subtree under `dealcards` (M255)
       dump_ev.py           hero's EV under the REFERENCE's own strategy pair,
                            and equity realisation from it (M256)
+      reference_solver.py  drive the independent solver and REFUSE a run
+                           that failed while looking like data (M257)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools
@@ -3155,6 +3157,52 @@ against an unexamined input. **Pre-register the rule AND sweep the
 assumption its input depends on.** (M251's own deep cell is unaffected -
 82-103 wrong of 128 at every factor - so the tool has the resolution for
 a large gap and not for a small one.)
+
+**THE REFERENCE SOLVER FAILS UNDER LOAD AND SAYS SOMETHING THAT LOOKS
+LIKE DATA (M257).** Not a crash and not an error code: it prints an
+exploitability line carrying a nonsense figure and writes no dump.
+Observed at **318%, 296% and 118.9%**, and all three were recorded as
+solved spots by a wrapper that checked only that an exploitability line
+existed - necessary, not sufficient.
+
+**The trigger is CONTENTION, not the spot.** `Kd7c2h_three_bet_c12`
+returned 118.9% with no dump while the machine was shared and **0.392%
+with a 23 MB dump run alone** - same parameters, same board, same
+ranges. M240's drift rule, applying to the instrument instead of to a
+stopwatch. **Solve references on a quiet machine, one at a time.**
+
+Use `bench.reference_solver.solve`, which refuses a run with no
+exploitability line, an implausible one (over
+`MAX_PLAUSIBLE_EXPLOITABILITY_PCT`, 5.0), or a missing/empty dump, and
+**deletes stale output first** - a previous run's dump left in place
+turns a failed solve into a successful-looking one carrying a different
+spot's data. **Filter at READ time too**: a bank built by a long-running
+job must not depend on that job having been the fixed version.
+
+**REFERENCE COST IS GOVERNED BY SPR, NOT BY RANGE WIDTH (M257).** Every
+cost estimate in this project has been expressed in width - M112's
+near-quadratic scaling in pool size, M242's 96 minutes at cap 60. At a
+deep stack width is the SECOND-order term:
+
+| line | SPR | pool | solve |
+|---|---|---|---|
+| four-bet | 2.53 | 107 | **19s** |
+| three-bet | 6.17 | 143 | 168-367s |
+| single-raised | 19.50 | 136 | **1,226s** |
+| single-raised | 19.50 | 315 | 1,892s |
+
+**Near-identical pool, 65x the cost.** 136 -> 315 combos at the same SPR
+costs 1.5x; SPR 2.5 -> 19.5 at the same width costs **65x**. A deeper
+stack is a deeper betting tree, and the tree is what the solver
+enumerates. **Scope a reference campaign by SPR first** - one planned at
+36 spots by width came to nineteen hours and was re-scoped on its first
+measurement.
+
+**And the WALK over a dump costs the square of the pool**: pricing one
+row took 113-177s at pool 315 against roughly a tenth of that at pool
+~100, because the leaf tables are hero-against-each and every node sums
+over every villain combo. Order a dump study CHEAPEST FIRST, so one
+stopped halfway holds many spots rather than one.
 
 **A BENCHMARK MEASURES THE POPULATION IT GENERATES, AND ONLY THAT
 (M252).** Three defects in the instrument, all now fixed in `bench/`:
