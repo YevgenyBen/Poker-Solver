@@ -17,7 +17,9 @@ the first version's actual bug.
 import numpy as np
 import pytest
 
-from bench.dump_ev import LeafEquity, Walk, parse_action, realisation
+from bench.dump_ev import (LeafEquity, Walk, map_row, parse_action,
+                           realisation)
+from bench.solver_dump import strategy_at
 
 HERO, VILLAIN = 1, 0
 POT = 10.0
@@ -273,4 +275,161 @@ def test_a_villain_combo_hero_blocks_starts_dead():
                    villain_combos=["8sQd", "AcQd"], leaf=leaf, pot0=POT)
     assert list(onboard.initial_reach(("8s", "6s", "2h"))) == [0.0, 1.0], (
         "a combo holding a board card cannot be dealt either"
+    )
+
+
+def test_our_row_is_remapped_onto_the_sizes_the_reference_offers():
+    """Two trees, two bet menus, one comparison.
+
+    Our row cannot be compared action-for-action with the reference's, so
+    a size maps to the nearest one offered - and **how much mass had to
+    move is part of the result**, not an implementation detail. M209 set
+    that convention after a comparison whose conclusion depended on a
+    remapping nobody had reported.
+    """
+    actions = ["CHECK", "BET 3.000000", "BET 8.000000", "FOLD"]
+
+    exact, moved = map_row({"call_or_check": 0.4, "raise:3.00": 0.6},
+                           actions, facing=False)
+    assert exact == {"CHECK": 0.4, "BET 3.000000": 0.6}
+    assert moved == 0.0, "a size the reference also offers has not moved"
+
+    approx, moved = map_row({"raise:5.00": 1.0}, actions, facing=False)
+    assert approx == {"BET 3.000000": 1.0}, "5 is nearer 3 than 8"
+    assert moved == pytest.approx(1.0), (
+        "all of it landed on a size we did not name, and the caller has "
+        "to be told so"
+    )
+
+    folds, _ = map_row({"fold": 0.7, "call_or_check": 0.3}, actions,
+                       facing=True)
+    assert folds == pytest.approx({"FOLD": 0.7, "CHECK": 0.3})
+
+
+def test_a_remapped_row_still_sums_to_one():
+    """Two of our actions can collapse onto one of theirs.
+
+    Dropping the renormalisation leaves a row summing to less than 1, and
+    `price_row` divides by the mass it used - so the EV would look fine
+    and be an average over a fraction of the strategy.
+    """
+    actions = ["CHECK", "BET 9.000000", "FOLD"]
+    row, moved = map_row({"raise:8.00": 0.5, "all_in:10.00": 0.5}, actions,
+                         facing=False)
+    assert set(row) == {"BET 9.000000"}
+    assert sum(row.values()) == pytest.approx(1.0)
+    assert moved == pytest.approx(1.0)
+
+
+def test_pricing_one_row_changes_only_that_decision():
+    """The whole point: the two arms differ in exactly one row.
+
+    Priced against the same tree, the same opponent and the same
+    continuation, so the difference cannot be the model preferring
+    itself - which is what M244 measured happening (corr -0.745) when a
+    disagreement was priced inside the model suspected of causing it.
+    """
+    tree = _action(HERO, ["CHECK", "BET 8.000000"], {"KhKd": [1.0, 0.0]},
+                   children={
+                       "CHECK": _action(VILLAIN, ["CHECK"],
+                                        {c: [1.0] for c in VILLAIN_COMBOS},
+                                        children={"CHECK": _chance()}),
+                       "BET 8.000000": _action(
+                           VILLAIN, ["CALL"],
+                           {c: [1.0] for c in VILLAIN_COMBOS},
+                           children={"CALL": _chance()})})
+    walk = _walk([0.75, 0.75])
+    board = ("8h", "6h", "2s", "Td")
+    reach = _reach(1.0, 1.0)
+
+    checking = walk.price_row(tree, board, reach, {"CHECK": 1.0})
+    betting = walk.price_row(tree, board, reach, {"BET 8.000000": 1.0})
+    assert checking == pytest.approx(0.75 * POT)
+    assert betting == pytest.approx(0.75 * (POT + 16.0) - 8.0)
+    assert betting > checking, "at 75% equity, betting should gain"
+
+    half = walk.price_row(tree, board, reach,
+                          {"CHECK": 0.5, "BET 8.000000": 0.5})
+    assert half == pytest.approx((checking + betting) / 2.0)
+
+
+def test_descending_carries_villains_reach_with_it():
+    """Pricing a turn decision against a UNIFORM range prices it against
+    an opponent who never made the bets that got there.
+
+    One villain combo always bets and the other always checks. After the
+    bet, only the bettor remains - and a walk that forgets this prices
+    the turn against both, which is a different game and flatters or
+    damns our row depending on the line.
+    """
+    turn = _action(HERO, ["CHECK"], {"KhKd": [1.0]},
+                   children={"CHECK": _chance()})
+    tree = _action(VILLAIN, ["CHECK", "BET 4.000000"],
+                   {"AsAd": [0.0, 1.0], "7c2h": [1.0, 0.0]},
+                   children={"BET 4.000000": _action(
+                       HERO, ["CALL"], {"KhKd": [1.0]},
+                       children={"CALL": _chance({"Td": turn})})})
+    walk = _walk([0.2, 0.8])
+    got = walk.descend(tree, ("8h", "6h", "2s"), _reach(1.0, 1.0),
+                       ["BET 4.000000", "CALL", "Td"])
+    assert got is not None
+    node, board, reach, street_in, total_in = got
+    assert list(reach) == [1.0, 0.0], (
+        "only the combo that actually bets can be here"
+    )
+    assert board == ("8h", "6h", "2s", "Td")
+    assert total_in == (4.0, 4.0), "the called bet carried into the pot"
+    assert street_in == (0.0, 0.0), "a new street starts with nothing in"
+
+
+def test_a_runout_zeroes_the_combos_it_blocks_on_the_way_down():
+    """The turn card is a card nobody can also be holding."""
+    turn = _action(HERO, ["CHECK"], {"KhKd": [1.0]},
+                   children={"CHECK": _chance()})
+    tree = _action(VILLAIN, ["CHECK"],
+                   {c: [1.0] for c in VILLAIN_COMBOS},
+                   children={"CHECK": _chance({"As": turn})})
+    walk = _walk([0.5, 0.5])
+    _n, _b, reach, _s, _t = walk.descend(
+        tree, ("8h", "6h", "2s"), _reach(1.0, 1.0), ["CHECK", "As"])
+    assert list(reach) == [0.0, 1.0], "AsAd cannot be held once As is dealt"
+
+
+def test_a_path_that_does_not_exist_is_refused_rather_than_guessed():
+    """A silently wrong node is the expensive failure here."""
+    tree = _action(VILLAIN, ["CHECK"], {c: [1.0] for c in VILLAIN_COMBOS},
+                   children={"CHECK": _chance()})
+    walk = _walk([0.5, 0.5])
+    assert walk.descend(tree, ("8h", "6h", "2s"), _reach(1.0, 1.0),
+                        ["BET 9.000000"]) is None
+
+
+def test_pricing_the_reference_row_reproduces_the_full_walk():
+    """The strongest identity available, and it was found by accident.
+
+    `price_row` handed the row the dump already holds must return exactly
+    what `value` returns walking the same node - they are the same
+    computation reached two ways. It catches any disagreement between the
+    two code paths, which is where a pricing study's arms would silently
+    diverge: one arm reads our row through `price_row` and the other is
+    compared against a number from `value`.
+    """
+    tree = _action(HERO, ["CHECK", "BET 8.000000"], {"KhKd": [0.3, 0.7]},
+                   children={
+                       "CHECK": _action(VILLAIN, ["CHECK"],
+                                        {c: [1.0] for c in VILLAIN_COMBOS},
+                                        children={"CHECK": _chance()}),
+                       "BET 8.000000": _action(
+                           VILLAIN, ["CALL", "FOLD"],
+                           {"AsAd": [0.6, 0.4], "7c2h": [0.1, 0.9]},
+                           children={"CALL": _chance()})})
+    walk = _walk([0.45, 0.62])
+    board = ("8h", "6h", "2s", "Td")
+    reach = walk.initial_reach(board)
+
+    row = strategy_at(tree)["KhKd"]
+    assert walk.price_row(tree, board, reach, row) == pytest.approx(
+        walk.value(tree, board, reach), abs=1e-12), (
+        "price_row and value disagree on the same row, so a pricing study "
+        "would be comparing two different computations"
     )

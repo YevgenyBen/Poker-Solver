@@ -232,6 +232,84 @@ class Walk:
             return self.value(child, board, reach, (0.0, 0.0), nt)
         return self.value(child, board, reach, tuple(new_street), total_in)
 
+    def descend(self, node, board, reach, path):
+        """Follow `path` from `node`, carrying villain's reach with it.
+
+        Returns `(node, board, reach, street_in, total_in)` at the end of
+        the path, or None if it does not exist in this tree.
+
+        **The reach is the point.** Pricing a turn decision against a
+        UNIFORM villain range prices it against an opponent who never
+        made the flop bets that got here - a different game, and one that
+        flatters or damns our row depending on the line. Each villain
+        action multiplies their reach by the frequency they take it; each
+        runout zeroes the combos it blocks.
+        """
+        street_in, total_in = (0.0, 0.0), (0.0, 0.0)
+        for step in path:
+            kind = node.get("node_type")
+            if kind == CHANCE:
+                kids = children_of(node)
+                if step not in kids:
+                    return None
+                reach = reach.copy()
+                reach[self._blocks(step)] = 0.0
+                board = tuple(board) + (step,)
+                node = kids[step]
+                street_in, total_in = (0.0, 0.0), total_in
+                continue
+            if kind != ACTION:
+                return None
+            kids = children_of(node)
+            if step not in kids:
+                return None
+            player = node.get("player")
+            kind_a, amount = parse_action(step)
+            if player != self.hero_index:
+                rows = strategy_at(node)
+                weights = np.array(
+                    [(rows.get(c) or {}).get(step, 0.0) for c in self.villain],
+                    dtype=np.float64)
+                reach = reach * weights
+            new_street = list(street_in)
+            if kind_a == CALL:
+                new_street[player] = max(street_in)
+            elif kind_a in ("BET", "RAISE"):
+                new_street[player] = float(amount)
+            child = kids[step]
+            if child.get("node_type") == CHANCE:
+                total_in = tuple(total_in[i] + new_street[i] for i in (0, 1))
+                street_in = (0.0, 0.0)
+            else:
+                street_in = tuple(new_street)
+            node = child
+        return node, board, reach, street_in, total_in
+
+    def price_row(self, node, board, reach, row, street_in=(0.0, 0.0),
+                  total_in=(0.0, 0.0)):
+        """Hero's EV playing `row` HERE, and the reference's line below.
+
+        This is the measurement M237 and M244 could not make. Both tried
+        to price a disagreement using the model suspected of causing it,
+        and a model always prefers its own answer - M244 measured that
+        directly at corr -0.745, with a control where the two already
+        agreed costing a median of exactly zero. Substituting only the
+        row under test, and taking the tree, the opponent and every
+        continuation from the reference, removes it: the two arms differ
+        in exactly one decision.
+        """
+        total, mass = 0.0, 0.0
+        for label, probability in row.items():
+            if probability <= 0:
+                continue
+            got = self._child_value(node, label, board, reach, street_in,
+                                    total_in)
+            if got is None:
+                continue
+            total += probability * got
+            mass += probability
+        return total / mass if mass > 0 else None
+
     def _hero_node(self, node, board, reach, street_in, total_in):
         rows = strategy_at(node)
         row = rows.get(self.hero_key)
@@ -279,6 +357,61 @@ class Walk:
 
     def _blocks(self, card):
         return np.array([card in str(c) for c in self.villain], dtype=bool)
+
+
+def map_row(our_row, dump_actions, facing):
+    """Our engine's strategy row, expressed in the dump's action labels.
+
+    The two trees offer different bet sizes, so a row cannot be compared
+    action-for-action; it has to be remapped, and how much mass had to
+    move is part of the result rather than an implementation detail
+    (M209's convention). A size maps to the closest one the reference
+    offers; fold and the passive action map by kind.
+
+    Returns `(row, remapped_mass)` where `remapped_mass` is the share of
+    our row that landed on an action whose size differs from ours.
+    """
+    sized = []
+    passive = None
+    fold = None
+    for label in dump_actions:
+        kind, amount = parse_action(label)
+        if kind == FOLD:
+            fold = label
+        elif kind in (CHECK, CALL):
+            passive = label
+        else:
+            sized.append((label, amount))
+
+    out, moved = {}, 0.0
+    for action, weight in our_row.items():
+        weight = float(weight)
+        if weight <= 0:
+            continue
+        name = str(action)
+        if name == "fold":
+            target = fold if fold is not None else passive
+        elif name.startswith("all_in") or name.startswith("raise"):
+            if not sized:
+                target = passive
+            else:
+                want = float(name.split(":")[1]) if ":" in name else None
+                if want is None:
+                    target = sized[0][0]
+                else:
+                    target = min(sized, key=lambda pair: abs(pair[1] - want))[0]
+                    if abs(dict(sized)[target] - want) > 1e-9:
+                        moved += weight
+        else:
+            target = passive if passive is not None else (
+                fold if facing else None)
+        if target is None:
+            continue
+        out[target] = out.get(target, 0.0) + weight
+    total = sum(out.values())
+    if total > 0:
+        out = {k: v / total for k, v in out.items()}
+    return out, (moved / total if total else 0.0)
 
 
 def realisation(ev, equity, pot0):
