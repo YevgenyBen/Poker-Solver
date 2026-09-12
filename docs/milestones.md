@@ -14862,3 +14862,87 @@ decision still carries a warning and still reports low confidence.
 **The frequencies still move on the quiet side** (0.0725), and the note
 says so. What holds there is the recommended ACTION, which is the thing
 the old copy was making a false claim about.
+
+## M255 — the blocker M237 recorded was one parameter deep, and a walker that misses one key sees 0.4% of the file
+
+M253 left R5 as the open item and the one to do next: measure how much
+of its raw equity a weak hand actually collects. It is what leaves R2
+undecided, and it is the **third** time this project has hit "a model
+cannot referee a disagreement about itself" — M237 pricing the turn's
+gap, M244 pricing the river note, M253 pricing the two-live cell. The
+stated way out was the outside solver.
+
+**M237 recorded why that was impossible**: "a correct price needs the
+reference's own EV machinery, which its dumps do not expose."
+
+Both halves of that are true. **The conclusion drawn from them was too
+strong, and it stood for fourteen milestones.** EV does not have to come
+from the solver: hero's expected value is determined by the tree, both
+players' strategies and exact showdown evaluation, and not one of those
+three is this engine's opinion — which is precisely the argument M202
+used when it priced street isolation. What was actually missing was the
+STRATEGIES for the streets past the flop.
+
+Those are one parameter away. `write_params` has always passed
+`set_dump_rounds 1`.
+
+### What a deeper dump costs
+
+One ordinary spot, ranges deliberately narrow so the scaling is about
+ROUNDS rather than the width M242 already costed at 96 minutes a spot:
+
+| `dump_rounds` | dump | solve | what it contains |
+|---|---|---|---|
+| 1 | **0.10 MB** | 54s | the flop's betting only |
+| 2 | **24.14 MB** | 52s | + all 52 turn cards, with real per-combo turn strategies |
+| 3 | **3.98 GB** | 207s | + the river |
+
+Exploitability is identical (7.2345%) across all three, as it must be —
+depth of dump does not change the solve. **Solve time barely moves; the
+cost is serialisation**, which is why none of this was ever visible from
+the solver's own timings.
+
+**So a flop-and-turn study is affordable at ~24 MB a spot, and a river
+one is 165x that.**
+
+### The trap, which caught this milestone first
+
+A chance node files its subtree under **`dealcards`**, not `childrens`.
+A walker that follows only `childrens` sees:
+
+| | nodes found | action nodes with a strategy |
+|---|---|---|
+| following `childrens` only | **47** | a handful |
+| following both | **12,995** | **6,100** |
+
+**0.4% of the file, with no error and a plausible node count.** That is
+what the first probe here reported — "24 MB and still 47 nodes, so the
+extra data must be somewhere else" — and it is one layer away from the
+shape of M237's own record: an accurate observation, a conclusion one
+step too strong, and nobody going back.
+
+`bench/solver_dump.py` merges the two child keys in one place, reports
+the rounds actually PRESENT in a file rather than the number requested
+(a three-round dump that ran out of disk is indistinguishable by its
+filename), and zips strategy rows against the action list — they are
+stored positionally, so reading them as a mapping returns nothing and
+reading them in the wrong order returns a confident wrong answer.
+
+Four tests, on synthetic fixtures so they run without the solver, and
+the one that matters asserts a two-round dump yields MORE nodes than a
+one-round one — equal counts being exactly how this defect presents.
+
+### What this does NOT do
+
+**It does not measure realisation.** R5 is unblocked, not answered. What
+is now known is that the instrument can supply flop and turn strategies
+cheaply, that the river costs 165x more, and that the EV walk over them
+is the remaining work.
+
+**And the river's cost is a real constraint on what R5 can say.** A
+realisation figure computed over flop and turn with the river left at
+raw equity is not a bound in either direction — a hand can realise MORE
+with another street to bluff on, not only less — so whatever R5 measures
+will have to state which streets it covers. Saying so now, because
+M253's whole lesson was that the assumption a method rests on is the
+thing that goes unexamined.
