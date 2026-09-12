@@ -315,6 +315,34 @@ subtree under **`dealcards`**, not `childrens`. Following only
 `childrens` finds **47 nodes in a file with 12,995** — 0.4%, no error,
 a plausible count. Use `bench.solver_dump`.
 
+**M256 BUILT THE MEASUREMENT, and four controls each caught what the one
+before could not.** `bench.dump_ev` walks a dump for hero's EV under the
+reference's own strategy pair; the denominator comes from the same exact
+four-card tables, so no sampling difference can enter one half of the
+ratio and not the other.
+| control | caught | error left |
+|---|---|---|
+| passive pair collects `equity * pot` | pot accounting | — |
+| branch weighting | villain's branches combined by RAW SUM | — |
+| averaged marginals | villain combos hero BLOCKS started alive | 8.83% -> 5.31% |
+| **exact pairwise conservation** | hero's OWN CARDS left in the runout | 0.80% -> **0.00%** |
+**An averaged control cannot adjudicate this**: each player's marginal is
+computed over different live matchups, so blocking alone made the equity
+marginals sum to 1.0222. Conditioning on ONE villain combo is exact —
+`EV(h|v) + EV(v|h) == the pot`, for any strategies at all.
+**The input was contaminated too**: the first figures came off M255's
+probe dump at **7.23% exploitability** against the usual 0.32-0.50%.
+Re-solved to **0.484%** in 131s the headline moved by 0.05 — the
+hypothesis was wrong and ruling it out was still right.
+**One spot, flop and turn, SPR 9.5, capped range out of position**:
+realisation median **0.2858** out of position and **1.1652** in position,
+on near-identical average equity (0.484 / 0.511), so the gap is
+structural rather than cards. **This does NOT settle R2** — that asks
+about a preflop call in a two-live multiway pot and this is one flop
+configuration, so M168's rule applies — and it covers flop and turn only,
+with the river valued at exact equity, which is not a bound in either
+direction.
+
 ### FACING A BET had never been checked from outside — until M241
 
 **Every external comparison before this one measured an OPENING
@@ -625,6 +653,8 @@ requests now reject unknown fields by name rather than ignoring them.
                            and clear_postflop_caches() keeps it warm (M252/M253)
       solver_dump.py       read a reference dump past the flop — chance nodes
                            file their subtree under `dealcards` (M255)
+      dump_ev.py           hero's EV under the REFERENCE's own strategy pair,
+                           and equity realisation from it (M256)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools

@@ -14946,3 +14946,103 @@ with another street to bluff on, not only less — so whatever R5 measures
 will have to state which streets it covers. Saying so now, because
 M253's whole lesson was that the assumption a method rests on is the
 thing that goes unexamined.
+
+## M256 — equity realisation is measurable, and three bugs and a bad input stood between the first number and a true one
+
+M253 left R5 as the open item: measure how much of its raw equity a weak
+hand actually collects. M255 unblocked the instrument. This builds the
+measurement, and the useful part of it is how many ways the first answer
+was wrong.
+
+`bench/dump_ev.py` walks a reference dump for hero's EV under the
+reference's OWN strategy pair. **Nothing in that walk is this engine's
+judgement**: the tree and both strategies come from the reference, and
+the showdown is exact card evaluation — M202's argument, one layer up.
+The denominator is computed from the same exact four-card tables the
+walk already builds, so a sampling difference cannot appear in one half
+of the ratio and not the other.
+
+### Four controls, each catching what the one before could not
+
+| control | what it caught | error left |
+|---|---|---|
+| passive pair collects `equity * pot` | pot accounting | — |
+| synthetic branch weighting | villain's branches combined by RAW SUM, not share | — |
+| averaged marginals | villain combos hero BLOCKS started at full reach | 8.83% -> 5.31% |
+| **exact pairwise conservation** | hero's OWN CARDS left in the runout | 0.80% -> **0.00%** |
+
+**The averaged control could never have found the last one.** Averaging
+each player's EV over their own range computes the two marginals over
+DIFFERENT sets of live matchups, so blocking alone made the equity
+marginals sum to 1.0222 rather than 1.0 — a control whose own target is
+uncertain by 2% cannot adjudicate a 3% discrepancy. Conditioning on ONE
+villain combo removes it: `EV(h | v) + EV(v | h) == the pot` exactly, for
+any strategies whatsoever, because at every terminal the two of them
+divide that pot and nothing else.
+
+**And the conservation test was too weak on its first writing.** It
+passed against a mutant that put hero's cards back in the runout, because
+the fixture used one equity value for every board — averaging over two
+cards and over one then gives the same answer and the identity holds
+either way. M219's failure exactly: an assertion that cannot distinguish
+the two things it compares. The equity now varies by runout and the
+mutant dies.
+
+### Then the input turned out to be contaminated too
+
+The first figures were read off M255's dump, which came from a
+deliberately cheap probe: **7.23% exploitability**, where this reference
+normally converges to 0.32-0.50%. That was correct for what M255 asked —
+bytes and seconds, and dump depth cannot change what a solve converged
+to — and quietly made the solve's quality part of a different answer.
+
+It should have mattered asymmetrically: an unconverged strategy costs the
+player with the harder problem more, and out of position against an
+uncapped range at SPR 9.5 is the harder problem.
+
+**It barely mattered at all.** Re-solved to **0.484%** in 131 seconds:
+
+| | OOP median | IP median | EV sum (pot 10) |
+|---|---|---|---|
+| probe, 7.23% exploitable | 0.2321 | 1.1345 | 10.154 |
+| **converged, 0.48%** | **0.2858** | **1.1652** | **10.045** |
+
+Fifteen times better convergence moved the headline by 0.05. **The
+hypothesis was wrong and checking it was still right** — it was the only
+remaining explanation that would have voided the result, and it cost one
+131-second solve to rule out.
+
+### What the one spot says
+
+Pot 10, stacks 95 (SPR 9.5), a capped out-of-position range against an
+uncapped one, both streets walked:
+
+| | hands | median realisation | mean | min | max |
+|---|---|---|---|---|---|
+| out of position | 29 | **0.2858** | 0.4400 | -0.5095 | 1.9949 |
+| in position | 26 | **1.1652** | 1.2440 | 0.5867 | 2.1819 |
+
+A hand out of position collects a median of **29%** of its raw equity
+share; in position, **117%**. The two ranges have near-identical average
+equity (0.484 / 0.511), so essentially all of that gap is structural —
+position and a capped range, not cards.
+
+### What this does NOT settle, and it is the whole question
+
+**R5 is measured on ONE SPOT and R2 is not this spot.** R2 asks about a
+preflop call in a two-live multiway pot; this is a single flop
+configuration with a capped range at SPR 9.5, which is a brutal one by
+construction. M253's threshold of 0.87 sits far above 0.2858, which
+points at widening the gate — and **one spot is not evidence for that**,
+for exactly the reason M168 and M251 both record: a measurement taken in
+one cell does not transfer to another without being taken there.
+
+**It also covers the flop and turn only.** The river's chance node is
+empty at two rounds, so the walk values it at exact equity, i.e. as if
+the river realised in full. That is not a bound in either direction — a
+hand can realise MORE with another street to bluff on.
+
+What is now true that was not: the instrument exists, it conserves the
+pot to machine precision, its input quality has been checked rather than
+assumed, and a realisation figure costs about two minutes of solving plus
+twenty seconds a hand.
