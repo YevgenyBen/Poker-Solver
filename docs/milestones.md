@@ -15046,3 +15046,122 @@ What is now true that was not: the instrument exists, it conserves the
 pot to machine precision, its input quality has been checked rather than
 assumed, and a realisation figure costs about two minutes of solving plus
 twenty seconds a hand.
+
+---
+
+## M257 — a deep test that mostly measured the instrument, and one price that survived it
+
+A ten-hour campaign against the independent solver, aimed at the
+question the last audit called UNKNOWN: **what does our postflop advice
+actually cost, priced with the reference's own EV rather than ours?**
+M237 and M244 had each failed at it. Full write-up in
+`docs/deep-test-2026-09-13.md`.
+
+**Seven findings. Six are about the apparatus.**
+
+**F55 — reference cost is governed by SPR, not by range width.** Every
+cost estimate in this project has been expressed in width. At a deep
+stack width is second-order: four-bet SPR 2.53 / pool 107 solves in
+**19s**, single-raised SPR 19.50 / pool 136 takes **1,226s** — near
+identical pools, **65×** apart — while 136 → 315 combos at one SPR costs
+1.5×. A campaign scoped the old way came to nineteen hours against ten
+available and was re-scoped on its first measurement.
+
+**F56 — the solver fabricates data under contention.** Not a crash: it
+prints an exploitability line carrying a nonsense figure and writes no
+dump. Seen at **318%, 296%, 118.9%**, all three recorded as solved spots
+by a wrapper that checked only that a figure existed. The trigger is
+load, not the spot — `Kd7c2h_three_bet_c12` gives 118.9% with no dump
+while the machine is shared and **0.392% with a 23 MB dump alone**.
+`bench/reference_solver.py` refuses all three failure modes and deletes
+stale output first; it then ran a full bank rebuild with **zero bad rows
+admitted** and refused two contended runs.
+
+**F58 — the metric measured two things at once, and an impossible number
+caught it.** Scoring our row as `EV(reference) − EV(ours)` assumes the
+reference's row is optimal *for that hand*. Over a range it nearly is;
+per hand it need not be. A four-bet pot priced `8d8c` at **−2.36 bb with
+0.2% of mass remapped** — our row beating the reference inside the
+reference's own game, which a converged row cannot allow.
+`Walk.regret_of_row` returns `max_a Q(a) − EV(row)`, non-negative by
+construction, plus the reference's own slack beside it.
+
+**F59 — the walk priced against a range the reference never played, and
+it withdrew a published figure.** `initial_reach` gave every unblocked
+combo weight 1.0; the solver is handed weights spanning **700×**
+(`JJ:0.6592 … 88:0.000908`). **M256's four controls could not see it**:
+exact pairwise conservation holds for *any* reach weights so long as
+both sides use the same ones, so it passed at 0.00% with the range flat
+— M219's dead guard again. **M256's realisation figures (0.2858 /
+1.1652) are withdrawn.** The dump carries no ranges; `parse_params_ranges`
+reads them from the params written beside it.
+
+**F60 — a stopped background task left its Python child running.** Two
+studies were corrupted by a process that outlived its task. Verify by
+PID.
+
+**F61 — over-read from one spot, corrected within the hour.** The
+external control (does the walk reproduce the solver's own reported
+exploitability?) failed at **8.4×** on the spot it happened to pick, and
+that was published as "the walk overstates". False: across six four-bet
+spots, **four sit at 0.000–0.007% of pot — far below the reported
+figure, as the ε-bound requires — and two violate it** (0.999%, 2.319%).
+Convergence does not explain the split; both offenders are high-card
+boards, on **n=6**, which is recorded as a lead and not a finding.
+
+**`bench/dump_control.py` is the durable artifact.** Every control M256
+built was internal, and internal consistency is exactly what a wrong
+input preserves. This one asks the solver what it thinks of its own
+strategy. The bound needs no calibration: at an ε-equilibrium **no
+single-node deviation can gain more than ε**, and the reference's
+per-hand regret is such a deviation, so its range-weighted mean must land
+at or below the reported figure. **Gate per SPOT, not per study** — that
+is what preserved a result at all.
+
+### The measurement that survived
+
+Four spots passing the control, SPR 2.53, cap 12, pot 33 bb, scored as
+regret inside the reference's game against its real weighted ranges:
+
+| cell | n | regret mean | % of pot | sigma | ref slack | remapped |
+|---|---|---|---|---|---|---|
+| **flop opening** (control) | 28 | 0.0802 | **0.24%** | **1.16** | 0.00015 | 0.003 |
+| **turn opening** | 42 | **1.0412** | **3.16%** | **3.82** | 0.0883 | 0.005 |
+| flop facing a bet | 24 | 3.0512 | 9.25% | 6.07 | 1.1671 | 0.380 |
+
+**The control passes** — the flop's opening decision is not separable
+from zero, which six external studies predicted and which the
+pre-registered rule required before anything else could be read. **The
+turn separates at 3.82 sigma**, which by that rule means the turn's gap
+has a price. Not a mapping artifact (remapped 0.005 against a 0.5
+threshold fixed in advance) and resolvable (regret is 12× the
+reference's own slack).
+
+**Facing a bet is 38× the opening decision**, reproducing M188/M189's
+20–27× from an instrument sharing none of this engine's assumptions.
+
+**And it points the opposite way to M237**, which priced the turn's
+frequency gap at **−0.0266 bb** using our own tree and said so. Inside
+the reference's game the same decision type costs **+1.04 bb**. Different
+sign, two orders of magnitude on the mean. Populations and widths
+differ, so this is **suggestive, not a refutation** — but it is the first
+evidence that M237's near-zero was self-refereeing.
+
+### What it does NOT say, and why no constant moved
+
+**SPR 2.53 is the shallow regime and the wrong one.** M199 puts 80% of
+real decisions at SPR ≥ 5, and M222 measured the turn's frequency gap as
+*smallest* when shallow. **Cap 12 is not a width the product runs** (the
+turn ships at 140), and M232 measured that gap doubling between cap 25
+and 140. The mean is tail-carried (1.0412 against a median of 0.0595),
+n=42, four boards. **And excluding the two control-failing spots was
+decided after seeing the data** — principled, but post hoc, so it needs
+replication.
+
+**Quoting 3.16% to a player would repeat M232's error exactly** —
+publishing a figure measured at a width and depth the product does not
+run — which is why nothing in `api/config.py` changed.
+
+**Open**: why the control fails on high-card boards (n=6); replication at
+SPR 6.17 and 19.50, whose readings are pre-registered; and F57, the
+river, still closed.
