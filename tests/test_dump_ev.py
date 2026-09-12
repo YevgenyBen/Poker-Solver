@@ -17,7 +17,8 @@ the first version's actual bug.
 import numpy as np
 import pytest
 
-from bench.dump_ev import (LeafEquity, Walk, map_row, parse_action,
+from bench.dump_ev import (LeafEquity, Walk, class_label, map_row,
+                           parse_action, parse_params_ranges,
                            realisation)
 from bench.solver_dump import strategy_at
 
@@ -506,3 +507,50 @@ def test_the_references_own_slack_is_reported_and_is_what_price_row_hid():
     reference = walk.price_row(tree, board, reach,
                                {"CHECK": 0.5, "BET 8.000000": 0.5})
     assert (reference - ours) == pytest.approx(regret - slack)
+
+
+def test_the_params_ranges_are_read_with_their_weights():
+    text = ("set_pot 33\n"
+            "set_range_oop AQo:0.9981,KJs:0.9969,JJ:0.962\n"
+            "set_range_ip JJ:0.6592,AA:0.2375,88:0.000908\n"
+            "set_bet_sizes oop,flop,bet,33,75\n")
+    got = parse_params_ranges(text)
+    assert got["oop"] == {"AQo": 0.9981, "KJs": 0.9969, "JJ": 0.962}
+    assert got["ip"]["88"] == 0.000908
+    assert got["ip"]["JJ"] == 0.6592
+
+
+def test_a_class_with_no_weight_is_taken_as_fully_in_range():
+    assert parse_params_ranges("set_range_ip AA,KK:0.5\n")["ip"] == {
+        "AA": 1.0, "KK": 0.5}
+
+
+def test_the_reach_carries_the_ranges_real_weights():
+    """F59. The solver is handed a weighted range and its strategy is an
+    equilibrium against THOSE weights; a flat reach prices every decision
+    against an opponent it never played.
+    """
+    walk = _walk([0.5, 0.5])
+    board = ("8h", "6h", "2s")
+    flat = walk.initial_reach(board)
+    assert list(flat) == [1.0, 1.0], "no weights still means uniform"
+
+    weights = {class_label(c): w for c, w in
+               zip(walk.villain, (0.25, 0.9))}
+    weighted = walk.initial_reach(board, weights)
+    assert list(weighted) == pytest.approx([0.25, 0.9])
+
+
+def test_a_combo_outside_the_range_reaches_the_node_at_zero():
+    walk = _walk([0.5, 0.5])
+    only_first = {class_label(walk.villain[0]): 0.8}
+    reach = walk.initial_reach(("8h", "6h", "2s"), only_first)
+    assert reach[1] == 0.0, "a class the range never held must not reach"
+
+
+def test_a_blocked_combo_stays_dead_however_heavy_its_class_is():
+    """Weighting must not resurrect a combo hero or the board holds."""
+    walk = _walk([0.5, 0.5], hero_key=str(VILLAIN_COMBOS[0]))
+    heavy = {class_label(c): 1.0 for c in walk.villain}
+    reach = walk.initial_reach(("8h", "6h", "2s"), heavy)
+    assert reach[0] == 0.0

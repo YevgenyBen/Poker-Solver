@@ -64,6 +64,48 @@ def parse_action(label: str):
     return head, float(rest)
 
 
+#: Rank order, low to high, for naming a class the way a params file does.
+RANKS = "23456789TJQKA"
+
+
+def class_label(combo):
+    """The label a solver params file uses for this combo: AA, AKs, 72o.
+
+    Takes the TEXT of a combo, because a dump names its rows that way and
+    `Walk.villain` carries those names rather than engine objects.
+    """
+    text = str(combo)
+    (rank_a, suit_a), (rank_b, suit_b) = text[0:2], text[2:4]
+    if RANKS.index(rank_a) < RANKS.index(rank_b):
+        rank_a, rank_b, suit_a, suit_b = rank_b, rank_a, suit_b, suit_a
+    if rank_a == rank_b:
+        return rank_a + rank_b
+    return rank_a + rank_b + ("s" if suit_a == suit_b else "o")
+
+
+def parse_params_ranges(text):
+    """`{'oop': {label: weight}, 'ip': {...}}` from a solver params file.
+
+    The dump does not carry the ranges - its top level is only actions,
+    childrens, node_type, player and strategy - so the weights the solve
+    was given have to come from the params written beside it. Without
+    them a walk silently prices against a uniform range (F59).
+    """
+    out = {}
+    for line in text.splitlines():
+        for key, name in (("set_range_oop", "oop"), ("set_range_ip", "ip")):
+            if line.startswith(key):
+                weights = {}
+                for item in line[len(key):].strip().split(","):
+                    item = item.strip()
+                    if not item:
+                        continue
+                    label, _, weight = item.partition(":")
+                    weights[label.strip()] = float(weight) if weight else 1.0
+                out[name] = weights
+    return out
+
+
 class LeafEquity:
     """Hero's exact equity against each villain combo, cached per board.
 
@@ -112,21 +154,25 @@ class Walk:
         self.leaves = 0
         self.truncated = 0
 
-    def initial_reach(self, board):
-        """Villain's reach at the root, with impossible combos removed.
+    def initial_reach(self, board, weights=None):
+        """Villain's reach at the root: the RANGE, with dead combos out.
 
-        A villain combo sharing a card with hero or with the board cannot
-        be held, and starting it at weight 1 is not harmless: it carries
-        through every villain decision, inflating the branch shares that
-        combine hero's values, and is only dropped at the leaf where the
-        equity is NaN. The distortion then varies by how many of
-        villain's combos hero happens to block, which is different for
-        every hand - so it moves each hand's EV by a different amount and
-        looks like a finding.
+        **`weights=None` means a uniform range, and that is almost never
+        the game the reference solved (F59, M257).** The solver is handed
+        a weighted range - a real one reads
+        `JJ:0.6592, AA:0.2375, ... 88:0.000908`, spanning **700x** - and
+        its strategy is an equilibrium against THOSE weights. Scoring it
+        against a flat range prices every decision against an opponent it
+        never played, and the damage is invisible to a conservation
+        control, because `EV(h|v) + EV(v|h) == pot` holds for any reach
+        weights so long as both sides use the same ones. M219's dead
+        guard again: an assertion that cannot distinguish the two things
+        it compares.
 
-        Measured before this existed: the walk manufactured **8.8% of the
-        pot** on a symmetric control where the two players must split it
-        exactly.
+        Measured: the reference's own rows scored **2.1-5.0 bb of
+        apparent per-hand slack on a 33bb pot** against a uniform range,
+        where a solve converged to 0.19-0.49% of pot should show ~0.1 bb.
+        Pass `combo_weights(...)` built from the params file.
         """
         dead = {str(c) for c in board}
         dead |= {self.hero_key[0:2], self.hero_key[2:4]}
@@ -135,6 +181,8 @@ class Walk:
             text = str(villain)
             if {text[0:2], text[2:4]} & dead:
                 reach[i] = 0.0
+            elif weights is not None:
+                reach[i] = weights.get(class_label(villain), 0.0)
         return reach
 
     # -- terminals ------------------------------------------------------

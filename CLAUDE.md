@@ -343,6 +343,28 @@ configuration, so M168's rule applies — and it covers flop and turn only,
 with the river valued at exact equity, which is not a bound in either
 direction.
 
+**THOSE TWO FIGURES ARE WITHDRAWN — the walk priced against a UNIFORM
+villain range (F59, M257).** `Walk.initial_reach` gave every unblocked
+villain combo weight 1.0, and the solver is handed a WEIGHTED range: a
+real params file reads `JJ:0.6592, AA:0.2375, ... 88:0.000908`, spanning
+**700x**. The reference's strategy is an equilibrium against those
+weights, so scoring it against a flat range prices every decision
+against an opponent it never played.
+**None of M256's four controls could see it**, and that is the lesson:
+`EV(h|v) + EV(v|h) == pot` holds for ANY reach weights so long as both
+sides use the same ones, so the exact-conservation control passed at
+0.00% while the range was wrong. **M219's dead guard in a new place** —
+an assertion that cannot distinguish the two things it compares.
+**How it surfaced**: the reference's OWN rows scored **2.1-5.0 bb of
+apparent per-hand slack on a 33bb pot**, where a solve converged to
+0.19-0.49% of pot should show ~0.1 bb, and one hand came back with our
+row beating the reference's inside the reference's own game.
+`initial_reach(board, weights)` now takes the real weights, built from
+the params file with `parse_params_ranges` — **the dump does not carry
+the ranges** (its top level is only actions, childrens, node_type,
+player, strategy), so any walk over a dump must read the params written
+beside it.
+
 ### FACING A BET had never been checked from outside — until M241
 
 **Every external comparison before this one measured an OPENING
