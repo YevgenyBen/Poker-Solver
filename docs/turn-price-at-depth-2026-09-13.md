@@ -163,6 +163,48 @@ measured.** The control failed, so the rule refuses the result — and the
 figure it refuses (1.06%, lower than shallow) is one a motivated reading
 would have been happy to publish.
 
+### The control rule was WRONG, not the data — and the cells are not comparable
+
+The flop cell is not a starved sample. Removing its top two rows still
+leaves **1.89% of pot**, and the per-spot values are 0.2–0.5 bb
+consistently across all six boards. It is a real measurement.
+
+**So the control rule was the error, and it was mine.** "The flop must
+price at ~0" was pre-registered on M221 and M242 — measured at shallow
+depth — while **M195/M196 had already measured the flop's street
+isolation bias GROWING with SPR** (+0.0981 at SPR 7.5, +0.2183 at SPR
+16.2). I imported a shallow-regime property into a deep-regime control.
+That is M168's rule, broken by the person who keeps citing it.
+
+**And `bench.dump_control` — which tests the instrument rather than my
+assumption — PASSED every flop cell** (ratios 0.00–1.72). The instrument
+is sound; 2.57% is a real measurement of our flop regret at SPR 6.17.
+
+**But the two cells cannot be compared, and that is the finding.**
+Regret is `max_a Q(a) − EV(ours)`, and `max_a` searches for the most
+valuable action — which in a reach-weighted reference means **searching
+for the least-trained subtree**. A flop node has the whole turn and
+river below it: **49 turn cards × 47 rivers** of branches to search. A
+turn node has one street. **So the bias grows with subtree size, and the
+flop cell is the larger search by three orders of magnitude.**
+
+Flop 2.57% against turn 1.06% is therefore **not** evidence that the
+flop is the worse street. It is consistent with the flop simply
+offering `max_a` more places to find an under-trained branch. The two
+numbers are not on the same scale.
+
+**This reaches back into M257.** Its "facing a bet is 38× the opening
+decision" compares cells whose subtrees differ the same way, and is
+subject to the same confound. It was reported as reproducing M188/M189's
+20–27× from an independent instrument; **that agreement may be
+coincidence**, and the claim should be treated as unproven rather than
+as replication.
+
+**What regret IS good for**: comparing the same cell across arms —
+configurations, depths, widths — where the subtree is the same shape and
+the bias is common to both. That is how F62, F66 and F67 used it, and
+those results stand.
+
 ### What actually needs explaining now
 
 **Why does the flop control price at 2.57% when the turn prices at
