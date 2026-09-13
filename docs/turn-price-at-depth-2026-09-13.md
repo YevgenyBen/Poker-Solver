@@ -77,6 +77,61 @@ measured **15.3 GB** of working set for a 3.36 GB file. That is the
 reading constraint F67 named, quantified — roughly 4.5× the file, which
 is what caps this at one spot in memory at a time.
 
-## Result
+## Result — the flop control passes and the turn cell is REFUSED
 
-*(Pending.)*
+First spot, `Th9c8d_three_bet_c12` (the connected T-9-8 board, the one
+that failed M257's two-round control at 50×), on a 3.36 GB three-round
+dump:
+
+| cell | n | regret | % of pot | ref slack | ratio | remapped |
+|---|---|---|---|---|---|---|
+| **flop opening** (control) | 4 | 0.1325 | 0.88% | **0.0000** | **0.00** | 0.0000 |
+| turn opening | 16 | 3.3970 | 22.65% | **3.1969** | **63×** | 0.0000 |
+
+**The control passes completely** — the reference's own slack at the
+flop root is *exactly* zero and our flop regret is 0.88% of pot. The
+instrument is sound on this dump, and remapped mass is 0.0000, so the
+menus match as F66 intended.
+
+**The turn cell is refused by its gate**, and the shape of the failure
+names the cause. Regret (3.184) and slack (3.197) are nearly equal,
+which means **our row and the reference's row agree with each other**
+and both sit ~3.2 bb below whatever the walk calls best. That is not two
+strategies disagreeing; it is one action looking inflated.
+
+**The inflated action is a 6×-pot overbet shove.** `BET 92` into a 15 bb
+pot is the walk's "best action" on 12 of 16 turn rows. A converged
+solver does not leave 4.86 bb on the table by declining to shove pocket
+fives — villain would call wider. What it means is that **villain's
+response to a rare overbet is the least-trained branch in the tree**, so
+in the dump villain over-folds there and the shove reads as free.
+
+### This is a limitation of the REGRET metric, and it is mine
+
+F58 replaced `EV(reference) − EV(ours)` with `max_a Q(a) − EV(ours)` and
+justified it as non-negative by construction. It is. **It is not
+unbiased.** `max_a` deliberately searches for the action with the
+highest value, and in a reference solved by reach-weighted effort that
+search lands on **whichever subtree the solver trained least**. The
+metric therefore inherits an upward bias that grows with how rare the
+node's best-looking action is.
+
+The flop root is high-reach and converged — slack 0.0000. A turn node's
+overbet is neither. **So the bias is not uniform and cannot be
+subtracted; it is exactly the reason the per-(spot, cell) gate exists.**
+
+**What a reference for this needs is now specific**: not a lower average
+exploitability (0.337% was already converged to target), but convergence
+**at the node and action level** — every branch a best response might
+choose, trained enough to be worth maximising over. A reach-weighted
+solve does not provide that and will not provide it by being asked
+harder in aggregate.
+
+**Consequence for M257's headline.** The 3.16%-of-pot turn figure at SPR
+2.53 was measured with the same metric and is subject to the same bias.
+Its cells passed their gate, which bounds the problem, and the gate is
+now the only thing separating a usable figure from an artifact.
+
+**M258's answer to its own question is therefore: the turn's price at
+depth is NOT measured**, the shallow figure is not shown to travel, and
+the reason is newly identified and specific.
