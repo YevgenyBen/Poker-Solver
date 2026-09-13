@@ -554,3 +554,39 @@ def test_a_blocked_combo_stays_dead_however_heavy_its_class_is():
     heavy = {class_label(c): 1.0 for c in walk.villain}
     reach = walk.initial_reach(("8h", "6h", "2s"), heavy)
     assert reach[0] == 0.0
+
+
+def test_integer_rounding_is_not_a_remap():
+    """F65. The solver rounds bet amounts: a 15 bb pot offers BET 5 /
+    BET 11 / BET 38 / BET 92 where our tree names 4.95 / 11.25 / 37.5 /
+    90. Counting those as remapped made the figure measure rounding, and
+    it read 0.82 at SPR 6.17 on menus that in fact match.
+    """
+    actions = ["CHECK", "BET 5.000000", "BET 11.000000",
+               "BET 38.000000", "BET 92.000000"]
+    row, moved = map_row({"raise:37.50": 1.0}, actions, facing=False)
+    assert row == {"BET 38.000000": 1.0}
+    assert moved == 0.0, "half a blind on 37.5 is rounding, not a remap"
+
+
+def test_a_real_size_difference_still_counts_as_moved():
+    """The tolerance must not swallow an actual disagreement: with no
+    250% bet on offer, our 37.5 lands on 11 and that IS a remap."""
+    actions = ["CHECK", "BET 5.000000", "BET 11.000000", "BET 92.000000"]
+    row, moved = map_row({"raise:37.50": 1.0}, actions, facing=False)
+    assert moved == pytest.approx(1.0)
+    assert set(row) == {"BET 11.000000"}
+
+
+def test_the_tolerance_is_relative_not_absolute():
+    """A 5% band on a 92 bb shove is 4.6 bb; the same band on a 5 bb bet
+    is 0.25. An absolute tolerance would treat those as the same
+    question."""
+    from bench.dump_ev import SIZE_MATCH_TOLERANCE
+    assert SIZE_MATCH_TOLERANCE == 0.05
+    small = map_row({"raise:5.20": 1.0},
+                    ["CHECK", "BET 5.000000", "BET 92.000000"], facing=False)
+    assert small[1] == 0.0
+    big = map_row({"raise:60.00": 1.0},
+                  ["CHECK", "BET 5.000000", "BET 92.000000"], facing=False)
+    assert big[1] == pytest.approx(1.0)

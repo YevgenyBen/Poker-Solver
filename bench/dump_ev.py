@@ -467,6 +467,12 @@ class Walk:
         return np.array([card in str(c) for c in self.villain], dtype=bool)
 
 
+#: Two sizes are the SAME action when they differ by less than this
+#: share of the size. The solver rounds amounts to integers, so a 5%
+#: band treats 37.5 and 38 as one action and 37.5 and 11 as two (F65).
+SIZE_MATCH_TOLERANCE = 0.05
+
+
 def map_row(our_row, dump_actions, facing):
     """Our engine's strategy row, expressed in the dump's action labels.
 
@@ -492,6 +498,13 @@ def map_row(our_row, dump_actions, facing):
             sized.append((label, amount))
 
     out, moved = {}, 0.0
+    # A size counts as MOVED only when it differs materially. The solver
+    # rounds its bet amounts to integers - a 15 bb pot offers BET 5 /
+    # BET 11 / BET 38 / BET 92 where our tree names 4.95 / 11.25 / 37.5 /
+    # 90 - so an exact comparison marks every action as remapped and the
+    # figure measures rounding rather than any disagreement about sizing
+    # (F65, M257). It read 0.82 at SPR 6.17 on menus that in fact match.
+
     for action, weight in our_row.items():
         weight = float(weight)
         if weight <= 0:
@@ -508,7 +521,8 @@ def map_row(our_row, dump_actions, facing):
                     target = sized[0][0]
                 else:
                     target = min(sized, key=lambda pair: abs(pair[1] - want))[0]
-                    if abs(dict(sized)[target] - want) > 1e-9:
+                    got = dict(sized)[target]
+                    if abs(got - want) > SIZE_MATCH_TOLERANCE * max(want, 1e-9):
                         moved += weight
         else:
             target = passive if passive is not None else (
