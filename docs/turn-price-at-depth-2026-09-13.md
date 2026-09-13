@@ -50,6 +50,33 @@ the control ratio should land **below 1.0**, as it did at 0.8× in M257.
 A spot coming back above 1.0 is a spot whose dump is not doing what this
 milestone assumes.
 
+## Cost, measured rather than assumed
+
+**A flop row costs ~600 seconds on a three-round dump.** It walks the
+whole tree — 49 turn cards, each with 47 rivers — and five of them took
+fifty minutes. At that rate one spot is over three hours and this study
+is twenty.
+
+**A turn row is ~49× cheaper**, because it starts AT a turn node and
+walks one river. So the expensive cells are exactly the ones M258 is not
+asking about, and the study was rescoped rather than run at a rate that
+would not finish:
+
+| | |
+|---|---|
+| flop opening (control) | **3 rows** — enough to see whether it prices at ~0 |
+| turn opening | **8 rows × 2 turn cards** |
+| flop facing a bet | **dropped** — a flop cell at ~600s, and not the question |
+
+**Rows are now checkpointed individually.** The first attempt lost fifty
+minutes of completed rows because a spot was only saved once it
+finished, and a spot here takes hours.
+
+**And a third cost, not in F55's model at all**: the resident dump
+measured **15.3 GB** of working set for a 3.36 GB file. That is the
+reading constraint F67 named, quantified — roughly 4.5× the file, which
+is what caps this at one spot in memory at a time.
+
 ## Result
 
 *(Pending.)*
