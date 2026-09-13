@@ -343,6 +343,28 @@ configuration, so M168's rule applies — and it covers flop and turn only,
 with the river valued at exact equity, which is not a bound in either
 direction.
 
+**THOSE TWO FIGURES ARE WITHDRAWN — the walk priced against a UNIFORM
+villain range (F59, M257).** `Walk.initial_reach` gave every unblocked
+villain combo weight 1.0, and the solver is handed a WEIGHTED range: a
+real params file reads `JJ:0.6592, AA:0.2375, ... 88:0.000908`, spanning
+**700x**. The reference's strategy is an equilibrium against those
+weights, so scoring it against a flat range prices every decision
+against an opponent it never played.
+**None of M256's four controls could see it**, and that is the lesson:
+`EV(h|v) + EV(v|h) == pot` holds for ANY reach weights so long as both
+sides use the same ones, so the exact-conservation control passed at
+0.00% while the range was wrong. **M219's dead guard in a new place** —
+an assertion that cannot distinguish the two things it compares.
+**How it surfaced**: the reference's OWN rows scored **2.1-5.0 bb of
+apparent per-hand slack on a 33bb pot**, where a solve converged to
+0.19-0.49% of pot should show ~0.1 bb, and one hand came back with our
+row beating the reference's inside the reference's own game.
+`initial_reach(board, weights)` now takes the real weights, built from
+the params file with `parse_params_ranges` — **the dump does not carry
+the ranges** (its top level is only actions, childrens, node_type,
+player, strategy), so any walk over a dump must read the params written
+beside it.
+
 ### FACING A BET had never been checked from outside — until M241
 
 **Every external comparison before this one measured an OPENING
@@ -655,6 +677,11 @@ requests now reject unknown fields by name rather than ignoring them.
                            file their subtree under `dealcards` (M255)
       dump_ev.py           hero's EV under the REFERENCE's own strategy pair,
                            and equity realisation from it (M256)
+      reference_solver.py  drive the independent solver and REFUSE a run
+                           that failed while looking like data (M257)
+      dump_control.py      check a dump walk against the solver's OWN
+                           reported exploitability - the only control a
+                           wrong input cannot satisfy (M257)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools
@@ -3155,6 +3182,75 @@ against an unexamined input. **Pre-register the rule AND sweep the
 assumption its input depends on.** (M251's own deep cell is unaffected -
 82-103 wrong of 128 at every factor - so the tool has the resolution for
 a large gap and not for a small one.)
+
+**EVERY CONTROL M256 BUILT WAS INTERNAL, AND A WRONG INPUT PASSES ALL OF
+THEM (M257).** Exact pairwise conservation - `EV(h|v) + EV(v|h) == pot` -
+took that walker's error from 0.80% to 0.00%, and then passed at 0.00%
+while the opponent's range was flat, because conservation holds for ANY
+reach weights so long as both sides use the same ones. **M219's dead
+guard in another shape.**
+
+**Use `bench.dump_control` before believing any figure off a dump.** The
+solver reports its own exploitability for the strategy it dumped, and
+that figure is not derived from our walk, so it can referee it. The
+bound: at an epsilon-equilibrium **no single-node deviation can gain
+more than epsilon**, and the reference's own per-hand regret at a node
+is such a deviation - strictly weaker than the full best response - so
+its range-weighted mean must land **at or below** the reported figure.
+Measured on a converged spot (reported 0.256% of pot): **0.711 bb =
+2.155%, a ratio of 8.4x**, so the walk overstates. Leading suspect is
+the leaf - a two-round dump has no river, so a turn leaf is valued at
+`equity * pot` while the strategy being scored was optimised against
+river play the solver DID run and merely did not serialise.
+
+**Three instrument defects in one campaign (F56, F58, F59), each found
+by a number that could not be true rather than by a test.**
+
+**THE REFERENCE SOLVER FAILS UNDER LOAD AND SAYS SOMETHING THAT LOOKS
+LIKE DATA (M257).** Not a crash and not an error code: it prints an
+exploitability line carrying a nonsense figure and writes no dump.
+Observed at **318%, 296% and 118.9%**, and all three were recorded as
+solved spots by a wrapper that checked only that an exploitability line
+existed - necessary, not sufficient.
+
+**The trigger is CONTENTION, not the spot.** `Kd7c2h_three_bet_c12`
+returned 118.9% with no dump while the machine was shared and **0.392%
+with a 23 MB dump run alone** - same parameters, same board, same
+ranges. M240's drift rule, applying to the instrument instead of to a
+stopwatch. **Solve references on a quiet machine, one at a time.**
+
+Use `bench.reference_solver.solve`, which refuses a run with no
+exploitability line, an implausible one (over
+`MAX_PLAUSIBLE_EXPLOITABILITY_PCT`, 5.0), or a missing/empty dump, and
+**deletes stale output first** - a previous run's dump left in place
+turns a failed solve into a successful-looking one carrying a different
+spot's data. **Filter at READ time too**: a bank built by a long-running
+job must not depend on that job having been the fixed version.
+
+**REFERENCE COST IS GOVERNED BY SPR, NOT BY RANGE WIDTH (M257).** Every
+cost estimate in this project has been expressed in width - M112's
+near-quadratic scaling in pool size, M242's 96 minutes at cap 60. At a
+deep stack width is the SECOND-order term:
+
+| line | SPR | pool | solve |
+|---|---|---|---|
+| four-bet | 2.53 | 107 | **19s** |
+| three-bet | 6.17 | 143 | 168-367s |
+| single-raised | 19.50 | 136 | **1,226s** |
+| single-raised | 19.50 | 315 | 1,892s |
+
+**Near-identical pool, 65x the cost.** 136 -> 315 combos at the same SPR
+costs 1.5x; SPR 2.5 -> 19.5 at the same width costs **65x**. A deeper
+stack is a deeper betting tree, and the tree is what the solver
+enumerates. **Scope a reference campaign by SPR first** - one planned at
+36 spots by width came to nineteen hours and was re-scoped on its first
+measurement.
+
+**And the WALK over a dump costs the square of the pool**: pricing one
+row took 113-177s at pool 315 against roughly a tenth of that at pool
+~100, because the leaf tables are hero-against-each and every node sums
+over every villain combo. Order a dump study CHEAPEST FIRST, so one
+stopped halfway holds many spots rather than one.
 
 **A BENCHMARK MEASURES THE POPULATION IT GENERATES, AND ONLY THAT
 (M252).** Three defects in the instrument, all now fixed in `bench/`:
