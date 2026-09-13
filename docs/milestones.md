@@ -15137,8 +15137,14 @@ has a price. Not a mapping artifact (remapped 0.005 against a 0.5
 threshold fixed in advance) and resolvable (regret is 12× the
 reference's own slack).
 
-**Facing a bet is 38× the opening decision**, reproducing M188/M189's
-20–27× from an instrument sharing none of this engine's assumptions.
+**Facing a bet is 38× the opening decision** — **WITHDRAWN by M258.**
+It read as reproducing M188/M189's 20–27× from an independent
+instrument. It compares two cells whose subtrees differ by orders of
+magnitude, and regret is `max_a Q(a) − EV(ours)` where `max_a` searches
+for the least-trained branch, so the bias scales with subtree size.
+**The agreement may be coincidence**; treat it as unproven rather than
+as replication. Regret remains sound for the SAME cell across arms,
+which is how F62/F66/F67 used it.
 
 **And it points the opposite way to M237**, which priced the turn's
 frequency gap at **−0.0266 bb** using our own tree and said so. Inside
