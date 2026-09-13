@@ -77,7 +77,33 @@ measured **15.3 GB** of working set for a 3.36 GB file. That is the
 reading constraint F67 named, quantified — roughly 4.5× the file, which
 is what caps this at one spot in memory at a time.
 
-## Result — the flop control passes and the turn cell is REFUSED
+## Result — INCONCLUSIVE, because the control fails
+
+### The verdict, over all six spots
+
+**The gate passes 11 of 12 (spot, cell) pairs.** Turn cells pass at
+ratios 0.01, 0.07, 0.21, 1.29 and 1.62; only `Th9c8d` fails, at 63×.
+
+| cell | n | mean regret | % of pot | sigma | remapped | zero control |
+|---|---|---|---|---|---|---|
+| **flop opening** (control) | 23 | 0.386 | **2.57%** | **4.15** | 0.0000 | 0.0 |
+| turn opening | 90 | 0.1597 | **1.06%** | 8.53 | 0.0000 | 0.0 |
+
+**The control fails.** It must price at ~0; it prices at 2.57% of pot,
+separable at 4.15 sigma — and it prices HIGHER than the turn, which
+contradicts the six external studies putting the flop as this engine's
+strongest street. By the rule fixed before the run, **nothing is
+concluded.**
+
+**What the turn figure would have said, had the control been clean**:
+1.06% of pot at SPR 6.17 against M257's 3.16% at SPR 2.53 — the THIRD
+pre-registered reading, that the shallow regime overstates. It is
+recorded here and **not claimed**, because a control exists precisely to
+stop a tidy number being published when the instrument says no.
+
+### The one spot that failed, and my over-reading of it
+
+#### `Th9c8d` in detail
 
 First spot, `Th9c8d_three_bet_c12` (the connected T-9-8 board, the one
 that failed M257's two-round control at 50×), on a 3.36 GB three-round
@@ -106,7 +132,7 @@ fives — villain would call wider. What it means is that **villain's
 response to a rare overbet is the least-trained branch in the tree**, so
 in the dump villain over-folds there and the shove reads as free.
 
-### This is a limitation of the REGRET metric, and it is mine
+#### The mechanism, and its real scope
 
 F58 replaced `EV(reference) − EV(ours)` with `max_a Q(a) − EV(ours)` and
 justified it as non-negative by construction. It is. **It is not
@@ -132,6 +158,28 @@ harder in aggregate.
 Its cells passed their gate, which bounds the problem, and the gate is
 now the only thing separating a usable figure from an artifact.
 
-**M258's answer to its own question is therefore: the turn's price at
-depth is NOT measured**, the shallow figure is not shown to travel, and
-the reason is newly identified and specific.
+**M258's answer to its own question is: the turn's price at depth is NOT
+measured.** The control failed, so the rule refuses the result — and the
+figure it refuses (1.06%, lower than shallow) is one a motivated reading
+would have been happy to publish.
+
+### What actually needs explaining now
+
+**Why does the flop control price at 2.57% when the turn prices at
+1.06%?** Six external studies put the flop as this engine's strongest
+street, and M257's own shallow run had the flop control at 0.24% and not
+separable from zero. Candidates, none tested:
+
+- **the flop cell is n=23 at 3 rows a spot**, chosen by a stride over
+  the range — a thin and possibly unrepresentative sample, where the
+  turn has 90;
+- the same overbet-exploitation that failed `Th9c8d`'s turn may be
+  present and sub-threshold in flop cells that passed;
+- something about a flop row on a three-round dump that a turn row does
+  not meet.
+
+**The cheapest discriminator is the first**: re-run the flop cell at the
+turn's row count on one spot. If 2.57% collapses toward M257's 0.24%,
+the control was starved rather than wrong, and this study can be re-read
+with a proper control. That is the next step, and it is minutes of
+solving plus an hour of walking.
