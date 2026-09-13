@@ -15228,3 +15228,54 @@ this reference and say so where the player reads it.
 
 **The bank survives as an asset**: 21 spots, 0 rejected, 577 MB, 2.2
 hours of solver, three SPRs × two widths, reusable without new solving.
+
+### Acting on the report closed the rest of it (F64–F67)
+
+**F64 — the "second wall" was one missing bet size, and it was mine.**
+The bank gave the reference `(33, 75)` plus all-in while real `/advise`
+responses offer **33, 75, 250** plus all-in. At SPR 2.53 our 2.5×-pot
+bet IS the all-in (242% of a 33 bb pot = 80 of an 83.5 stack), so the
+menus coincided; at SPR 6.17 the 250% bet is a separate action the
+reference never had, and **our 2.5×-pot bet was being scored as a
+75%-pot bet** because `BET 11` was the nearest on offer. M222's void run
+in miniature.
+
+**F65 — the mapping metric was measuring the solver's integer
+rounding.** Caught because matching the menu left remapped mass
+*byte-identical*, which cannot happen. The solver rounds to integers —
+`BET 5 / 11 / 38 / 92` where our tree names 4.95 / 11.25 / 37.5 / 90 —
+and `map_row` counted anything past `1e-9` as moved, so the figure
+saturated near 0.8 regardless of agreement. `SIZE_MATCH_TOLERANCE =
+0.05`, relative. **F63's "the mapping is exhausted at depth" is
+withdrawn** — 0.4551 was rounding, and the pre-registered 0.5 threshold
+was never testing what it was written to test. M219's dead guard, fourth
+time.
+
+**F66 — matched menus eliminate mapping dependence entirely**: 0.4551 →
+**0.0000** on every cell, at **no cost** (150–426s against 168–408s).
+The flop control still failed at 4.44 sigma, which was the MIDDLE
+pre-registered reading: the menu was one cause, the leaf the other.
+
+**F67 — and then it passed.** Three-round dump at SPR 6.17 with matched
+menus: **0.321% of pot against a reported 0.404%, ratio 0.8**, median
+slack exactly 0.0000. **Below 1.0 is where theory requires it** — a
+root-only deviation is strictly weaker than the full best response.
+
+| arm | ratio | control |
+|---|---|---|
+| SPR 2.53, two rounds | 8.4× | FAIL |
+| SPR 2.53, three rounds | 2.5× | PASS |
+| SPR 6.17, two rounds, mismatched menu | ~7× | FAIL |
+| **SPR 6.17, three rounds, matched menu** | **0.8×** | **PASS** |
+
+**The instrument is correct at depth, and every defect this campaign
+found is closed.** What remains is a price: **425s and 3.47 GB per
+spot** at SPR 6.17, and the new binding constraint is **reading** it —
+a 3.47 GB dump expands severalfold as Python objects against 31.7 GB of
+machine.
+
+**The claim that a correct instrument and the regime that matters could
+not be bought together is WITHDRAWN.** Both were bought. The turn's
+price at SPR ≥ 5 is now a specified, affordable measurement that has not
+yet been run — and until it is, the 3.16%-of-pot figure from SPR 2.53
+remains one regime, four spots, with no evidence it travels.
