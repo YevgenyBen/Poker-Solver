@@ -394,6 +394,12 @@ class Walk:
         `reference_slack` is the same quantity for the reference's own
         row: it measures the instrument, and a row whose slack is the
         size of our regret is a row this dump cannot resolve.
+
+        Returns `(regret, reference_slack, best_label, unsupported_mass)`,
+        where the last is the share of our row that had to be dropped for
+        the two arms to share a support. A large value means we are
+        playing lines the reference does not, and the figure says more
+        about that than about our accuracy.
         """
         # Evaluating a subtree is the expensive step, and the actions
         # excluded above are often the biggest ones (an all-in opens the
@@ -417,6 +423,25 @@ class Walk:
         # nobody makes is the least-trained branch in the tree.
         best_label = max(values, key=values.get)
         best = values[best_label]
+        # BOTH arms must sit on the same support, or the comparison is
+        # incoherent: `price_row` values our row over whatever WE play,
+        # and if that includes an action the max no longer covers, our EV
+        # can exceed the max and regret goes negative - which it did,
+        # at -0.0161 bb, on a flop cell (M258). Restricting our row to
+        # the same actions restores `regret >= 0` by construction and
+        # keeps the exclusion honest in both directions: we do not get
+        # credit for a line valued against an untrained subtree either.
+        eligible = set(values)
+        kept = {k: v for k, v in row.items() if k in eligible and v > 0}
+        moved = 1.0 - sum(kept.values()) / (sum(v for v in row.values()
+                                                if v > 0) or 1.0)
+        if not kept:
+            # Our row lives entirely outside what the reference plays.
+            # That is a real observation and not a regret; the caller's
+            # gate should see it rather than a fabricated number.
+            return None
+        total = sum(kept.values())
+        row = {k: v / total for k, v in kept.items()}
         ours = self.price_row(node, board, reach, row, street_in, total_in)
         if ours is None:
             return None
@@ -427,7 +452,7 @@ class Walk:
                                     total_in)
             if ref_ev is not None:
                 slack = best - ref_ev
-        return best - ours, slack, best_label
+        return best - ours, slack, best_label, moved
 
     def price_row(self, node, board, reach, row, street_in=(0.0, 0.0),
                   total_in=(0.0, 0.0)):
