@@ -334,7 +334,7 @@ class Walk:
         return node, board, reach, street_in, total_in
 
     def action_values(self, node, board, reach, street_in=(0.0, 0.0),
-                      total_in=(0.0, 0.0)):
+                      total_in=(0.0, 0.0), only=None):
         """Hero's EV for EACH action here, the reference's line below.
 
         The quantity `price_row` needs and could not see. A row's EV is
@@ -344,10 +344,29 @@ class Walk:
         """
         out = {}
         for label in node.get("actions") or []:
+            if only is not None and label not in only:
+                continue
             got = self._child_value(node, label, board, reach, street_in,
                                     total_in)
             if got is not None:
                 out[label] = got
+        return out
+
+    def action_support(self, node):
+        """How much of the range takes each action here.
+
+        The solver trains a branch in proportion to how much reach
+        arrives at it, so an action almost nobody takes is an action
+        almost nothing trained. This is the weight `regret_of_row` uses
+        to decide which actions are worth maximising over.
+        """
+        rows = strategy_at(node)
+        if not rows:
+            return {}
+        out = {}
+        for label in node.get("actions") or []:
+            total = sum(float((r or {}).get(label, 0.0)) for r in rows.values())
+            out[label] = total / len(rows)
         return out
 
     def regret_of_row(self, node, board, reach, row, street_in=(0.0, 0.0),
@@ -376,9 +395,26 @@ class Walk:
         row: it measures the instrument, and a row whose slack is the
         size of our regret is a row this dump cannot resolve.
         """
-        values = self.action_values(node, board, reach, street_in, total_in)
+        # Evaluating a subtree is the expensive step, and the actions
+        # excluded above are often the biggest ones (an all-in opens the
+        # widest tree). Computing support FIRST and valuing only what
+        # survives is both the correct scope and the cheap one.
+        support = self.action_support(node)
+        wanted = {k for k, v in support.items() if v >= MIN_ACTION_SUPPORT}
+        values = self.action_values(node, board, reach, street_in, total_in,
+                                    only=wanted or None)
+        if not values:
+            values = self.action_values(node, board, reach, street_in,
+                                        total_in)
         if not values:
             return None
+        # Maximise only over actions the reference ACTUALLY PLAYS. An
+        # action nothing takes is an action nothing trained, and an
+        # unrestricted max lands on it by construction - M258 measured a
+        # walk calling a 6x-pot overbet shove the best action on 12 of 16
+        # turn rows, worth 4.86 bb more than what a converged solver
+        # does with pocket fives, because villain's response to a bet
+        # nobody makes is the least-trained branch in the tree.
         best_label = max(values, key=values.get)
         best = values[best_label]
         ours = self.price_row(node, board, reach, row, street_in, total_in)
@@ -465,6 +501,16 @@ class Walk:
 
     def _blocks(self, card):
         return np.array([card in str(c) for c in self.villain], dtype=bool)
+
+
+#: An action taken by less than this share of the range is treated as
+#: untrained and is not maximised over. Regret becomes "how far from the
+#: best action the reference actually plays" rather than a true best
+#: response - a deliberate trade, because an unrestricted max searches
+#: for the least-trained subtree and its bias then scales with how big
+#: that subtree is, which makes cells of different depths incomparable
+#: (M258).
+MIN_ACTION_SUPPORT = 0.01
 
 
 #: Two sizes are the SAME action when they differ by less than this

@@ -590,3 +590,67 @@ def test_the_tolerance_is_relative_not_absolute():
     big = map_row({"raise:60.00": 1.0},
                   ["CHECK", "BET 5.000000", "BET 92.000000"], facing=False)
     assert big[1] == pytest.approx(1.0)
+
+
+def _support_tree(hero_row, other_rows):
+    """A node where CHECK is played and BET 8 is (almost) not."""
+    rows = {"KhKd": hero_row}
+    rows.update(other_rows)
+    return _action(HERO, ["CHECK", "BET 8.000000"], rows,
+                   children={
+                       "CHECK": _action(VILLAIN, ["CHECK"],
+                                        {c: [1.0] for c in VILLAIN_COMBOS},
+                                        children={"CHECK": _chance()}),
+                       "BET 8.000000": _action(
+                           VILLAIN, ["FOLD"],
+                           {c: [1.0] for c in VILLAIN_COMBOS},
+                           children={"FOLD": _chance()})})
+
+
+def test_an_action_nobody_plays_is_not_maximised_over():
+    """M258. An unrestricted max lands on the least-trained branch by
+    construction: a walk called a 6x-pot overbet shove the best action on
+    12 of 16 turn rows, worth 4.86 bb more than what a converged solver
+    does with pocket fives, because villain's response to a bet nobody
+    makes is the least-trained node in the tree.
+    """
+    walk, board, reach = _walk([0.2, 0.2]), ("8h", "6h", "2s", "Td"), _reach(1.0, 1.0)
+    tree = _support_tree([1.0, 0.0], {"QhQd": [1.0, 0.0], "JhJd": [1.0, 0.0]})
+
+    support = walk.action_support(tree)
+    assert support["CHECK"] == pytest.approx(1.0)
+    assert support["BET 8.000000"] == pytest.approx(0.0)
+
+    regret, _slack, best = walk.regret_of_row(tree, board, reach,
+                                              {"CHECK": 1.0})
+    assert best == "CHECK", "an action the range never takes is not a target"
+    assert regret == pytest.approx(0.0)
+
+
+def test_an_action_the_range_does_play_is_still_maximised_over():
+    walk, board, reach = _walk([0.2, 0.2]), ("8h", "6h", "2s", "Td"), _reach(1.0, 1.0)
+    tree = _support_tree([0.0, 1.0], {"QhQd": [0.0, 1.0], "JhJd": [0.0, 1.0]})
+    assert walk.action_support(tree)["BET 8.000000"] == pytest.approx(1.0)
+    _r, _s, best = walk.regret_of_row(tree, board, reach, {"CHECK": 1.0})
+    assert best == "BET 8.000000"
+
+
+def test_the_floor_is_a_share_of_the_range_not_of_heros_own_row():
+    """Hero may never take an action the rest of the range takes often.
+    Training follows the RANGE's reach, not one hand's, so the support
+    that matters is the range's."""
+    walk, board, reach = _walk([0.2, 0.2]), ("8h", "6h", "2s", "Td"), _reach(1.0, 1.0)
+    tree = _support_tree([1.0, 0.0], {"QhQd": [0.0, 1.0], "JhJd": [0.0, 1.0]})
+    support = walk.action_support(tree)
+    assert support["BET 8.000000"] == pytest.approx(2.0 / 3.0)
+    _r, _s, best = walk.regret_of_row(tree, board, reach, {"CHECK": 1.0})
+    assert best == "BET 8.000000", "hero's own row must not gate the search"
+
+
+def test_regret_stays_non_negative_under_the_restriction():
+    walk, board, reach = _walk([0.75, 0.75]), ("8h", "6h", "2s", "Td"), _reach(1.0, 1.0)
+    tree = _mixed_tree()
+    for row in ({"CHECK": 1.0}, {"BET 8.000000": 1.0},
+                {"CHECK": 0.5, "BET 8.000000": 0.5}):
+        regret, _slack, _best = walk.regret_of_row(tree, board, reach, row)
+        assert regret >= -1e-9
