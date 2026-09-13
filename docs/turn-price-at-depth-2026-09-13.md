@@ -163,6 +163,43 @@ measured.** The control failed, so the rule refuses the result — and the
 figure it refuses (1.06%, lower than shallow) is one a motivated reading
 would have been happy to publish.
 
+### CORRECTION — the control failure was the METRIC, not our advice and not the rule
+
+The section below concluded that our flop advice is genuinely worse at
+depth and that the control rule had imported a shallow-regime
+assumption. **Both are withdrawn.** Bounding regret to the actions the
+reference actually plays (`MIN_ACTION_SUPPORT`) moves the flop cell:
+
+| flop opening | mean regret | % of pot |
+|---|---|---|
+| unrestricted max | 0.386 bb | 2.57% |
+| **bounded to the reference's support** | **0.0518 bb** | **0.35%** |
+
+**Why is visible in one line.** Action support at that flop root:
+
+    CHECK 1.0000   BET 5 0.0000   BET 11 0.0000   BET 38 0.0000   BET 92 0.0000
+
+**The reference never bets this flop.** Every bet subtree is completely
+untrained, and an unrestricted `max_a` was maximising over noise. The
+control rule — "the flop must price at ~0" — was right; the instrument
+feeding it was not. The M168 self-criticism attached to it is withdrawn
+with the claim.
+
+**The cross-cell confound stands, and this sharpens it**: the bias is
+not about subtree size as such, it is about **how much untrained subtree
+a cell's `max_a` can reach**, and a flop node whose every bet is untrained
+is the extreme case. M257's "facing a bet is 38× the opening decision"
+remains unproven for the same reason.
+
+**The turn is now the marginal case.** Support at the turn node:
+
+    CHECK 0.7354   BET 5 0.1368   BET 11 0.0661   BET 38 0.0506   BET 92 0.0111
+
+The overbet shove clears the 0.01 floor **by a hair**, which is why the
+turn figure did not move at all when the flop's fell fivefold. A result
+that turns on where a hand-picked line falls relative to one action is
+not a result, so the threshold is swept rather than defended.
+
 ### The control rule was WRONG, not the data — and the cells are not comparable
 
 The flop cell is not a starved sample. Removing its top two rows still
