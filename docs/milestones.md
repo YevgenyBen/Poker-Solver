@@ -15162,6 +15162,69 @@ replication.
 publishing a figure measured at a width and depth the product does not
 run — which is why nothing in `api/config.py` changed.
 
-**Open**: why the control fails on high-card boards (n=6); replication at
-SPR 6.17 and 19.50, whose readings are pre-registered; and F57, the
-river, still closed.
+### F62 — the leaf WAS the cause, and adding the river fixes the control
+
+The decisive experiment, on `Kd7c2h_four_bet_c12` — one of the two spots
+that FAIL the control — changing only how much of the solve was
+serialised:
+
+| dump | mean slack | % of pot | ratio | control |
+|---|---|---|---|---|
+| two rounds | 0.711 bb | 2.155% | **8.4×** | **FAIL** |
+| **three rounds** | **0.207 bb** | **0.627%** | **2.5×** | **PASS** |
+
+Inside `MAX_PLAUSIBLE_RATIO` (4.0), fixed before any of it ran. Slack
+falls 3.4×, median 0.727 → 0.125, worst 1.733 → 0.593, with
+exploitability identical (0.256%) — the solve did not change, only what
+the walk could see. **F61's "high-card board" lead is withdrawn**: the
+variable is how much the river matters, not the board's top card.
+
+**F57 is answered with it.** Three rounds cost **632.7 MB and 64s at SPR
+2.53** against M255's **3.98 GB at SPR 9.5**, so F55's SPR law governs
+dump SIZE too: the river is closed at depth and **open in the shallow
+corner**.
+
+### F63 — the depth replication is INCONCLUSIVE, by its own rules
+
+21 spots, three SPRs, both widths, each gated individually. 11 passed,
+298 rows survived, and the pre-registered rules refused the result:
+
+| cell | n | mean regret | % of pot | sigma | remapped > 0.5 |
+|---|---|---|---|---|---|
+| **flop opening** (control) | 75 | 0.2519 | **1.28%** | **4.55** | 36 of 75 |
+| turn opening | 150 | 0.4381 | 2.22% | 6.44 | **90 of 150** |
+| flop facing a bet | 73 | 2.4259 | 12.29% | 6.12 | 15 of 73 |
+
+**The control fails at 4.55 sigma**, and **mean remapped mass is 0.4551**
+against a 0.5 threshold — where the same figure at SPR 2.53 was 0.005.
+Either alone forbids reading it. Without the pre-registration this would
+have been published as "the turn costs 2.22% of pot at 6.44 sigma":
+tidy, consistent with the shallow result, and unsupported.
+
+**Consistent with F62**: a deeper stack means more river play, so the
+two-round leaf approximation is worst exactly where the gate now fails.
+`Th9c8d_four_bet_c12` passes on flop-opening rows and fails once its
+turn rows are included — a turn decision sits one action from the
+approximated leaf, a flop decision two. **Gate per (spot, cell), not per
+spot.**
+
+### What the campaign actually bought
+
+**The turn is not unpriced because nobody tried the right metric** —
+M237, M244 and this milestone all tried metrics. It is unpriced because
+a correct instrument costs more at depth than the reference can deliver:
+three rounds are 633 MB at SPR 2.53 and 3.98 GB at SPR 9.5, and the deep
+solves are also the least converged (0.62–0.85% against 0.10–0.43%).
+That is now measured, with numbers.
+
+**And a second wall that is not about cost**: at depth our bet menu and
+the reference's diverge so far that the remap carries the answer. Even a
+three-round dump at SPR 9.5 meets it. Closing it needs the menus matched
+at the node — M241's rule applied to depth.
+
+**Open**: match the trees well enough for a deep comparison to mean
+something, or concede that advice at SPR ≥ 5 cannot be priced against
+this reference and say so where the player reads it.
+
+**The bank survives as an asset**: 21 spots, 0 rejected, 577 MB, 2.2
+hours of solver, three SPRs × two widths, reusable without new solving.
