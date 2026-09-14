@@ -127,6 +127,43 @@ question: does our row play what the reference plays? That is the
 frequency metric this project moved away from in M182/M183, arriving
 back by necessity rather than preference.
 
+### The threshold SWEEP — no plateau, so the figure is a choice
+
+`MIN_ACTION_SUPPORT` was set to 0.01 by judgement. Swept on `Th9c8d`'s
+turn node, where support reads
+`CHECK 0.7354 / BET 5 0.1368 / BET 11 0.0661 / BET 38 0.0506 / BET 92 0.0111`:
+
+| threshold | actions kept | mean regret | % of pot |
+|---|---|---|---|
+| 0.000 / 0.005 / **0.010** | 5 | 4.045 | **26.97%** |
+| 0.020 / 0.050 | 4 | 2.430 | 16.20% |
+| **0.100** | 2 | **0.095** | **0.63%** |
+| 0.200 | 1 | −0.093 | −0.62% |
+
+**No plateau: 43× between 0.01 and 0.10.** The whole figure was carried
+by actions the range barely plays. **The threshold does not calibrate
+the metric, it determines the answer**, which is M253's lesson landing
+on the very knob introduced to fix the previous problem.
+
+*(The sweep script values our row unrestricted, so it reproduces the
+negative-regret flaw corrected in the main metric — hence the −0.093 at
+0.20. Its absolute values are approximate; the 43× trend is not
+affected.)*
+
+**What this does to the headline.** Raising the threshold removes
+actions from the `max`, which can only lower `best`. So for the gated
+spots — whose turn regrets at 0.01 are 0.004%, 0.033%, 0.086%, 0.615%
+and −0.000% — **0.55% of pot is an UPPER BOUND**, and the true figure at
+any stricter threshold is smaller. That is the honest form of the
+result:
+
+> **Our turn advice at SPR 6.17 is within 0.55% of pot of the best
+> action the reference actually plays — an upper bound, at cap 12, on
+> five spots whose cells passed an external control.**
+
+It is not a point estimate, and a figure whose value moves 43× with a
+hand-set constant must not be quoted as one.
+
 ### The depth comparison is STILL not available
 
 M257's 3.16% at SPR 2.53 was computed with the **unbounded** metric,
