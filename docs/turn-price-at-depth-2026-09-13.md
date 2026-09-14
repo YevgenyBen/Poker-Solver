@@ -77,6 +77,70 @@ measured **15.3 GB** of working set for a 3.36 GB file. That is the
 reading constraint F67 named, quantified — roughly 4.5× the file, which
 is what caps this at one spot in memory at a time.
 
+## FINAL RESULT — on the corrected metric
+
+Everything below this section was measured with an unbounded `max_a` and
+is superseded; it is kept because the corrections are the substance of
+this milestone. Six spots, SPR 6.17, cap 12, three-round dumps, matched
+menus, regret bounded to the reference's own support, both arms on one
+support, gated per (spot, cell).
+
+**The gate passes 11 of 12 cells.** Only `Th9c8d`'s turn fails, at 63×.
+
+| cell | n | mean regret | % of pot | median | sigma | zero control |
+|---|---|---|---|---|---|---|
+| flop opening | 23 | 0.0565 | **0.38%** | 0.0007 | 2.51 | 0.0 |
+| turn opening | 90 | 0.0824 | **0.55%** | 0.0169 | 6.24 | 0.0 |
+
+### Only ONE of those two numbers is usable, and the other is the finding
+
+**Off-support mass — the share of OUR row on actions the reference never
+plays — decides how much of our strategy the figure covers:**
+
+| cell | mean | median | rows > 0.5 | rows > 0.9 |
+|---|---|---|---|---|
+| flop opening | **0.351** | 0.251 | 6 of 23 | **4** |
+| turn opening | **0.109** | 0.016 | 3 of 106 | 0 |
+
+**The turn figure is real.** It covers ~89% of our row, no row exceeds
+0.9, and the gate passes on 5 of 6 spots: **our turn advice at SPR 6.17
+sits 0.55% of pot from the best action the reference actually plays.**
+
+**The flop figure is not.** A third of our flop strategy is on actions
+the reference never takes, and per spot it runs:
+
+| spot | flop off-support |
+|---|---|
+| `Kd7c2h` | **0.988** |
+| `9d9s4c` | 0.447 |
+| `8h6h2s` | 0.436 |
+| `5c4d2h` / `Ac7d2h` / `Th9c8d` | 0.086–0.087 |
+
+On `Kd7c2h` **98.8% of our flop strategy is on actions the reference
+never plays** — it checks that flop 100% and we bet it almost always —
+so "regret 0.0000" there is computed on the 1.2% that overlaps and means
+the opposite of agreement.
+
+**So at a pure or near-pure reference node, regret cannot express
+disagreement at all**, and the only meaningful measure is the frequency
+question: does our row play what the reference plays? That is the
+frequency metric this project moved away from in M182/M183, arriving
+back by necessity rather than preference.
+
+### The depth comparison is STILL not available
+
+M257's 3.16% at SPR 2.53 was computed with the **unbounded** metric,
+which this milestone showed inflates figures by maximising over
+untrained subtrees. **0.55% against 3.16% is not a comparison** — the
+two use different instruments, and the shallow figure would shrink too
+if recomputed. The pre-registered "materially smaller → the shallow
+regime overstates" reading is therefore **not** claimed.
+
+What M258 delivers instead is a single clean number on a validated
+instrument, and the knowledge of exactly which cells it can speak for.
+
+---
+
 ## Result — INCONCLUSIVE, because the control fails
 
 ### The verdict, over all six spots
