@@ -15285,3 +15285,81 @@ not be bought together is WITHDRAWN.** Both were bought. The turn's
 price at SPR ≥ 5 is now a specified, affordable measurement that has not
 yet been run — and until it is, the 3.16%-of-pot figure from SPR 2.53
 remains one regime, four spots, with no evidence it travels.
+
+---
+
+## M258 — the turn at depth, three metric revisions, and an upper bound
+
+M257 built an instrument and validated it at depth (0.8× against the
+solver's own exploitability). M258 spent the bill it priced — 425s and
+3.47 GB a spot — to ask whether the turn's price GROWS with depth.
+Report in `docs/turn-price-at-depth-2026-09-13.md`.
+
+**Scoped as a DIRECTION question from the start**, because the
+instrument can have depth or width and not both: these run at cap 12
+while the turn ships at 140, and a three-round dump at production width
+extrapolates to tens of GB. **No constant in `api/config.py` moved.**
+
+### The result, in the only form it survives
+
+Six spots, SPR 6.17, three-round dumps, matched menus, gated per (spot,
+cell). **11 of 12 cells pass.**
+
+> **Our turn advice at SPR 6.17 is within 0.55% of pot of the best
+> action the reference actually plays** — an UPPER BOUND, n=90, cap 12,
+> five spots, ~89% of our strategy on-support, zero control exactly 0.0.
+
+**Not a point estimate**, because the threshold sweep found **no
+plateau**: on `Th9c8d`'s turn the figure slides **43×** (26.97% of pot at
+`MIN_ACTION_SUPPORT` 0.01, 16.20% at 0.02, 0.63% at 0.10). The constant
+does not calibrate the metric, it determines the answer.
+
+**The depth comparison M258 existed to make is NOT available.** M257's
+3.16% at SPR 2.53 used the unbounded metric this milestone corrected, so
+0.55% against 3.16% compares two instruments and not two depths.
+
+### Three metric revisions, each caught by an impossible number
+
+1. **The unbounded `max_a` maximises over untrained subtrees.** Support
+   at one flop root read `CHECK 1.0000` with every bet at `0.0000` — the
+   reference never bets that flop — so the max was ranging over pure
+   noise. Bounding to the reference's support took that cell from 2.57%
+   of pot to 0.35%. **F58's regret is non-negative by construction and
+   NOT unbiased**, and the bias scales with how much untrained subtree a
+   cell's max can reach.
+2. **Then regret went negative** (−0.0161 bb): `max_a` was restricted
+   while our row was still valued over everything we play. Both arms now
+   share one support, the dropped mass is returned, and a row entirely
+   off-support returns `None`.
+3. **Then the threshold turned out to carry the answer** (43×, above).
+
+### What regret can and cannot do — the durable finding
+
+**It cannot compare cells of different sizes.** M257's "facing a bet is
+38× the opening decision", read as reproducing M188/M189's 20–27×, is
+**WITHDRAWN**: those cells' subtrees differ by orders of magnitude and so
+does the bias.
+
+**It cannot express disagreement at a pure node.** On `Kd7c2h`'s flop
+**98.8% of our strategy sits on actions the reference never plays** — it
+checks 100%, we bet almost always — and regret reads **0.0000**, computed
+on the 1.2% that overlaps. **"Regret 0" there means the opposite of
+agreement.** Off-support mass averages 0.351 on the flop cell with 4 of
+23 rows above 0.9, which is why the flop figure is reported as unusable
+rather than as a control.
+
+**At a pure node the only meaningful measure is the frequency question** —
+does our row play what the reference plays — which is the metric this
+project moved away from in M182/M183, arriving back by necessity.
+
+**It IS sound for the same cell across arms**, where the subtree is one
+shape and the bias is common. That is how F62 (two vs three rounds), F66
+(matched menus) and F67 (depth) used it, and those stand.
+
+### Cost, which is now the binding constraint
+
+A **flop** row costs ~600s on a three-round dump (49 turn cards × 47
+rivers); a **turn** row ~10s, because it starts at a turn node. A 3.36 GB
+dump holds **15.3 GB resident**, ~4.5×, so only one can exist at a time —
+the study solves, prices and deletes one spot at a time. None of this
+appears in F55's cost model, which was built from solve time and disk.
