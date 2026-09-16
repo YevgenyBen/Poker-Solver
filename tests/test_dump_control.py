@@ -75,3 +75,33 @@ def test_a_hand_outside_the_range_is_skipped_too():
     assert range_weighted_slack(
         node={}, walk_for=walk_for, board=("8h", "6h", "2s"),
         weights={}, hero_keys=["AcKd"]) is None
+
+
+def test_the_bound_is_epsilon_only_at_the_root():
+    """M259. Exploitability bounds the reach-weighted SUM of regrets, so
+    a node reached with probability p may carry up to epsilon / p. The
+    same slack that fails at the root passes at a node reached a tenth of
+    the time."""
+    at_root, _ = check(_summary(0.711), pot=33.0,
+                       reported_exploitability_pct=0.256)
+    deep, detail = check(_summary(0.711), pot=33.0,
+                         reported_exploitability_pct=0.256, reach=0.1)
+    assert not at_root
+    assert deep
+    assert detail["allowed_pct_of_pot"] == pytest.approx(2.56)
+
+
+def test_reach_defaults_to_the_root_so_old_callers_are_unchanged():
+    ok_default, d1 = check(_summary(0.085), pot=33.0,
+                           reported_exploitability_pct=0.256)
+    ok_root, d2 = check(_summary(0.085), pot=33.0,
+                        reported_exploitability_pct=0.256, reach=1.0)
+    assert ok_default == ok_root
+    assert d1["ratio"] == pytest.approx(d2["ratio"])
+
+
+def test_an_impossible_reach_is_refused():
+    for bad in (0.0, -0.1, 1.5):
+        with pytest.raises(ValueError, match="reach"):
+            check(_summary(0.1), pot=33.0, reported_exploitability_pct=0.256,
+                  reach=bad)
