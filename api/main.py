@@ -1273,18 +1273,9 @@ async def advise_endpoint(request: AdviseRequest):
             # the second. Keyed off the ORIGIN table size for the same
             # reason solver_confidence is — the preflop solve happened
             # before anyone folded. See cfg.SIZING_CAVEAT_TABLE_SIZES.
-            "sizing_confidence": (
-                "low"
-                if raw.get("street") == "preflop"
-                and request.players in cfg.SIZING_CAVEAT_TABLE_SIZES
-                else "high"
-            ),
-            "sizing_confidence_reason": (
-                cfg.SIZING_CAVEAT_REASON
-                if raw.get("street") == "preflop"
-                and request.players in cfg.SIZING_CAVEAT_TABLE_SIZES
-                else None
-            ),
+            # M260: postflop it also reads the response's own rows.
+            "sizing_confidence": _sizing_confidence(raw, request.players)[0],
+            "sizing_confidence_reason": _sizing_confidence(raw, request.players)[1],
             # M128: the postflop counterpart. Scoped to the AGGRESSION
             # axis — how often to bet or raise — because that is what was
             # measured to be unstable. Sweeping the cost-only range cap
@@ -1537,13 +1528,58 @@ def _is_facing_a_bet(raw: dict) -> bool:
                for row in rows for action in row)
 
 
+def _sizing_confidence(raw: dict, players: int) -> tuple:
+    """`(level, reason)` for the SIZE the advice names.
+
+    Preflop it is M98's multiway sizing defect, keyed on the origin table.
+    **Postflop it was the constant "high" (M260)** - measured on 1,468 of
+    1,468 postflop decisions over two benchmark arms - which told a client
+    to "trust the action sizes" on the very responses whose
+    `bet-sizing-coverage` note says no intermediate size existed. The two
+    signals now agree: postflop is "low" exactly when that note fires.
+    """
+    if raw.get("street") == "preflop":
+        if players in cfg.SIZING_CAVEAT_TABLE_SIZES:
+            return "low", cfg.SIZING_CAVEAT_REASON
+        return "high", None
+    if _has_no_intermediate_bet_size(raw):
+        return "low", cfg.POSTFLOP_SIZING_COVERAGE_REASON
+    return "high", None
+
+
+def _smallest_opening_bet_fraction() -> float:
+    """The smallest opening bet any postflop menu offers, as a pot fraction."""
+    fractions = []
+    for sizes in (cfg.FLOP_RAISE_SIZES, cfg.TURN_STANDALONE_RAISE_SIZES,
+                  cfg.RIVER_STANDALONE_RAISE_SIZES, cfg.MULTIWAY_FLOP_RAISE_SIZES):
+        if not sizes:
+            continue
+        first = sizes[0]
+        fractions.extend(first if isinstance(first, (tuple, list)) else (first,))
+    return min(fractions) if fractions else 0.0
+
+
 def _has_no_intermediate_bet_size(raw: dict) -> bool:
-    """True when the only way to put money in here is all-in."""
+    """True when the only way to put money in here is all-in BECAUSE OF THE
+    MODEL, not because of the stack.
+
+    M260. At an opening decision where even the smallest bet on the menu
+    is already the whole stack, the real game offers nothing smaller
+    either, and the note's claim - that a smaller bet "was never
+    available" and that this distorts the play - is false there. The wide
+    benchmark found that was **189 of 303** firings, almost all 20bb
+    stacks after three raises. Facing a bet the note still fires: the
+    tree's single re-raise multiple not fitting is a limit of the model.
+    """
     rows = list((raw.get("strategy") or {}).values())
     hero = raw.get("hero") or {}
     if isinstance(hero, dict) and hero.get("strategy"):
         rows.append(hero["strategy"])
     if not rows:
+        return False
+    pot, behind = raw.get("pot"), raw.get("max_affordable_bb")
+    if (not _is_facing_a_bet(raw) and pot and behind is not None
+            and _smallest_opening_bet_fraction() * pot >= behind):
         return False
     saw_all_in = False
     for row in rows:

@@ -7299,6 +7299,53 @@ def test_the_flop_names_the_all_in_at_the_players_real_stack(client):
             f"{echoed.json().get('detail')}")
 
 
+def test_postflop_sizing_confidence_agrees_with_the_bet_sizing_note(client):
+    """M260. `sizing_confidence` was "high" on every postflop decision.
+
+    1,468 of 1,468 in the wide benchmark, including the responses whose
+    own `bet-sizing-coverage` note says no intermediate size existed -
+    one response telling a client to trust the sizes and not to. The two
+    now agree, asserted in both directions so neither the old constant
+    nor a blanket "low" passes.
+    """
+    base = {"stack_bb": 20.0, "players": 2, "board": "Kd7c2h",
+            "hero_cards": "9c9d",
+            "preflop_action_path": ["raise", "call_or_check"]}
+    opening = client.post("/advise", json=base).json()
+    assert "bet-sizing-coverage" not in opening["advisory_notes"]
+    assert (opening["sizing_confidence"], opening["sizing_confidence_reason"]) == ("high", None)
+
+    # Facing a 2.5x bet with 17.5bb behind: the 3x re-raise does not fit,
+    # so the tree offers only the shove - a limit of the MODEL.
+    big = max(s for s in opening["modelled_bet_sizes"]
+              if s < opening["max_affordable_bb"])
+    facing = client.post("/advise", json={
+        **base, "flop_action_path": ["raise:%.2f" % big]}).json()
+    assert "bet-sizing-coverage" in facing["advisory_notes"]
+    assert facing["sizing_confidence"] == "low"
+    assert facing["sizing_confidence_reason"] == (
+        api_config.POSTFLOP_SIZING_COVERAGE_REASON)
+
+
+def test_the_bet_sizing_note_is_silent_when_the_stack_is_the_reason(client):
+    """M260. A shove-only menu is not a modelling gap when even a third of
+    the pot is the whole stack - the real game has nothing smaller either.
+
+    189 of 303 firings in the wide benchmark were this case, mostly 20bb
+    stacks after a four-bet, and the note told those players that a
+    smaller bet "was never available" and that this distorts the play.
+    """
+    body = {"stack_bb": 20.0, "players": 2, "board": "Kd7c2h",
+            "hero_cards": "9c9d",
+            "preflop_action_path": ["raise", "raise", "raise", "call_or_check"]}
+    payload = client.post("/advise", json=body).json()
+    assert payload["modelled_bet_sizes"] == [payload["max_affordable_bb"]], (
+        "this spot must be shove-only for the test to mean anything")
+    assert 0.33 * payload["pot"] >= payload["max_affordable_bb"]
+    assert "bet-sizing-coverage" not in payload["advisory_notes"]
+    assert payload["sizing_confidence"] == "high"
+
+
 def test_relabelling_the_all_in_merges_and_leaves_the_library_alone():
     """The helper renames only the all-in, sums any collision, and returns
     a copy - the library entry is shared across requests."""

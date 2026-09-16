@@ -2787,6 +2787,15 @@ POSTFLOP_AGGRESSION_ERROR_WORST = 0.8810
 # action with frequencies, so even a checked-through line carries
 # information: the approximation is real in every line, and trading a
 # known gap for an unvalidated model is not an improvement.
+# M260. `sizing_confidence`'s postflop reason, fired on exactly the rows
+# BET_SIZING_COVERAGE_NOTE fires on. Short on purpose: the full
+# explanation is already in the aggression note on the same response, and
+# the front end shows both.
+POSTFLOP_SIZING_COVERAGE_REASON = (
+    "No bet size between checking and going all-in was available on this street, so "
+    "the size this advice names was never chosen over a smaller one. See the note on "
+    "bet sizing in the aggression caveat."
+)
 BET_SIZING_COVERAGE_NOTE = (
     " Note also that on this street the solver modelled only checking or calling and "
     "going all-in: no intermediate bet size was a legal action in its tree. So a low "
