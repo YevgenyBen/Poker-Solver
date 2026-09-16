@@ -8272,9 +8272,20 @@ def test_the_river_under_fold_note_quotes_its_own_measurement(client):
         "the note is gated on hero's row being SPLIT, and must say so - without "
         "that it reads as a claim about every river decision, which M243 "
         "measured at 0.53 sigma, i.e. absent")
-    assert "unknown" in note.lower(), (
-        "the cost of this frequency gap is not established: M244 priced it and "
-        "got -0.9644 bb, which only says our own model prefers our own row")
+    assert str(api_config.RIVER_UNDER_FOLD_UNDER_FOLDED) in note
+    assert "%.2f" % api_config.RIVER_UNDER_FOLD_COST_BB in note
+    assert "%.2f" % api_config.RIVER_UNDER_FOLD_SILENT_COST_BB in note
+    assert api_config.RIVER_UNDER_FOLD_SILENT_COST_BB < api_config.RIVER_UNDER_FOLD_COST_BB, (
+        "M259 priced this inside the REFERENCE's game: firing 0.2684 bb against "
+        "silent 0.0657 at 4.07 sigma. The note's price must stay above its control")
+    assert "upper bound" in note.lower(), (
+        "regret is bounded by a support threshold and the figure moves past 0.10 "
+        "(M258/M259), so it may only be quoted as an upper bound")
+    assert "unknown" not in note.lower(), (
+        "M259 measured the cost from outside; calling it unknown is now false")
+    assert "more likely a cheap" not in note.lower(), (
+        "M244's argument that close decisions are cheap was refuted by M259: "
+        "they are about four times as expensive as decisive ones")
     assert "probably small" not in note.lower(), (
         "M244 removed that clause. It was an inference from M183, and the one "
         "measurement bearing on it - the spread between the values of the "

@@ -15363,3 +15363,60 @@ rivers); a **turn** row ~10s, because it starts at a turn node. A 3.36 GB
 dump holds **15.3 GB resident**, ~4.5×, so only one can exist at a time —
 the study solves, prices and deletes one spot at a time. None of this
 appears in F55's cost model, which was built from solve time and disk.
+
+## M259 - the river under-fold, priced from outside: close decisions are the expensive ones
+
+**What shipped.**
+
+- **`RIVER_UNDER_FOLD_NOTE` quotes a measured price instead of
+  "unknown":** up to **0.27 bb** where it fires, against **0.07** where
+  it is silent. The copy states it as an upper bound and says part of it
+  is the reference's own imprecision.
+- **Its frequency figures move to the matched population:** reference
+  **0.5925** against ours **0.3058** over 18 spots, under-folding on 14.
+- **`bench.dump_control.check` takes `reach`.** Epsilon bounds a
+  deviation only at the root. At a node reached with probability p, the
+  bound is epsilon/p. M258's single "63x" failure may sit inside the
+  true bound.
+- **CLAUDE.md** drops M257's superseded "the walk overstates" and
+  records what regret can and cannot measure.
+
+**The measurement.** Details are in
+`docs/river-underfold-price-2026-09-16.md`; the reading rule was fixed
+before any number existed.
+
+- **Metric:** regret of our row inside the reference's game.
+- **Spots:** 75 river spots at cap 60:
+  - 50 are M243's spots, re-solved;
+  - 25 are fresh spots, screened on our own row.
+- **Re-raise matched:** `raise_pct` 20 gives 10bb, against our 9.90.
+- **References:** every one at 0.20-0.50%, each passing the root
+  control.
+- **Result:** firing **0.2684 bb (1.79% of pot)**, silent **0.0657
+  (0.44%)**, **+0.2026 at 4.07 sigma**.
+  - Split-half: 2.82 / 3.19 sigma.
+  - Flat across support thresholds 0.00-0.05; breaks at 0.10.
+  - Net of the reference's own slack: +0.1224 at 2.52 sigma.
+- **The first pass read +0.13 at 1.80 sigma, and it was contaminated.**
+  It ran at `raise_pct` 60 with 9 firing rows. Three strong-hand rows
+  carried 0.53-0.72 remapped mass, and only 3 of the 9 were under-folds.
+  Matching the re-raise and screening for more firing rows were decided
+  before the re-run.
+
+**Findings.**
+
+- **M244's "more likely cheap" is withdrawn.** Close river decisions
+  cost about four times what decisive ones do.
+- **The cost is not only the under-fold.**
+  - Where folding is in play, firing costs +0.1628 (2.17 sigma), and the
+    fold gap is -0.2867 at 4.07 sigma.
+  - Where neither arm folds, firing costs +0.2258 (3.17 sigma).
+- **M243's quoted 0.7078 / 0.3783 did not reproduce** on the clean
+  population. The copy now quotes this study's figures.
+
+**Deferred.**
+
+- **The gate and its 0.80 threshold are unchanged.** This study measured
+  where the gate fires, not whether a better gate exists.
+- **`classify`'s absolute hand ranking mislabels hands where the board
+  plays.** Noted; nothing depends on it.

@@ -2631,25 +2631,44 @@ TURN_INDEPENDENT_NOTE = (
 # says "more likely cheap than expensive" and calls that an argument.
 RIVER_UNDER_FOLD_MAX_BET_FRACTION = 0.75
 RIVER_UNDER_FOLD_MIXED_MAX_TOP_ACTION = 0.80
-RIVER_UNDER_FOLD_REFERENCE_FOLDS = 0.7078
-RIVER_UNDER_FOLD_WE_FOLD = 0.3783
-RIVER_UNDER_FOLD_SPOTS = 16
+#
+# M259 PRICED IT FROM OUTSIDE, and the argument above was wrong. EV no
+# longer has to come from our model: `bench.dump_ev` walks the
+# reference's own dump for the regret of our row inside the REFERENCE's
+# game, which cannot prefer our answer. 75 river spots, re-raise matched
+# (raise_pct 20 -> 10bb against our 9.90, remapped mass 0.0000 on every
+# row), every reference 0.20-0.50% of pot and passing `dump_control`:
+#      note FIRES   n=34  regret 0.2684 bb  1.79% of pot
+#      note SILENT  n=41  regret 0.0657 bb  0.44% of pot
+#      difference  +0.2026 bb at 4.07 sigma; split-half 2.82 / 3.19
+# Plateau across support thresholds 0.00-0.05 (4.07 -> 3.67 sigma),
+# breaks at 0.10, so it is an UPPER bound (M258). Net of the reference's
+# own slack (0.1055 firing, 0.0016 silent) it is +0.1224 at 2.52 sigma.
+# **So the close decisions are the EXPENSIVE ones, not the cheap ones.**
+# The under-fold replicates on matched raises where folding is in play:
+# reference 0.5925 / ours 0.3058 over 18 spots, 4.07 sigma, 14 of 18.
+# The cost is NOT only folding: firing rows that never fold cost just as
+# much (+0.2258, 3.17 sigma), so the copy separates the two claims.
+RIVER_UNDER_FOLD_REFERENCE_FOLDS = 0.5925
+RIVER_UNDER_FOLD_WE_FOLD = 0.3058
+RIVER_UNDER_FOLD_SPOTS = 18
+RIVER_UNDER_FOLD_UNDER_FOLDED = 14
+RIVER_UNDER_FOLD_COST_BB = 0.27
+RIVER_UNDER_FOLD_SILENT_COST_BB = 0.07
 RIVER_UNDER_FOLD_NOTE = (
     " A warning specific to this decision: it is a CLOSE one - this engine is splitting "
     "between actions rather than settling on one - and close river decisions facing a small "
-    "bet are exactly where it has measured furthest from an independent solver. Over 16 such "
-    "spots the reference folded about 71% of the time and this engine folded about 38%; it "
-    "under-folded on 14 of the 16. So when it leans toward calling or raising here, treat "
-    "FOLDING as the serious alternative. Two things keep this honest. On river decisions that "
-    "are NOT close - about four in five - the two solvers agree to within a few points, and "
-    "this note stays silent there. And the cost of this in chips is genuinely UNKNOWN: priced "
-    "inside this engine's own model the disagreement comes out in its favour, which is what "
-    "any model says about departing from its own answer, so that number settles nothing. What "
-    "can be said is that the actions being chosen between here are closer in value than at a "
-    "typical mixed decision - about 7% of the pot apart against 17% - so this is more likely a "
-    "cheap disagreement than an expensive one, but that is an argument and not a measurement. "
-    "It is a difference in the model, not a setting - it survived matching the ranges and the "
-    "raise sizes between the two solvers."
+    "bet are where it has measured furthest from an independent solver, in chips as well as "
+    "in frequencies. Priced inside the independent solver's own game, following this "
+    "engine's advice at decisions like this one costs up to about 0.27 big blinds (roughly 2% "
+    "of the pot), against about 0.07 at river decisions that are not close, where this note "
+    "stays silent. Where folding was a real option, over 18 such spots the reference folded "
+    "about 59% of the time and this engine about 31%, under-folding on 14 of the 18 - so when "
+    "it leans toward calling or raising here, treat FOLDING as the serious alternative. The "
+    "cost is not only about folding: close decisions where neither solver folds cost about "
+    "as much, so treat the whole mix here with caution. The figure is an upper bound, and "
+    "part of it is the reference's own imprecision. It is a difference in the model, not a "
+    "setting - it survived matching the ranges and the raise sizes between the two solvers."
 )
 
 # M221. The first finding this project has that came from OUTSIDE.

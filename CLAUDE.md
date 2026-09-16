@@ -452,16 +452,33 @@ on hero's top action:
 `RIVER_UNDER_FOLD_MIXED_MAX_TOP_ACTION = 0.80`: where it is SILENT the
 gap is -0.0250 at 1.10 sigma, so the note now says nothing on the ~79%
 of river decisions this engine gets right. Split-half on the firing
-rows: -0.2538 (5.69) / -0.4052 (4.17). Copy quotes reference 0.7078 /
-ours 0.3783 over 16 spots, **and says the cost is unknown** — M244 tried
-to price it and could not: matching the reference's fold rate scores
-**-0.9644 bb** against our own model, with corr(gap, loss) **-0.745**,
-because a model always prefers its own answer. **A model cannot referee
-a disagreement about itself.** What the reference-free half shows is
-that among nodes that MIX, the ones this fires on are the closer ones
-(support spread **6.84% of pot against 16.87%**) — the reverse of the
-hypothesis that went in, which was that mixing at nodes a blind apart
-meant our mix was internally inconsistent. The overbet row and the turn stay excluded
+rows: -0.2538 (5.69) / -0.4052 (4.17).
+**M259 PRICED IT FROM OUTSIDE, and the "cheap disagreement" argument
+was wrong.** M244 could not price it inside our own model: it got
+-0.9644 bb with corr -0.745, and **a model cannot referee a
+disagreement about itself**. M259 measured regret inside the
+REFERENCE's game instead.
+
+- **Setup:** 75 river spots, re-raise matched (remapped mass 0.0000).
+  It compares the same cell across arms.
+
+| note | n | regret | % of pot |
+|---|---|---|---|
+| **fires** | 34 | **0.2684 bb** | 1.79% |
+| silent | 41 | 0.0657 bb | 0.44% |
+
+- **The difference is +0.2026 at 4.07 sigma.** It is flat across support
+  thresholds 0.00-0.05 and breaks at 0.10, so it is an UPPER bound.
+- **Net of the reference's own slack** it is +0.1224 at 2.52 sigma. The
+  reference's slack is largest where it mixes.
+- **Close decisions are the EXPENSIVE ones.**
+- **The under-fold replicates** where folding is in play: reference
+  0.5925 against ours 0.3058 over 18 spots, at 4.07 sigma.
+- **The cost is not only folding.** Firing rows that never fold cost as
+  much (+0.2258, 3.17 sigma).
+- **The copy** quotes up to 0.27 bb against 0.07. It no longer says
+  "unknown".
+The overbet row and the turn stay excluded
 (M168). The gate reads the RESPONSE, so it fails toward silence.
 
 ### The checks REPLICATE on fresh spots (M236) — n=42 per street

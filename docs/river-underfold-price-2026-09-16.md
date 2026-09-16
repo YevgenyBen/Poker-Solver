@@ -125,4 +125,84 @@ free.
 
 ## Result
 
-*(Pending.)*
+**Rule reading one: the note's gap costs money.** 75 matched-raise
+spots. All 75 pass the root control and all 75 agree with
+`regret_of_row`. Exploitability runs 0.199-0.499% with zero refusals.
+**Remapped mass is 0.0000 on every row**, so matching the re-raise
+removed the first pass's mapping problem.
+
+| threshold | firing (n=34) | silent (n=41) | difference | sigma |
+|---|---|---|---|---|
+| 0.000 | 0.2692 bb (1.79%) | 0.0659 (0.44%) | +0.2032 | 4.08 |
+| **0.010 (shipped)** | **0.2684 (1.79%)** | **0.0657 (0.44%)** | **+0.2026** | **4.07** |
+| 0.020 | 0.2649 | 0.0655 | +0.1994 | 3.97 |
+| 0.050 | 0.2463 | 0.0651 | +0.1812 | 3.67 |
+| 0.100 | 0.1886 | 0.2702 | -0.0816 | -0.36 |
+| 0.200 | 0.6752 (32% off-support) | 0.6902 | -0.0150 | -0.03 |
+
+**The figure is flat from 0.00 to 0.05 and breaks at 0.10.** From 0.10
+up, dropping actions the reference plays 5-10% of the time starts to
+carry the answer (M258). So the firing figure is an **upper bound**,
+and it is quoted as one.
+
+**Checks against over-reading it:**
+
+- **Medians:** firing 0.1596, silent 0.0118. Rows over 0.5 bb: 4
+  firing, 0 silent.
+- **Split-half on the firing rows:** +0.1616 (2.82 sigma) and +0.2436
+  (3.19 sigma).
+- **By origin:** the 25 screened spots average 0.2759 and the 9 M243
+  spots 0.2476. M243's population alone gives firing against silent
+  +0.1819 at 1.90 sigma. The size matches; the sample is 9 spots.
+- **Reference slack:** the reference's own row carries 0.1055 bb of
+  regret on firing rows and 0.0016 on silent ones. The reference is
+  least exact exactly where it mixes. **Net of its own slack the
+  difference is +0.1224 at 2.52 sigma.** That still clears the rule, and
+  the copy says part of the figure is the reference's own imprecision.
+
+### It is not only about folding
+
+The split pre-registered for the second pass, where either arm folds at
+least 5%:
+
+| group | firing | silent | difference | fold, ours vs ref |
+|---|---|---|---|---|
+| fold in play | n=18, 0.2613 | n=13, 0.0985 | +0.1628 (2.17 sigma) | **0.306 vs 0.592, -0.2867 at 4.07 sigma, 14 of 18** |
+| never folds | n=16, 0.2763 | n=28, 0.0505 | +0.2258 (3.17 sigma) | 0.001 vs 0.002 |
+
+- **The under-fold replicates.** It holds on matched raises and on fresh
+  spots selected only by our own row. It is smaller than M243's
+  0.7078 / 0.3783, in the same direction, at the same 4 sigma.
+- **The cost is not confined to the under-fold.** Firing rows where
+  neither arm folds cost just as much. The gate finds expensive close
+  decisions, and folding is one way that shows, not the only one.
+
+### What changed in the product
+
+`RIVER_UNDER_FOLD_NOTE` now quotes a price.
+
+- **The price:** up to **0.27 bb** (about 2% of pot) where it fires,
+  against **0.07** where it is silent. The copy calls this an upper
+  bound and says part of it is the reference's imprecision.
+- **The frequency figures** move to this population: 18 spots, 59%
+  against 31%, under-folding on 14 of 18.
+- **Two separate claims:** the copy now says "fold more here" apart
+  from "this whole mix is costly".
+
+**M244's argument is withdrawn.** It held that the actions being mixed
+are closer in value, so the disagreement was more likely cheap. The
+close decisions cost about **four times** what decisive ones do. The
+gate and its threshold are unchanged.
+
+### Two things noted and not acted on
+
+- **The quoted M243 frequencies do not reproduce on the clean
+  population.** They came from 16 firing rows at `raise_pct` 60, with
+  force-inclusion effects already stripped. Here, the first pass's
+  firing rows gave ours 0.10 against the reference's 0.19. The copy
+  now quotes this study's figures, which come from a matched menu and a
+  larger sample.
+- **`classify` in M243's harness ranks hands absolutely.** A hand whose
+  board plays is labelled `nutted` or `two_pair_plus`. This study used
+  the fold-in-play split instead of hand class, so nothing depends on
+  those labels.
