@@ -7272,6 +7272,45 @@ def test_every_published_bet_size_is_accepted_back(client):
     assert checked >= 4, f"only round-tripped {checked} sizes"
 
 
+def test_the_flop_names_the_all_in_at_the_players_real_stack(client):
+    """M260. The heads-up flop's own all-in label must be valid input.
+
+    The canonical library solves at a depth rounded DOWN (F13), so at
+    100bb it published `all_in:95.00` beside `max_affordable_bb: 97.5`,
+    and echoing that label into `flop_action_path` came back 422. The
+    round-trip test above skipped `all_in` names, which is how it lived.
+    100bb is the point: it does not sit on a bucket boundary.
+    """
+    base = {"stack_bb": 100.0, "players": 2, "board": "Kd7c2h",
+            "hero_cards": "9c9d",
+            "preflop_action_path": ["raise", "call_or_check"]}
+    payload = client.post("/advise", json=base).json()
+    names = [n for n in payload["hero"]["strategy"] if n.startswith("all_in")]
+    assert names == ["all_in:%.2f" % payload["max_affordable_bb"]], (
+        f"the flop's all-in is {names} but the player can commit "
+        f"{payload['max_affordable_bb']} - F13's bucketed depth leaked into "
+        "the label")
+    for name in payload["hero"]["strategy"]:
+        if name == "call_or_check":
+            continue
+        echoed = client.post("/advise", json={**base, "flop_action_path": [name]})
+        assert echoed.status_code == 200, (
+            f"the flop published {name!r} but rejects it as input: "
+            f"{echoed.json().get('detail')}")
+
+
+def test_relabelling_the_all_in_merges_and_leaves_the_library_alone():
+    """The helper renames only the all-in, sums any collision, and returns
+    a copy - the library entry is shared across requests."""
+    from api.solving import _all_in_at_the_real_stack
+    library_rows = {"9c9d": {"call_or_check": 0.5, "raise:12.50": 0.25,
+                             "all_in:95.00": 0.25}}
+    out = _all_in_at_the_real_stack(library_rows, 97.5)
+    assert out == {"9c9d": {"call_or_check": 0.5, "raise:12.50": 0.25,
+                            "all_in:97.50": 0.25}}
+    assert "all_in:95.00" in library_rows["9c9d"], "the shared entry was rewritten"
+
+
 def test_a_multiway_player_can_say_they_face_a_small_bet(client, monkeypatch):
     """M214. The capability the multiway menu exists to provide.
 
