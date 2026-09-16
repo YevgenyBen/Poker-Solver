@@ -45,6 +45,18 @@ Rules for reading them:
   - **the spot's root control** (`bench.dump_control`, reach 1);
   - **remapped mass:** a cell averaging over 0.5 is graded
     "mapping-dependent" instead of by letter.
+- **A row is graded only if its node is REACHED** in the reference's own
+  game: the villain takes the line to it at least **5%** of the time.
+  - **Why:** the ε bound at a node reached with probability p is ε/p
+    (M259). The smoke run shows the effect: facing a 2.5× overbet at
+    p ≈ 0.003, the reference's own slack was 13 bb.
+  - **Selection bias:** the reach fraction is a property of the
+    reference alone, so selecting on it cannot favour our answer.
+  - **Excluded rows** are counted and reported, not graded.
+  - **Check:** each graded cell also gets its regret net of the
+    reference's own slack.
+  - *(Added after the one-spot smoke run and before the main run; no
+    graded number existed yet.)*
 - **Frequency on the flop is graded on TVD alone** and marked as such.
   M221/M242 measured the flop as the street closest to the reference,
   so a flop grade below B would contradict two studies and must be
