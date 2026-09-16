@@ -84,27 +84,42 @@ def range_weighted_slack(node, walk_for, board, weights, hero_keys,
 
 
 def check(summary, pot, reported_exploitability_pct,
-          max_ratio=MAX_PLAUSIBLE_RATIO):
+          max_ratio=MAX_PLAUSIBLE_RATIO, reach=1.0):
     """`(ok, detail)` - does the walk reproduce the solver's own figure?
+
+    **`reach` is the probability the node is reached, and the bound is
+    only epsilon at the ROOT** (M259). Exploitability bounds the
+    reach-weighted SUM of regrets over the game, so conditioned on a node
+    reached with probability `reach` the regret there can be as large as
+    `epsilon / reach`. M257 applied this at the root, where reach is 1
+    and its 0.8x stands. M258 applied it unscaled at turn nodes reached
+    through two checks and one specific card - reach well under 1/46 - so
+    its gate was stricter than the bound, over-flagging rather than
+    under-flagging, and its one FAIL may sit inside the true limit.
 
     Never raises on its own: a study decides whether to stop. What it
     must not do is publish a number without having run this.
     """
+    if not 0.0 < reach <= 1.0:
+        raise ValueError("reach must be in (0, 1], got %r" % (reach,))
     ours_pct = 100.0 * summary["weighted_mean_slack_bb"] / pot
-    ratio = (ours_pct / reported_exploitability_pct
-             if reported_exploitability_pct else float("inf"))
+    allowed_pct = (reported_exploitability_pct / reach
+                   if reported_exploitability_pct else 0.0)
+    ratio = (ours_pct / allowed_pct if allowed_pct else float("inf"))
     detail = dict(summary)
     detail.update({"ours_pct_of_pot": ours_pct,
                    "reported_exploitability_pct": reported_exploitability_pct,
+                   "reach": reach, "allowed_pct_of_pot": allowed_pct,
                    "ratio": ratio, "max_ratio": max_ratio})
     return ratio <= max_ratio, detail
 
 
 def require(summary, pot, reported_exploitability_pct,
-            max_ratio=MAX_PLAUSIBLE_RATIO):
+            max_ratio=MAX_PLAUSIBLE_RATIO, reach=1.0):
     """`check`, but refuses to continue - for a study that would
     otherwise publish."""
-    ok, detail = check(summary, pot, reported_exploitability_pct, max_ratio)
+    ok, detail = check(summary, pot, reported_exploitability_pct, max_ratio,
+                       reach)
     if not ok:
         raise ControlFailed(
             "the walk reports %.3f%% of pot where the solver reports %.3f%% "
