@@ -3197,11 +3197,41 @@ bound: at an epsilon-equilibrium **no single-node deviation can gain
 more than epsilon**, and the reference's own per-hand regret at a node
 is such a deviation - strictly weaker than the full best response - so
 its range-weighted mean must land **at or below** the reported figure.
-Measured on a converged spot (reported 0.256% of pot): **0.711 bb =
-2.155%, a ratio of 8.4x**, so the walk overstates. Leading suspect is
-the leaf - a two-round dump has no river, so a turn leaf is valued at
+**Serialise the river, or the control fails on spots where the river
+matters (M257 F62/F67).** A two-round dump values a turn leaf at
 `equity * pot` while the strategy being scored was optimised against
-river play the solver DID run and merely did not serialise.
+river play the solver ran and did not serialise. Same spot, nothing else
+changed: two rounds **8.4x FAIL**, three rounds **2.5x PASS**; at SPR
+6.17 with matched menus **0.8x PASS**, below the bound as theory
+requires. (The 8.4x was first read as "the walk overstates" in general -
+it was one spot; four of six passed at two rounds.) Three rounds cost
+**633 MB at SPR 2.53 and 3.47 GB at SPR 6.17**, and a resident dump
+takes **~4.5x its file size in RAM**, so one at a time.
+
+**Give the reference OUR bet menu, read off a real response (M257
+F64).** It was handed `(33, 75)` while `/advise` offers 33/75/**250**
+plus all-in; at SPR 2.53 the 250% bet IS the all-in and nothing shows,
+at SPR 6.17 our overbet was scored as a 75%-pot bet. Matching is free.
+**And compare sizes with a tolerance** (`SIZE_MATCH_TOLERANCE`, 5%
+relative): the solver rounds amounts to integers, and an exact
+comparison counted rounding as remapping (F65).
+
+**What REGRET can and cannot measure (M258).** `Walk.regret_of_row` is
+`max_a Q(a) - EV(ours)`, bounded to actions the range plays at least
+`MIN_ACTION_SUPPORT` (1%), with both arms on one support.
+- **Unbounded, it maximises over untrained subtrees**: a flop root the
+  reference checks 100% priced at 2.57% of pot, 0.35% bounded.
+- **It cannot compare cells of different sizes** - the bias grows with
+  how much untrained subtree a cell's max can reach. M257's "facing a
+  bet is 38x the opening decision" was withdrawn for this.
+- **It cannot express disagreement at a PURE reference node.** On one
+  flop 98.8% of our row sat on actions the reference never plays and
+  regret read 0.0000. **Report off-support mass beside every regret**;
+  at a pure node the only honest measure is the frequency question.
+- **The support threshold can carry the answer**: one turn cell moved
+  **43x** between 0.01 and 0.10, so a figure from it is an UPPER bound,
+  not a point estimate.
+- **Sound for the SAME cell across arms**, where the bias is common.
 
 **Three instrument defects in one campaign (F56, F58, F59), each found
 by a number that could not be true rather than by a test.**
