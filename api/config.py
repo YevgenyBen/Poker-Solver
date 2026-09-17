@@ -1358,11 +1358,15 @@ MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION = 8
 # better, aggression moving toward the reference, p90 under 5s - is met
 # by iterations alone. It still scores below a card-blind prior (-0.073,
 # -3.86 sigma), so the multiway disclosure stays.
-# **The diagnostic arm names the mechanism**: with ONE sized bet the
-# advice reaches the card-blind prior (-0.011, 0.63 sigma). Three sized
-# bets give the uniform starting strategy 80% aggressive mass, and an
-# under-converged row keeps it. The fix for that is a starting prior that
-# is not action-count weighted - its own change, not made here.
+# **The diagnostic arm locates the problem in the MENU**: with ONE sized
+# bet the advice reaches the card-blind prior (-0.011, 0.63 sigma).
+# M264 first blamed the uniform STARTING strategy (80% aggressive with
+# three sizes). **M265 tested that and it is wrong**: a kind-balanced
+# starting prior changed nothing (-0.005, -0.49 sigma; aggression 0.470
+# both arms). The likelier mechanism is that regret matching is not
+# neutral to near-duplicate actions - three similar bet sizes each
+# accumulate positive regret, so betting as a GROUP is over-weighted
+# throughout the solve. Untested.
 # Cost: multiway postflop p50 0.98 -> 2.87s, max 7.4s, 22 of 579 over 5s.
 DEFAULT_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = 4000
 MAX_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = 4000

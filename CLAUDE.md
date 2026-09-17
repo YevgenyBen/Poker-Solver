@@ -605,11 +605,15 @@ The overbet row and the turn stay excluded
   - **The result:** +0.107 at 7.86 sigma over the old budget. Range cap
     26 and 4-run ensembles did nothing, measured against the outside
     reference this time.
-  - **The mechanism:** a ONE-size menu reaches the card-blind prior.
-    Three bet sizes give the uniform starting strategy 80% aggressive
-    mass, and under-converged rows keep it.
-  - **Rule:** the next multiway fix is an action-count-neutral starting
-    strategy (A4b), **not a smaller menu and not more width**.
+  - **Where it lives:** a ONE-size menu reaches the card-blind prior, so
+    the problem is in how the solver treats three similar bet sizes.
+  - **Not the starting strategy.** M264 first said the uniform start
+    (80% aggressive with three sizes) was the cause. **M265 falsified
+    that**: a kind-balanced start changed nothing (-0.005, -0.49 sigma).
+  - **Standing hypothesis, untested:** regret matching over-weights a
+    GROUP of near-duplicate actions all through the solve.
+  - **Rule:** not a smaller menu (players need the sizes, M209-M220), not
+    more width, not a new starting prior.
 
 ### The checks REPLICATE on fresh spots (M236) — n=42 per street
 

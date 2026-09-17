@@ -102,3 +102,48 @@ raises 0.111 and folds 0.593.
   taken at the old budget. More iterations should make multiway answers
   *more* stable, so those figures now likely overstate the instability.
   That direction is safe for a warning, but it is stale, and it is queued.
+
+## M265 (A4b) — a starting strategy that does not count bet sizes
+
+*(Pre-registered before the run.)*
+
+**The change.** `poker_solver.cfr.ACTION_PRIOR = "kind_balanced"`. Where
+no action has positive regret yet, regret matching plays fold, passive
+and aggressive with equal weight, split evenly within each kind. It
+replaces the uniform row, which is 80% aggressive at an unfacing node
+with three bet sizes.
+
+**The arms.** Both use the same 579 decisions.
+
+- **`prod`:** today's production configuration (M264's ×4 budget).
+- **`kind_prior`:** production plus the new prior, switched on only
+  after the preflop solve is warm, so only postflop solves use it.
+
+**Adopted only if all of these hold:**
+
+1. **Improvement:** paired p better than `prod` at **2σ**.
+2. **Direction:** checked-to aggression moves toward 0.194.
+3. **Latency:** p90 under 5 s.
+
+**Recorded either way:** its score against the card-blind prior. It
+reaching the prior would match what the one-size diagnostic did.
+
+**Scope if adopted:** multiway POSTFLOP solves only. Preflop already
+beats the prior (+0.060) and is not re-measured here. The exact heads-up
+solver never reads this setting.
+
+**Result.** Both arms scored all 579 decisions.
+
+| arm | p | vs `prod` | vs prior | bets when checked to | p90 |
+|---|---|---|---|---|---|
+| prod | 0.5575 | — | −0.073 | 0.470 | 4.65 s |
+| kind_prior | 0.5522 | **−0.005 (−0.49σ)** | −0.079 | **0.470** | 4.16 s |
+
+- **Not adopted.** The starting strategy is not the mechanism, and M264's
+  explanation of the one-size result is withdrawn.
+- **The one-size result itself stands.** With one sized bet, the advice
+  reaches the prior. The likelier cause is that regret matching
+  over-weights a group of near-duplicate actions throughout the solve,
+  not only at the start. That remains untested.
+- **The `prod` arm reproduced M264's ×4 arm exactly,** so the replay is
+  deterministic.

@@ -1814,3 +1814,40 @@ def test_solve_uses_the_vector_recursion_by_default():
     finally:
         cfr._solve_recurse = original
     assert len(calls) == 4
+
+
+def test_kind_balanced_prior_gives_each_kind_equal_weight():
+    """M265. Adding a bet size must not add betting mass."""
+    from poker_solver.cfr import kind_balanced_prior
+    unfacing = ["call_or_check", "raise", "raise", "raise", "all_in"]
+    p = kind_balanced_prior(unfacing)
+    assert p.sum() == pytest.approx(1.0)
+    assert p[0] == pytest.approx(0.5)
+    assert p[1:].sum() == pytest.approx(0.5)
+    facing = ["fold", "call_or_check", "raise", "all_in"]
+    q = kind_balanced_prior(facing)
+    assert list(q) == pytest.approx([1 / 3, 1 / 3, 1 / 6, 1 / 6])
+
+
+def test_current_strategy_uses_the_prior_only_where_no_regret_is_positive():
+    from poker_solver.cfr import InfoSetTable
+    table = InfoSetTable.zeros(2, 3)
+    table.regret_sum[1] = [0.0, 2.0, 2.0]
+    prior = np.array([0.5, 0.25, 0.25])
+    s = table.current_strategy(prior=prior)
+    assert list(s[0]) == pytest.approx([0.5, 0.25, 0.25])
+    assert list(s[1]) == pytest.approx([0.0, 0.5, 0.5])
+    assert list(table.current_strategy()[0]) == pytest.approx([1 / 3] * 3)
+    # average_strategy keeps the uniform fallback the API relies on.
+    assert list(table.average_strategy()[0]) == pytest.approx([1 / 3] * 3)
+
+
+def test_the_starting_prior_is_uniform_unless_switched(monkeypatch):
+    from poker_solver import cfr
+    assert cfr.ACTION_PRIOR == "uniform"
+    assert cfr._starting_prior(["fold", "call_or_check"]) is None
+    monkeypatch.setattr(cfr, "ACTION_PRIOR", "kind_balanced")
+    assert list(cfr._starting_prior(["fold", "call_or_check", "raise"])) == pytest.approx([1 / 3] * 3)
+    monkeypatch.setattr(cfr, "ACTION_PRIOR", "nonsense")
+    with pytest.raises(ValueError):
+        cfr._starting_prior(["fold"])
