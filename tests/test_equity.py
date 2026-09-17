@@ -982,3 +982,26 @@ def test_equity_is_symmetric_within_sampling_error():
         assert forward + reverse == pytest.approx(1.0, abs=0.010), (
             f"{labels}: {forward:.4f} + {reverse:.4f} = {forward + reverse:.4f}"
         )
+
+
+def test_a_transient_sharing_violation_is_retried(monkeypatch):
+    """Windows can refuse a just-written file for a moment; the suite hit
+    it once as PermissionError in the concurrent cold-start test."""
+    from poker_solver import equity
+    monkeypatch.setattr(equity.time, "sleep", lambda s: None)
+    calls = []
+
+    def flaky(x):
+        calls.append(x)
+        if len(calls) < 3:
+            raise PermissionError(13, "Permission denied")
+        return x * 2
+
+    assert equity._retry_on_sharing_violation(flaky, 21) == 42
+    assert len(calls) == 3
+
+    def always(x):
+        raise PermissionError(13, "Permission denied")
+
+    with pytest.raises(PermissionError):
+        equity._retry_on_sharing_violation(always, 1, attempts=3)

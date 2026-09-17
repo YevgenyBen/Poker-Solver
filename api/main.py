@@ -732,12 +732,11 @@ def _prewarm_common_depths() -> None:
     # M76: every (table size, depth) pair, not just stack_bb=100 — see
     # cfg.MULTIWAY_PREWARM_STACK_DEPTHS for why the depth list is
     # separate from the heads-up one and why these three depths.
-    for players in cfg.MULTIWAY_TABLE_CONFIGS:
-        for depth in cfg.MULTIWAY_PREWARM_STACK_DEPTHS:
-            _prewarm_step(
-                f"{players}-max stack_bb={depth}",
-                lambda p=players, d=depth: _get_or_solve_multiway(d, p),
-            )
+    for players, depth in cfg.multiway_prewarm_plan():
+        _prewarm_step(
+            f"{players}-max stack_bb={depth}",
+            lambda p=players, d=depth: _get_or_solve_multiway(d, p),
+        )
 
     # solve_flop itself (~2.6s) isn't worth pre-warming — /solve_flop
     # was never given this treatment, since a couple seconds is a fine

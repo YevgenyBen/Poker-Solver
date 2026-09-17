@@ -417,7 +417,7 @@ MAX_CACHE_BYTES_PER_CACHE = 160 * 1024 * 1024
 _multiway_cache = _SolveCache(
     # A3: the count ceiling covers the startup prewarm (9) plus the
     # background warm list; `max_bytes` below is the real bound.
-    "multiway", maxsize=15 + 3 + 102,
+    "multiway", maxsize=17 + 3 + 102,
     # M216. Its own budget, because a SINGLE 9-max entry (256.56 MB)
     # exceeds the 160 MB every other cache gets, and a cache that cannot
     # hold one entry is not a cache. Sized at the prewarmed working set —
@@ -435,7 +435,10 @@ _multiway_cache = _SolveCache(
     # A9 (M268) raised it to 2.5 GB: 4- and 5-handed tables add 81 MB to
     # the prewarm (7.66 and 19.17 MB an entry at 100bb) and 430 MB to the
     # background list (16 buckets each), ~2.29 GB in all.
-    max_bytes=2_560 * 1024 * 1024)
+    #
+    # A9 (M270) raised it to 2.75 GB for the 7- and 8-handed 100bb
+    # prewarm (58 + 194 MB).
+    max_bytes=2_816 * 1024 * 1024)
 
 # The worst measured entry in `_multiway_cache`, in MB (9-max at 100bb,
 # after pruning). The ceiling above is derived from it, and
