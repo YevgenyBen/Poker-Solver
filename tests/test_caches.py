@@ -313,7 +313,7 @@ from api.caches import entry_bytes as _deep_size            # noqa: E402
 # entry larger than every other cache's whole budget - against a solve
 # costing 35s at 3-max and 525s at 9-max. It is sized at the prewarmed
 # working set and enforced by eviction (M216), not waived.
-_DECLARED_BUDGETS_MB = {"multiway": 1_024}
+_DECLARED_BUDGETS_MB = {"multiway": 2_048}
 
 
 def _allowance(name):
@@ -502,8 +502,12 @@ def test_the_multiway_preflop_ceiling_is_derived_from_its_worst_entry():
     from api import caches as caches_module
     from api import config as api_config
 
-    budget = (caches_module._multiway_cache.maxsize
-              * caches_module.MULTIWAY_PREFLOP_WORST_MB)
+    # A3: the count ceiling now covers many small background-warmed
+    # entries, so `maxsize x worst` no longer bounds anything real. The
+    # enforced byte budget does, and it must fit the declared figure AND
+    # hold at least one worst-case entry.
+    budget = caches_module._multiway_cache.max_bytes / (1024 * 1024)
+    assert budget >= caches_module.MULTIWAY_PREFLOP_WORST_MB
     assert budget <= caches_module.MULTIWAY_PREFLOP_DECLARED_BUDGET_MB, (
         f"_multiway_cache holds {caches_module._multiway_cache.maxsize} entries "
         f"of up to {caches_module.MULTIWAY_PREFLOP_WORST_MB} MB = {budget:.0f} MB, "
@@ -513,7 +517,8 @@ def test_the_multiway_preflop_ceiling_is_derived_from_its_worst_entry():
         f"that matters and no sweep can afford to build it."
     )
 
-    designed = len(api_config.MULTIWAY_PREWARM_STACK_DEPTHS) * 3
+    designed = (len(api_config.MULTIWAY_PREWARM_STACK_DEPTHS) * 3
+                + len(api_config.MULTIWAY_BACKGROUND_WARM))
     assert caches_module._multiway_cache.maxsize >= designed, (
         f"ceiling {caches_module._multiway_cache.maxsize} is below the "
         f"{designed} entries the prewarm creates, so warmed solves would be "
