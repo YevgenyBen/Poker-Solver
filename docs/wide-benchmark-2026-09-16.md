@@ -441,3 +441,169 @@ M223/M232 already showed configuration cannot reach it.
 **Shipped.** `TURN_SHOVE_NOTE` (`turn-shove`) says so, quotes the floor
 and names calling as the alternative. Four tests pin it: every gate
 condition is removed once, and the copy is pinned to its constants.
+
+---
+
+## Can a live player use this today?
+
+Built only from the measurements above. Nothing new was solved for this
+section except one extra cut of the external rows: **how often our
+recommended action matches the reference's**, collapsed to fold /
+check-call / bet-raise.
+
+### The short answer
+
+- **Heads-up, turn or river:** yes, as a strong guide.
+  - It picks the same kind of action as an independent solver on
+    **79–88%** of decisions, and **86–97%** where that solver is clear
+    about it.
+  - The per-decision price of following it is about **0.03–0.18 bb**.
+- **Heads-up flop:** usable for WHETHER to bet, less so for how much.
+  - **Whether to bet:** it agrees with the reference 88% of the time at
+    the opening decision.
+  - **How much:** it usually picks a different size, and the cost of that
+    is unmeasured.
+- **Multiway (3+ players past the flop):** not something to lean on.
+  - About one decision in four there carries a "not reproducible"
+    warning.
+  - No outside reference exists to say how accurate it is.
+- **Speed is not the constraint.** Every one of 2,293 decisions came back
+  inside 5 seconds.
+
+### Accuracy — how good is the read?
+
+**Agreement with the independent solver**, reached rows only, heads-up
+3-bet pots at 100 bb (the river also in single-raised pots):
+
+| decision | rows | same kind of action | when the reference is clear (≥ 80%) |
+|---|---|---|---|
+| river, first to act | 43 | **88%** | **91%** (32 of 35) |
+| river, facing a bet | 95 | **85%** | **97%** (64 of 66) |
+| turn, first to act | 72 | **81%** | **97%** (37 of 38) |
+| turn, facing a bet | 147 | **79%** | **86%** (95 of 110) |
+| flop, first to act | 8 | 88% | 88% (7 of 8) |
+| flop, facing a bet | 32 | **72%** | **74%** (23 of 31) |
+
+**Read it this way:**
+
+- **Where the right play is clear, the engine usually names it:** 86–97%
+  on the turn and river.
+- **Most remaining disagreement is at close decisions,** where either
+  action is worth about the same. That is why the chips below are small.
+- **The flop facing a bet is the weak spot** in this table: roughly one
+  clear decision in four disagrees, and it is not priced.
+
+**What following the advice costs.** This is the most a decision can
+lose against an opponent playing the reference's strategy. It is an
+upper bound, not an expected loss.
+
+| decision | mean | median | worst tenth starts at | pot |
+|---|---|---|---|---|
+| river, first to act | **0.03 bb** | 0.01 | 0.07 | 5–15 bb |
+| river, facing a bet | **0.10 bb** | 0.02 | 0.28 | 5–15 bb |
+| turn, first to act | **0.11 bb** | 0.09 | 0.20 | 15 bb |
+| turn, facing a bet | **0.18 bb** | 0.02 | 0.51 | 15 bb |
+| turn, **shoving** facing a bet | **2.4 bb** (a floor) | 2.3 | — | 15 bb |
+
+**The shape matters more than the mean.**
+
+- **Most decisions cost almost nothing:** medians are 0.01–0.09 bb.
+- **The cost sits in a tail you can recognise,** and the response flags
+  most of it:
+  - the turn shove facing a bet (`turn-shove`, about 2.4 bb each time,
+    3 of 55 heads-up turn facing-a-bet decisions);
+  - close river decisions facing a bet (`river-under-fold`, 1.55% of pot
+    against 0.65%).
+
+  A player who treats those two warnings as "slow down and consider the
+  alternative the note names" avoids the most expensive advice measured
+  here.
+
+**In win-rate terms.** This is a rough bound, stated as one.
+
+- **The rough sum:** on the turn and river in a 15 bb pot, following the
+  advice costs up to about 0.1 bb per decision. At M183's ~1.4 postflop
+  decisions a hand, that is on the order of **10–15 bb/100 at most** if
+  every hand were a 3-bet pot, and about a third of that in single-raised
+  pots, where the pot is a third the size.
+- **For scale:** a solid online winning rate is roughly 5–10 bb/100, so
+  the upper bound is the same order as the edge a player is trying to
+  keep.
+- **Why the true figure is lower:**
+  - the bound is regret, so it overstates;
+  - most of it lives in the flagged tail.
+- **Why it could be higher:** the flop is not in it.
+- **Not measured at all:** real opponents. Every number here is against
+  a near-equilibrium opponent. Against a weaker one, a close-to-GTO line
+  wins more, and a mistake at a close decision matters less.
+
+**Where the read is weakest, in order:**
+
+1. **Multiway postflop.**
+   - **Disclosure:** 23% of all decisions carry
+     `multiway_postflop_irreproducible`. A second solve of the same spot
+     changes the top action 41–75% of the time (M245).
+   - **Reference:** none. Treat it as a rough lean, not a read.
+2. **The turn shove facing a bet.** Flagged; call instead.
+3. **The flop facing a bet.** 74% agreement where the answer is clear,
+   and no price.
+4. **Preflop in a multiway pot that folds to two, with trash facing a
+   4-bet** (M251). Flagged; it fires on 0.6–1.2% of decisions.
+
+**Where it has NOT been checked from outside at all:**
+
+- stacks other than 100 bb;
+- single-raised turns and flops;
+- 4-bet pots;
+- any multiway spot.
+
+### Speed — does it answer in time?
+
+Measured in-process on this machine. There is no network and no
+concurrent users, and the machine drifted 1.2–2.5× during the run.
+
+| decision | median | 90th percentile | worst |
+|---|---|---|---|
+| preflop | **0.00 s** (cached) | 1.6–1.8 s | 4.9 s |
+| flop, first to act | 1.6–2.0 s | 2.4–2.5 s | 4.5 s |
+| flop, facing a bet | 1.5–1.7 s | 2.4–2.5 s | 2.8 s |
+| turn, first to act | 1.1–1.3 s | 1.5 s | 3.2 s |
+| river, first to act | 0.7–1.1 s | 3.1–3.4 s | 4.2 s |
+| turn / river, facing a bet | 0.02 s* | 0.04–0.29 s | 0.9 s |
+| **every decision** | **0.42–0.46 s** | **2.2–2.3 s** | **4.86 s** |
+
+\* **Facing-a-bet times on the turn and river are mostly cache hits.**
+In the benchmark those requests came right after the same street's
+opening request, which pays for the solve. A player whose opponent acted
+first has not made that request, so expect the opening decision's
+**~1–3 s** instead.
+
+**What that means at a table:**
+
+- **Everything returns inside 5 seconds.** 0 of 2,293 decisions went
+  over, 13–16% took more than 2 s, and 3.4–3.6% took more than 3 s.
+- **Online:** a typical action clock is ~15 s before a time bank. A
+  worst case under 5 s leaves room to read the answer and its notes.
+- **Live:** there is no hard clock, and a 1–3 s pause is invisible.
+- **The real time cost is the player's input,** not the solver. The
+  action history has to be entered for every street, and on a multiway
+  hand that is most of the time spent.
+- **Not measured:**
+  - many players sharing one server;
+  - a cold server that has not warmed its multiway depths. The first
+    multiway preflop at a new depth can take 30–60 s (M252).
+
+### Verdict
+
+| use | ready? |
+|---|---|
+| heads-up turn and river decisions | **yes**, reading the warnings it attaches |
+| heads-up flop: bet or check, call or fold | **mostly**; the size advice is unpriced |
+| heads-up flop facing a bet | **with caution**; 1 clear decision in 4 disagrees |
+| multiway postflop | **no** — a lean, not a read |
+| multiway preflop, weak hands facing heavy action | **no** — flagged |
+| speed, anywhere | **yes** — under 5 s on every decision measured |
+
+**The single most useful habit:** when a response carries `turn-shove`
+or `river-under-fold`, take the alternative the note names seriously.
+Those two warnings cover the most expensive advice this benchmark found.
