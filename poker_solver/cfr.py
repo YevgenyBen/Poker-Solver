@@ -224,7 +224,8 @@ class InfoSetTable:
             strategy_sum=np.zeros((num_hands, num_actions)),
         )
 
-    def current_strategy(self, optimism: float = 0.0, smoothing: float = 0.0) -> np.ndarray:
+    def current_strategy(self, optimism: float = 0.0, smoothing: float = 0.0,
+                         prior=None) -> np.ndarray:
         """Regret-matching+ strategy: shape (num_hands, num_actions).
 
         Two optional modifications, **both off by default and both
@@ -269,6 +270,11 @@ class InfoSetTable:
         At 0.0 each is skipped entirely, and the arrays they read
         (`last_regret`, `last_strategy`) are not even stored — see the
         record sites in `_mccfr_recurse` for why that matters.
+
+        `prior` (M265) replaces the uniform fallback used where no action
+        has positive regret yet. `average_strategy` keeps its uniform
+        fallback on purpose: "this row is exactly the prior" is how the
+        API detects an answer that was never computed (F43/F47).
         """
         regrets = self.regret_sum
         if optimism and self.last_regret is not None:
@@ -276,10 +282,14 @@ class InfoSetTable:
         positive = np.maximum(regrets, 0.0)
         totals = positive.sum(axis=1, keepdims=True)
         num_actions = regrets.shape[1]
-        uniform = np.full_like(regrets, 1.0 / num_actions)
+        if prior is None:
+            fallback = np.full_like(regrets, 1.0 / num_actions)
+        else:
+            fallback = np.broadcast_to(np.asarray(prior, dtype=regrets.dtype),
+                                       regrets.shape)
         with np.errstate(invalid="ignore", divide="ignore"):
             normalized = positive / totals
-        strategy = np.where(totals > 0, normalized, uniform)
+        strategy = np.where(totals > 0, normalized, fallback)
         if smoothing and self.last_strategy is not None:
             strategy = smoothing * self.last_strategy + (1.0 - smoothing) * strategy
         return strategy
@@ -1177,7 +1187,8 @@ def _mccfr_recurse(
 
     actions = node.legal_actions
     table = node_data.setdefault(id(node), InfoSetTable.zeros(num_hands, len(actions)))
-    strategy = table.current_strategy(optimism, smoothing)
+    strategy = table.current_strategy(optimism, smoothing,
+                                      prior=_starting_prior(actions))
     if smoothing:
         # What this node actually played, for the next visit's blend.
         # Conditional for the same memory reason as `last_regret` below.
@@ -1409,6 +1420,46 @@ def _sample_opponent_hands(
             return candidate_hands
         # opponents mutually incompatible — resample the whole draw
     return candidate_hands
+
+
+#: M265. What regret matching plays at a row with no positive regret yet.
+#: "uniform" is the textbook choice and was the only one until M264
+#: showed it biases multiway advice: with check, three bet sizes and
+#: all-in, a uniform row is 80% aggressive, and an under-converged row
+#: keeps much of that. "kind_balanced" gives fold, passive and
+#: aggressive equal weight and splits each group evenly among its
+#: actions, so adding a bet size no longer adds betting mass. Module
+#: level so a study can switch it; see `_starting_prior`.
+ACTION_PRIOR = "uniform"
+
+
+def kind_balanced_prior(actions) -> np.ndarray:
+    """Equal weight per action KIND (fold / passive / aggressive), split
+    evenly within each kind. Sums to 1 over `actions`."""
+    groups = []
+    for action in actions:
+        kind = getattr(action, "kind", action)
+        groups.append("fold" if kind == "fold" else
+                      "passive" if kind == "call_or_check" else "aggressive")
+    present = sorted(set(groups))
+    sizes = {g: groups.count(g) for g in present}
+    return np.array([1.0 / len(present) / sizes[g] for g in groups])
+
+
+_PRIOR_CACHE: dict = {}
+
+
+def _starting_prior(actions):
+    """The fallback row for `actions` under ACTION_PRIOR, or None for
+    uniform (which `current_strategy` builds itself)."""
+    if ACTION_PRIOR == "uniform":
+        return None
+    if ACTION_PRIOR != "kind_balanced":
+        raise ValueError(f"unknown ACTION_PRIOR {ACTION_PRIOR!r}")
+    key = tuple(getattr(a, "kind", a) for a in actions)
+    if key not in _PRIOR_CACHE:
+        _PRIOR_CACHE[key] = kind_balanced_prior(actions)
+    return _PRIOR_CACHE[key]
 
 
 def mccfr_solve(
