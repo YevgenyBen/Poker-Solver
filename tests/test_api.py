@@ -8942,3 +8942,37 @@ def test_a_missing_hero_row_is_never_served_at_high_confidence():
         {"street": "flop", "positions": ["SB", "BB"]}, 2,
         {"cards": "KdJd", "strategy": {"call_or_check": 0.6, "raise:1.65": 0.4}}, "flop")
     assert level == "high"
+
+
+def test_advisory_note_details_carry_each_note_with_its_own_text(client):
+    """A2. Same ids, same order, each with the backend's own text, so a
+    client can show the warnings that matter on their own."""
+    body = {"stack_bb": 100.0, "players": 2, "hero_cards": "9c9d",
+            "board": "Kd7c2h", "preflop_action_path": ["raise", "call_or_check"],
+            "flop_action_path": ["raise:1.65"]}
+    payload = client.post("/advise", json=body).json()
+    details = payload["advisory_note_details"]
+    assert [d["id"] for d in details] == payload["advisory_notes"]
+    assert details, "a postflop decision facing a bet carries notes"
+    joined = payload["aggression_confidence_reason"]
+    for d in details:
+        assert d["text"] and d["text"] in joined
+    pre = client.post("/advise", json={"stack_bb": 100.0, "players": 2,
+                                        "hero_cards": "9c9d",
+                                        "preflop_action_path": []}).json()
+    assert pre["advisory_note_details"] == []
+
+
+def test_every_note_the_front_end_prioritises_exists_in_the_api():
+    """A2. The front end picks warnings out by id; a renamed id here would
+    silently drop the badge a player relies on."""
+    import pathlib
+    import re
+    source = (pathlib.Path(__file__).resolve().parent.parent / "frontend" / "src"
+              / "advisoryNotes.ts").read_text(encoding="utf-8")
+    block = source[source.index("PRIORITY_NOTES"):source.index("};")]
+    ids = re.findall(r"'([a-z-]+)':", block)
+    assert ids, "could not read the front end's priority ids"
+    backend = pathlib.Path(api_main.__file__).read_text(encoding="utf-8")
+    for note_id in ids:
+        assert '("%s",' % note_id in backend, note_id

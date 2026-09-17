@@ -117,6 +117,13 @@ class RangeConfidence(BaseModel):
     fully_trained: bool
 
 
+class AdvisoryNote(BaseModel):
+    """One caveat that applied to a decision: a stable id and its text."""
+
+    id: str
+    text: str
+
+
 class AdviseResponse(BaseModel):
     """M51's unified response. `trained` is None (not {}) specifically
     when the answer came from the canonical library (`source ==
@@ -244,6 +251,12 @@ class AdviseResponse(BaseModel):
     #: is re-measured and rewritten routinely, which is why they are
     #: separate.
     advisory_notes: list[str] = []
+    #: A2 (2026-09-17): the same notes WITH their text, in the same order,
+    #: so a client can show each one on its own - the most useful
+    #: warnings used to be the last sentence of a ~3,200-character
+    #: paragraph. The text is the backend's own constant, so a client
+    #: never re-types copy that is re-measured here.
+    advisory_note_details: list[AdvisoryNote] = []
 
 
 class SolveResponse(BaseModel):
