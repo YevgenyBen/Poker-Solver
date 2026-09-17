@@ -9063,3 +9063,19 @@ def test_warm_status_reports_both_warm_phases(client, monkeypatch):
     assert body["background_done"] == 2 and body["background_solved"] == 1
     assert body["background_planned"] == len(api_config.MULTIWAY_BACKGROUND_WARM)
     assert body["background_last"] == "6-max stack_bb=110.0"
+
+
+def test_the_multiway_postflop_budget_is_the_one_an_outside_reference_chose():
+    """M264. 4x the old budget beat the old one against 579 real decisions
+    by a strong six-handed agent (+0.107 at 7.86 sigma); cap and ensemble
+    did nothing. Pinned so a latency tidy-up cannot quietly undo it, and
+    so the chained caps stay where their own costs put them."""
+    from api import solving as solving_module
+    caps = solving_module._ADVISE_ITERATION_CAPS
+    assert caps[("flop", True)] == (4000, 4000)
+    assert api_config.MULTIWAY_TURN_SOLVE_STANDALONE
+    assert caps[("turn", True)] == (4000, 4000)
+    assert api_config.MULTIWAY_RIVER_SOLVE_STANDALONE
+    assert caps[("river", True)] == (200, 200)
+    assert api_config.MAX_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS == 1000
+    assert api_config.MAX_FLOP_TO_RIVER_MULTIWAY_ITERATIONS == 500

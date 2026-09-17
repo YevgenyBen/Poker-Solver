@@ -15685,3 +15685,43 @@ archive:
 - **Not warmed:**
   - 9-max (257 MB an entry);
   - stacks over 200bb.
+
+## M264 - multiway levers scored against Pluribus: iterations win, the menu names the mechanism
+
+`docs/multiway-levers-2026-09-17.md` (rules fixed before the run).
+
+**Method.** The same 579 multiway decisions, one change per arm, one
+process each. The score is our probability on the action Pluribus took,
+paired against the baseline arm.
+
+| arm | vs baseline | bets when checked to | p90 |
+|---|---|---|---|
+| iters x4 | **+0.107, 7.86 sigma** | 0.589 -> **0.470** | 3.96s |
+| range cap 26 | +0.007, 0.54 sigma | — | — |
+| ensemble x4 | +0.002, 0.23 sigma | — | — |
+| one bet size | +0.169, 10.14 sigma | — | — |
+
+- **Adopted: iters x4.** It still scores below the card-blind prior
+  (-0.073, -3.86 sigma), so the disclosure stays.
+- **Range cap 26 and ensemble x4: nothing.**
+- **One bet size (diagnostic): reaches the prior.** Three sized bets put
+  80% of the uniform starting mass on betting, and under-converged rows
+  keep it. The fix is an action-count-neutral starting strategy (A4b),
+  not a smaller menu.
+
+**Shipped.**
+
+- **Budgets:**
+  - multiway flop 1000 -> 4000;
+  - standalone multiway turn 1000 -> 4000, with its own cap;
+  - standalone multiway river 50 -> 200, with its own constants.
+- **Chained caps are untouched.**
+- **`MULTIWAY_BET_NOTE` is re-measured** on the adopted arm: 47% against
+  19%; weak half 35% against 14%.
+- **A test pins the budgets.**
+
+**Cost.** Multiway postflop p50 0.98 -> 2.87s; 22 of 579 over 5s (max
+7.4s).
+
+**Stale and queued.** M245/M254's reproducibility figures were measured at
+the old budget.

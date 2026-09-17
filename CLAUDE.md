@@ -601,6 +601,16 @@ The overbet row and the turn stay excluded
   - **Rule:** **benchmark stacks must be drawn from real play, not from
     the prewarm list.**
 
+- **MULTIWAY POSTFLOP RUNS AT 4x THE ITERATIONS, CHOSEN AGAINST PLURIBUS (M264).**
+  - **The result:** +0.107 at 7.86 sigma over the old budget. Range cap
+    26 and 4-run ensembles did nothing, measured against the outside
+    reference this time.
+  - **The mechanism:** a ONE-size menu reaches the card-blind prior.
+    Three bet sizes give the uniform starting strategy 80% aggressive
+    mass, and under-converged rows keep it.
+  - **Rule:** the next multiway fix is an action-count-neutral starting
+    strategy (A4b), **not a smaller menu and not more width**.
+
 ### The checks REPLICATE on fresh spots (M236) — n=42 per street
 
 M222/M224's figures rested on ~21 spots each and carry a user-facing
@@ -1235,7 +1245,8 @@ requests now reject unknown fields by name rather than ignoring them.
   is on tree SHAPE, not precision — the cells run different iteration
   budgets on purpose, which is safe because iterations do not change
   which actions exist.
-  **`DEFAULT_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = 1000`** (was 200).
+  **`DEFAULT_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS` 1000 at the time** (was 200;
+  M264 took it to 4000 on an outside reference).
   M162 refused this for want of a converged multiway reference; there
   still is none, but there is now a correctness criterion needing none —
   facing a smaller bet must fold less — validated against the heads-up
