@@ -119,7 +119,7 @@ def _hero_cache_component(hero_combo, hero_in_range=None, by_class=False):
     first out-of-range hand of a class fixed the pool, and a second combo
     of the same class hit that entry and found its own row missing:
     `/advise` returned 200 with `strategy: null`. Found by replaying
-    Pluribus hands - JcKc asked a 3-way flop, then KdJd was answered with
+    real hands - JcKc asked a 3-way flop, then KdJd was answered with
     nothing. (Nor are two same-class combos strategically equal on a real
     board: a flush draw tells them apart.)
 

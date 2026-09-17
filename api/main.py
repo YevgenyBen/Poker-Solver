@@ -1757,6 +1757,35 @@ def _river_under_folds_applies(raw: dict, street: str | None,
     return faced / pot_before_the_bet <= cfg.RIVER_UNDER_FOLD_MAX_BET_FRACTION
 
 
+def _multiway_bet_applies(raw: dict, street: str | None,
+                          hero: dict | None = None) -> bool:
+    """Is this a multiway decision where our row leans to betting (M262)?
+
+    6-max only, 3+ live postflop, deep enough, and hero's own row at least
+    `MULTIWAY_BET_MIN_AGGRESSIVE` on bets and raises - read off the
+    response (M144). SPR is behind over the pot at THIS node, the same
+    quantity the measurement recorded.
+    """
+    if not _is_multiway_postflop(raw, street):
+        return False
+    if raw.get("players") not in cfg.MULTIWAY_BET_TABLE_SIZES:
+        return False
+    source = hero if isinstance(hero, dict) else (raw.get("hero") or {})
+    row = source.get("strategy") if isinstance(source, dict) else None
+    if not row:
+        return False
+    total = sum(float(w) for w in row.values()) or 1.0
+    aggressive = sum(float(w) for k, w in row.items()
+                     if str(k).split(":")[0] in ("raise", "all_in"))
+    if aggressive / total < cfg.MULTIWAY_BET_MIN_AGGRESSIVE:
+        return False
+    pot = raw.get("pot")
+    behind = raw.get("effective_stack_bb")
+    if not isinstance(pot, (int, float)) or not isinstance(behind, (int, float)) or pot <= 0:
+        return False
+    return behind / pot >= cfg.MULTIWAY_BET_MIN_SPR
+
+
 def _turn_shove_applies(raw: dict, street: str | None,
                         hero: dict | None = None) -> bool:
     """Is this the turn decision where M260 priced our shove?
@@ -1942,6 +1971,9 @@ def _advisory_notes(raw: dict, hero: dict | None = None) -> list:
     # which is 20x the flop's and has a direction.
     if _turn_independent_gap_applies(raw, street):
         notes.append(("turn-independent", cfg.TURN_INDEPENDENT_NOTE))
+    # M262: multiway betting, checked against a strong six-handed player.
+    if _multiway_bet_applies(raw, street, hero):
+        notes.append(("multiway-bet", cfg.MULTIWAY_BET_NOTE))
     # M185: where the measured cost actually is. Appended LAST because it
     # is the part a player can act on immediately — the notes before it
     # describe what is known about the street, this describes what is

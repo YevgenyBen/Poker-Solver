@@ -2737,6 +2737,61 @@ TURN_SHOVE_NOTE = (
     "as the serious alternative, and a small raise where one is offered."
 )
 
+# M262. MULTIWAY ADVICE, CHECKED FROM OUTSIDE FOR THE FIRST TIME - AND IT
+# BETS FAR TOO OFTEN.
+#
+# There is no converged multiway solver (F46/M163), so 2,279 real
+# decisions by a published six-handed agent that beat professionals were
+# replayed through /advise, at its own depth (6-max, 100bb), with its real
+# cards and line (M262 in docs/milestones.md). Score: our
+# probability on the action it actually took, against a CARD-BLIND prior
+# (how often it takes each action in that kind of spot, leave-one-out).
+#      heads-up postflop (control)  +0.057 at  3.58 sigma - the metric sees card-reading
+#      preflop, 3+ live             +0.060 at  4.66 sigma
+#      **multiway postflop, n=579   -0.184 at -9.70 sigma** - worse than the prior,
+#                                   and below a uniform guess (0.446 vs 0.461)
+# Where it lives:
+#      checked to / first in, 444   it bets 19%; this engine 59%
+#        weak half of hands          14% vs 48%;  middling 14% vs 56%
+#      facing a bet, 135            it folds 59% / raises 11%; this engine 39% / 39%
+# The ORDER is not the problem (our bet share still rises with strength,
+# corr +0.26); the LEVEL is. The gate below fires where our row leans to
+# betting or raising, which is exactly where the disagreement is:
+#      not facing: fires 280 of 444; it bet 18.9% there; our p 0.31 vs 0.68 silent
+#      facing:     fires  46 of 135; it raised 19.6%, called 54.3%, folded 26.1%
+# M254's stable/split gate is validated from outside by the same data:
+# stable rows score +0.19 over split at 4.26 sigma.
+#
+# Gated to what was measured: a 6-max table, 3+ live postflop, node SPR
+# >= MULTIWAY_BET_MIN_SPR (every measured decision sat at 1.23 or more,
+# median 13.5). The reference is a strong agent, not an equilibrium, and
+# one sampled action per spot carries no chip price - so the note gives
+# frequencies and says what they are, and names no price.
+MULTIWAY_BET_MIN_AGGRESSIVE = 0.5
+MULTIWAY_BET_MIN_SPR = 1.5
+MULTIWAY_BET_TABLE_SIZES = (6,)
+MULTIWAY_BET_DECISIONS = 579
+MULTIWAY_BET_WE_BET = 0.59
+MULTIWAY_BET_REFERENCE_BETS = 0.19
+MULTIWAY_BET_WEAK_WE = 0.48
+MULTIWAY_BET_WEAK_REFERENCE = 0.14
+MULTIWAY_BET_FACING_REFERENCE_RAISES = 0.20
+MULTIWAY_BET_FACING_REFERENCE_CALLS = 0.54
+MULTIWAY_BET_FACING_REFERENCE_FOLDS = 0.26
+MULTIWAY_BET_NOTE = (
+    " A warning specific to this decision: this engine is recommending a BET or a RAISE in a "
+    "pot three or more players saw, and that is where its multiway advice measured worst. "
+    "Checked against 579 real six-handed decisions by a published poker AI that beat "
+    "professional players, played at this same 100-big-blind depth, this engine bets about "
+    "three times as often when checked to: 59% against 19%, and with the weaker half of hands "
+    "48% against 14%. Facing a bet where this engine leans toward raising, that player raised "
+    "only 20% of the time, called 54% and folded 26%. Scored by how much weight the advice put "
+    "on what that player actually did, this engine's multiway advice did worse than simply "
+    "knowing how often such spots are checked. So in a multiway pot, treat a recommendation "
+    "to bet or raise - especially without a strong hand - as a candidate to check or call "
+    "instead. These are frequencies from one strong player, not a price in chips."
+)
+
 # M221. The first finding this project has that came from OUTSIDE.
 #
 # Every accuracy figure before this measured distance from a fuller solve
