@@ -30,9 +30,9 @@ from bench.advise_checks import response_defects
 
 # The preflop model's raise cap; the last raise is forced all in.
 PREFLOP_MAX_RAISES = 4
-SUPPORTED_TABLE_SIZES = (2, 3, 6, 9)
+SUPPORTED_TABLE_SIZES = (2, 3, 4, 5, 6, 9)
 RANKS, SUITS = "AKQJT98765432", "shdc"
-DEFAULT_WHERE = ("clean = 1 AND n_players IN (2,3,6,9) "
+DEFAULT_WHERE = ("clean = 1 AND n_players IN (2,3,4,5,6,9) "
                  "AND eff_stack_bb <= 200 AND eff_stack_bb >= 2")
 
 
@@ -178,6 +178,9 @@ def main(argv=None):                                      # pragma: no cover
     parser.add_argument("--sample", type=int, default=1200)
     parser.add_argument("--seed", type=int, default=5)
     parser.add_argument("--out", required=True)
+    parser.add_argument("--where", default=DEFAULT_WHERE)
+    parser.add_argument("--tables", default="3,4,5,6,9",
+                        help="multiway table sizes to prewarm at 100/50/20bb")
     args = parser.parse_args(argv)
 
     from fastapi.testclient import TestClient
@@ -185,7 +188,8 @@ def main(argv=None):                                      # pragma: no cover
     from bench.server_warmup import warm_multiway
 
     client = TestClient(app)
-    warm_multiway(depths=(100.0, 50.0, 20.0), table_sizes=(3, 6, 9))
+    warm_multiway(depths=(100.0, 50.0, 20.0),
+                  table_sizes=tuple(int(t) for t in args.tables.split(",")))
 
     def post(body):
         r = client.post("/advise", json=body)
@@ -198,7 +202,8 @@ def main(argv=None):                                      # pragma: no cover
     db = hand_db.connect()
     rng = random.Random(args.seed)
     with open(args.out, "w") as fh:
-        for hand in sample_hands(db, args.sample, args.seed, accept=not_cold_nine_max):
+        for hand in sample_hands(db, args.sample, args.seed, where=args.where,
+                                 accept=not_cold_nine_max):
             fh.write(json.dumps(replay_one(hand, rng, post)) + "\n")
             fh.flush()
 

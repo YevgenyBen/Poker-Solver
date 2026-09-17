@@ -628,6 +628,17 @@ The overbet row and the turn stay excluded
   - **Rule:** **split latency by live count**. A pooled p90 over a sample
     that was 93% three-handed hid it.
 
+- **4- AND 5-HANDED TABLES ARE SUPPORTED (M268/A9).**
+  - **Why:** they are 36% of clean real online hands, and none could be
+    asked about.
+  - **Budget:** 3,000 iterations each, measured over three seeds. At
+    12,000, AA's open-jam got worse, which is 6-max's M72 direction.
+  - **Warming:** the startup prewarm and background warmer cover both
+    sizes; `_multiway_cache` is budgeted at 2.5 GB.
+  - **Validation:** 300 real 4-/5-handed decisions replayed, 0 defects,
+    warm max 3.8s.
+  - **Still unsupported:** 7-, 8- and 10-handed tables.
+
 ### The checks REPLICATE on fresh spots (M236) — n=42 per street
 
 M222/M224's figures rested on ~21 spots each and carry a user-facing
@@ -799,7 +810,7 @@ engine is the product; the frontend is a tool for driving it.
 Given **your hole cards, the board, the table size, and the action so
 far**, it returns GTO advice for the decision you actually face — at
 every street (preflop through river) and every supported table size
-(heads-up, 3/6/9-max). One endpoint does this: **`POST /advise`**.
+(heads-up, 3/4/5/6/9-max). One endpoint does this: **`POST /advise`**.
 
 **Position is DERIVED, not supplied** (corrected M102). This line used to
 say "your position" and there is no such field: the acting seat follows

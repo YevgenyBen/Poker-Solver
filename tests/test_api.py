@@ -281,6 +281,8 @@ def test_heads_up_response_reports_position_and_positions(client):
     "players,expected_positions",
     [
         (3, ["BTN", "SB", "BB"]),
+        (4, ["CO", "BTN", "SB", "BB"]),
+        (5, ["MP", "CO", "BTN", "SB", "BB"]),
         (6, ["UTG", "MP", "CO", "BTN", "SB", "BB"]),
         (9, ["UTG", "UTG1", "MP1", "MP2", "MP3", "CO", "BTN", "SB", "BB"]),
     ],
@@ -295,7 +297,7 @@ def test_multiway_solve_returns_200_with_well_formed_response(client, players, e
     assert len(body["opening_range"]) == len(FAST_MULTIWAY_HANDS)
 
 
-@pytest.mark.parametrize("players", [3, 6, 9])
+@pytest.mark.parametrize("players", [3, 4, 5, 6, 9])
 def test_multiway_solve_frequencies_sum_to_one_per_hand(client, players):
     body = client.get(f"/solve/100?players={players}").json()
     for freqs in body["opening_range"].values():
@@ -354,7 +356,7 @@ def test_multiway_solve_is_cached_separately_per_table_size(client):
 
 
 def test_solve_rejects_unsupported_player_count(client):
-    response = client.get("/solve/100?players=4")
+    response = client.get("/solve/100?players=7")
     assert response.status_code == 422
 
 
@@ -2271,7 +2273,7 @@ def test_preflop_walk_players_defaults_to_two_and_reports_the_heads_up_positions
 
 
 def test_preflop_walk_rejects_an_unsupported_players_value(client):
-    response = client.post("/preflop_walk", json=_walk_body([], players=5))
+    response = client.post("/preflop_walk", json=_walk_body([], players=7))
     assert response.status_code == 422
 
 
@@ -9009,19 +9011,44 @@ def test_every_note_the_front_end_prioritises_exists_in_the_api():
         assert '("%s",' % note_id in backend, note_id
 
 
+@pytest.mark.parametrize("players, preflop", [
+    (4, ["call_or_check", "call_or_check", "call_or_check", "call_or_check"]),
+    (5, ["fold", "call_or_check", "call_or_check", "call_or_check", "call_or_check"]),
+])
+def test_a_four_or_five_handed_hand_gets_advice_on_every_street(client, players, preflop):
+    """A9 (M268). 36% of clean real online hands are 4- or 5-handed and
+    could not be asked about at all."""
+    close = ["call_or_check"] * 4
+    bodies = [
+        {"preflop_action_path": []},
+        {"preflop_action_path": preflop, "board": "Kd7c2h"},
+        {"preflop_action_path": preflop, "board": "Kd7c2h", "flop_action_path": close,
+         "turn_card": "5s"},
+    ]
+    for extra in bodies:
+        response = client.post("/advise", json=_advise_body(
+            hero_cards="AsAh", players=players, stack_bb=100.0, **extra))
+        assert response.status_code == 200, response.json()
+        body = response.json()
+        assert body["hero"]["strategy"], body
+        assert body["players"] == players
+
+
 def test_the_background_warm_list_is_well_formed():
     """A3. Buckets only, no repeats, nothing the startup prewarm covers,
     no 9-max (257 MB an entry), and the measured 6-max order first."""
     warm = api_config.MULTIWAY_BACKGROUND_WARM
     assert len(set(warm)) == len(warm)
     for players, depth in warm:
-        assert players in (3, 6)
+        assert players in (3, 4, 5, 6)
         assert depth % api_config.MULTIWAY_STACK_BUCKET_BB == 0 and 5 <= depth <= 200
         assert depth not in api_config.MULTIWAY_PREWARM_STACK_DEPTHS
     assert warm[:5] == ((6, 105.0), (6, 110.0), (6, 115.0), (6, 120.0), (6, 195.0))
     six = [d for p, d in warm if p == 6]
     three = [d for p, d in warm if p == 3]
     assert len(six) == 22 and len(three) == 37
+    assert len([d for p, d in warm if p == 5]) == 16
+    assert len([d for p, d in warm if p == 4]) == 16
 
 
 def test_the_background_warmer_waits_for_idle_and_skips_warm_buckets(monkeypatch):

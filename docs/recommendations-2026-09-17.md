@@ -25,5 +25,5 @@ queued.
 
 | # | recommendation | from | why | status |
 |---|---|---|---|---|
-| **A9** | **Support 4-, 5-, 7- and 8-handed tables** (and 10 where a site deals it) | A5 scoping, hand store | Only 2/3/6/9 players are representable: **43.6% of real hands** have another player count. 5-handed alone is 19% and 4-handed 9%. With stacks over 200 bb also excluded, only **46%** of real hands can be asked about at all | OPEN |
+| **A9** | **Support 4-, 5-, 7- and 8-handed tables** (and 10 where a site deals it) | A5 scoping, hand store | Only 2/3/6/9 players are representable: **43.6% of real hands** have another player count. 5-handed alone is 19% and 4-handed 9%. With stacks over 200 bb also excluded, only **46%** of real hands can be asked about at all | **4/5 DONE** (M268) — measured budgets (3,000 each), prewarm + background warm, front end; 300 real 4-/5-handed decisions replayed, 0 defects, warm max 3.8 s. 7/8-handed (7%) and stacks over 200 bb (17.5%) still open |
 | A10 | Measure whether the x4 multiway budget pays at 4+ live players, with a sample big enough to answer (Pluribus has 38 such decisions) | M266 | Reverted on cost, not on evidence of no benefit | OPEN |
