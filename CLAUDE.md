@@ -637,7 +637,11 @@ The overbet row and the turn stay excluded
     sizes; `_multiway_cache` is budgeted at 2.5 GB.
   - **Validation:** 300 real 4-/5-handed decisions replayed, 0 defects,
     warm max 3.8s.
-  - **Still unsupported:** 7-, 8- and 10-handed tables.
+  - **7- and 8-handed followed (M270):** 3,000 and 12,000 iterations,
+    both low-confidence, warmed at 100bb only. 148 of 150 real
+    decisions answered, 0 defects. Only 10-handed is unsupported.
+  - **Stacks over 200bb were always supported.** The replay excluded
+    them. Deep MULTIWAY latency is unmeasured (A11).
 
 ### The checks REPLICATE on fresh spots (M236) — n=42 per street
 
@@ -810,7 +814,7 @@ engine is the product; the frontend is a tool for driving it.
 Given **your hole cards, the board, the table size, and the action so
 far**, it returns GTO advice for the decision you actually face — at
 every street (preflop through river) and every supported table size
-(heads-up, 3/4/5/6/9-max). One endpoint does this: **`POST /advise`**.
+(heads-up, 3- to 9-max). One endpoint does this: **`POST /advise`**.
 
 **Position is DERIVED, not supplied** (corrected M102). This line used to
 say "your position" and there is no such field: the acting seat follows

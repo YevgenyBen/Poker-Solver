@@ -15880,3 +15880,52 @@ decisions:
 **Deferred.** 7- and 8-handed tables (7% of hands) cost about what 9-max
 does, and 10-handed is 0.4%. Coverage of real hands goes from 46% to
 roughly 76% (stacks over 200bb, 17.5% of hands, are still excluded).
+
+## M270 - 7- and 8-handed tables (A9, second half)
+
+**Budgets, measured the same way as M268** (100bb, three seeds, rule
+fixed before the run):
+
+| table | iterations | AA jam (3 seeds) | T7s fold (UTG) | entry | solve |
+|---|---|---|---|---|---|
+| 7 | **3,000** | .555 / .111 / .557 | .83 / .92 / .80 | 58 MB | 97s |
+| 7 | 12,000 | .676 / .236 / .652 | .99 / .995 / .99 | 130 MB | 245s |
+| 8 | 3,000 | 1.00 / .841 / 1.00 | .53 / .26 / .51 | 68 MB | 106s |
+| 8 | **12,000** | .099 / .438 / .091 | .97 / .94 / .97 | 194 MB | 326s |
+
+- **Which way each size went:** 7-handed goes 6-max's way and 8-handed
+  goes 9-max's (M157). At 3,000, an 8-handed UTG shoves aces nearly
+  always.
+- **Both are low-confidence**, like 9-max. AA's jam moves by 0.44 and
+  0.35 across seeds, and at 7-handed it averages 0.41.
+- **Warming:** 100bb only (`MULTIWAY_PREWARM_DEPTHS_BY_TABLE`), since
+  entries cost 58 and 194 MB. The cache budget goes 2.5 GB -> 2.75 GB.
+  `multiway_prewarm_plan()` is now the one list the prewarm, the cache
+  ceiling and the tests read.
+
+**Real hands.** 150 decisions from 7- and 8-handed hands at 100bb:
+
+- **148 answered, 0 defects.** p90 2.49s, max 4.2s, none over 5s.
+- **Two could not be asked, and both are model limits, not defects.**
+  One player folded when checking was free. In the other, a short stack
+  was all in on the flop; the model has equal stacks and no side pots.
+
+**A correction to M266/M268: stacks over 200bb were never unsupported.**
+The replay filtered them out itself.
+
+- **What works:** heads-up at 300 and 500bb answers normally, in 0.4s
+  preflop and 2.5-2.9s on the flop.
+- **What is not measured:** 18,138 clean real hands sit above 200bb and
+  only 1,408 of them are heads-up. Deep multiway stacks pay a cold
+  preflop solve per 5bb bucket, and neither warmer reaches past 200bb.
+  That latency is unmeasured and is the next item.
+
+**Coverage.** Every table size from 2 to 9 is now supported. Only
+10-handed tables (0.4% of hands) are not.
+
+**Also fixed in M270: an intermittent suite failure.**
+`test_get_equity_table_concurrent_cold_start_never_produces_a_corrupt_file`
+failed once with `PermissionError` (errno 13). The lock already rules
+out two writers, so this was Windows briefly refusing a just-written
+file. `equity._retry_on_sharing_violation` now retries the load and the
+replace.
