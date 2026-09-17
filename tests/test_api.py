@@ -8863,3 +8863,25 @@ def test_the_turn_shove_note_quotes_its_own_measurement():
     assert "at least" in note, (
         "the price is a FLOOR - the reference's reply to a shove it never "
         "makes is untrained and flatters the shove (M258)")
+
+
+def test_two_combos_of_one_out_of_range_class_both_get_advice(client, monkeypatch):
+    """M262. The cache was keyed by hero CLASS while force-inclusion adds
+    hero's one COMBO, so the second combo of an out-of-range class hit the
+    first one's solve and was answered with `strategy: null` at 200.
+
+    Found replaying Pluribus: JcKc asked a 3-way flop, then KdJd was told
+    nothing. Reproduced here on the standalone heads-up turn, with its cap
+    shrunk so the class is guaranteed to be out of range.
+    """
+    monkeypatch.setattr(api_config, "TURN_STANDALONE_CLASSES_PER_SIDE", 4)
+    base = {"stack_bb": 100.0, "players": 2, "board": "Kd8c3h",
+            "preflop_action_path": ["raise", "call_or_check"],
+            "flop_action_path": ["call_or_check", "call_or_check"],
+            "turn_card": "2s"}
+    for hero in ("7c4d", "7h4s"):
+        payload = client.post("/advise", json={**base, "hero_cards": hero}).json()
+        assert payload["hero"]["in_range"] is False, "the test needs an out-of-range hero"
+        assert payload["hero"]["strategy"], (
+            f"{hero} got no advice after another 74o was asked first: "
+            f"{payload['hero']}")

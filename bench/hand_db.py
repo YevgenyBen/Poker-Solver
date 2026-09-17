@@ -126,6 +126,10 @@ def connect(path: str | pathlib.Path = DEFAULT_DB) -> sqlite3.Connection:
             db.execute("ALTER TABLE hands ADD COLUMN %s %s" % (column, kind))
     db.execute("INSERT OR IGNORE INTO meta VALUES ('schema_version', ?)",
                (str(SCHEMA_VERSION),))
+    # Commit now: Python's sqlite3 keeps the implicit transaction above
+    # open, and an open write transaction locks the store against every
+    # other process for as long as this connection lives.
+    db.commit()
     return db
 
 
