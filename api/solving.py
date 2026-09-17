@@ -607,13 +607,27 @@ def _validate_preflop_path_shape(
     expensive call. If they ever disagree the slow one still wins, which
     is the safe direction for a duplicated check to fail in.
     """
-    root = build_game_tree(_preflop_config(stack_bb, players))
+    config = _preflop_config(stack_bb, players)
+    root = build_game_tree(config)
     _actions, node = _resolve_action_path(root, action_kinds)
     if not isinstance(node, TerminalNode):
         raise ValueError(
             f"{path_field_name} does not close the preflop betting, so no board can be dealt "
             "yet. To ask about a postflop decision, the preflop action has to run to the end; "
             "to ask about a PREFLOP decision instead, send the partial path with no board."
+        )
+    # A5 (M266): a line that ends with every live player all in has no
+    # decision left on ANY street. It used to reach the postflop tree
+    # builder and come back as "stack_bb must be positive" beside a
+    # request whose stack_bb was 100. Found replaying real online hands:
+    # the preflop tree forces the fourth raise all in, so a real 5-bet
+    # pot is one of these.
+    live = [p for p in node.invested if p not in node.folded]
+    if live and min(node.invested[p] for p in live) >= stack_bb - 1e-9:
+        raise ValueError(
+            f"{path_field_name} ends with every remaining player all in, so there is no "
+            "decision left to advise on any street. (The preflop model allows at most "
+            f"{config.max_raises} raises and makes the last one all in.)"
         )
 
 

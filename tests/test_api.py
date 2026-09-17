@@ -3683,6 +3683,38 @@ def test_a_malformed_action_path_is_rejected_without_paying_for_a_solve(client):
     )
 
 
+@pytest.mark.parametrize("players, preflop, street_fields", [
+    (2, ["raise", "raise", "raise", "all_in", "call_or_check"], {"board": "Kd7c2h"}),
+    (2, ["raise", "raise", "raise", "all_in", "call_or_check"],
+     {"board": "Kd7c2h", "flop_action_path": [], "turn_card": "5h"}),
+    (6, ["fold", "fold", "raise", "fold", "fold", "raise", "raise", "all_in", "call_or_check"],
+     {"board": "Kd7c2h"}),
+])
+def test_a_preflop_line_that_ends_all_in_is_refused_by_name(client, players, preflop, street_fields):
+    """A5 (M266). Replaying real online hands found a 5-bet pot the
+    preflop model forces all in; asking about the flop came back 422
+    "stack_bb must be positive" beside a request whose stack_bb was 100.
+    The refusal is right - nobody has a decision left - and the message
+    must say so, before any solve."""
+    caches._SolveCache.clear_all()
+    body = _advise_body(preflop_action_path=preflop, hero_cards="AsAh",
+                        players=players, stack_bb=100.0, **street_fields)
+    response = client.post("/advise", json=body)
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert "all in" in detail and "no decision left" in detail
+    assert "must be positive" not in detail
+    assert len(caches._multiway_cache.entries) == 0
+
+
+def test_a_preflop_line_with_chips_behind_is_not_called_all_in(client):
+    """The other half: a called 4-bet short of the cap still has a flop."""
+    response = client.post("/advise", json=_advise_body(
+        preflop_action_path=["raise", "raise", "raise", "call_or_check"],
+        hero_cards="AsAh", board="Kd7c2h", players=2, stack_bb=100.0))
+    assert response.status_code == 200, response.json()
+
+
 def test_a_valid_multiway_request_still_reaches_the_solver(client):
     """The other half: making rejection cheap must not make acceptance
     broken. A path that DOES close the round still routes through and
@@ -9079,3 +9111,37 @@ def test_the_multiway_postflop_budget_is_the_one_an_outside_reference_chose():
     assert caps[("river", True)] == (200, 200)
     assert api_config.MAX_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS == 1000
     assert api_config.MAX_FLOP_TO_RIVER_MULTIWAY_ITERATIONS == 500
+
+
+class _BudgetSeen(Exception):
+    pass
+
+
+@pytest.mark.parametrize("preflop, street_fields, expected", [
+    # four live: BTN opens, SB folds, everyone else calls round to it
+    (["call_or_check", "call_or_check", "raise", "call_or_check", "fold", "call_or_check",
+      "call_or_check", "call_or_check"], {"board": "Kd7c2h"}, 1000),
+    (["call_or_check", "call_or_check", "raise", "call_or_check", "fold", "call_or_check",
+      "call_or_check", "call_or_check"],
+     {"board": "Kd7c2h", "flop_action_path": ["call_or_check"] * 4, "turn_card": "5s"}, 1000),
+    # three live keeps the x4 budget M264 measured
+    (["fold", "call_or_check", "raise", "fold", "fold", "call_or_check", "call_or_check"],
+     {"board": "Kd7c2h"}, 4000),
+])
+def test_a_pot_with_four_or_more_live_keeps_the_pre_m264_budget(client, monkeypatch, preflop, street_fields, expected):
+    """A5 (M266). M264's x4 budget was chosen on 3-live pots; with 4 live
+    it gained +0.056 at 1.01 sigma while tripling the flop's latency."""
+    from api import main as main_module
+    seen = {}
+
+    def spy(request, street, iterations, solve_iterations, hero_combo, multiway):
+        seen.update(street=street, solve_iterations=solve_iterations, multiway=multiway)
+        raise _BudgetSeen
+
+    monkeypatch.setattr(main_module, "_advise", spy)
+    body = _advise_body(preflop_action_path=preflop, hero_cards="AsAh", players=6,
+                        stack_bb=100.0, **street_fields)
+    with pytest.raises(_BudgetSeen):
+        client.post("/advise", json=body)
+    assert seen["multiway"] is True
+    assert seen["solve_iterations"] == expected

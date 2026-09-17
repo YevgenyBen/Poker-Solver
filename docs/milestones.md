@@ -15759,3 +15759,45 @@ deterministic.
 **Kept.** The option stays in the engine with its default `"uniform"` and
 three tests, per M97's precedent: a measured null is worth keeping
 reproducible.
+
+## M266 - real online hands through `/advise` (A5)
+
+`docs/real-hand-replay-2026-09-17.md`. The harness is
+`bench/real_replay.py`. It replays 1,200 HandHQ decisions at their real
+stacks, table sizes, lines and bet sizes, with random hole cards.
+
+**The result.**
+
+- **1,199 answered and 0 response defects.** One line could not be
+  followed, and that was a product defect.
+- **The defect:** a preflop line ending all in (a real 5-bet pot, which
+  the model forces all in at its fourth raise) reached the postflop tree
+  builder. It came back 422 **"stack_bb must be positive"** beside
+  `stack_bb: 100`, heads-up and multiway.
+- **The fix:** `_validate_preflop_path_shape` now refuses the line by
+  name, before any solve (0.08 s cold).
+
+**M264's 4x budget was too expensive with four or more live.**
+
+- **What M264 quoted:** one p90 (3.96 s) over a sample that was 93%
+  three-live.
+- **Split by live count:** x4 gained **+0.110 at 7.88 sigma** with 3
+  live and **+0.056 at 1.01 sigma** with 4 (n=38). It took the 4-live
+  flop from 2.1 to 7.0 s.
+- **At real stacks:** 4-live flops took 13.5 s median and a 5-live one
+  14.4 s.
+- **The change:** `MULTIWAY_WIDE_POT_MIN_LIVE = 4` keeps the pre-M264
+  1,000 iterations on the flop and turn. The 4-live accuracy question is
+  underpowered, not answered.
+
+**Also measured.**
+
+- **Cold depths:** every answer over 30 s (12) was the first request at
+  a six-max depth the harness had not warmed. It runs no lifespan, so
+  A3's background warmer never ran.
+- **Notes:** `turn-shove` fired 0 times in 891 postflop decisions, and
+  `multiway-bet` 16 times.
+- **Coverage:** only 46% of real hands can be asked about at all (A9).
+
+**Rule.** Split latency by live count. A pooled figure over a mostly
+three-handed sample hid the four-handed cost.
