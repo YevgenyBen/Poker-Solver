@@ -1189,6 +1189,9 @@ def _mccfr_recurse(
     table = node_data.setdefault(id(node), InfoSetTable.zeros(num_hands, len(actions)))
     strategy = table.current_strategy(optimism, smoothing,
                                       prior=_starting_prior(actions))
+    if ACTION_GROUPING != "none" and not smoothing and not optimism:
+        strategy = grouped_strategy(table.regret_sum, _action_groups(actions),
+                                    ACTION_GROUPING, fallback=strategy)
     if smoothing:
         # What this node actually played, for the next visit's blend.
         # Conditional for the same memory reason as `last_regret` below.
@@ -1447,6 +1450,55 @@ def kind_balanced_prior(actions) -> np.ndarray:
 
 
 _PRIOR_CACHE: dict = {}
+
+# A4d (M269): regret matching over GROUPS of actions. With check, three
+# bet sizes and all-in, plain regret matching gives betting as a group the
+# sum of four actions' positive regret, so near-duplicate sizes each add
+# weight to "bet". "max" and "mean" first match across kinds (fold /
+# passive / aggressive) using the best or the average positive regret
+# inside each kind, then split a kind among its own actions by their
+# regrets. "none" (the default) is plain regret matching. An EXPERIMENT:
+# grouped matching carries no convergence guarantee of its own.
+ACTION_GROUPING = "none"
+_GROUP_CACHE: dict = {}
+
+
+def _action_groups(actions):
+    key = tuple(getattr(a, "kind", a) for a in actions)
+    if key not in _GROUP_CACHE:
+        kinds = ["fold" if k == "fold" else "passive" if k == "call_or_check"
+                 else "aggressive" for k in key]
+        order = sorted(set(kinds))
+        _GROUP_CACHE[key] = np.array([order.index(k) for k in kinds])
+    return _GROUP_CACHE[key]
+
+
+def grouped_strategy(regret_sum, groups, mode, fallback):
+    """Two-level regret matching: across groups, then within each group.
+
+    `groups[j]` is action j's group index. A row with no positive regret
+    anywhere keeps `fallback`'s row; a group with positive group regret
+    whose members all have none splits evenly among them.
+    """
+    if mode not in ("max", "mean"):
+        raise ValueError(f"unknown ACTION_GROUPING {mode!r}")
+    positive = np.maximum(regret_sum, 0.0)
+    n_groups = int(groups.max()) + 1
+    group_regret = np.zeros((positive.shape[0], n_groups))
+    within = np.zeros_like(positive)
+    for g in range(n_groups):
+        members = groups == g
+        block = positive[:, members]
+        group_regret[:, g] = block.max(axis=1) if mode == "max" else block.mean(axis=1)
+        totals = block.sum(axis=1, keepdims=True)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            share = np.where(totals > 0, block / totals, 1.0 / members.sum())
+        within[:, members] = share
+    gtotal = group_regret.sum(axis=1, keepdims=True)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        gshare = np.where(gtotal > 0, group_regret / gtotal, 0.0)
+    strategy = gshare[:, groups] * within
+    return np.where(gtotal > 0, strategy, fallback)
 
 
 def _starting_prior(actions):
