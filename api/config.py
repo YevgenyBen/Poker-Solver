@@ -3101,6 +3101,17 @@ UNTRAINED_HERO_ROW_REASON = (
     "different line, a shallower spot, or heads-up will usually return a real one."
 )
 
+# A1 (2026-09-17). A request that names hero's cards and gets back NO row
+# for them is not an answer. M262's replay found /advise returning 200
+# with `strategy: null` (a cache-key defect, fixed); nothing said so, and
+# no benchmark flagged it. If it ever happens again, the headline signal
+# says it rather than reading "high" over an empty answer.
+MISSING_HERO_ROW_REASON = (
+    "There is no advice for your hand in this answer - the solve that served it does not "
+    "contain your cards. This is a defect, not a recommendation: ask again, and if it "
+    "repeats, treat this spot as unanswered."
+)
+
 UNTRAINED_NODE_REASON = (
     "This spot was not actually solved. Every hand at this decision carries the "
     "solver's starting assumption - an even split across the available actions - "
