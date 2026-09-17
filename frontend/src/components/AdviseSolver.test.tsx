@@ -580,6 +580,35 @@ describe('AdviseSolver', () => {
     expect(screen.queryByText('AKs')).not.toBeInTheDocument();
   });
 
+  it('shows the warnings that change the play on their own when the backend itemises them', async () => {
+    // A2: the most useful warnings used to be the last sentence of a long
+    // paragraph. With itemised notes, priority ones come first as alerts
+    // and the joined paragraph is not repeated.
+    vi.stubGlobal(
+      'fetch',
+      mockFetch(walkFor, () =>
+        adviceResponse({
+          aggression_confidence: 'low',
+          aggression_confidence_reason: 'JOINED PARAGRAPH',
+          advisory_notes: ['standing-aggression-caveat', 'turn-shove'],
+          advisory_note_details: [
+            { id: 'standing-aggression-caveat', text: 'How often to bet is a rough hint.' },
+            { id: 'turn-shove', text: 'Shoving here cost at least 2.4 big blinds.' },
+          ],
+        }),
+      ),
+    );
+    render(<AdviseSolver />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Get advice' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Get advice' }));
+
+    const warning = await screen.findByRole('alert');
+    expect(warning).toHaveTextContent(/calling is the serious alternative/);
+    expect(warning).toHaveTextContent('Shoving here cost at least 2.4 big blinds.');
+    expect(screen.getByText('Other caveats for this decision (1)')).toBeInTheDocument();
+    expect(screen.queryByText(/JOINED PARAGRAPH/)).not.toBeInTheDocument();
+  });
+
   it('warns that postflop aggression is only a rough hint', async () => {
     // M128: the range a postflop solve models is capped for COST, and
     // sweeping that cap moves a value hand's raising frequency

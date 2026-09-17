@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ComboRow } from './ComboRow';
+import { DecisionWarnings } from './DecisionWarnings';
 import { fetchAdvice, SolveError } from '../api';
 import { MULTIWAY_TABLE_SIZES, type MultiwayTableSize } from '../hands';
 import { usePreflopWalk } from '../usePreflopWalk';
@@ -527,12 +528,19 @@ export function AdviseSolver() {
             </p>
           )}
 
-          {result.aggression_confidence === 'low' && (
-            <p className="solver-warning" role="alert">
-              <strong>How aggressively to play is a rough hint.</strong>{' '}
-              {result.aggression_confidence_reason ??
-                'The range this solve models is capped for cost, and the raising frequency of a strong hand moves erratically with that cap.'}
-            </p>
+          {/* A2: when the backend sends the notes one by one, show the ones
+              that change the play on their own and collapse the rest; the
+              joined paragraph stays as the fallback for an older backend. */}
+          {result.advisory_note_details && result.advisory_note_details.length > 0 ? (
+            <DecisionWarnings notes={result.advisory_note_details} />
+          ) : (
+            result.aggression_confidence === 'low' && (
+              <p className="solver-warning" role="alert">
+                <strong>How aggressively to play is a rough hint.</strong>{' '}
+                {result.aggression_confidence_reason ??
+                  'The range this solve models is capped for cost, and the raising frequency of a strong hand moves erratically with that cap.'}
+              </p>
+            )
           )}
 
           {result.range_confidence && (

@@ -569,3 +569,39 @@ select:focus-visible {
 .solver-warning strong {
   color: #7c2d12;
 }
+
+/* A2: the warnings that change the play, each on its own, then the rest
+   collapsed. Priority warnings reuse .solver-warning's colours so a
+   player reads them as the same family, with a heavier rule. */
+.decision-warnings {
+  margin-top: 0.75rem;
+}
+
+.priority-warning {
+  border-left-width: 5px;
+}
+
+.priority-warning p {
+  margin: 0.35rem 0 0;
+}
+
+.other-caveats {
+  margin-top: 0.75rem;
+  font-size: 0.85rem;
+  color: #555;
+}
+
+.other-caveats summary {
+  cursor: pointer;
+}
+
+.other-caveats summary:focus-visible {
+  outline: 2px solid #92400e;
+  outline-offset: 2px;
+}
+
+.other-caveats ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.2rem;
+  line-height: 1.45;
+}

@@ -1316,6 +1316,12 @@ async def advise_endpoint(request: AdviseRequest):
                 if raw.get("street") != "preflop"
                 else []
             ),
+            "advisory_note_details": (
+                [{"id": name, "text": text.strip()}
+                 for name, text in _advisory_notes(raw, hero)]
+                if raw.get("street") != "preflop"
+                else []
+            ),
             # M144/F40: what the tree could actually offer here. Derived
             # from the response's own rows, not from config, so it stays
             # honest if the sizing constants change.

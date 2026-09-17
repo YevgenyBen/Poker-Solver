@@ -285,6 +285,17 @@ export interface AdviseResponse {
   // and not for the split among the non-fold actions.
   sizing_confidence?: string;
   sizing_confidence_reason?: string | null;
+  /** M252: stable ids for the caveats that applied to THIS decision. */
+  advisory_notes?: string[];
+  /** A2: the same notes with the backend's own text, in the same order,
+   * so the ones that matter can be shown on their own instead of inside
+   * one long paragraph. Optional so an older backend still typechecks. */
+  advisory_note_details?: AdvisoryNote[];
+}
+
+export interface AdvisoryNote {
+  id: string;
+  text: string;
 }
 
 // The request shape /advise takes — street depth is INFERRED from which
