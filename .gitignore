@@ -8,3 +8,6 @@ venv/
 .idea/
 .claude/
 poker_solver/data/
+
+# Real played hands (bench/hand_db.py) - local, large, never committed.
+data/hands/

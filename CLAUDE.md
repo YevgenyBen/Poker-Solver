@@ -789,6 +789,11 @@ requests now reject unknown fields by name rather than ignoring them.
       dump_control.py      check a dump walk against the solver's OWN
                            reported exploitability - the only control a
                            wrong input cannot satisfy (M257)
+      hand_db.py           a local, append-only store of REAL played hands
+                           (PHH format -> data/hands/hands.sqlite,
+                           git-ignored). Content-keyed, so re-ingesting is
+                           a no-op; `python -m bench.hand_db ingest|stats|
+                           rederive`. Instrument only (M261)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools
