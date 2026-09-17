@@ -571,6 +571,25 @@ The overbet row and the turn stay excluded
   the most expensive advice (`turn-shove`, `river-under-fold`) are the
   last sentence of a ~3,200-character paragraph (R11).
 
+- **MULTIWAY ADVICE HAS AN OUTSIDE REFERENCE NOW, AND IT FAILS IT (M262).**
+  - **Method:** 2,279 Pluribus decisions (6-max, 100bb) replayed through
+    `/advise`, scoring our probability on the action it took against a
+    card-blind prior.
+  - **Result:** heads-up postflop **+0.057 (3.58 sigma)** as the control;
+    multiway postflop **-0.184 (-9.70 sigma), below uniform**.
+  - **The disagreement:** checked to, it bets 19% and we bet 59% (weak
+    half: 14% against 48%). Facing a bet, it raises 11% and we raise 39%.
+    The order is right and the level is wrong.
+  - **Disclosed:** `MULTIWAY_BET_NOTE` (6-max, SPR >= 1.5, row >= 50%
+    bet/raise). M254's stable gate is validated from outside (+0.19,
+    4.26 sigma).
+  - **Rules:**
+    - **Replay real hands through `/advise` to find what synthetic
+      populations miss.** It found a `strategy: null` defect no benchmark
+      flagged.
+    - **Key a path cache by exactly what force-inclusion adds** — the
+      combo, except on the class-level library path.
+
 ### The checks REPLICATE on fresh spots (M236) — n=42 per street
 
 M222/M224's figures rested on ~21 spots each and carry a user-facing

@@ -8863,3 +8863,67 @@ def test_the_turn_shove_note_quotes_its_own_measurement():
     assert "at least" in note, (
         "the price is a FLOOR - the reference's reply to a shove it never "
         "makes is untrained and flatters the shove (M258)")
+
+
+def test_two_combos_of_one_out_of_range_class_both_get_advice(client, monkeypatch):
+    """M262. The cache was keyed by hero CLASS while force-inclusion adds
+    hero's one COMBO, so the second combo of an out-of-range class hit the
+    first one's solve and was answered with `strategy: null` at 200.
+
+    Found replaying Pluribus: JcKc asked a 3-way flop, then KdJd was told
+    nothing. Reproduced here on the standalone heads-up turn, with its cap
+    shrunk so the class is guaranteed to be out of range.
+    """
+    monkeypatch.setattr(api_config, "TURN_STANDALONE_CLASSES_PER_SIDE", 4)
+    base = {"stack_bb": 100.0, "players": 2, "board": "Kd8c3h",
+            "preflop_action_path": ["raise", "call_or_check"],
+            "flop_action_path": ["call_or_check", "call_or_check"],
+            "turn_card": "2s"}
+    for hero in ("7c4d", "7h4s"):
+        payload = client.post("/advise", json={**base, "hero_cards": hero}).json()
+        assert payload["hero"]["in_range"] is False, "the test needs an out-of-range hero"
+        assert payload["hero"]["strategy"], (
+            f"{hero} got no advice after another 74o was asked first: "
+            f"{payload['hero']}")
+
+
+def _multiway_raw(row, players=6, positions=("SB", "BB", "BTN"), pot=7.5, behind=97.5):
+    return {"street": "flop", "players": players, "positions": list(positions),
+            "pot": pot, "effective_stack_bb": behind, "max_affordable_bb": behind,
+            "hero": {"strategy": row}}
+
+
+def test_the_multiway_bet_note_fires_where_it_was_measured():
+    """M262. 6-max, 3+ live, deep, and the row leans to betting."""
+    betting = {"call_or_check": 0.3, "raise:2.48": 0.5, "all_in:97.50": 0.2}
+    raw = _multiway_raw(betting)
+    assert api_main._multiway_bet_applies(raw, "flop")
+    assert "multiway-bet" in [n for n, _t in api_main._advisory_notes(raw)]
+    facing = {"fold": 0.2, "call_or_check": 0.2, "raise:11.25": 0.6}
+    assert api_main._multiway_bet_applies(_multiway_raw(facing), "turn")
+
+
+def test_the_multiway_bet_note_is_silent_everywhere_else():
+    betting = {"call_or_check": 0.3, "raise:2.48": 0.7}
+    checking = {"call_or_check": 0.7, "raise:2.48": 0.3}
+    assert not api_main._multiway_bet_applies(_multiway_raw(checking), "flop")
+    assert not api_main._multiway_bet_applies(
+        _multiway_raw(betting, positions=("SB", "BB")), "flop"), "heads-up"
+    assert not api_main._multiway_bet_applies(
+        _multiway_raw(betting, players=9), "flop"), "only 6-max was measured"
+    assert not api_main._multiway_bet_applies(
+        _multiway_raw(betting, pot=40.0, behind=30.0), "flop"), "shallower than measured"
+    assert not api_main._multiway_bet_applies(_multiway_raw(betting), "preflop")
+
+
+def test_the_multiway_bet_note_quotes_its_own_measurement():
+    note = api_config.MULTIWAY_BET_NOTE
+    assert str(api_config.MULTIWAY_BET_DECISIONS) in note
+    for value in (api_config.MULTIWAY_BET_WE_BET, api_config.MULTIWAY_BET_REFERENCE_BETS,
+                  api_config.MULTIWAY_BET_WEAK_WE, api_config.MULTIWAY_BET_WEAK_REFERENCE,
+                  api_config.MULTIWAY_BET_FACING_REFERENCE_RAISES,
+                  api_config.MULTIWAY_BET_FACING_REFERENCE_CALLS,
+                  api_config.MULTIWAY_BET_FACING_REFERENCE_FOLDS):
+        assert "%d%%" % round(value * 100) in note, value
+    assert "not a price" in note, "one sampled action per spot carries no chip price"
+    assert "Pluribus" not in note, "shipped text does not name outside tools (stone law)"

@@ -53,6 +53,14 @@ FORBIDDEN_TEXT = (
     "gtowizard",
     "hand_history",
     "handhistory",
+    # M261/M262: the local store of real hands and where it came from.
+    # Measuring against them is the point; answering from them is not.
+    "hand_db",
+    "hands.sqlite",
+    "data/hands",
+    "phh-dataset",
+    "uoftcprg",
+    "Pluribus",
 )
 
 

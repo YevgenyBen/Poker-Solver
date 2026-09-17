@@ -15569,3 +15569,63 @@ archive:
 - which stack buckets to warm first;
 - a replay of real decisions through `/advise`;
 - Pluribus as the first outside reference for multiway play.
+
+## M262 - multiway advice checked against Pluribus: it bets three times too often
+
+`docs/pluribus-multiway-2026-09-17.md` (rules fixed before the run).
+
+**The first outside reference multiway has ever had.**
+
+- **Method:** 2,279 decisions by Pluribus were replayed through `/advise`
+  at 6-max 100bb with its real cards and line.
+- **Score:** our probability on the action it took, against a card-blind
+  prior (leave-one-out).
+
+**Results.**
+
+| cell | difference | n |
+|---|---|---|
+| heads-up postflop (control) | **+0.057, 3.58 sigma** | 699 |
+| preflop, 3+ live | +0.060, 4.66 sigma | — |
+| **multiway postflop** | **-0.184, -9.70 sigma** | 579 |
+
+- **Multiway postflop is worse than a card-blind tendency and below
+  uniform.**
+- **The disagreement is betting frequency.**
+  - Checked to: Pluribus bets 19%, we bet 59%; with the weaker half of
+    hands, 14% against 48%.
+  - Facing a bet: it raises 11%, we raise 39%.
+- **Our bet share still rises with strength** (corr +0.26), so the level
+  is wrong, not the order.
+- **M254's stable/split gate is validated from outside:** +0.19 at 4.26
+  sigma.
+
+**Shipped.**
+
+- **`MULTIWAY_BET_NOTE`.** Gate: 6-max, 3+ live postflop, node SPR >= 1.5,
+  hero row >= 50% bet/raise. It fires on 280 of 444 checked-to decisions
+  (Pluribus bet 18.9% there; our p 0.31 against 0.68 silent) and 46 of 135
+  facing a bet.
+- **Combo-level path caches keyed by the concrete hero combo.** A second
+  out-of-range combo of an already-asked class got `strategy: null` at
+  200. It was found by the replay; the regression test fails without the
+  fix.
+- **`hand_db.connect` commits,** so an open store no longer locks others
+  out.
+- **The stone-law text list** now names the hand store and its source.
+
+**Instrument.**
+
+- 1 of 2,279 lines unrepresentable.
+- Size mapping median ratio 1.00.
+- Our pot a median 1.10-1.15x the real one (a larger preflop open).
+- Log loss is worse than the prior in every cell, the control included,
+  because near-pure rows punish confidence. It is secondary, as
+  registered.
+
+**Deferred.**
+
+- WHY the multiway engine over-bets (F46 noise, uniform-reach node
+  training, cap 8 are the standing candidates).
+- 3-max and 9-max, which have no reference.
+- A chip price.

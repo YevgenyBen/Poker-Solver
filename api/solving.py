@@ -96,7 +96,7 @@ def _cache_key(stack_bb: float, iterations: int) -> tuple:
     return (round(stack_bb), iterations)
 
 
-def _hero_cache_component(hero_combo, hero_in_range=None):
+def _hero_cache_component(hero_combo, hero_in_range=None, by_class=False):
     """The hero part of a path-query cache key (M76).
 
     Every one of these caches keys on the action path, stack, board and
@@ -110,11 +110,18 @@ def _hero_cache_component(hero_combo, hero_in_range=None):
     9s9d gave advice then silence; reversing the order reversed which one
     was answered; clearing the cache between requests answered both.
 
-    Keyed by hand CLASS, not concrete combo. The force-inclusion that
-    makes the solve hero-dependent is class-shaped in every case that
-    matters (a capped range is a set of classes expanded to combos), so
-    two suit-isomorphic hero hands genuinely share a solve — 169 possible
-    key values instead of 1,326, for the same correctness.
+    **Keyed by the CONCRETE COMBO, except on the canonical-library flop
+    path (`by_class=True`) - M262 corrected this.** M76 keyed by class on
+    the argument that force-inclusion is "class-shaped in every case that
+    matters". It is class-shaped only on the library path, which adds
+    hero's whole class to class-level ranges. Every other path adds hero's
+    ONE combo to combo-level ranges (`_derive_path_situation`), so the
+    first out-of-range hand of a class fixed the pool, and a second combo
+    of the same class hit that entry and found its own row missing:
+    `/advise` returned 200 with `strategy: null`. Found by replaying
+    real hands - JcKc asked a 3-way flop, then KdJd was answered with
+    nothing. (Nor are two same-class combos strategically equal on a real
+    board: a flush draw tells them apart.)
 
     The expensive preflop leg is cached separately (_preflop_raw_cache /
     _multiway_cache) and keyed without hero, so it is still shared across
@@ -142,7 +149,9 @@ def _hero_cache_component(hero_combo, hero_in_range=None):
         # no force-inclusion happened and the solve does not depend on
         # which hand was asked about.
         return None
-    return str(_combo_to_class(hero_combo))
+    if by_class:
+        return str(_combo_to_class(hero_combo))
+    return str(hero_combo)
 
 
 def _get_multiway_equity_cache(hands) -> MultiwayEquityCache:
@@ -1243,7 +1252,7 @@ def _query_flop_from_path(
     effective_stack_bb = situation.effective_stack_bb
 
     partition_key = (tuple(action_kinds), round(stack_bb), iterations, players,
-                     _hero_cache_component(hero_combo, situation.hero_in_range))
+                     _hero_cache_component(hero_combo, situation.hero_in_range, by_class=True))
     with _path_query_libraries.lock:
         library = _path_query_libraries.setdefault(partition_key, {})
         result = query_strategy_from_path(

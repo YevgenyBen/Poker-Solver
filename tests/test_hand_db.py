@@ -227,3 +227,15 @@ def test_an_older_store_gains_new_columns_and_can_be_rederived(tmp_path):
     assert hand_db.rederive(db) == 1
     assert db.execute("SELECT clean FROM hands").fetchone()[0] == 1
     db.close()
+
+
+def test_an_open_store_does_not_lock_out_a_second_connection(tmp_path):
+    """A long-running study holds its connection; others must still work."""
+    path = tmp_path / "shared.sqlite"
+    first = hand_db.connect(path)
+    second = hand_db.connect(path)             # used to raise "locked"
+    hand_db.ingest_file(second, _write(tmp_path, "0.phh", PLURIBUS_LIKE), "p")
+    second.commit()
+    assert hand_db.stats(first)["hands"] == 1
+    first.close()
+    second.close()
