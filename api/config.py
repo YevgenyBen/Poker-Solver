@@ -511,7 +511,15 @@ MULTIWAY_RIVER_SOLVE_STANDALONE = True
 # ordering facing different bet sizes points the wrong way, which is a
 # correctness criterion that needs no converged reference. It is
 # affordable here precisely because the street is no longer chained.
-MULTIWAY_TURN_STANDALONE_ITERATIONS = 1000
+MULTIWAY_TURN_STANDALONE_ITERATIONS = 4000  # M264: 1000 before
+# M264: the standalone turn's own ceiling. The chained turn keeps
+# MAX_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS, where an iteration costs
+# a whole flop leg.
+MAX_MULTIWAY_TURN_STANDALONE_ITERATIONS = 4000
+# M264: the standalone multiway river ran at the chained solver's
+# default of 50 iterations. 4x that is what was measured.
+MULTIWAY_RIVER_STANDALONE_ITERATIONS = 200
+MAX_MULTIWAY_RIVER_STANDALONE_ITERATIONS = 200
 
 # M220. Facing a bet, a sized RE-RAISE - the last place in the product
 # where the only way to put chips in was all-in (F40's shape).
@@ -1334,8 +1342,30 @@ MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION = 8
 # solves, and a 1000-iteration flop leg costs them **32.83s and 25.06s**
 # (measured, same run). They keep their own budgets - see
 # DEFAULT_MULTIWAY_TURN_PATH_QUERY_FLOP_ITERATIONS below.
-DEFAULT_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = 1000
-MAX_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = 1000
+
+# M264 (A4). THE MULTIWAY POSTFLOP BUDGET IS 4x WHAT IT WAS, BECAUSE AN
+# OUTSIDE REFERENCE SAID SO. Every multiway budget change before this was
+# refused for want of anything to score it against (F46/M163/M245). M262
+# supplied one: 579 real decisions by a published six-handed agent. One
+# change per arm, same decisions, one process each:
+#      arm            vs baseline        bets when checked to   p90
+#      baseline       -                  0.589                   1.40s
+#      **iters x4**   **+0.107, 7.86s**  **0.470**               3.96s
+#      range cap 26   +0.007, 0.54s      0.609                   4.91s
+#      ensemble x4    +0.002, 0.23s      0.587                   5.21s
+#      one bet size   +0.169, 10.14s     0.351   (diagnostic; not adoptable)
+# (s = sigma; the reference bets 0.194.) The pre-registered bar - 2 sigma
+# better, aggression moving toward the reference, p90 under 5s - is met
+# by iterations alone. It still scores below a card-blind prior (-0.073,
+# -3.86 sigma), so the multiway disclosure stays.
+# **The diagnostic arm names the mechanism**: with ONE sized bet the
+# advice reaches the card-blind prior (-0.011, 0.63 sigma). Three sized
+# bets give the uniform starting strategy 80% aggressive mass, and an
+# under-converged row keeps it. The fix for that is a starting prior that
+# is not action-count weighted - its own change, not made here.
+# Cost: multiway postflop p50 0.98 -> 2.87s, max 7.4s, 22 of 579 over 5s.
+DEFAULT_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = 4000
+MAX_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = 4000
 
 # /solve_turn_multiway_from_path's (M44) own class cap and iteration
 # bounds — deliberately its own, not MAX_MULTIWAY_PATH_QUERY_CLASSES_
@@ -2802,25 +2832,30 @@ TURN_SHOVE_NOTE = (
 # median 13.5). The reference is a strong agent, not an equilibrium, and
 # one sampled action per spot carries no chip price - so the note gives
 # frequencies and says what they are, and names no price.
+# M264 re-measured the quoted figures after the multiway budget went 4x
+# (same 579 decisions): checked to, 47% against 19% (weak half 35% vs
+# 14%); the gate fires on 213 of 444, where the reference bet 23.9% and
+# our p was 0.34 against 0.77 silent; facing a bet it fires on 43 of 135,
+# where the reference raised 25.6%, called 48.8% and folded 25.6%.
 MULTIWAY_BET_MIN_AGGRESSIVE = 0.5
 MULTIWAY_BET_MIN_SPR = 1.5
 MULTIWAY_BET_TABLE_SIZES = (6,)
 MULTIWAY_BET_DECISIONS = 579
-MULTIWAY_BET_WE_BET = 0.59
+MULTIWAY_BET_WE_BET = 0.47
 MULTIWAY_BET_REFERENCE_BETS = 0.19
-MULTIWAY_BET_WEAK_WE = 0.48
+MULTIWAY_BET_WEAK_WE = 0.35
 MULTIWAY_BET_WEAK_REFERENCE = 0.14
-MULTIWAY_BET_FACING_REFERENCE_RAISES = 0.20
-MULTIWAY_BET_FACING_REFERENCE_CALLS = 0.54
+MULTIWAY_BET_FACING_REFERENCE_RAISES = 0.26
+MULTIWAY_BET_FACING_REFERENCE_CALLS = 0.49
 MULTIWAY_BET_FACING_REFERENCE_FOLDS = 0.26
 MULTIWAY_BET_NOTE = (
     " A warning specific to this decision: this engine is recommending a BET or a RAISE in a "
     "pot three or more players saw, and that is where its multiway advice measured worst. "
     "Checked against 579 real six-handed decisions by a published poker AI that beat "
     "professional players, played at this same 100-big-blind depth, this engine bets about "
-    "three times as often when checked to: 59% against 19%, and with the weaker half of hands "
-    "48% against 14%. Facing a bet where this engine leans toward raising, that player raised "
-    "only 20% of the time, called 54% and folded 26%. Scored by how much weight the advice put "
+    "two and a half times as often when checked to: 47% against 19%, and with the weaker half "
+    "of hands 35% against 14%. Facing a bet where this engine leans toward raising, that "
+    "player raised 26% of the time, called 49% and folded 26%. Scored by how much weight the advice put "
     "on what that player actually did, this engine's multiway advice did worse than simply "
     "knowing how often such spots are checked. So in a multiway pot, treat a recommendation "
     "to bet or raise - especially without a strong hand - as a candidate to check or call "
