@@ -8078,10 +8078,19 @@ def test_the_turn_note_quotes_the_production_width_measurement(client):
     assert "about %d " % signed_points in note, (
         "the note no longer quotes TURN_INDEPENDENT_GAP_SIGNED (%d points), "
         "which is the DIRECTION a player acts on" % signed_points)
-    assert api_config.TURN_INDEPENDENT_GAP_MEDIAN > 0.4, (
-        "the turn's measured gap dropped below 0.4; if that is a real "
-        "re-measurement the note's wording needs revisiting, not just the "
-        "constant")
+    assert "%d of %d" % (api_config.TURN_INDEPENDENT_WITHIN_TEN,
+                         api_config.TURN_INDEPENDENT_ROWS) in note
+    assert "%d of %d" % (api_config.TURN_INDEPENDENT_SPOTS_BETTING_MORE,
+                         api_config.TURN_INDEPENDENT_SPOTS) in note
+    assert api_config.TURN_INDEPENDENT_GAP_SIGNED > 0, (
+        "the note says this engine bets MORE; M260 re-scored that with "
+        "range-weighted heroes at 6.46 sigma")
+    # M260: the headline is the RANGE-WEIGHTED figure. The hand-picked one
+    # may appear only as context, and must not be the larger claim the
+    # note leads with.
+    picked = round(api_config.TURN_INDEPENDENT_HAND_PICKED_MEDIAN * 100)
+    assert note.index("%d percentage points" % median_points) < note.index(
+        "%d points" % picked), "the note must lead with what a player's hand meets"
 
 
 def test_the_turn_reference_note_is_silent_where_the_gap_was_not_measured(client):

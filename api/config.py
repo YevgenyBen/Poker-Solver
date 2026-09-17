@@ -2486,18 +2486,39 @@ STREET_ISOLATION_COST_WORST = 0.4123
 # as large: mean 0.4235, median 0.5268, 17 of 21 spots over 0.10, signed
 # +0.3306. A warning that understates the error by half is the one
 # failure mode a warning may not have.
-TURN_INDEPENDENT_GAP_MEDIAN = 0.5268
-TURN_INDEPENDENT_GAP_MEAN = 0.4235
-TURN_INDEPENDENT_GAP_SIGNED = 0.3306
+#
+# M260 RE-SCORED THE SAME REFERENCES WITH THE HANDS A PLAYER HOLDS. M232
+# and M236 scored ONE hand-picked hero per spot. The 24 M236 turn dumps
+# hold the reference's row for every out-of-position combo, so 144 heroes
+# drawn by RANGE WEIGHT (6 a spot) were scored against them, same
+# references, same shipped cap 140:
+#      hand-picked heroes   n= 21  median |gap| 0.4367  within .10:  2
+#      range-weighted       n=144  median |gap| 0.1816  within .10: 47
+#      signed, weighted     +0.1860, 6.46 sigma over 24 spot means,
+#                           bets more on 21 of 24; split-half 5.00 / 5.86
+# The DIRECTION stands (the pre-registered reading). The SIZE the note
+# quoted was a property of the hero list: hand-picked hands were closer
+# decisions than the hands a range actually holds - M243's river finding,
+# one street earlier. The hand-picked figure is kept, labelled as such.
+TURN_INDEPENDENT_GAP_MEDIAN = 0.1816
+TURN_INDEPENDENT_GAP_MEAN = 0.2604
+TURN_INDEPENDENT_GAP_SIGNED = 0.1860
+TURN_INDEPENDENT_WITHIN_TEN = 47
+TURN_INDEPENDENT_ROWS = 144
+TURN_INDEPENDENT_SPOTS = 24
+TURN_INDEPENDENT_SPOTS_BETTING_MORE = 21
+TURN_INDEPENDENT_HAND_PICKED_MEDIAN = 0.5268
 TURN_INDEPENDENT_GAP_FLOP_MEDIAN = 0.0099
 TURN_INDEPENDENT_SPR_MIN = 5.0
 TURN_INDEPENDENT_NOTE = (
     " A warning specific to the turn, and it is the sharpest one here. Checked against a "
     "different solver entirely - one that plays the river out instead of averaging it in - "
-    "turn advice sat about 53 percentage points away from it on the typical spot, against "
-    "1 point on the flop. Only 4 of 21 turn spots agreed within 10 points. The "
-    "disagreement has a direction: this engine BETS MORE than the reference, by about 33 "
-    "points on average, and that direction held on a second set of spots built differently. "
+    "for hands drawn the way a real range holds them, turn advice sat about 18 percentage "
+    "points away from it on the typical decision, and only about a third of decisions "
+    "(47 of 144) agreed within 10 points. (Hand-picked test hands had put it at 53 points; "
+    "those turned out to be closer decisions than a typical hand faces.) The disagreement "
+    "has a direction: this engine BETS MORE than the reference, by about 19 points on "
+    "average, and it did so on 21 of 24 boards. "
     "Three explanations were tested and all three failed: modelling the river inside the "
     "turn made it WORSE, more solving precision made it worse, and every range width from "
     "25 to 140 classes landed in the same place. So this is a difference in the model "

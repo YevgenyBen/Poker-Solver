@@ -130,9 +130,31 @@ shipped cap 140, against a reference handed the same 140-class ranges:
 | **cap 140 / 250 (shipped)** | **0.4235** | **0.5268** | **17/21** | **+0.3306** |
 
 **The disclosure understated the error by more than half**, which is the
-one failure mode a warning may not have. `TURN_INDEPENDENT_GAP_MEDIAN` is
-now 0.5268 and the copy is pinned to the constants by
-`test_the_turn_note_quotes_the_production_width_measurement`.
+one failure mode a warning may not have. The copy is pinned to its
+constants by `test_the_turn_note_quotes_the_production_width_measurement`.
+
+**M260 corrected it again, in the OTHER direction, and the cause was the
+hero list.**
+
+- **What M232/M236 did:** scored ONE hand-picked hero per spot.
+- **The re-score:** the same 24 references, scored against 144 heroes
+  drawn by RANGE WEIGHT.
+
+| heroes | n | median gap | within 0.10 |
+|---|---|---|---|
+| hand-picked | 21 | 0.4367 | 2 |
+| **range-weighted** | 144 | **0.1816** | **47** |
+
+- **Direction:** the direction STANDS, **+0.1860 at 6.46 sigma**,
+  betting more on 21 of 24 boards.
+- **Size:** hand-picked hands were closer decisions than the hands a
+  range holds, which is M243's river trap one street earlier.
+- **Constants:** `TURN_INDEPENDENT_GAP_MEDIAN = 0.1816` and
+  `TURN_INDEPENDENT_GAP_SIGNED = 0.1860`. The note keeps 53 points only
+  as labelled context.
+- **Rule:** **score a reference against heroes drawn by range weight,
+  never a hand-picked list.** A dump already carries every combo's row,
+  so it costs only `/advise` calls.
 
 **THE TURN'S GAP IS MODEL ERROR, PROVEN WITHOUT A REFERENCE (M233).**
 Exploitability needs no reference and has no shared blind spot, so it
