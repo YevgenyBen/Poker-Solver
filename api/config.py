@@ -2486,18 +2486,39 @@ STREET_ISOLATION_COST_WORST = 0.4123
 # as large: mean 0.4235, median 0.5268, 17 of 21 spots over 0.10, signed
 # +0.3306. A warning that understates the error by half is the one
 # failure mode a warning may not have.
-TURN_INDEPENDENT_GAP_MEDIAN = 0.5268
-TURN_INDEPENDENT_GAP_MEAN = 0.4235
-TURN_INDEPENDENT_GAP_SIGNED = 0.3306
+#
+# M260 RE-SCORED THE SAME REFERENCES WITH THE HANDS A PLAYER HOLDS. M232
+# and M236 scored ONE hand-picked hero per spot. The 24 M236 turn dumps
+# hold the reference's row for every out-of-position combo, so 144 heroes
+# drawn by RANGE WEIGHT (6 a spot) were scored against them, same
+# references, same shipped cap 140:
+#      hand-picked heroes   n= 21  median |gap| 0.4367  within .10:  2
+#      range-weighted       n=144  median |gap| 0.1816  within .10: 47
+#      signed, weighted     +0.1860, 6.46 sigma over 24 spot means,
+#                           bets more on 21 of 24; split-half 5.00 / 5.86
+# The DIRECTION stands (the pre-registered reading). The SIZE the note
+# quoted was a property of the hero list: hand-picked hands were closer
+# decisions than the hands a range actually holds - M243's river finding,
+# one street earlier. The hand-picked figure is kept, labelled as such.
+TURN_INDEPENDENT_GAP_MEDIAN = 0.1816
+TURN_INDEPENDENT_GAP_MEAN = 0.2604
+TURN_INDEPENDENT_GAP_SIGNED = 0.1860
+TURN_INDEPENDENT_WITHIN_TEN = 47
+TURN_INDEPENDENT_ROWS = 144
+TURN_INDEPENDENT_SPOTS = 24
+TURN_INDEPENDENT_SPOTS_BETTING_MORE = 21
+TURN_INDEPENDENT_HAND_PICKED_MEDIAN = 0.5268
 TURN_INDEPENDENT_GAP_FLOP_MEDIAN = 0.0099
 TURN_INDEPENDENT_SPR_MIN = 5.0
 TURN_INDEPENDENT_NOTE = (
     " A warning specific to the turn, and it is the sharpest one here. Checked against a "
     "different solver entirely - one that plays the river out instead of averaging it in - "
-    "turn advice sat about 53 percentage points away from it on the typical spot, against "
-    "1 point on the flop. Only 4 of 21 turn spots agreed within 10 points. The "
-    "disagreement has a direction: this engine BETS MORE than the reference, by about 33 "
-    "points on average, and that direction held on a second set of spots built differently. "
+    "for hands drawn the way a real range holds them, turn advice sat about 18 percentage "
+    "points away from it on the typical decision, and only about a third of decisions "
+    "(47 of 144) agreed within 10 points. (Hand-picked test hands had put it at 53 points; "
+    "those turned out to be closer decisions than a typical hand faces.) The disagreement "
+    "has a direction: this engine BETS MORE than the reference, by about 19 points on "
+    "average, and it did so on 21 of 24 boards. "
     "Three explanations were tested and all three failed: modelling the river inside the "
     "turn made it WORSE, more solving precision made it worse, and every range width from "
     "25 to 140 classes landed in the same place. So this is a difference in the model "
@@ -2671,6 +2692,51 @@ RIVER_UNDER_FOLD_NOTE = (
     "setting - it survived matching the ranges and the raise sizes between the two solvers."
 )
 
+# M260. FACING A TURN BET, THIS ENGINE SHOVES WHERE AN INDEPENDENT SOLVER
+# NEVER DOES - and that is the most expensive disagreement measured here.
+#
+# The wide benchmark priced 24 fresh three-bet turn boards (cap 140, every
+# root control passing, heroes drawn by range weight). 17 of 147 reached
+# facing rows were PURE-NODE disagreements (M258): our row sat 99.98% on
+# the all-in, an action the reference plays under 1% of the time - it
+# calls, or raises to 10. Regret cannot see that, so the shove was priced
+# directly, Q(best supported action) - Q(all-in), in the reference's game:
+#      17 rows, 9 boards   mean 2.675 bb   median 2.525   0 negative
+# Over every row this gate fires on (the 17, plus 4 where the reference
+# does shove a little and regret applies):
+#      21 rows             mean 2.408 bb = 16% of the pot, 5.42 sigma
+# **A floor, not an estimate.** The reference never trains its villain's
+# reply to a shove it does not make; that villain folds 45-83% to it, and
+# M258 measured exactly such branches inflated in the shove's favour.
+#
+# Gate, read off the RESPONSE (M144): the turn, heads-up, facing a bet,
+# hero's row at least TURN_SHOVE_MIN_ALL_IN on the all-in, and the street
+# having opened at SPR >= TURN_INDEPENDENT_SPR_MIN - the only depth
+# measured (6.17). Of the 21 decisions it fires on, the reference never
+# shoved in 17 (81%).
+#
+# Mechanism, as a HYPOTHESIS: the turn is solved without playing the
+# river, so a call is valued at showdown equity and cannot collect river
+# value, while a shove collects it now. That is M222's street-isolation
+# story in its sharpest form. Not fixable by configuration (M223/M232).
+TURN_SHOVE_MIN_ALL_IN = 0.5
+TURN_SHOVE_COST_BB = 2.4
+TURN_SHOVE_COST_PCT_POT = 16
+TURN_SHOVE_ROWS = 21
+TURN_SHOVE_REFERENCE_NEVER = 17
+TURN_SHOVE_BOARDS = 9
+TURN_SHOVE_NOTE = (
+    " A warning specific to this decision: this engine is recommending moving ALL IN on the "
+    "turn in response to a bet. An independent solver that plays the river out almost never "
+    "does that with the hands where this engine does - it calls, or makes a small raise. Over "
+    "21 such decisions on 9 boards, it never shoved in 17 of them, and following this "
+    "engine's shove cost at least 2.4 big blinds per decision in that solver's game - about "
+    "16% of the pot - and cost something on every one measured. The likely reason is that "
+    "this engine solves the turn without playing the river, so calling with a strong hand "
+    "looks worse to it than getting the money in now. With a strong hand here, treat calling "
+    "as the serious alternative, and a small raise where one is offered."
+)
+
 # M221. The first finding this project has that came from OUTSIDE.
 #
 # Every accuracy figure before this measured distance from a fuller solve
@@ -2787,6 +2853,15 @@ POSTFLOP_AGGRESSION_ERROR_WORST = 0.8810
 # action with frequencies, so even a checked-through line carries
 # information: the approximation is real in every line, and trading a
 # known gap for an unvalidated model is not an improvement.
+# M260. `sizing_confidence`'s postflop reason, fired on exactly the rows
+# BET_SIZING_COVERAGE_NOTE fires on. Short on purpose: the full
+# explanation is already in the aggression note on the same response, and
+# the front end shows both.
+POSTFLOP_SIZING_COVERAGE_REASON = (
+    "No bet size between checking and going all-in was available on this street, so "
+    "the size this advice names was never chosen over a smaller one. See the note on "
+    "bet sizing in the aggression caveat."
+)
 BET_SIZING_COVERAGE_NOTE = (
     " Note also that on this street the solver modelled only checking or calling and "
     "going all-in: no intermediate bet size was a legal action in its tree. So a low "

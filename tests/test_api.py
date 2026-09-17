@@ -7272,6 +7272,92 @@ def test_every_published_bet_size_is_accepted_back(client):
     assert checked >= 4, f"only round-tripped {checked} sizes"
 
 
+def test_the_flop_names_the_all_in_at_the_players_real_stack(client):
+    """M260. The heads-up flop's own all-in label must be valid input.
+
+    The canonical library solves at a depth rounded DOWN (F13), so at
+    100bb it published `all_in:95.00` beside `max_affordable_bb: 97.5`,
+    and echoing that label into `flop_action_path` came back 422. The
+    round-trip test above skipped `all_in` names, which is how it lived.
+    100bb is the point: it does not sit on a bucket boundary.
+    """
+    base = {"stack_bb": 100.0, "players": 2, "board": "Kd7c2h",
+            "hero_cards": "9c9d",
+            "preflop_action_path": ["raise", "call_or_check"]}
+    payload = client.post("/advise", json=base).json()
+    names = [n for n in payload["hero"]["strategy"] if n.startswith("all_in")]
+    assert names == ["all_in:%.2f" % payload["max_affordable_bb"]], (
+        f"the flop's all-in is {names} but the player can commit "
+        f"{payload['max_affordable_bb']} - F13's bucketed depth leaked into "
+        "the label")
+    for name in payload["hero"]["strategy"]:
+        if name == "call_or_check":
+            continue
+        echoed = client.post("/advise", json={**base, "flop_action_path": [name]})
+        assert echoed.status_code == 200, (
+            f"the flop published {name!r} but rejects it as input: "
+            f"{echoed.json().get('detail')}")
+
+
+def test_postflop_sizing_confidence_agrees_with_the_bet_sizing_note(client):
+    """M260. `sizing_confidence` was "high" on every postflop decision.
+
+    1,468 of 1,468 in the wide benchmark, including the responses whose
+    own `bet-sizing-coverage` note says no intermediate size existed -
+    one response telling a client to trust the sizes and not to. The two
+    now agree, asserted in both directions so neither the old constant
+    nor a blanket "low" passes.
+    """
+    base = {"stack_bb": 20.0, "players": 2, "board": "Kd7c2h",
+            "hero_cards": "9c9d",
+            "preflop_action_path": ["raise", "call_or_check"]}
+    opening = client.post("/advise", json=base).json()
+    assert "bet-sizing-coverage" not in opening["advisory_notes"]
+    assert (opening["sizing_confidence"], opening["sizing_confidence_reason"]) == ("high", None)
+
+    # Facing a 2.5x bet with 17.5bb behind: the 3x re-raise does not fit,
+    # so the tree offers only the shove - a limit of the MODEL.
+    big = max(s for s in opening["modelled_bet_sizes"]
+              if s < opening["max_affordable_bb"])
+    facing = client.post("/advise", json={
+        **base, "flop_action_path": ["raise:%.2f" % big]}).json()
+    assert "bet-sizing-coverage" in facing["advisory_notes"]
+    assert facing["sizing_confidence"] == "low"
+    assert facing["sizing_confidence_reason"] == (
+        api_config.POSTFLOP_SIZING_COVERAGE_REASON)
+
+
+def test_the_bet_sizing_note_is_silent_when_the_stack_is_the_reason(client):
+    """M260. A shove-only menu is not a modelling gap when even a third of
+    the pot is the whole stack - the real game has nothing smaller either.
+
+    189 of 303 firings in the wide benchmark were this case, mostly 20bb
+    stacks after a four-bet, and the note told those players that a
+    smaller bet "was never available" and that this distorts the play.
+    """
+    body = {"stack_bb": 20.0, "players": 2, "board": "Kd7c2h",
+            "hero_cards": "9c9d",
+            "preflop_action_path": ["raise", "raise", "raise", "call_or_check"]}
+    payload = client.post("/advise", json=body).json()
+    assert payload["modelled_bet_sizes"] == [payload["max_affordable_bb"]], (
+        "this spot must be shove-only for the test to mean anything")
+    assert 0.33 * payload["pot"] >= payload["max_affordable_bb"]
+    assert "bet-sizing-coverage" not in payload["advisory_notes"]
+    assert payload["sizing_confidence"] == "high"
+
+
+def test_relabelling_the_all_in_merges_and_leaves_the_library_alone():
+    """The helper renames only the all-in, sums any collision, and returns
+    a copy - the library entry is shared across requests."""
+    from api.solving import _all_in_at_the_real_stack
+    library_rows = {"9c9d": {"call_or_check": 0.5, "raise:12.50": 0.25,
+                             "all_in:95.00": 0.25}}
+    out = _all_in_at_the_real_stack(library_rows, 97.5)
+    assert out == {"9c9d": {"call_or_check": 0.5, "raise:12.50": 0.25,
+                            "all_in:97.50": 0.25}}
+    assert "all_in:95.00" in library_rows["9c9d"], "the shared entry was rewritten"
+
+
 def test_a_multiway_player_can_say_they_face_a_small_bet(client, monkeypatch):
     """M214. The capability the multiway menu exists to provide.
 
@@ -7992,10 +8078,19 @@ def test_the_turn_note_quotes_the_production_width_measurement(client):
     assert "about %d " % signed_points in note, (
         "the note no longer quotes TURN_INDEPENDENT_GAP_SIGNED (%d points), "
         "which is the DIRECTION a player acts on" % signed_points)
-    assert api_config.TURN_INDEPENDENT_GAP_MEDIAN > 0.4, (
-        "the turn's measured gap dropped below 0.4; if that is a real "
-        "re-measurement the note's wording needs revisiting, not just the "
-        "constant")
+    assert "%d of %d" % (api_config.TURN_INDEPENDENT_WITHIN_TEN,
+                         api_config.TURN_INDEPENDENT_ROWS) in note
+    assert "%d of %d" % (api_config.TURN_INDEPENDENT_SPOTS_BETTING_MORE,
+                         api_config.TURN_INDEPENDENT_SPOTS) in note
+    assert api_config.TURN_INDEPENDENT_GAP_SIGNED > 0, (
+        "the note says this engine bets MORE; M260 re-scored that with "
+        "range-weighted heroes at 6.46 sigma")
+    # M260: the headline is the RANGE-WEIGHTED figure. The hand-picked one
+    # may appear only as context, and must not be the larger claim the
+    # note leads with.
+    picked = round(api_config.TURN_INDEPENDENT_HAND_PICKED_MEDIAN * 100)
+    assert note.index("%d percentage points" % median_points) < note.index(
+        "%d points" % picked), "the note must lead with what a player's hand meets"
 
 
 def test_the_turn_reference_note_is_silent_where_the_gap_was_not_measured(client):
@@ -8724,3 +8819,47 @@ def test_the_reproducibility_warning_quotes_its_own_measurement(client):
     assert "%d of %d" % (api_config.MULTIWAY_STABLE_TURN_HELD,
                          api_config.MULTIWAY_STABLE_TURN_SPOTS) in stable
     assert str(api_config.MULTIWAY_STABLE_FLOP_SPOTS) in stable
+
+
+def _turn_facing_raw(row, positions=("BB", "BTN"), entering=92.5, bet=4.95, pot=15.0):
+    return {"street": "turn", "positions": list(positions),
+            "pot": pot + bet, "max_affordable_bb": entering,
+            "effective_stack_bb": entering - bet,
+            "hero": {"strategy": row}}
+
+
+def test_the_turn_shove_note_fires_where_it_was_priced():
+    """M260. Heads-up, facing a bet, mostly all-in, a deep street."""
+    shove = {"fold": 0.0001, "call_or_check": 0.0003, "raise:9.90": 0.0032,
+             "all_in:92.50": 0.9964}
+    raw = _turn_facing_raw(shove)
+    assert api_main._turn_shove_applies(raw, "turn")
+    assert "turn-shove" in [n for n, _t in api_main._advisory_notes(raw)]
+
+
+def test_the_turn_shove_note_is_silent_everywhere_else():
+    """Each condition is load-bearing, so each is removed once."""
+    shove = {"fold": 0.0, "call_or_check": 0.1, "all_in:92.50": 0.9}
+    calls = {"fold": 0.0, "call_or_check": 0.9, "all_in:92.50": 0.1}
+    assert not api_main._turn_shove_applies(_turn_facing_raw(calls), "turn")
+    assert not api_main._turn_shove_applies(_turn_facing_raw(shove), "river")
+    assert not api_main._turn_shove_applies(
+        _turn_facing_raw(shove, positions=("SB", "BB", "BTN")), "turn")
+    # An opening decision: no fold in the row, so not facing a bet.
+    opening = {"call_or_check": 0.1, "all_in:92.50": 0.9}
+    assert not api_main._turn_shove_applies(_turn_facing_raw(opening), "turn")
+    # A street that opened shallow (SPR 2), which was never measured.
+    assert not api_main._turn_shove_applies(
+        _turn_facing_raw(shove, entering=30.0, pot=15.0), "turn")
+
+
+def test_the_turn_shove_note_quotes_its_own_measurement():
+    note = api_config.TURN_SHOVE_NOTE
+    for value in (api_config.TURN_SHOVE_ROWS, api_config.TURN_SHOVE_BOARDS,
+                  api_config.TURN_SHOVE_REFERENCE_NEVER,
+                  api_config.TURN_SHOVE_COST_PCT_POT):
+        assert str(value) in note, value
+    assert "%.1f big blinds" % api_config.TURN_SHOVE_COST_BB in note
+    assert "at least" in note, (
+        "the price is a FLOOR - the reference's reply to a shove it never "
+        "makes is untrained and flatters the shove (M258)")

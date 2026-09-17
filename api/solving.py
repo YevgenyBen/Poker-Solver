@@ -1165,6 +1165,36 @@ def _derive_path_situation(
     )
 
 
+def _all_in_at_the_real_stack(strategy: dict, stack_bb: float) -> dict:
+    """The library's rows with the all-in named at the player's REAL stack.
+
+    M260. The canonical library solves at a depth that is rounded DOWN
+    (F13, `canonical_stack_depth`), so its tree's all-in is the bucketed
+    stack: at 100bb a heads-up flop published **`all_in:95.00`** while
+    `max_affordable_bb` said 97.5 and the walked tree offered
+    `all_in:97.50`. So the API's own label came back **422** when echoed
+    into `flop_action_path`, and the wide benchmark hit it on about a
+    fifth of flop facing-a-bet requests. M101's invariant (every size <=
+    `max_affordable_bb`) held throughout, which is why nothing caught it:
+    it bounds the label from above and says nothing about naming the
+    real action.
+
+    An all-in is "every chip", not an amount, so relabelling changes what
+    the row SAYS and not what was solved. The depth approximation F13
+    documents is unchanged. Returns a new dict - the library entry is
+    shared across requests and must not be rewritten.
+    """
+    label = f"all_in:{stack_bb:.2f}"
+    out = {}
+    for hand, row in strategy.items():
+        fixed = {}
+        for action, weight in row.items():
+            key = label if str(action).startswith("all_in") else action
+            fixed[key] = fixed.get(key, 0.0) + weight
+        out[hand] = fixed
+    return out
+
+
 def _query_flop_from_path(
     action_kinds: list, stack_bb: float, board_cards: tuple, iterations: int, players: int = 2,
     hero_combo=None,
@@ -1265,7 +1295,7 @@ def _query_flop_from_path(
         "pot": path_scenario.pot,
         "hit": result.hit,
         "elapsed_seconds": result.elapsed_seconds,
-        "strategy": result.strategy,
+        "strategy": _all_in_at_the_real_stack(result.strategy, effective_stack_bb),
         # M76: real per-combo confidence from the library, replacing the
         # hardcoded null this cell used to report.
         "trained": result.trained,
