@@ -52,6 +52,41 @@ PREWARM_STACK_DEPTHS = (20, 40, 50, 75, 100, 150, 200)
 # a daemon thread, while the server already serves everything else.
 # Depths outside this list still work; they just pay the solve.
 MULTIWAY_PREWARM_STACK_DEPTHS = (100.0, 50.0, 20.0)
+
+# A3 (2026-09-17). WARM THE DEPTHS REAL PLAYERS SIT AT, IN THE BACKGROUND.
+#
+# The three depths above cover the multiway preflop solve for 12% of real
+# 6-max multiway flops (15% at 9-max): 129,508 real 2009 online hands put
+# **88% of 6-max multiway pots at 100bb or deeper**, and every 5bb bucket
+# that is not warm costs its first player 55-110s (6-max) or 16-39s
+# (3-max) - measured, not estimated. The wide benchmark could not see it
+# because it drew stacks only from this list (M252's population trap).
+#
+# Serving a deep stack from the 100bb solve instead was measured and
+# REFUSED: M124's control re-run at 100 vs 115/150/200bb exceeds the
+# same-depth seed control at the deepest node checked at every gap (6-max
+# 115bb: 33 fold/play flips against 21). So the depths are warmed, not
+# substituted.
+#
+# Order is by how often real 6-max multiway flops occur at each bucket
+# (hand store, measured offline - nothing reads it at request time). The
+# 22 below plus 100bb cover 69% of all real 6-max multiway flops and 91%
+# of those at or under 200bb; 23.7% are deeper than 200bb and are not
+# warmed. 3-max entries cost ~2 MB, so every 3-max bucket follows. 9-max
+# is not warmed: 257 MB an entry does not fit a background budget.
+#
+# Warmed only while the server is idle (`MULTIWAY_BACKGROUND_WARM_IDLE_SECONDS`
+# since the last request finished), one solve at a time, after the
+# startup prewarm, and skipped for any bucket already cached.
+MULTIWAY_BACKGROUND_WARM = tuple(
+    [(6, float(d)) for d in (105, 110, 115, 120, 195, 125, 30, 200, 130, 135,
+                             140, 190, 145, 95, 180, 165, 150, 175, 170, 185,
+                             155, 160)]
+    + [(3, float(d)) for d in sorted(
+        (d for d in range(5, 205, 5) if float(d) not in (100.0, 50.0, 20.0)),
+        key=lambda d: (abs(d - 100), d))]
+)
+MULTIWAY_BACKGROUND_WARM_IDLE_SECONDS = 2.0
 # The ceiling on a client-supplied `iterations` for the heads-up preflop
 # solve — the one endpoint that exposes the knob at all (multiway ignores
 # it outright, per MULTIWAY_TABLE_CONFIGS' fixed-menu discipline).

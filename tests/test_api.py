@@ -8976,3 +8976,90 @@ def test_every_note_the_front_end_prioritises_exists_in_the_api():
     backend = pathlib.Path(api_main.__file__).read_text(encoding="utf-8")
     for note_id in ids:
         assert '("%s",' % note_id in backend, note_id
+
+
+def test_the_background_warm_list_is_well_formed():
+    """A3. Buckets only, no repeats, nothing the startup prewarm covers,
+    no 9-max (257 MB an entry), and the measured 6-max order first."""
+    warm = api_config.MULTIWAY_BACKGROUND_WARM
+    assert len(set(warm)) == len(warm)
+    for players, depth in warm:
+        assert players in (3, 6)
+        assert depth % api_config.MULTIWAY_STACK_BUCKET_BB == 0 and 5 <= depth <= 200
+        assert depth not in api_config.MULTIWAY_PREWARM_STACK_DEPTHS
+    assert warm[:5] == ((6, 105.0), (6, 110.0), (6, 115.0), (6, 120.0), (6, 195.0))
+    six = [d for p, d in warm if p == 6]
+    three = [d for p, d in warm if p == 3]
+    assert len(six) == 22 and len(three) == 37
+
+
+def test_the_background_warmer_waits_for_idle_and_skips_warm_buckets(monkeypatch):
+    """A3. It must never start a solve while a player is waiting, and must
+    not re-solve what is already cached."""
+    monkeypatch.setattr(api_config, "MULTIWAY_BACKGROUND_WARM",
+                        ((6, 105.0), (6, 110.0), (3, 95.0)))
+    api_main._multiway_cache.store((110.0, 6), object())
+    solved, slept = [], []
+    now = {"t": 100.0}
+    api_main._ACTIVITY.update(in_flight=1, last_finished=0.0)
+
+    def fake_sleep(seconds):
+        slept.append(seconds)
+        now["t"] += seconds
+        if len(slept) == 3:                      # the request finishes
+            api_main._ACTIVITY.update(in_flight=0, last_finished=now["t"])
+
+    monkeypatch.setattr(api_main, "_get_or_solve_multiway",
+                        lambda depth, players: solved.append((players, depth)))
+    api_main.PREWARM_STATUS["background"] = []
+    api_main._background_warm(clock=lambda: now["t"], sleep=fake_sleep,
+                              enabled=lambda: True)
+    assert solved == [(6, 105.0), (3, 95.0)], "the cached 110bb bucket was re-solved"
+    # 3 polls while busy, then enough idle polls to cover the idle window.
+    idle_polls = int(api_config.MULTIWAY_BACKGROUND_WARM_IDLE_SECONDS / 0.5)
+    assert len(slept) == 3 + idle_polls
+    names = [(s["name"], s["skipped"]) for s in api_main.PREWARM_STATUS["background"]]
+    assert names == [("6-max stack_bb=105.0", False), ("6-max stack_bb=110.0", True),
+                     ("3-max stack_bb=95.0", False)]
+
+
+def test_the_background_warmer_stops_when_switched_off(monkeypatch):
+    calls = []
+    monkeypatch.setattr(api_main, "_get_or_solve_multiway",
+                        lambda depth, players: calls.append(depth))
+    api_main._background_warm(enabled=lambda: False)
+    assert calls == []
+
+
+def test_requests_are_counted_while_in_flight(client):
+    """A3. The idle gate reads this; a request must raise and then release it."""
+    seen = {}
+    original = api_main._advise
+
+    def spy(*args, **kwargs):
+        seen["in_flight"] = api_main._ACTIVITY["in_flight"]
+        return original(*args, **kwargs)
+
+    import unittest.mock
+    with unittest.mock.patch.object(api_main, "_advise", spy):
+        client.post("/advise", json={"stack_bb": 100.0, "players": 2,
+                                     "hero_cards": "AhKd", "preflop_action_path": []})
+    assert seen.get("in_flight", 0) >= 1
+    assert api_main._ACTIVITY["in_flight"] == 0
+    assert api_main._ACTIVITY["last_finished"] > 0
+
+
+def test_warm_status_reports_both_warm_phases(client, monkeypatch):
+    """A3. An operator can see whether the server is warm yet."""
+    monkeypatch.setattr(api_main, "PREWARM_STATUS", {
+        "started": True, "finished": True,
+        "steps": [{"name": "a", "ok": True, "error": None},
+                  {"name": "b", "ok": False, "error": "x"}],
+        "background": [{"name": "6-max stack_bb=105.0", "ok": True, "error": None, "skipped": False},
+                       {"name": "6-max stack_bb=110.0", "ok": True, "error": None, "skipped": True}],
+    })
+    body = client.get("/warm_status").json()
+    assert body["prewarm_finished"] is True and body["prewarm_failed"] == ["b"]
+    assert body["background_done"] == 2 and body["background_solved"] == 1
+    assert body["background_planned"] == len(api_config.MULTIWAY_BACKGROUND_WARM)
+    assert body["background_last"] == "6-max stack_bb=110.0"

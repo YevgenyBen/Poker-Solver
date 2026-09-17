@@ -538,6 +538,7 @@ import dataclasses
 import logging
 import os
 import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path as FilePath
 
@@ -832,14 +833,107 @@ def _prewarm_common_depths() -> None:
         logger.info("pre-warm finished: %d step(s), all ok", len(PREWARM_STATUS["steps"]))
 
 
+def _background_warm_enabled() -> bool:
+    """A3's own switch, so a deployment can keep the startup prewarm and
+    skip the long idle-time warm (or the reverse)."""
+    return os.environ.get("POKER_SOLVER_BACKGROUND_WARM", "1") != "0"
+
+
+# A3: requests in flight, and when the last one finished. The background
+# warmer only starts a solve when the server has been idle for
+# MULTIWAY_BACKGROUND_WARM_IDLE_SECONDS, so it never competes with a
+# player for the CPU at the moment they ask.
+_ACTIVITY = {"in_flight": 0, "last_finished": 0.0}
+_ACTIVITY_LOCK = threading.Lock()
+
+
+def _server_is_idle(now: float) -> bool:
+    with _ACTIVITY_LOCK:
+        return (_ACTIVITY["in_flight"] == 0 and now - _ACTIVITY["last_finished"]
+                >= cfg.MULTIWAY_BACKGROUND_WARM_IDLE_SECONDS)
+
+
+def _background_warm(clock=time.monotonic, sleep=time.sleep, poll_seconds=0.5,
+                     enabled=_background_warm_enabled) -> None:
+    """A3: warm the multiway preflop depths real players sit at.
+
+    Runs after the startup prewarm, one solve at a time, only while the
+    server is idle, skipping buckets already cached. Outcomes are recorded
+    in PREWARM_STATUS["background"] the way the prewarm records its own.
+    """
+    status = PREWARM_STATUS.setdefault("background", [])
+    for players, depth in cfg.MULTIWAY_BACKGROUND_WARM:
+        if not enabled():
+            return
+        key = (canonical_stack_depth(depth, cfg.MULTIWAY_STACK_BUCKET_BB), players)
+        if key in _multiway_cache.entries:
+            status.append({"name": f"{players}-max stack_bb={depth}", "ok": True,
+                           "error": None, "skipped": True})
+            continue
+        while not _server_is_idle(clock()):
+            sleep(poll_seconds)
+        started = clock()
+        try:
+            _get_or_solve_multiway(depth, players)
+        except Exception as exc:
+            logger.exception("background warm failed for %s-max %s", players, depth)
+            status.append({"name": f"{players}-max stack_bb={depth}", "ok": False,
+                           "error": f"{type(exc).__name__}: {exc}", "skipped": False})
+            continue
+        status.append({"name": f"{players}-max stack_bb={depth}", "ok": True,
+                       "error": None, "skipped": False})
+        logger.info("background warm: %s-max stack_bb=%s in %.1fs",
+                    players, depth, clock() - started)
+
+
+def _warm_all() -> None:
+    _prewarm_common_depths()
+    if _background_warm_enabled():
+        _background_warm()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if _prewarm_enabled():
-        threading.Thread(target=_prewarm_common_depths, daemon=True).start()
+        threading.Thread(target=_warm_all, daemon=True).start()
     yield
 
 
 app = FastAPI(title="Poker Solver API", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def _track_activity(request, call_next):
+    with _ACTIVITY_LOCK:
+        _ACTIVITY["in_flight"] += 1
+    try:
+        return await call_next(request)
+    finally:
+        with _ACTIVITY_LOCK:
+            _ACTIVITY["in_flight"] -= 1
+            _ACTIVITY["last_finished"] = time.monotonic()
+
+
+@app.get("/warm_status")
+async def warm_status_endpoint():
+    """A3: what the startup prewarm and the background warm have done.
+
+    Read-only and cheap. The warm runs in a daemon thread whose own log
+    lines do not reach the server log by default, so this is how an
+    operator (or a test) can tell whether a server is warm yet.
+    """
+    background = list(PREWARM_STATUS.get("background", []))
+    return {
+        "prewarm_started": PREWARM_STATUS["started"],
+        "prewarm_finished": PREWARM_STATUS["finished"],
+        "prewarm_steps": len(PREWARM_STATUS["steps"]),
+        "prewarm_failed": [s["name"] for s in PREWARM_STATUS["steps"] if not s["ok"]],
+        "background_planned": len(cfg.MULTIWAY_BACKGROUND_WARM),
+        "background_done": len(background),
+        "background_solved": sum(1 for s in background if s["ok"] and not s["skipped"]),
+        "background_failed": [s["name"] for s in background if not s["ok"]],
+        "background_last": background[-1]["name"] if background else None,
+    }
 
 
 @app.get("/solve/{stack_bb}", response_model=SolveResponse)

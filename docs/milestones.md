@@ -15629,3 +15629,59 @@ archive:
   training, cap 8 are the standing candidates).
 - 3-max and 9-max, which have no reference.
 - A chip price.
+
+## M263 - acting on the recommendations: empty answers, visible warnings, warm deep stacks
+
+`docs/recommendations-2026-09-17.md`, items A1-A3.
+
+**A1 - never vouch for an empty answer.**
+
+- **`solver_confidence`:** goes low with `MISSING_HERO_ROW_REASON` when
+  hero's cards were given and no row came back.
+- **`bench/advise_checks.response_defects`:** gathers the defect checks
+  every harness re-typed (missing hero row, row sums, negative
+  frequencies, unaffordable sizes, uniform rows at high confidence). The
+  missing hero row is the one none of them caught (M262).
+
+**A2 - show the warnings that change the play.**
+
+- **API:** `AdviseResponse.advisory_note_details` carries each note's id
+  and its own backend text.
+- **Front end:** `DecisionWarnings` shows `multiway-bet`, `turn-shove`,
+  `river-under-fold` and `costly-band` as separate alerts, with
+  qualitative titles and the figures kept in the backend text. The rest
+  sit in a collapsed drawer; the joined paragraph stays as the fallback.
+- **Drift guard:** a backend test pins the front end's priority ids to
+  notes that exist.
+- **Checked in the browser:** a heads-up flop facing a bet shows one
+  priority alert and four collapsed caveats.
+
+**A3 - warm the depths real multiway players sit at.**
+
+- **The exposure:** 129,508 real hands put **88% of 6-max multiway flops
+  at 100bb or deeper**. Only 12% sit at a prewarmed depth. Every cold 5bb
+  bucket costs its first player 55-110s (6-max). Benchmarks drew stacks
+  only from the prewarm list, which is M252's population trap again.
+- **The fallback was refused.** Serving deep stacks from the 100bb solve
+  was measured first with M124's control, and exceeded same-depth seed
+  noise at the deepest node at every gap. 6-max 115bb showed 33
+  fold/play flips against 21.
+- **Shipped instead:**
+  - **`MULTIWAY_BACKGROUND_WARM`:** 22 six-max buckets in real-frequency
+    order (69% of real 6-max multiway flops with 100bb; 91% of those at
+    or under 200bb; 23.7% are deeper than 200bb) plus all 37 remaining
+    three-max buckets.
+  - **The warmer:** runs after the prewarm, only after 2s of server
+    idle, skipping cached buckets.
+  - **Activity counter:** an HTTP middleware tracks requests in flight.
+  - **Cache budget:** `_multiway_cache` goes 1 GB -> 2 GB. The ceiling
+    test now bounds by the enforced byte budget rather than
+    `count x worst`.
+  - **`GET /warm_status`:** reports what the prewarm and the background
+    warm have done.
+- **Live result:** a 107bb 6-max request went from ~100s cold to
+  **0.24s** once its bucket was warmed; the prewarm finished its 20 steps
+  with no failures.
+- **Not warmed:**
+  - 9-max (257 MB an entry);
+  - stacks over 200bb.

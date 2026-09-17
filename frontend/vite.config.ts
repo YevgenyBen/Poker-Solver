@@ -25,6 +25,7 @@ export default defineConfig({
       // whose name doesn't start with '/solve' silently fell through to
       // the SPA's index.html in dev.
       '/advise': 'http://127.0.0.1:8000',
+      '/warm_status': 'http://127.0.0.1:8000',
     },
   },
   test: {

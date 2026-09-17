@@ -590,6 +590,17 @@ The overbet row and the turn stay excluded
     - **Key a path cache by exactly what force-inclusion adds** — the
       combo, except on the class-level library path.
 
+- **MULTIWAY DEPTHS ARE WARMED IN THE BACKGROUND (M263/A3).**
+  - **The exposure:** real multiway pots sit at 100bb or deeper 88% of the
+    time, and only 100/50/20 were prewarmed.
+  - **The warmer:** `MULTIWAY_BACKGROUND_WARM` warms 22 six-max and 37
+    three-max buckets while the server is idle. `GET /warm_status` shows
+    progress.
+  - **Serving a deep stack from a shallower solve was REFUSED on M124's
+    control.** Do not add that fallback without re-running it.
+  - **Rule:** **benchmark stacks must be drawn from real play, not from
+    the prewarm list.**
+
 ### The checks REPLICATE on fresh spots (M236) — n=42 per street
 
 M222/M224's figures rested on ~21 spots each and carry a user-facing
