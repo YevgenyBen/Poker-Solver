@@ -317,3 +317,33 @@ against our 1.65, which is 21% apart and over the 5% tolerance.
 
 **R4 would unlock the most.** The turn's price is the largest unknown
 left, and the cost is in our own walk, not in the solver.
+
+### R4, acted on — the walk
+
+`LeafEquity` built the full (N+1)×(N+1) equity table for every river
+board, then read only row 0.
+
+- **The fix:** on a board with at most one card to come, hero's row is an
+  O(N) rank comparison.
+- **Correctness:** equal to the table's row exactly, pinned by a
+  parametrised test.
+- **Speed:** one turn row at a 584-combo pool went **228.8 s → 6.2 s
+  (36.9×)**, with the same regret to 1e-9.
+- **What that buys:** a turn spot now prices in ~75 s with 12 rows,
+  instead of 30 min with 4–7.
+
+### R4, acted on — the turn priced at n = 24
+
+The rule was fixed before the run:
+
+- **Design:** 24 fresh three-bet turn boards at cap 140, with heroes drawn
+  by range weight (R5): three at the opening decision, three per facing
+  size. Same controls and same 5% reach rule as above.
+- **Reading, turn against river, per node type:**
+  - turn larger at 2σ → the turn is the costlier street in chips;
+  - otherwise → the streets are not separable.
+- **Quoting the turn's price to players requires both:**
+  - its cell is separable from zero at 2σ;
+  - all spots pass the root control.
+
+  Otherwise it stays a report finding.
