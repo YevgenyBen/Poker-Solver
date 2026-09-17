@@ -15801,3 +15801,33 @@ stacks, table sizes, lines and bet sizes, with random hole cards.
 
 **Rule.** Split latency by live count. A pooled figure over a mostly
 three-handed sample hid the four-handed cost.
+
+## M267 - multiway reproducibility re-measured at the x4 budget (A4c)
+
+M254's 90-spot study, re-run unchanged (same seed, same bodies) on the
+shipped configuration after M264 and M266.
+
+| | M254 (old budget) | now |
+|---|---|---|
+| action changes, all spots | 0.2815 | **0.2111** |
+| flop | 0.1333 | 0.1333 |
+| turn | 0.1778 | 0.1889 |
+| river | 0.5333 | **0.3111** |
+| decisive river rows | 0.30 (4 of 10 held) | **0.077 (10 of 13 held)** |
+
+- **Paired, per spot:** the action changes -0.070 less often (2.05
+  sigma) and TVD falls -0.055 (2.85 sigma). The river carries it: its
+  TVD falls -0.134 at 3.06 sigma, while the flop and turn are null. The
+  river went from 50 to 200 iterations in M264.
+- **The river exclusion is removed.** Its decisive rows now behave like
+  the turn's. M254's pre-registered rule passes on the split-row gate
+  alone: firing 38 of 90 at 0.4386, silent 52 at 0.0449, **6.23 sigma**,
+  split halves 4.07 / 5.01, quiet share 58%, and both outcome measures
+  agree.
+- **The copy follows the measurement.** Split rows now quote 50% / 33%
+  / 49%. Decisive rows quote 46 of 52 held (22/22, 14/17, 10/13) and
+  frequencies moving about 0.10 (was 0.07). "More computation does not
+  fix this" is withdrawn, since the river measured that it does,
+  partly.
+- **Nothing on the flop or turn changed,** so M264's gain against the
+  outside agent is not a reproducibility gain there.

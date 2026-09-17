@@ -1809,16 +1809,12 @@ def _multiway_answer_is_stable(raw: dict, street: str | None,
     cell measures 0.2889, is the mistake M245's guard caught in this
     milestone's own first draft.)
 
-    **The river is excluded whatever its row looks like.** Its decisive
-    rows still flip 0.30 of the time, against the flop's 0.0000 and the
-    turn's 0.0667, so there is no quiet cell there to find. That is a
-    measurement, not caution: the same split/decisive gap holds WITHIN
-    every street (5.61 / 2.57 / 2.84 sigma), so the predictor is not a
-    proxy for the street - the river simply has no stable half.
+    **The river used to be excluded whatever its row looked like** - at
+    M254's budget its decisive rows flipped 0.30 of the time. A4c (M267)
+    re-measured at M264's budget: 0.077, the turn's level (0.078), so the
+    river now takes the same gate as the other streets.
     """
     if not _is_multiway_postflop(raw, street):
-        return False
-    if (street or raw.get("street")) == "river":
         return False
     top = _hero_top_action_mass(raw, hero)
     return top is not None and top >= cfg.MULTIWAY_STABLE_MAX_TOP_ACTION

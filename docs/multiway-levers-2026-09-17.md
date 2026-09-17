@@ -147,3 +147,12 @@ solver never reads this setting.
   not only at the start. That remains untested.
 - **The `prod` arm reproduced M264's ×4 arm exactly,** so the replay is
   deterministic.
+
+## A4c (M267): reproducibility at the new budget
+
+M254's study was re-run unchanged. The top action changes 21% of the
+time (M254: 28%), all of the improvement on the river (0.53 → 0.31).
+Decisive river rows now change 0.077, the same as the turn's, so the
+river no longer needs its blanket warning. The split-row gate alone
+passes M254's rule at 6.23σ. The details are in `docs/milestones.md`,
+M267.
