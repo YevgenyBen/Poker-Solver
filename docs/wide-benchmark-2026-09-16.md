@@ -467,8 +467,13 @@ check-call / bet-raise.
   - About one decision in four there carries a "not reproducible"
     warning.
   - No outside reference exists to say how accurate it is.
-- **Speed is not the constraint.** Every one of 2,293 decisions came back
-  inside 5 seconds.
+- **Heads-up, speed is not the constraint.**
+  - Every one of 2,293 benchmark decisions came back inside 5 seconds.
+  - Facing a bet with nothing cached, it takes 1.9–2.8 s (median).
+- **Multiway, the FIRST request at an unusual stack can take minutes.**
+  - Measured: 6-max at 73 bb waited **99.5 s**, 3-max at 37 bb **51.9 s**.
+  - Only 100/50/20 bb are prewarmed, and the benchmark only drew those
+    stacks, so it never saw this (see *Speed*).
 
 ### Accuracy — how good is the read?
 
@@ -575,13 +580,50 @@ concurrent users, and the machine drifted 1.2–2.5× during the run.
 \* **Facing-a-bet times on the turn and river are mostly cache hits.**
 In the benchmark those requests came right after the same street's
 opening request, which pays for the solve. A player whose opponent acted
-first has not made that request, so expect the opening decision's
-**~1–3 s** instead.
+first has not made that request.
+
+**Measured afterwards with every postflop cache cleared** (heads-up,
+100 bb, 10 spots per street):
+
+| street, facing a bet, cold | median | worst |
+|---|---|---|
+| flop | 2.80 s | 4.11 s |
+| turn | 1.86 s | 2.51 s |
+| river | 2.60 s | 3.85 s |
+
+### The wait the benchmark could not see: multiway at an unprewarmed stack
+
+The multiway preflop solve is cached per 5 bb stack bucket (M124), and
+production prewarms only **100, 50 and 20 bb**
+(`MULTIWAY_PREWARM_STACK_DEPTHS`). Both benchmark arms drew stacks from
+exactly those three values. So every multiway request they made was
+warm. **M252's population trap again: the benchmark measured the stacks
+it generated.**
+
+Measured on a fresh process:
+
+| request | first time | again (same bucket) |
+|---|---|---|
+| heads-up preflop, 73 bb | 0.5 s | — |
+| heads-up flop, 73 bb | 2.8 s | 0.0 s |
+| **3-max preflop, 37 bb** | **51.9 s** | — |
+| **6-max preflop, 73 bb** | **99.5 s** | 0.0 s |
+| 9-max preflop, unprewarmed | **~525 s** by M157's cost (not re-run) | — |
+
+- **Who waits:** a multiway player whose stack is not near 100/50/20 bb.
+- **How often:** once per 5 bb bucket per table size, per server
+  process. Every multiway postflop request needs this solve first, so
+  those wait too.
+- **Heads-up is unaffected:** the exact solver answers any depth in
+  under a second.
 
 **What that means at a table:**
 
-- **Everything returns inside 5 seconds.** 0 of 2,293 decisions went
-  over, 13–16% took more than 2 s, and 3.4–3.6% took more than 3 s.
+- **At a prewarmed stack, everything returns inside 5 seconds.** 0 of
+  2,293 decisions went over, 13–16% took more than 2 s, and 3.4–3.6%
+  took more than 3 s.
+- **At any other multiway stack, the first answer is too slow for any
+  clock:** 52 s at 3-max, 99.5 s at 6-max, and minutes at 9-max.
 - **Online:** a typical action clock is ~15 s before a time bank. A
   worst case under 5 s leaves room to read the answer and its notes.
 - **Live:** there is no hard clock, and a 1–3 s pause is invisible.
@@ -590,8 +632,7 @@ first has not made that request, so expect the opening decision's
   hand that is most of the time spent.
 - **Not measured:**
   - many players sharing one server;
-  - a cold server that has not warmed its multiway depths. The first
-    multiway preflop at a new depth can take 30–60 s (M252).
+  - a server under load while a cold multiway depth is solving.
 
 ### Verdict
 
@@ -602,8 +643,42 @@ first has not made that request, so expect the opening decision's
 | heads-up flop facing a bet | **with caution**; 1 clear decision in 4 disagrees |
 | multiway postflop | **no** — a lean, not a read |
 | multiway preflop, weak hands facing heavy action | **no** — flagged |
-| speed, anywhere | **yes** — under 5 s on every decision measured |
+| speed, heads-up | **yes**; under 5 s at every depth, cold or warm |
+| speed, multiway | **only at 100/50/20 bb**; elsewhere the first answer takes 52 s to minutes |
 
 **The single most useful habit:** when a response carries `turn-shove`
 or `river-under-fold`, take the alternative the note names seriously.
 Those two warnings cover the most expensive advice this benchmark found.
+
+**Today that habit is hard to act on.**
+
+- **The front end never reads `advisory_notes`.** It shows every note
+  joined into one paragraph.
+- **On a heads-up turn facing a bet, that paragraph runs 3,236
+  characters** — about 500 words, and it appears on every postflop
+  decision. The `turn-shove` warning is its last sentence.
+- **At the table,** a player on a 15 s clock will not get there (R11).
+
+---
+
+## Recommendations — amended after the live-play section
+
+The usability review changed the priorities. Two findings the benchmark
+could not see now lead, because they decide whether a player at a table
+can use the product at all.
+
+| # | recommendation | why (live play) | priority | status |
+|---|---|---|---|---|
+| **R11** | **Surface the warnings that matter.** Render `advisory_notes` by id, putting `turn-shove`, `river-under-fold`, `costly-band` first as short badges, plus the multiway irreproducibility reason from `solver_confidence_reason`, with the long standing caveat collapsed | The two warnings that avoid the most expensive advice are the last sentence of a ~500-word paragraph shown on every postflop decision | **1** | OPEN |
+| **R12** | **Close the multiway cold-depth wait.** Warm every 5 bb bucket in the background after startup, most common stacks first. Meanwhile, answer from the nearest warmed bucket BELOW (F13's floor keeps sizes affordable), with a disclosure, rather than blocking. Draw benchmark stacks off the prewarm grid | First multiway answer at 73 bb took 99.5 s (6-max), 51.9 s (3-max), ~525 s at 9-max. Full warming costs ~1.6 CPU-hours at 3/6-max, and ~39 x 40 MB at 6-max, over the 1 GB cache budget, so the budget must move too; 9-max cannot be fully warmed at 257 MB an entry | **2** | OPEN |
+| R14 | **Find where the flop facing a bet disagrees.** A frequency-only study, cheap: dumps need one round. Look for a runtime-readable gate, the way M243 found one for the river | The weakest heads-up cell in the usability table: 23 of 31 clear decisions agree. M188 puts the most postflop cost on this node, and it is unpriced | 3 | OPEN (supersedes R7's priority) |
+| R13 | **Extend external coverage to the spots players meet:** stacks other than 100 bb, single-raised turns and flops, 4-bet pots | Every accuracy number above is heads-up, 100 bb, mostly 3-bet pots. Turn pricing is now cheap (R4); single-raised depth is the cost driver (M257) | 4 | OPEN |
+| R7 | Price the flop's size disagreement | Size advice is the flop's biggest frequency gap, but a player can act on "bet or check" without it | 5 | OPEN |
+| R15 | **Time the whole hand, not only the solve.** Measure how long a player takes to ENTER the action history per street in the front end | For a live player that is likely the larger delay, and it has never been measured | 6 | OPEN |
+| R1–R6, R9, R10 | as above | — | — | DONE |
+| R8 | Report river direction by pot type in any future river copy | unchanged | — | recorded |
+
+**Retired as out of reach here:** measuring accuracy against real
+(non-equilibrium) opponents. It needs play data this project does not
+have. The win-rate bound in the usability section stays a bound against
+a near-equilibrium opponent.
