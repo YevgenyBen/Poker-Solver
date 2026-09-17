@@ -1649,6 +1649,16 @@ requests now reject unknown fields by name rather than ignoring them.
   **22 of 22** on the flop, 12 of 15 on the turn — quoted as COUNTS,
   because at 22 of 22 a percentage reads "0%" and claims more than 22
   spots support.
+  **A4c (M267) RE-MEASURED IT AT M264's BUDGET, and the river exclusion
+  is gone.** Same 90 spots: the action changes 21% of the time overall
+  (was 28%), and the river moved most (paired TVD -0.134, 3.06 sigma).
+  Decisive river rows now change **0.077**, the turn's 0.078, where M254
+  measured 0.30, so the gate is now split row alone (top action < 0.90)
+  on every street: firing 0.4386 / silent 0.0449, **6.23 sigma**, split
+  halves 4.07 / 5.01. Quoted now: split rows change 50% flop / 33% turn /
+  49% river; decisive rows held 46 of 52 (flop 22/22, turn 14/17, river
+  10/13). **More computation DOES help the river** — the note no longer
+  says it cannot. The M254 figures below are history.
   **Nothing became more reproducible** — 41% of these decisions are now
   correctly described instead of incorrectly, and the exposure figure
   does not move. **The river was expected to be cleanest (exact equity,

@@ -8516,22 +8516,16 @@ def test_a_decisive_multiway_row_is_quoted_its_own_measurement():
     assert not api_main._multiway_answer_is_stable(_mw_raw("turn", 0.80), "turn")
 
 
-def test_the_river_is_never_quoted_the_stable_measurement():
-    """M254. Measured, not cautious.
-
-    The river's DECISIVE rows still flip 0.30 of the time, against the
-    flop's 0.0000 and the turn's 0.0667, so there is no stable half there
-    to find. The predictor is not merely a proxy for the street - the
-    split/decisive gap holds WITHIN each street (5.61 / 2.57 / 2.84
-    sigma) - but the river has no quiet cell for it to select.
-    """
+def test_a_decisive_river_row_is_quoted_the_stable_measurement():
+    """A4c (M267). M254 excluded the river because its decisive rows
+    flipped 0.30 of the time. At M264's budget they flip 0.077, the turn's
+    level, and the pre-registered rule passes without the exclusion
+    (6.23 sigma). A split river row still gets the warning."""
     from api import main as api_main
 
-    assert not api_main._multiway_answer_is_stable(_mw_raw("river", 0.99), "river")
-    assert api_main._multiway_answer_is_stable(_mw_raw("turn", 0.99), "turn"), (
-        "the turn's decisive rows ARE the quiet cell - excluding them too "
-        "would throw away the whole finding"
-    )
+    assert api_main._multiway_answer_is_stable(_mw_raw("river", 0.99), "river")
+    assert not api_main._multiway_answer_is_stable(_mw_raw("river", 0.60), "river")
+    assert api_main._multiway_answer_is_stable(_mw_raw("turn", 0.99), "turn")
 
 
 def test_the_stable_branch_is_still_low_confidence():
@@ -8550,7 +8544,7 @@ def test_the_stable_branch_is_still_low_confidence():
         _mw_raw("flop", 0.97), players=6,
         hero=_mw_raw("flop", 0.97)["hero"], street="flop")
     assert level == "low", "a multiway answer reported high confidence"
-    assert "It held on 34 of 37" in (reason or "")
+    assert "It held on %d of %d" % (api_cfg.MULTIWAY_STABLE_HELD_SPOTS, api_cfg.MULTIWAY_STABLE_SPOTS) in (reason or "")
     assert "NOT REPRODUCIBLE" not in (reason or "")
 
 
@@ -8564,7 +8558,7 @@ def test_a_split_multiway_row_still_gets_the_full_warning():
         raw, players=6, hero=raw["hero"], street="flop")
     assert level == "low"
     assert "NOT REPRODUCIBLE" in (reason or "")
-    assert "It held on 34 of 37" not in (reason or "")
+    assert "It held on %d of %d" % (api_config.MULTIWAY_STABLE_HELD_SPOTS, api_config.MULTIWAY_STABLE_SPOTS) not in (reason or "")
 
 
 def test_neither_multiway_reason_reaches_a_two_player_pot():
@@ -8577,7 +8571,7 @@ def test_neither_multiway_reason_reaches_a_two_player_pot():
     heads_up = _mw_raw("flop", 0.97, positions=("BTN", "BB"))
     level, reason = api_main._solver_confidence(
         heads_up, players=6, hero=heads_up["hero"], street="flop")
-    assert "It held on 34 of 37" not in (reason or "")
+    assert "It held on %d of %d" % (api_config.MULTIWAY_STABLE_HELD_SPOTS, api_config.MULTIWAY_STABLE_SPOTS) not in (reason or "")
     assert "NOT REPRODUCIBLE" not in (reason or "")
 
 
@@ -8851,6 +8845,11 @@ def test_the_reproducibility_warning_quotes_its_own_measurement(client):
     assert "%d of %d" % (api_config.MULTIWAY_STABLE_TURN_HELD,
                          api_config.MULTIWAY_STABLE_TURN_SPOTS) in stable
     assert str(api_config.MULTIWAY_STABLE_FLOP_SPOTS) in stable
+    assert "%d of %d" % (api_config.MULTIWAY_STABLE_RIVER_HELD,
+                         api_config.MULTIWAY_STABLE_RIVER_SPOTS) in stable
+    assert "does not fix this" not in note, (
+        "A4c measured more iterations cutting the river's action changes "
+        "0.53 -> 0.31; the note may not say computation cannot help")
 
 
 def _turn_facing_raw(row, positions=("BB", "BTN"), entering=92.5, bet=4.95, pot=15.0):

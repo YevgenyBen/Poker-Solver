@@ -1560,19 +1560,29 @@ MULTIWAY_SEED_ACTION_FLIP_RIVER = 0.75
 # which is M232's failure inside the milestone that exists to fix M232's
 # failure.
 MULTIWAY_STABLE_MAX_TOP_ACTION = 0.90
+# A4c (M267) re-measured all of this at the M264 budget, on M254's own 90
+# spots (same seed, same bodies). The top action now changes 21% of the
+# time overall against 28%, and the river moved most: its paired TVD fell
+# 0.134 at 3.06 sigma, and its DECISIVE rows now change 0.077 of the
+# time - the turn's 0.078 - where M254 measured 0.30. So the river is no
+# longer excluded from the quiet branch. The rule M254 fixed in advance
+# passes without the exclusion: 6.23 sigma, split halves 4.07 / 5.01,
+# quiet share 58%.
 MULTIWAY_INSTABILITY_SPOTS = 90
-MULTIWAY_UNSTABLE_ACTION_CHANGES = 0.4591
+MULTIWAY_UNSTABLE_ACTION_CHANGES = 0.4386
 MULTIWAY_UNSTABLE_FLIP_FLOP = 0.50
-MULTIWAY_UNSTABLE_FLIP_TURN = 0.2889
-MULTIWAY_UNSTABLE_FLIP_RIVER = 0.5333
-MULTIWAY_STABLE_ACTION_CHANGES = 0.0270
-MULTIWAY_STABLE_HELD_SPOTS = 34
-MULTIWAY_STABLE_SPOTS = 37
+MULTIWAY_UNSTABLE_FLIP_TURN = 0.3333
+MULTIWAY_UNSTABLE_FLIP_RIVER = 0.4902
+MULTIWAY_STABLE_ACTION_CHANGES = 0.0449
+MULTIWAY_STABLE_HELD_SPOTS = 46
+MULTIWAY_STABLE_SPOTS = 52
 MULTIWAY_STABLE_FLOP_HELD = 22
 MULTIWAY_STABLE_FLOP_SPOTS = 22
-MULTIWAY_STABLE_TURN_HELD = 12
-MULTIWAY_STABLE_TURN_SPOTS = 15
-MULTIWAY_STABLE_TVD = 0.0725
+MULTIWAY_STABLE_TURN_HELD = 14
+MULTIWAY_STABLE_TURN_SPOTS = 17
+MULTIWAY_STABLE_RIVER_HELD = 10
+MULTIWAY_STABLE_RIVER_SPOTS = 13
+MULTIWAY_STABLE_TVD = 0.1013
 
 MULTIWAY_STABLE_REASON = (
     "This is a multiway pot - three or more players saw this street - and multiway advice has "
@@ -1580,9 +1590,9 @@ MULTIWAY_STABLE_REASON = (
     "particular decision, though, the instability that affects multiway answers generally is "
     "measured to be small: this engine is settled on one action here rather than split between "
     "several, and on decisions like it the recommended ACTION survives being solved again with "
-    "a different random draw. It held on 34 of 37 such spots - on the flop it did not change "
-    "once in 22, and on the turn it held on 12 of 15. The exact frequencies still move by "
-    "roughly 0.07, so lean on the recommendation itself rather than on the precise percentages "
+    "a different random draw. It held on 46 of 52 such spots - on the flop it did not change "
+    "once in 22, on the turn it held on 14 of 17 and on the river on 10 of 13. The exact "
+    "frequencies still move by roughly 0.10, so lean on the recommendation itself rather than on the precise percentages "
     "beside it."
 )
 
@@ -1590,12 +1600,11 @@ MULTIWAY_REPRODUCIBILITY_REASON = (
     "This is a multiway pot - three or more players saw this street - and multiway advice "
     "here is NOT REPRODUCIBLE. Solving the same spot again, changing nothing but the "
     "solver's internal random draw, gives a different recommended ACTION 50% of the time on "
-    "the flop, 29% on the turn and 53% on the river - measured on decisions like this one, "
-    "where either this engine is split between actions or the street is the river, which is "
-    "unstable even when it looks decided. "
+    "the flop, 33% on the turn and 49% on the river - measured on decisions like this one, "
+    "where this engine is split between actions. "
     "The answer you are reading is one draw from a range of answers, not a solved result. "
-    "More computation does not fix this and neither does modelling more hands - both were "
-    "measured. Use the shape of the advice, not its exact frequency, and treat a marginal "
+    "More computation reduces this only partly and modelling more hands does not help - both "
+    "were measured. Use the shape of the advice, not its exact frequency, and treat a marginal "
     "recommendation here as genuinely unsettled."
 )
 
