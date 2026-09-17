@@ -693,3 +693,31 @@ def test_a_row_fully_on_support_reports_no_dropped_mass():
     tree = _support_tree([1.0, 0.0], {"QhQd": [1.0, 0.0], "JhJd": [1.0, 0.0]})
     _r, _s, _b, moved = walk.regret_of_row(tree, board, reach, {"CHECK": 1.0})
     assert moved == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize("board_text", ["Kd7c2hTs", "Kd7c2hTs4c", "As5s9sQs2d"])
+def test_the_hero_row_equals_the_full_table(board_text):
+    """M260. The O(N) hero row must be the full table's row 0, exactly.
+
+    Walking a turn dump builds a leaf per river card, and building the
+    whole (N+1) x (N+1) table to read one row made a turn row cost
+    minutes at a 140-class pool. The shortcut is only allowed because it
+    is the same enumeration - same deck, same ties, NaN on collisions.
+    """
+    from poker_solver.board_equity import build_board_equity_table
+    from poker_solver.cards import Card
+    from poker_solver.combos import HandCombo
+
+    cards = tuple(Card.from_str(board_text[i:i + 2])
+                  for i in range(0, len(board_text), 2))
+    hero = HandCombo(Card.from_str("Ah"), Card.from_str("Jd"))
+    names = ["QhQc", "Kh3h", "7d7s", "AsKc", "5c4c", "JhTh", "2c2s",
+             "Ac9c", "Td9d", "KsKc", "AdJc"]
+    villains = [HandCombo(Card.from_str(n[:2]), Card.from_str(n[2:]))
+                for n in names]
+    table = build_board_equity_table(cards, [hero] + villains)
+    fast = LeafEquity(hero, villains).vector(cards)
+    slow = np.asarray(table[0, 1:], dtype=np.float64)
+    assert np.array_equal(np.isnan(fast), np.isnan(slow))
+    ok = ~np.isnan(slow)
+    assert np.allclose(fast[ok], slow[ok], atol=1e-12)

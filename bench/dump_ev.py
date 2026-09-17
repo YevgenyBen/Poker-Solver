@@ -119,6 +119,78 @@ class LeafEquity:
         self._villain = list(villain_combos)
         self._cache = {}
         self._equity_fn = equity_fn
+        self._arrays = None
+
+    def _villain_arrays(self):
+        if self._arrays is None:
+            from poker_solver.board_equity import _SUIT_INDEX
+            values = np.array([[c.card_a.value, c.card_b.value]
+                               for c in self._villain], dtype=np.int64)
+            suits = np.array([[_SUIT_INDEX[c.card_a.suit], _SUIT_INDEX[c.card_b.suit]]
+                              for c in self._villain], dtype=np.int64)
+            names = [(str(c.card_a), str(c.card_b)) for c in self._villain]
+            self._arrays = (values, suits, names)
+        return self._arrays
+
+    def _hero_row(self, cards):
+        """Hero's exact equity against every villain on a board with at
+        most ONE card to come - hero's row alone, O(N) per board.
+
+        M260. The general path builds the whole (N+1) x (N+1) table and
+        keeps row 0, which is O(N^2) per board; a turn dump walks ~46
+        river boards per leaf, and at a 140-class pool that made one turn
+        row cost several minutes. Equal to the table's row exactly
+        (`test_the_hero_row_equals_the_full_table`): the same deck, the
+        same enumeration, the same tie convention, NaN where hands
+        collide.
+        """
+        from poker_solver.board_equity import _SUIT_INDEX
+        from poker_solver.cards import Card
+        from poker_solver.hand_eval import best_hand_rank_batch
+
+        values, suits, names = self._villain_arrays()
+        hero = (self._hero.card_a, self._hero.card_b)
+        hero_names = {str(c) for c in hero}
+        board_names = {str(c) for c in cards}
+        if len(cards) == 5:
+            runouts = [()]
+        else:
+            deck = [Card.from_str(r + s) for r in "23456789TJQKA" for s in "shdc"]
+            runouts = [(c,) for c in deck
+                       if str(c) not in board_names and str(c) not in hero_names]
+        n, k = len(self._villain), len(runouts)
+        full = [tuple(cards) + run for run in runouts]
+        b_values = np.array([[c.value for c in b] for b in full], dtype=np.int64)
+        b_suits = np.array([[_SUIT_INDEX[c.suit] for c in b] for b in full],
+                           dtype=np.int64)
+        h_values = np.concatenate(
+            [np.tile([[c.value for c in hero]], (k, 1)), b_values], axis=1)
+        h_suits = np.concatenate(
+            [np.tile([[_SUIT_INDEX[c.suit] for c in hero]], (k, 1)), b_suits], axis=1)
+        hero_scores = best_hand_rank_batch(h_values, h_suits)             # (k,)
+        v_values = np.concatenate(
+            [np.repeat(values[:, None, :], k, axis=1),
+             np.broadcast_to(b_values, (n, k, 5))], axis=2).reshape(n * k, 7)
+        v_suits = np.concatenate(
+            [np.repeat(suits[:, None, :], k, axis=1),
+             np.broadcast_to(b_suits, (n, k, 5))], axis=2).reshape(n * k, 7)
+        v_scores = best_hand_rank_batch(v_values, v_suits).reshape(n, k)
+        run_names = [str(run[0]) if run else None for run in runouts]
+        valid = np.ones((n, k), dtype=bool)
+        row = np.full(n, np.nan)
+        for i, (a, b) in enumerate(names):
+            if a in hero_names or b in hero_names or a in board_names or b in board_names:
+                valid[i, :] = False
+                continue
+            for j, r in enumerate(run_names):
+                if r is not None and (r == a or r == b):
+                    valid[i, j] = False
+        share = np.where(hero_scores[None, :] > v_scores, 1.0,
+                         np.where(hero_scores[None, :] == v_scores, 0.5, 0.0))
+        counts = valid.sum(axis=1)
+        live = counts > 0
+        row[live] = (share * valid).sum(axis=1)[live] / counts[live]
+        return row
 
     def vector(self, board):
         key = tuple(str(c) for c in board)
@@ -126,6 +198,11 @@ class LeafEquity:
             return self._cache[key]
         if self._equity_fn is not None:
             row = np.asarray(self._equity_fn(board), dtype=np.float64)
+        elif len(board) >= 4:
+            from poker_solver.cards import Card
+            cards = tuple(Card.from_str(c) if isinstance(c, str) else c
+                          for c in board)
+            row = self._hero_row(cards)
         else:
             from poker_solver.board_equity import build_board_equity_table
             from poker_solver.cards import Card
