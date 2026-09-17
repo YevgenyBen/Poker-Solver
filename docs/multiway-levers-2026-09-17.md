@@ -131,3 +131,19 @@ reaching the prior would match what the one-size diagnostic did.
 **Scope if adopted:** multiway POSTFLOP solves only. Preflop already
 beats the prior (+0.060) and is not re-measured here. The exact heads-up
 solver never reads this setting.
+
+**Result.** Both arms scored all 579 decisions.
+
+| arm | p | vs `prod` | vs prior | bets when checked to | p90 |
+|---|---|---|---|---|---|
+| prod | 0.5575 | — | −0.073 | 0.470 | 4.65 s |
+| kind_prior | 0.5522 | **−0.005 (−0.49σ)** | −0.079 | **0.470** | 4.16 s |
+
+- **Not adopted.** The starting strategy is not the mechanism, and M264's
+  explanation of the one-size result is withdrawn.
+- **The one-size result itself stands.** With one sized bet, the advice
+  reaches the prior. The likelier cause is that regret matching
+  over-weights a group of near-duplicate actions throughout the solve,
+  not only at the start. That remains untested.
+- **The `prod` arm reproduced M264's ×4 arm exactly,** so the replay is
+  deterministic.

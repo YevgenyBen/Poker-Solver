@@ -15704,10 +15704,9 @@ paired against the baseline arm.
 - **Adopted: iters x4.** It still scores below the card-blind prior
   (-0.073, -3.86 sigma), so the disclosure stays.
 - **Range cap 26 and ensemble x4: nothing.**
-- **One bet size (diagnostic): reaches the prior.** Three sized bets put
-  80% of the uniform starting mass on betting, and under-converged rows
-  keep it. The fix is an action-count-neutral starting strategy (A4b),
-  not a smaller menu.
+- **One bet size (diagnostic): reaches the prior.** The problem lives in
+  how three similar sizes are solved. (The first explanation, the uniform
+  starting strategy, is falsified in M265.)
 
 **Shipped.**
 
@@ -15725,3 +15724,38 @@ paired against the baseline arm.
 
 **Stale and queued.** M245/M254's reproducibility figures were measured at
 the old budget.
+
+## M265 - a kind-balanced starting strategy: measured, and it does nothing
+
+`docs/multiway-levers-2026-09-17.md` (A4b, rules fixed before the run).
+
+**The test.** M264 blamed multiway over-betting on the uniform starting
+strategy: with check, three bet sizes and all-in, 80% of it is
+aggressive. So `poker_solver.cfr.ACTION_PRIOR = "kind_balanced"` was
+built. Where no action has positive regret yet, it gives fold, passive
+and aggressive equal weight and splits each kind among its actions.
+`average_strategy` keeps its uniform fallback, which the API's
+"never computed" detection depends on.
+
+**The result.** Against production (x4 budget) on the same 579 Pluribus
+decisions:
+
+| | vs production | bets when checked to | p90 |
+|---|---|---|---|
+| production | — | 0.470 | 4.65s |
+| kind-balanced | **-0.005, -0.49 sigma** | **0.470** | 4.16s |
+
+- **Not adopted.**
+- **M264's mechanism is withdrawn,** in the code comment, CLAUDE.md and
+  the milestone entry. The one-size diagnostic stands: the problem is how
+  three similar sizes are solved, not where the solve starts.
+- **Standing hypothesis, untested:** regret matching over-weights a group
+  of near-duplicate actions throughout.
+
+**A reproducibility check came free.** The production arm reproduced
+M264's x4 arm to every figure (p, aggression, facing mix): the replay is
+deterministic.
+
+**Kept.** The option stays in the engine with its default `"uniform"` and
+three tests, per M97's precedent: a measured null is worth keeping
+reproducible.
