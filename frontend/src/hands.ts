@@ -11,11 +11,13 @@ export const PRESET_STACKS = [20, 40, 50, 75, 100, 150, 200] as const;
 // size's acting order) — hardcoded here rather than derived from a
 // solve response so the position selector can render before the first
 // response for that table size arrives.
-export const MULTIWAY_TABLE_SIZES = [3, 6, 9] as const;
+export const MULTIWAY_TABLE_SIZES = [3, 4, 5, 6, 9] as const;
 export type MultiwayTableSize = (typeof MULTIWAY_TABLE_SIZES)[number];
 
 export const MULTIWAY_POSITIONS: Record<MultiwayTableSize, readonly string[]> = {
   3: ['BTN', 'SB', 'BB'],
+  4: ['CO', 'BTN', 'SB', 'BB'],
+  5: ['MP', 'CO', 'BTN', 'SB', 'BB'],
   6: ['UTG', 'MP', 'CO', 'BTN', 'SB', 'BB'],
   9: ['UTG', 'UTG1', 'MP1', 'MP2', 'MP3', 'CO', 'BTN', 'SB', 'BB'],
 };

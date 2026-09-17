@@ -15831,3 +15831,52 @@ shipped configuration after M264 and M266.
   partly.
 - **Nothing on the flop or turn changed,** so M264's gain against the
   outside agent is not a reproducibility gain there.
+
+## M268 - 4- and 5-handed tables (A9, first half)
+
+**Why.** Only 2/3/6/9-player tables were supported. In the hand store,
+**4-handed is 11% and 5-handed 25% of clean real online hands**, and
+none of them could be asked about.
+
+**The budget was measured, not inherited** (M72/M157's method).
+
+- **Setup:** 100bb, plain CFR, the full pool, three seeds per arm.
+- **Rule, fixed before the run:** AA's open-jam should approach 0 and
+  72o's fold should approach 1.
+
+| table | iterations | AA jam (3 seeds) | 72o fold | solve |
+|---|---|---|---|---|
+| 4 | **3,000** | .298 / .104 / .120 | 1.0 | 26-30s |
+| 4 | 12,000 | .618 / .878 / .079 | 1.0 | 55-57s |
+| 5 | **3,000** | .001 / .252 / .129 | 1.0 | 46s |
+| 5 | 12,000 | .420 / .293 / .140 | 1.0 | 91-102s |
+
+- **Both go 6-max's way:** more iterations converge onto the jam (M98).
+  So both ship at 3,000.
+- **Still disclosed:** AA jams 10-30% of the time. The multiway preflop
+  sizing caveat covers it.
+
+**Wiring.**
+
+- **Seats:** `CO BTN SB BB` and `MP CO BTN SB BB`, following 6-max's
+  names.
+- **Startup prewarm:** 100/50/20bb for both sizes. Entries cost 7.66 MB
+  and 19.17 MB.
+- **Background warm:** the 16 most common real multiway-flop buckets for
+  each size. Coverage of real 4-handed multiway flops goes 15% -> 70%;
+  5-handed goes 13% -> 66%.
+- **Cache:** `_multiway_cache`'s byte budget goes 2 GB -> 2.5 GB.
+- **Front end:** the table-size selectors offer 4 and 5.
+
+**Validated on real hands.** `bench.real_replay` ran 300 real 4-/5-handed
+decisions:
+
+- **300 answered, 0 defects.** All four streets were exercised, with up
+  to 5 live players.
+- **Warm latency:** p90 2.17s, max 3.8s, none over 5s.
+- **Cold latency:** 58 first requests at an unwarmed depth paid a 27-37s
+  solve. The replay runs no background warmer.
+
+**Deferred.** 7- and 8-handed tables (7% of hands) cost about what 9-max
+does, and 10-handed is 0.4%. Coverage of real hands goes from 46% to
+roughly 76% (stacks over 200bb, 17.5% of hands, are still excluded).

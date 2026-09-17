@@ -82,6 +82,15 @@ MULTIWAY_BACKGROUND_WARM = tuple(
     [(6, float(d)) for d in (105, 110, 115, 120, 195, 125, 30, 200, 130, 135,
                              140, 190, 145, 95, 180, 165, 150, 175, 170, 185,
                              155, 160)]
+    # A9 (M268): the 16 most common real 4- and 5-handed multiway-flop
+    # buckets after the prewarm, in order (hand store, measured offline).
+    # They take coverage of real 5-handed multiway flops from 13% to 66%
+    # and 4-handed from 15% to 70%. Entries cost 19.2 MB (5) and 7.7 MB
+    # (4); solves 37s and 27s.
+    + [(5, float(d)) for d in (105, 110, 95, 120, 115, 125, 195, 130, 145, 150,
+                               30, 155, 135, 165, 175, 160)]
+    + [(4, float(d)) for d in (95, 105, 110, 115, 120, 130, 30, 125, 65, 75,
+                               140, 195, 145, 90, 60, 85)]
     + [(3, float(d)) for d in sorted(
         (d for d in range(5, 205, 5) if float(d) not in (100.0, 50.0, 20.0)),
         key=lambda d: (abs(d - 100), d))]
@@ -325,6 +334,25 @@ MULTIWAY_PREFLOP_SAMPLES = 50
 # its own measurement rather than from a shared assumption.
 MULTIWAY_TABLE_CONFIGS = {
     3: {"positions": ("BTN", "SB", "BB"), "iterations": 12_000},
+    # A9 (M268): 4- and 5-handed, which are 11% and 25% of clean real
+    # online hands and could not be asked about at all before. Budgets
+    # measured the M72/M157 way at 100bb, plain CFR, three seeds each,
+    # under a rule fixed before the run (AA's open-jam toward 0, 72o's
+    # fold toward 1):
+    #
+    #   table  iters   AA jam (3 seeds)          72o fold   solve
+    #   4      3,000   .298 / .104 / .120        1.0        26-30s
+    #   4     12,000   .618 / .878 / .079        1.0        55-57s
+    #   5      3,000   .001 / .252 / .129        1.0        46s
+    #   5     12,000   .420 / .293 / .140        1.0        91-102s
+    #
+    # Both go 6-max's way (M72): more iterations converge ONTO the jam,
+    # which is M98's pricing defect, so 3,000. AA still jams 10-30% of the
+    # time - the sizing caveat every multiway preflop answer carries is
+    # there for exactly this. Seat names follow 6-max's, dropping the
+    # earliest seats.
+    4: {"positions": ("CO", "BTN", "SB", "BB"), "iterations": 3_000},
+    5: {"positions": ("MP", "CO", "BTN", "SB", "BB"), "iterations": 3_000},
     6: {"positions": ("UTG", "MP", "CO", "BTN", "SB", "BB"), "iterations": 3_000},
     # `floor_regret` (M71): every table size uses plain CFR regret
     # matching now EXCEPT 9-max. CFR+'s clamp is a ratchet under sampling

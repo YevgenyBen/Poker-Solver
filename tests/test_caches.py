@@ -276,7 +276,8 @@ def test_the_expensive_caches_keep_a_generous_ceiling():
     from api import config as api_config
 
     by_name = {c.name: c for c in caches_module._SolveCache.registered()}
-    designed = len(api_config.MULTIWAY_PREWARM_STACK_DEPTHS) * 3
+    designed = (len(api_config.MULTIWAY_PREWARM_STACK_DEPTHS)
+                * len(api_config.MULTIWAY_TABLE_CONFIGS))
     assert by_name["multiway"].maxsize >= designed, (
         f"the multiway ceiling ({by_name['multiway'].maxsize}) is below the "
         f"{designed} entries the prewarm creates, so warmed solves would be "
@@ -313,7 +314,7 @@ from api.caches import entry_bytes as _deep_size            # noqa: E402
 # entry larger than every other cache's whole budget - against a solve
 # costing 35s at 3-max and 525s at 9-max. It is sized at the prewarmed
 # working set and enforced by eviction (M216), not waived.
-_DECLARED_BUDGETS_MB = {"multiway": 2_048}
+_DECLARED_BUDGETS_MB = {"multiway": 2_560}
 
 
 def _allowance(name):
@@ -517,7 +518,8 @@ def test_the_multiway_preflop_ceiling_is_derived_from_its_worst_entry():
         f"that matters and no sweep can afford to build it."
     )
 
-    designed = (len(api_config.MULTIWAY_PREWARM_STACK_DEPTHS) * 3
+    designed = (len(api_config.MULTIWAY_PREWARM_STACK_DEPTHS)
+                * len(api_config.MULTIWAY_TABLE_CONFIGS)
                 + len(api_config.MULTIWAY_BACKGROUND_WARM))
     assert caches_module._multiway_cache.maxsize >= designed, (
         f"ceiling {caches_module._multiway_cache.maxsize} is below the "
