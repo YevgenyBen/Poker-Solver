@@ -8927,3 +8927,18 @@ def test_the_multiway_bet_note_quotes_its_own_measurement():
         assert "%d%%" % round(value * 100) in note, value
     assert "not a price" in note, "one sampled action per spot carries no chip price"
     assert "Pluribus" not in note, "shipped text does not name outside tools (stone law)"
+
+
+def test_a_missing_hero_row_is_never_served_at_high_confidence():
+    """A1. The cache defect behind M262's `strategy: null` is fixed; this
+    makes sure that if anything reintroduces an empty answer, the headline
+    signal says so instead of vouching for it."""
+    level, reason = api_main._solver_confidence(
+        {"street": "flop", "positions": ["SB", "BB"]}, 2,
+        {"cards": "KdJd", "strategy": None}, "flop")
+    assert level == "low"
+    assert api_config.MISSING_HERO_ROW_REASON in reason
+    level, _ = api_main._solver_confidence(
+        {"street": "flop", "positions": ["SB", "BB"]}, 2,
+        {"cards": "KdJd", "strategy": {"call_or_check": 0.6, "raise:1.65": 0.4}}, "flop")
+    assert level == "high"

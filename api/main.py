@@ -1477,9 +1477,17 @@ def _solver_confidence(raw: dict, players: int, hero: dict | None = None,
             if isinstance(hero, dict) and hero.get("trained") is True
             else cfg.UNTRAINED_HERO_ROW_REASON
         )
+    if _hero_row_is_missing(hero):
+        reasons.append(cfg.MISSING_HERO_ROW_REASON)
     if not reasons:
         return "high", None
     return "low", " ".join(reasons)
+
+
+def _hero_row_is_missing(hero: dict | None) -> bool:
+    """Hero's cards were given and no strategy came back for them (A1)."""
+    return (isinstance(hero, dict) and bool(hero.get("cards"))
+            and not hero.get("strategy"))
 
 
 def _modelled_bet_sizes(raw: dict) -> list:
