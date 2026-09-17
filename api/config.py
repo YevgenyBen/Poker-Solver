@@ -1369,6 +1369,18 @@ MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION = 8
 # throughout the solve. Untested.
 # Cost: multiway postflop p50 0.98 -> 2.87s, max 7.4s, 22 of 579 over 5s.
 DEFAULT_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = 4000
+
+# A5 (M266): the x4 budget above was chosen on 3-live pots, and it does
+# not hold for 4 or more. On the same outside-agent replay, split by live
+# count, x4 gained +0.110 at 7.88 sigma with 3 live (n=541) and +0.056
+# at 1.01 sigma with 4 (n=38) - not separable - while tripling the
+# 4-live flop (2.1 -> 7.0s median). Replaying real online hands at real
+# stacks, a 4-live flop took 13.5s median and a 5-live one 14.4s. So a
+# pot with this many players still in keeps the pre-M264 budget. The
+# 4-live accuracy question is UNDERPOWERED, not answered: this reverts
+# a cost nobody measured a benefit for. The river is unchanged (0.7s).
+MULTIWAY_WIDE_POT_MIN_LIVE = 4
+MULTIWAY_WIDE_POT_ITERATIONS = {"flop": 1000, "turn": 1000}
 MAX_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = 4000
 
 # /solve_turn_multiway_from_path's (M44) own class cap and iteration

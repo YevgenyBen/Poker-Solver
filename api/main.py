@@ -1283,7 +1283,8 @@ async def advise_endpoint(request: AdviseRequest):
         # Survivor count, NOT request.players — see _live_position_count
         # for the real bug this prevents (a full-ring hand folding down
         # to a heads-up flop must use the exact 2-position solver).
-        multiway = street != "preflop" and _live_position_count(request, iterations) >= 3
+        live = _live_position_count(request, iterations) if street != "preflop" else None
+        multiway = live is not None and live >= 3
         cell = (street, multiway)
         if cell in _ADVISE_UNSUPPORTED_CELLS:
             raise ValueError(_ADVISE_UNSUPPORTED_CELLS[cell])
@@ -1291,6 +1292,8 @@ async def advise_endpoint(request: AdviseRequest):
         solve_iterations = None
         if street != "preflop":
             default_iters, max_iters = _ADVISE_ITERATION_CAPS[cell]
+            if multiway and live >= cfg.MULTIWAY_WIDE_POT_MIN_LIVE:
+                default_iters = cfg.MULTIWAY_WIDE_POT_ITERATIONS.get(street, default_iters)
             solve_iterations = request.solve_iterations if request.solve_iterations is not None else default_iters
             if not 0 < solve_iterations <= max_iters:
                 raise ValueError(

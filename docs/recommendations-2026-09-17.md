@@ -13,7 +13,7 @@ Ordered by what they change for a player at a table, then by cost.
 | **A4b** | **Give the solver a starting strategy that does not weight betting by how many bet sizes exist** | M264 | With one sized bet, multiway advice reaches the card-blind prior | **DONE — NULL** (M265: −0.005, −0.49σ; not adopted; mechanism withdrawn) |
 | A4d | Test whether regret matching over-weights a group of near-duplicate bet sizes (group-level matching, or size menus solved as one action then split) | M265 | The one-size result stands and its mechanism is unknown | OPEN |
 | A4c | Re-measure multiway reproducibility (M245/M254) at the new budget | M264 | The quoted instability was measured at 1000 iterations | OPEN |
-| **A5** | **Replay real online hands through `/advise`** as a standing defect benchmark: real stacks, real sizes, real table sizes | M262, M260 R13/R15 | Replaying real hands found a defect no synthetic population reached | OPEN |
+| **A5** | **Replay real online hands through `/advise`** as a standing defect benchmark: real stacks, real sizes, real table sizes | M262, M260 R13/R15 | Replaying real hands found a defect no synthetic population reached | **DONE** (M266) — `bench/real_replay.py`; 1,199 of 1,200 answered, 0 defects; fixed an all-in preflop line refused as "stack_bb must be positive"; 4+ live pots keep the pre-M264 budget (x4 cost 3.4x there for +0.056 at 1.01σ) |
 | A6 | Find where the flop facing a bet disagrees (a frequency study, cheap) | M260 R14 | 23 of 31 clear decisions agree; unpriced | OPEN |
 | A7 | Extend external coverage: other stacks, single-raised turns and flops, 4-bet pots | M260 R13 | Every external figure is 100 bb and mostly 3-bet | OPEN |
 | A8 | Price the flop's size disagreement | M260 R7 | Needs three-round dumps or a streaming reader | OPEN |
@@ -26,3 +26,4 @@ queued.
 | # | recommendation | from | why | status |
 |---|---|---|---|---|
 | **A9** | **Support 4-, 5-, 7- and 8-handed tables** (and 10 where a site deals it) | A5 scoping, hand store | Only 2/3/6/9 players are representable: **43.6% of real hands** have another player count. 5-handed alone is 19% and 4-handed 9%. With stacks over 200 bb also excluded, only **46%** of real hands can be asked about at all | OPEN |
+| A10 | Measure whether the x4 multiway budget pays at 4+ live players, with a sample big enough to answer (Pluribus has 38 such decisions) | M266 | Reverted on cost, not on evidence of no benefit | OPEN |

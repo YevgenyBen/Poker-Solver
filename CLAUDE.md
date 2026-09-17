@@ -615,6 +615,19 @@ The overbet row and the turn stay excluded
   - **Rule:** not a smaller menu (players need the sizes, M209-M220), not
     more width, not a new starting prior.
 
+- **REAL ONLINE HANDS REPLAY CLEAN, AND FOUND TWO THINGS (M266/A5).**
+  - **Method:** `bench/real_replay.py` sends 1,200 real decisions, at
+    real stacks and real lines, through `/advise`.
+  - **Result:** 1,199 answered, 0 defects.
+  - **A preflop line ending all in** (the model's fourth raise is all in,
+    so a real 5-bet pot is one) was refused as "stack_bb must be
+    positive". It is now refused by name, before any solve.
+  - **M264's x4 budget cost 3.4x with 4+ live, for +0.056 at 1.01
+    sigma.** Real 4-live flops took 13.5s median.
+    `MULTIWAY_WIDE_POT_MIN_LIVE = 4` keeps 1,000 iterations there.
+  - **Rule:** **split latency by live count**. A pooled p90 over a sample
+    that was 93% three-handed hid it.
+
 ### The checks REPLICATE on fresh spots (M236) — n=42 per street
 
 M222/M224's figures rested on ~21 spots each and carry a user-facing
@@ -838,6 +851,8 @@ requests now reject unknown fields by name rather than ignoring them.
                            git-ignored). Content-keyed, so re-ingesting is
                            a no-op; `python -m bench.hand_db ingest|stats|
                            rederive`. Instrument only (M261)
+      real_replay.py       replay real hands from that store through
+                           /advise as a defect benchmark (M266)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools
