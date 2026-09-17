@@ -8819,3 +8819,47 @@ def test_the_reproducibility_warning_quotes_its_own_measurement(client):
     assert "%d of %d" % (api_config.MULTIWAY_STABLE_TURN_HELD,
                          api_config.MULTIWAY_STABLE_TURN_SPOTS) in stable
     assert str(api_config.MULTIWAY_STABLE_FLOP_SPOTS) in stable
+
+
+def _turn_facing_raw(row, positions=("BB", "BTN"), entering=92.5, bet=4.95, pot=15.0):
+    return {"street": "turn", "positions": list(positions),
+            "pot": pot + bet, "max_affordable_bb": entering,
+            "effective_stack_bb": entering - bet,
+            "hero": {"strategy": row}}
+
+
+def test_the_turn_shove_note_fires_where_it_was_priced():
+    """M260. Heads-up, facing a bet, mostly all-in, a deep street."""
+    shove = {"fold": 0.0001, "call_or_check": 0.0003, "raise:9.90": 0.0032,
+             "all_in:92.50": 0.9964}
+    raw = _turn_facing_raw(shove)
+    assert api_main._turn_shove_applies(raw, "turn")
+    assert "turn-shove" in [n for n, _t in api_main._advisory_notes(raw)]
+
+
+def test_the_turn_shove_note_is_silent_everywhere_else():
+    """Each condition is load-bearing, so each is removed once."""
+    shove = {"fold": 0.0, "call_or_check": 0.1, "all_in:92.50": 0.9}
+    calls = {"fold": 0.0, "call_or_check": 0.9, "all_in:92.50": 0.1}
+    assert not api_main._turn_shove_applies(_turn_facing_raw(calls), "turn")
+    assert not api_main._turn_shove_applies(_turn_facing_raw(shove), "river")
+    assert not api_main._turn_shove_applies(
+        _turn_facing_raw(shove, positions=("SB", "BB", "BTN")), "turn")
+    # An opening decision: no fold in the row, so not facing a bet.
+    opening = {"call_or_check": 0.1, "all_in:92.50": 0.9}
+    assert not api_main._turn_shove_applies(_turn_facing_raw(opening), "turn")
+    # A street that opened shallow (SPR 2), which was never measured.
+    assert not api_main._turn_shove_applies(
+        _turn_facing_raw(shove, entering=30.0, pot=15.0), "turn")
+
+
+def test_the_turn_shove_note_quotes_its_own_measurement():
+    note = api_config.TURN_SHOVE_NOTE
+    for value in (api_config.TURN_SHOVE_ROWS, api_config.TURN_SHOVE_BOARDS,
+                  api_config.TURN_SHOVE_REFERENCE_NEVER,
+                  api_config.TURN_SHOVE_COST_PCT_POT):
+        assert str(value) in note, value
+    assert "%.1f big blinds" % api_config.TURN_SHOVE_COST_BB in note
+    assert "at least" in note, (
+        "the price is a FLOOR - the reference's reply to a shove it never "
+        "makes is untrained and flatters the shove (M258)")

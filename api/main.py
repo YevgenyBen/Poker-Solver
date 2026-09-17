@@ -1757,6 +1757,39 @@ def _river_under_folds_applies(raw: dict, street: str | None,
     return faced / pot_before_the_bet <= cfg.RIVER_UNDER_FOLD_MAX_BET_FRACTION
 
 
+def _turn_shove_applies(raw: dict, street: str | None,
+                        hero: dict | None = None) -> bool:
+    """Is this the turn decision where M260 priced our shove?
+
+    Heads-up, facing a bet, hero's own row mostly all-in, and a street
+    that opened deep. Everything is read off the response: the stack
+    entering the street less the stack behind is the bet faced, and the
+    pot less that bet is the pot the street opened with - the same
+    derivation `_river_under_folds_applies` uses.
+    """
+    if street != "turn" or _is_multiway_postflop(raw, street):
+        return False
+    if not _is_facing_a_bet(raw):
+        return False
+    source = hero if isinstance(hero, dict) else (raw.get("hero") or {})
+    row = source.get("strategy") if isinstance(source, dict) else None
+    if not row:
+        return False
+    total = sum(float(w) for w in row.values()) or 1.0
+    shove = sum(float(w) for k, w in row.items() if str(k).startswith("all_in"))
+    if shove / total < cfg.TURN_SHOVE_MIN_ALL_IN:
+        return False
+    pot = raw.get("pot")
+    entering = raw.get("max_affordable_bb")
+    behind = raw.get("effective_stack_bb")
+    if not all(isinstance(v, (int, float)) for v in (pot, entering, behind)):
+        return False
+    opened = pot - (entering - behind)
+    if opened <= 0:
+        return False
+    return entering / opened >= cfg.TURN_INDEPENDENT_SPR_MIN
+
+
 def _drawy_board_applies(raw: dict, street: str | None) -> bool:
     """Is this a flop where a flush draw is live?
 
@@ -1921,6 +1954,9 @@ def _advisory_notes(raw: dict, hero: dict | None = None) -> list:
         # not of the street.
         if _river_under_folds_applies(raw, street, hero):
             notes.append(("river-under-fold", cfg.RIVER_UNDER_FOLD_NOTE))
+        # M260: the turn's shove facing a bet, priced from outside.
+        if _turn_shove_applies(raw, street, hero):
+            notes.append(("turn-shove", cfg.TURN_SHOVE_NOTE))
         # M189: graded, not replaced. The coarse note covers all
         # facing-a-bet decisions because even out-of-band ones average
         # ~0.3 bb against an opening decision's 0.03. This adds the

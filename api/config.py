@@ -2692,6 +2692,51 @@ RIVER_UNDER_FOLD_NOTE = (
     "setting - it survived matching the ranges and the raise sizes between the two solvers."
 )
 
+# M260. FACING A TURN BET, THIS ENGINE SHOVES WHERE AN INDEPENDENT SOLVER
+# NEVER DOES - and that is the most expensive disagreement measured here.
+#
+# The wide benchmark priced 24 fresh three-bet turn boards (cap 140, every
+# root control passing, heroes drawn by range weight). 17 of 147 reached
+# facing rows were PURE-NODE disagreements (M258): our row sat 99.98% on
+# the all-in, an action the reference plays under 1% of the time - it
+# calls, or raises to 10. Regret cannot see that, so the shove was priced
+# directly, Q(best supported action) - Q(all-in), in the reference's game:
+#      17 rows, 9 boards   mean 2.675 bb   median 2.525   0 negative
+# Over every row this gate fires on (the 17, plus 4 where the reference
+# does shove a little and regret applies):
+#      21 rows             mean 2.408 bb = 16% of the pot, 5.42 sigma
+# **A floor, not an estimate.** The reference never trains its villain's
+# reply to a shove it does not make; that villain folds 45-83% to it, and
+# M258 measured exactly such branches inflated in the shove's favour.
+#
+# Gate, read off the RESPONSE (M144): the turn, heads-up, facing a bet,
+# hero's row at least TURN_SHOVE_MIN_ALL_IN on the all-in, and the street
+# having opened at SPR >= TURN_INDEPENDENT_SPR_MIN - the only depth
+# measured (6.17). Of the 21 decisions it fires on, the reference never
+# shoved in 17 (81%).
+#
+# Mechanism, as a HYPOTHESIS: the turn is solved without playing the
+# river, so a call is valued at showdown equity and cannot collect river
+# value, while a shove collects it now. That is M222's street-isolation
+# story in its sharpest form. Not fixable by configuration (M223/M232).
+TURN_SHOVE_MIN_ALL_IN = 0.5
+TURN_SHOVE_COST_BB = 2.4
+TURN_SHOVE_COST_PCT_POT = 16
+TURN_SHOVE_ROWS = 21
+TURN_SHOVE_REFERENCE_NEVER = 17
+TURN_SHOVE_BOARDS = 9
+TURN_SHOVE_NOTE = (
+    " A warning specific to this decision: this engine is recommending moving ALL IN on the "
+    "turn in response to a bet. An independent solver that plays the river out almost never "
+    "does that with the hands where this engine does - it calls, or makes a small raise. Over "
+    "21 such decisions on 9 boards, it never shoved in 17 of them, and following this "
+    "engine's shove cost at least 2.4 big blinds per decision in that solver's game - about "
+    "16% of the pot - and cost something on every one measured. The likely reason is that "
+    "this engine solves the turn without playing the river, so calling with a strong hand "
+    "looks worse to it than getting the money in now. With a strong hand here, treat calling "
+    "as the serious alternative, and a small raise where one is offered."
+)
+
 # M221. The first finding this project has that came from OUTSIDE.
 #
 # Every accuracy figure before this measured distance from a fuller solve
