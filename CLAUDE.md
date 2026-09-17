@@ -556,6 +556,21 @@ The overbet row and the turn stay excluded
     smaller sizes.** That covered 189 of 303 firings, where the note was
     false.
 
+- **MULTIWAY AT AN UNPREWARMED STACK IS NOT LIVE-USABLE ON FIRST ASK.**
+  - **The cost:** the multiway preflop solve is cached per 5 bb bucket,
+    and only 100/50/20 bb are prewarmed. The first request elsewhere took
+    **99.5 s at 6-max (73 bb)** and **51.9 s at 3-max (37 bb)**; 9-max
+    is ~525 s by M157's cost.
+  - **Why the benchmark missed it:** it drew stacks only from the
+    prewarm grid.
+  - **Heads-up is unaffected:** under 1 s at any depth.
+  - **Recommendation:** R12 in the report — background-warm the buckets
+    and serve the nearest warmed bucket below meanwhile.
+  - **Rule:** **draw benchmark stacks off the prewarm grid.**
+- **The front end never reads `advisory_notes`.** The warnings that avoid
+  the most expensive advice (`turn-shove`, `river-under-fold`) are the
+  last sentence of a ~3,200-character paragraph (R11).
+
 ### The checks REPLICATE on fresh spots (M236) — n=42 per street
 
 M222/M224's figures rested on ~21 spots each and carry a user-facing
