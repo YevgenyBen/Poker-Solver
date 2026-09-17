@@ -53,6 +53,22 @@ PREWARM_STACK_DEPTHS = (20, 40, 50, 75, 100, 150, 200)
 # Depths outside this list still work; they just pay the solve.
 MULTIWAY_PREWARM_STACK_DEPTHS = (100.0, 50.0, 20.0)
 
+# A9 (M270): 7- and 8-handed are 2.3% and 5.2% of real hands and their
+# entries cost 58 MB and 194 MB (solves 97s and 326s), so they warm at
+# 100bb only. A table size missing here warms every depth above; a depth
+# listed here but not above is never warmed (so emptying the list above
+# still switches all multiway warming off).
+MULTIWAY_PREWARM_DEPTHS_BY_TABLE = {7: (100.0,), 8: (100.0,)}
+
+
+def multiway_prewarm_plan():
+    """Every (players, depth) the startup prewarm solves, in order."""
+    plan = []
+    for players in MULTIWAY_TABLE_CONFIGS:
+        wanted = MULTIWAY_PREWARM_DEPTHS_BY_TABLE.get(players, MULTIWAY_PREWARM_STACK_DEPTHS)
+        plan += [(players, d) for d in MULTIWAY_PREWARM_STACK_DEPTHS if d in wanted]
+    return plan
+
 # A3 (2026-09-17). WARM THE DEPTHS REAL PLAYERS SIT AT, IN THE BACKGROUND.
 #
 # The three depths above cover the multiway preflop solve for 12% of real
@@ -354,6 +370,22 @@ MULTIWAY_TABLE_CONFIGS = {
     4: {"positions": ("CO", "BTN", "SB", "BB"), "iterations": 3_000},
     5: {"positions": ("MP", "CO", "BTN", "SB", "BB"), "iterations": 3_000},
     6: {"positions": ("UTG", "MP", "CO", "BTN", "SB", "BB"), "iterations": 3_000},
+    # A9 (M270): 7- and 8-handed (2.3% and 5.2% of clean real hands),
+    # measured the same way as 4/5 above, three seeds at 100bb:
+    #
+    #   table  iters   AA jam (3 seeds)          T7s fold (UTG)       solve
+    #   7      3,000   .555 / .111 / .557        .83 / .92 / .80      97s
+    #   7     12,000   .676 / .236 / .652        .99 / .995 / .99     245s
+    #   8      3,000   1.00 / .841 / 1.00        .53 / .26 / .51      106s
+    #   8     12,000   .099 / .438 / .091        .97 / .94 / .97      326s
+    #
+    # 72o folds 1.0 in every arm. By the pre-registered rule (AA's jam
+    # toward 0) 7-handed goes 6-max's way and 8-handed goes 9-max's (M157):
+    # at 3,000 an 8-handed UTG jams aces nearly always. Both stay flagged
+    # low-confidence: AA's jam varies by 0.44 and 0.35 across seeds.
+    7: {"positions": ("UTG", "UTG1", "MP", "CO", "BTN", "SB", "BB"), "iterations": 3_000},
+    8: {"positions": ("UTG", "UTG1", "MP1", "MP2", "CO", "BTN", "SB", "BB"),
+        "iterations": 12_000},
     # `floor_regret` (M71): every table size uses plain CFR regret
     # matching now EXCEPT 9-max. CFR+'s clamp is a ratchet under sampling
     # and dropping it is a large win at 3-max and 6-max (AA's jam
@@ -1637,6 +1669,18 @@ MULTIWAY_REPRODUCIBILITY_REASON = (
 )
 
 LOW_CONFIDENCE_TABLE_SIZES = {
+    7: (
+        "7-handed preflop is not converged. How often it moves all in with a premium such "
+        "as aces changes with the solver's random seed by up to 0.44, and on average it "
+        "shoves them far more often than a strong player would. Treat it as a strong hint "
+        "rather than GTO, and lean on the fold-or-play call rather than the exact frequency."
+    ),
+    8: (
+        "8-handed preflop is not converged. Iterations divide among eight seats, and how "
+        "often it moves all in with a premium such as aces still changes with the solver's "
+        "random seed by up to 0.35. Treat it as a strong hint rather than GTO, and lean on "
+        "the fold-or-play call rather than the exact frequency."
+    ),
     9: (
         "9-max preflop is the least converged table size: iterations divide among "
         "nine seats, so each gets a third of what 6-max gives. It is much better "

@@ -19,6 +19,7 @@ import hashlib
 import os
 import random
 import threading
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -171,18 +172,37 @@ def get_equity_table(
     """
     path = Path(cache_path) if cache_path is not None else DEFAULT_CACHE_PATH
     if not force_rebuild and path.exists():
-        return np.load(path)
+        return _retry_on_sharing_violation(np.load, path)
     with _equity_table_cache_lock:
         # Re-check now that we hold the lock — another thread may have
         # already built and written the table while we were waiting.
         if not force_rebuild and path.exists():
-            return np.load(path)
+            return _retry_on_sharing_violation(np.load, path)
         table = build_equity_table(hands=hands, samples=samples, seed=seed)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = path.parent / f"{path.stem}.tmp-{os.getpid()}-{threading.get_ident()}.npy"
         np.save(tmp_path, table)
-        os.replace(tmp_path, path)
+        _retry_on_sharing_violation(os.replace, tmp_path, path)
     return table
+
+
+def _retry_on_sharing_violation(fn, *args, attempts: int = 20, delay: float = 0.05):
+    """Call `fn(*args)`, retrying a Windows sharing violation.
+
+    Windows briefly refuses to open or replace a file that another
+    process has just written - a virus scanner or indexer opening it is
+    enough. The full suite hit it once in eight threads racing a cold
+    cache (`PermissionError`, errno 13), where the lock above already
+    rules out two writers. A retry is the standard remedy; the last
+    attempt's error is raised unchanged.
+    """
+    for attempt in range(attempts):
+        try:
+            return fn(*args)
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(delay)
 
 
 # ---------------------------------------------------------------------------

@@ -180,7 +180,9 @@ def main(argv=None):                                      # pragma: no cover
     parser.add_argument("--out", required=True)
     parser.add_argument("--where", default=DEFAULT_WHERE)
     parser.add_argument("--tables", default="3,4,5,6,9",
-                        help="multiway table sizes to prewarm at 100/50/20bb")
+                        help="multiway table sizes to prewarm")
+    parser.add_argument("--depths", default="100,50,20",
+                        help="stack depths to prewarm them at")
     args = parser.parse_args(argv)
 
     from fastapi.testclient import TestClient
@@ -188,7 +190,7 @@ def main(argv=None):                                      # pragma: no cover
     from bench.server_warmup import warm_multiway
 
     client = TestClient(app)
-    warm_multiway(depths=(100.0, 50.0, 20.0),
+    warm_multiway(depths=tuple(float(d) for d in args.depths.split(",")),
                   table_sizes=tuple(int(t) for t in args.tables.split(",")))
 
     def post(body):

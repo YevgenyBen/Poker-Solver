@@ -283,6 +283,8 @@ def test_heads_up_response_reports_position_and_positions(client):
         (3, ["BTN", "SB", "BB"]),
         (4, ["CO", "BTN", "SB", "BB"]),
         (5, ["MP", "CO", "BTN", "SB", "BB"]),
+        (7, ["UTG", "UTG1", "MP", "CO", "BTN", "SB", "BB"]),
+        (8, ["UTG", "UTG1", "MP1", "MP2", "CO", "BTN", "SB", "BB"]),
         (6, ["UTG", "MP", "CO", "BTN", "SB", "BB"]),
         (9, ["UTG", "UTG1", "MP1", "MP2", "MP3", "CO", "BTN", "SB", "BB"]),
     ],
@@ -297,7 +299,7 @@ def test_multiway_solve_returns_200_with_well_formed_response(client, players, e
     assert len(body["opening_range"]) == len(FAST_MULTIWAY_HANDS)
 
 
-@pytest.mark.parametrize("players", [3, 4, 5, 6, 9])
+@pytest.mark.parametrize("players", [3, 4, 5, 6, 7, 8, 9])
 def test_multiway_solve_frequencies_sum_to_one_per_hand(client, players):
     body = client.get(f"/solve/100?players={players}").json()
     for freqs in body["opening_range"].values():
@@ -356,7 +358,7 @@ def test_multiway_solve_is_cached_separately_per_table_size(client):
 
 
 def test_solve_rejects_unsupported_player_count(client):
-    response = client.get("/solve/100?players=7")
+    response = client.get("/solve/100?players=10")
     assert response.status_code == 422
 
 
@@ -2273,7 +2275,7 @@ def test_preflop_walk_players_defaults_to_two_and_reports_the_heads_up_positions
 
 
 def test_preflop_walk_rejects_an_unsupported_players_value(client):
-    response = client.post("/preflop_walk", json=_walk_body([], players=7))
+    response = client.post("/preflop_walk", json=_walk_body([], players=10))
     assert response.status_code == 422
 
 
@@ -9032,6 +9034,29 @@ def test_a_four_or_five_handed_hand_gets_advice_on_every_street(client, players,
         body = response.json()
         assert body["hero"]["strategy"], body
         assert body["players"] == players
+
+
+def test_seven_and_eight_handed_warm_at_100bb_only_and_are_low_confidence():
+    """A9 (M270). Their entries cost 58 and 194 MB, and AA's jam still
+    moves by 0.35-0.44 with the seed."""
+    plan = api_config.multiway_prewarm_plan()
+    assert [d for p, d in plan if p == 7] == [100.0]
+    assert [d for p, d in plan if p == 8] == [100.0]
+    assert [d for p, d in plan if p == 6] == list(api_config.MULTIWAY_PREWARM_STACK_DEPTHS)
+    # The suite fixture shrinks budgets, so read the shipped ones afresh.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_shipped_config", api_config.__file__)
+    shipped = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(shipped)
+    assert shipped.MULTIWAY_TABLE_CONFIGS[8]["iterations"] == 12_000
+    assert shipped.MULTIWAY_TABLE_CONFIGS[7]["iterations"] == 3_000
+    for players in (7, 8, 9):
+        assert players in api_config.LOW_CONFIDENCE_TABLE_SIZES
+
+
+def test_emptying_the_prewarm_depths_switches_every_table_off(monkeypatch):
+    monkeypatch.setattr(api_config, "MULTIWAY_PREWARM_STACK_DEPTHS", ())
+    assert api_config.multiway_prewarm_plan() == []
 
 
 def test_the_background_warm_list_is_well_formed():
