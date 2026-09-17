@@ -503,6 +503,59 @@ REFERENCE's game instead.
 The overbet row and the turn stay excluded
 (M168). The gate reads the RESPONSE, so it fails toward silence.
 
+### THE WIDE BENCHMARK (M260) — every street priced from outside
+
+`docs/wide-benchmark-2026-09-16.md`. Grades were fixed in advance.
+
+- **Sample:** 42 references, plus 24 more turn boards.
+- **Heroes:** drawn by range weight.
+- **Rows kept:** only rows the reference reaches at least 5% of the
+  time. Regret is graded only where our row sits ON the reference's
+  support.
+
+| street | opening | facing a bet |
+|---|---|---|
+| river | **0.41% of pot (A)** | **0.88% (B)** |
+| turn | 0.71% (B) | 1.20% (C) |
+| flop | same bet frequency (kind TVD 0.067), different SIZE (0.418) | kind TVD 0.256, no direction; unpriced |
+
+- **THE TURN SHOVES FACING A BET WHERE THE REFERENCE NEVER DOES.**
+  - **The behaviour:** strong made hands facing a turn bet move all-in
+    ~0.9998. The reference calls, or raises small.
+  - **The cost:** priced as Q(best) - Q(all-in) in the reference's own
+    game, **2.408 bb a decision = 16% of the pot, 5.42 sigma, 21 rows, 0
+    negative**.
+  - **A floor:** the reference's reply to a shove it never makes is
+    untrained, and that flatters the shove.
+  - **Disclosed:** `TURN_SHOVE_NOTE` (`turn-shove`), gated heads-up,
+    facing a bet, all-in >= 0.5, street opened at SPR >= 5.
+  - **Likely cause:** street isolation. Not fixable by configuration.
+- **A PURE-NODE ROW HAS NO REGRET.** Our row can sit 99.98% on an action
+  the reference never plays. Then `regret_of_row` prices the 0.01% that
+  overlaps, renormalised. That read one turn cell as **7.4% of pot,
+  worst 231%**.
+  - **Rule:** grade regret only where `off_support <= 0.5`.
+  - **Pure nodes:** price by action value instead.
+- **The dump walk prices a leaf from HERO's row alone.** On boards with at
+  most one card to come this is **36.9x** faster on a 584-combo turn row
+  (228.8s to 6.2s), with identical regret (`LeafEquity._hero_row`,
+  exact-equality test).
+  - **Why it matters:** the full (N+1)^2 table was what made turn
+    pricing cost 30 min a spot.
+- **The reference drops range classes weighted under ~0.006**
+  (two-decimal parsing).
+  - **Size:** 0.13% of range mass, harmless.
+  - **Where it bites:** heroes must be drawn above it, or they vanish
+    from the dump.
+- **Three product fixes from the self-benchmark:**
+  - **The flop's all-in is named at the real stack.** F13's bucketed
+    depth published `all_in:95.00` at 97.5bb and 422'd its own echo.
+  - **Postflop `sizing_confidence` reads the rows.** It had been
+    "high" on 1,468 of 1,468 decisions.
+  - **`bet-sizing-coverage` is silent where the STACK removes the
+    smaller sizes.** That covered 189 of 303 firings, where the note was
+    false.
+
 ### The checks REPLICATE on fresh spots (M236) — n=42 per street
 
 M222/M224's figures rested on ~21 spots each and carry a user-facing

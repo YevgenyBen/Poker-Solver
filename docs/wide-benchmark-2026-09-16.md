@@ -84,8 +84,9 @@ the run's measured drift printed beside it.
 | **Honesty** (self) | **F → fixed** | a signal that could not vary, and a note that was false on 62% of firings |
 | **River, opening** | **A** (0.41% of pot) | frequency C (TVD 0.197); the gaps are cheap |
 | **River, facing a bet** | **B** (0.88% of pot) | frequency C (0.153); under-folds at 2.16σ |
-| **Turn, opening** | **B** (0.68%) | n=5; frequency D (0.298) |
-| **Turn, facing a bet** | **D** (2.19%, ±0.80) | n=17; the most expensive cell measured; upper bound |
+| **Turn, opening** | **B** (0.71%) | n=71 on 24 boards; frequency D (0.300) |
+| **Turn, facing a bet** | **C** (1.20%, ±0.22) | n=130 on 24 boards; 17 pure-node rows priced separately (E5) |
+| **Turn, shoving facing a bet** | **F** (16% of pot) | 2.41 bb a decision at 5.42σ, a floor; now disclosed (E5) |
 | **Flop, opening** | **F by TVD, B by kind** | bets as often as the reference (0.067); disagrees on WHICH size (0.418) |
 | **Flop, facing a bet** | **D** (TVD 0.256) | a kind-level disagreement with no direction; unpriced |
 
@@ -231,10 +232,11 @@ against our 1.65, which is 21% apart and over the 5% tolerance.
 - **Against M259:** M259 measured 1.79% against 0.44% on a different
   population. The note's price holds up on boards it never saw.
 
-### E2 — the turn facing a bet is the most expensive cell measured
+### E2 — the turn facing a bet, first pass (superseded by the n=24 run below)
 
 - **The price:** 2.19% of pot ±0.80 over 17 rows; 1.03% net of the
-  reference's own slack. The worst row is 10.6%.
+  reference's own slack. The worst row is 10.6%. With R10's off-support
+  rule applied, it is 1.39% over 15 rows.
 - **It is thin:** six boards, because a turn spot costs half an hour to
   price.
 - **It fits the record:** everything the project knows about the turn
@@ -309,7 +311,9 @@ against our 1.65, which is 21% apart and over the 5% tolerance.
 | R1 | Name the flop's all-in at the real stack (W1) | **DONE** — 2 tests, recheck 0 refusals |
 | R2 | Let postflop `sizing_confidence` read the rows (W2) | **DONE** — test in both directions |
 | R3 | Silence the coverage note where the stack, not the model, removes the size (W3) | **DONE** — test |
-| R4 | Make the turn walk cheaper, then price the turn at n ≥ 24 | OPEN — the walk is 30 min a spot at cap 140; the solve is 15 s |
+| R4 | Make the turn walk cheaper, then price the turn at n ≥ 24 | **DONE** — walk 36.9× faster; 24 boards priced (below) |
+| R9 | Disclose the turn shove facing a bet (E5) | **DONE** — `TURN_SHOVE_NOTE`, 3 tests |
+| R10 | Grade regret only where off-support mass ≤ 0.5, and price pure nodes by action value | **DONE** in the report script; recorded in CLAUDE.md |
 | R5 | Score references against RANGE-WEIGHTED heroes, never hand-picked or uniform | **DONE** for the turn note (E4); recorded in CLAUDE.md as the rule |
 | R6 | Correct `TURN_INDEPENDENT_NOTE` to the range-weighted figures (E4) | **DONE** |
 | R7 | Price the flop's size disagreement | OPEN — needs three-round dumps (3.5 GB each, F67) or a streaming reader |
@@ -347,3 +351,93 @@ The rule was fixed before the run:
   - all spots pass the root control.
 
   Otherwise it stays a report finding.
+
+**Result.** 24 of 24 root controls pass, exploitability 0.32–0.50%, no
+missing heroes, 219 reached rows.
+
+**A rule applied after seeing the rows, and disclosed as such.**
+
+- **The problem:** the first read gave turn facing a bet **7.4% of pot,
+  worst 231%**. Those extremes were pure-node disagreements (M258).
+  - Our row sat 99.98% on an all-in the reference never plays.
+  - Regret was computed on the 0.01% of our row that overlapped, then
+    renormalised.
+- **The fix:** CLAUDE.md already states the rule: report off-support
+  mass, and at a pure node ask the frequency question. So regret is now
+  graded only where off-support mass is 0.5 or less.
+  - **Excluded here:** 17 facing rows and 1 opening row.
+  - **Excluded in the first external set:** 2 turn rows.
+  - **Recomputed:** the tables above were recomputed on the same basis.
+    The first set's turn facing cell moves from 2.19% to **1.39%**, and
+    nothing on the river changes.
+
+| cell | reached | priced | regret % pot | ±sem | net of slack | median | grade |
+|---|---|---|---|---|---|---|---|
+| opening | 72 | 71 | **0.71** | 0.09 | 0.13 | 0.58 | **B** |
+| facing 0.33× | 72 | 63 | 1.21 | 0.34 | 0.81 | 0.29 | C |
+| facing 0.75× | 48 | 44 | 1.22 | 0.36 | 0.17 | 0.09 | C |
+| facing 2.5× | 27 | 23 | 1.15 | 0.45 | 0.47 | 0.05 | C |
+| **facing, pooled** | 147 | 130 | **1.20** | 0.22 | 0.53 | 0.15 | **C** |
+
+**By the rule, the turn facing a bet is the costlier street.**
+
+- **Numbers:** 1.20% ±0.22 on the turn against the river's 0.88% ±0.14,
+  a difference of 0.32 at **1.23σ**.
+- **Verdict:** that is not separable, so the streets are **not
+  separable** facing a bet.
+- **Turn opening decision:** 0.71% against the river's 0.41%, +0.30 at
+  1.99σ, just short of the bar. Not separable either.
+- **Copy:** no turn price for the regret cells goes into player-facing
+  copy, since the rule asks for a comparison that did not clear. The
+  pure-node rows are a different matter (E5).
+
+### E5 — facing a turn bet, the engine shoves where the reference never does
+
+**The most expensive disagreement measured here. Disclosed.**
+
+**The rows.** The 17 excluded rows are one behaviour:
+
+- **Ours:** with a strong made hand facing a bet (a set, trips, two
+  pair), we move all-in about 99.98% of the time.
+- **The reference:** it calls, or raises small to 10, and shoves under
+  1% of the time.
+- **Example:** 6h6c on Kh6s2hJd facing a third-pot bet shoves 92.5 bb
+  into a 20 bb pot **0.9967**. The reference raises small **1.0**.
+
+**The price.** Regret cannot see a pure node, so the shove was priced
+directly, in the reference's game: the value of the best supported action
+minus the value of the all-in.
+
+| rows | boards | mean | median | sem | negative |
+|---|---|---|---|---|---|
+| 17 | 9 | **2.675 bb** | 2.525 | 0.517 | **0** |
+
+**The gate.** It fires on the turn, heads-up, facing a bet, when the row
+is at least 50% all-in and the street opened at SPR ≥ 5. Every row it
+fires on:
+
+- **Rows:** 21 in all, the 17 plus 4 where the reference does shove a
+  little, priced by regret.
+- **Cost:** **2.408 bb = 16% of the pot, 5.42σ.**
+- **Precision:** the reference never shoved on 17 of the 21 (81%).
+
+**A floor.** The reference never trains its villain's reply to a shove it
+doesn't make. That villain folds 45–83% to it, and M258 measured such
+branches as flattering the shove.
+
+**Exposure.** In the self-benchmark, 3 of 55 heads-up 100 bb turn
+facing-a-bet decisions shove with at least 0.9 of the row. So this is
+rare, and about 2.4 bb each time.
+
+**Mechanism, a hypothesis.** The turn is solved without playing the
+river:
+
+- a call is valued at showdown equity and collects no river value;
+- a shove collects its value now.
+
+This is M222's street-isolation story in its sharpest form, and
+M223/M232 already showed configuration cannot reach it.
+
+**Shipped.** `TURN_SHOVE_NOTE` (`turn-shove`) says so, quotes the floor
+and names calling as the alternative. Four tests pin it: every gate
+condition is removed once, and the copy is pinned to its constants.

@@ -15420,3 +15420,90 @@ before any number existed.
   where the gate fires, not whether a better gate exists.
 - **`classify`'s absolute hand ranking mislabels hands where the board
   plays.** Noted; nothing depends on it.
+
+## M260 - wide benchmark: the river is the best street, the turn shoves where it should call
+
+Report: `docs/wide-benchmark-2026-09-16.md`. Grades were fixed before
+either half ran, and every rule added later is marked as such.
+
+**Against ourselves** (2 raise weights x 3 seeds, 2,293 decisions,
+drift-timed).
+
+- **Defects and latency:** 0 defects, 0 over 5 s. p50 0.42-0.46 s,
+  p90 2.2-2.3 s. Drift reached 2.51x in one arm.
+- **Exposure:** multiway irreproducibility 23%. `river-under-fold` fires
+  on 27% of river facing-a-bet decisions.
+- **Three product fixes, each tested and mutation-checked:**
+  1. **The flop's all-in is named at the player's real stack.** F13's
+     floored depth published `all_in:95.00` at 97.5 bb, and echoing it
+     returned 422. That was every one of the 32 refusals, about a fifth of
+     flop facing-a-bet requests. The recheck seed went from 7 refusals to
+     0.
+  2. **Postflop `sizing_confidence` now reads the rows.** It had been
+     "high" on 1,468 of 1,468 decisions, beside notes saying no
+     intermediate size existed. The recheck agrees on 26 of 26.
+  3. **`bet-sizing-coverage` is silent where the stack, not the model,
+     removes smaller sizes.** That was 189 of 303 firings, and the note
+     was false on them.
+
+**Against the independent solver** (42 references plus 24 turn boards;
+every turn and river root control passes).
+
+- **Headline cells:**
+
+  | cell | regret, % of pot | grade |
+  |---|---|---|
+  | river, opening | 0.41 | A |
+  | river, facing a bet | 0.88 | B |
+  | turn, opening | 0.71 | B |
+  | turn, facing a bet | 1.20 | C |
+
+- **Turn against river:** not separable at either node (1.23 sigma / 1.99
+  sigma).
+- **Flop:** it bets as often as the reference (kind TVD 0.067) and
+  chooses a different size (TVD 0.418), which is a first measurement of
+  size choice. Facing a bet it disagrees on kind (0.256) with no
+  direction.
+- **The under-fold price replicates on fresh boards:** 1.55% where the
+  note fires against 0.65% where it is silent (M259: 1.79% / 0.44%).
+
+**Findings.**
+
+- **The turn shoves facing a bet where the reference never does.**
+  - **The behaviour:** strong made hands move all-in ~0.9998, while the
+    reference calls or raises small.
+  - **The price:** Q(best) - Q(all-in) in the reference's game is
+    **2.675 bb over 17 pure-node rows, 0 negative**. Over the 21 rows the
+    gate fires on it is **2.408 bb = 16% of pot, 5.42 sigma**.
+  - **A floor:** the reference's villain folds 45-83% to a shove it never
+    trained against.
+  - **Shipped:** `TURN_SHOVE_NOTE`.
+- **The turn note overstated the typical gap about 3x.**
+  - **The re-score:** the same 24 M236 references, against 144
+    range-weighted heroes: median 0.1816 against the hand-picked 0.4367,
+    and 47 of 144 within 10 points.
+  - **The direction stands:** +0.1860 at 6.46 sigma, 21 of 24 boards.
+  - **Shipped:** `TURN_INDEPENDENT_NOTE` now leads with the weighted
+    figures.
+- **A pure-node row has no regret.**
+  - **The artefact:** regret priced the 0.01% overlap renormalised,
+    reading a turn cell at 7.4% of pot with a worst row of 231%.
+  - **The rule, applied after seeing it and disclosed:** grade regret
+    only where off-support mass is 0.5 or less, and price pure nodes by
+    action value.
+- **`LeafEquity` now prices from hero's row alone** on boards with at most
+  one card to come. It is exactly equal to the full table, and one turn
+  row went from 228.8 s to 6.2 s (36.9x). A turn spot now prices in
+  ~75 s instead of 30 min.
+- **Instrument notes.**
+  - The reference drops classes weighted under ~0.006 (0.13% of mass).
+  - Uniformly drawn heroes can vanish, so draw by weight.
+  - River opening direction depends on pot type: 3-bet -0.176, SRP
+    +0.084.
+
+**Deferred.**
+
+- **Pricing the flop's size disagreement.** It needs three-round dumps
+  or a streaming reader.
+- **A fix for the turn shove.** It is street isolation, and M223/M232
+  already showed configuration cannot reach it.
