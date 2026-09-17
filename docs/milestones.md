@@ -15507,3 +15507,65 @@ every turn and river root control passes).
   or a streaming reader.
 - **A fix for the turn shove.** It is street isolation, and M223/M232
   already showed configuration cannot reach it.
+
+## M261 - a local store of real played hands
+
+`bench/hand_db.py` plus `data/hands/` (git-ignored; see its README). It
+answers "accuracy against real opponents needs real hands": the hands
+exist, and are now one query away.
+
+**What is in it.** Everything comes from the University of Toronto
+Computer Poker Research Group's phh-dataset (repository MIT; Zenodo
+archive CC BY 4.0), taken as a SPARSE git checkout rather than the 20.3 GB
+archive:
+
+- **Pluribus: 10,000 hands.** 6-max, 100 bb, **every hole card
+  visible**.
+- **HandHQ online: 129,508 hands.** Anonymised, July 2009, 25NL-1000NL,
+  six networks. These are the first 5 files of each of 27 site/stake
+  folders. Hole cards are visible only when shown.
+- **Totals:** 139,508 hands, 119 MB. Ingest takes 24 s; reading and
+  replaying every hand takes 3.7 s; a filtered query takes 0.1 s.
+
+**Design.**
+
+- **Storage:** SQLite from the standard library, with no new dependency.
+  Each hand is one row keyed by a content hash, so re-ingesting a file,
+  or an overlapping one, adds nothing twice. Each file is recorded by
+  hash, so re-running over a directory skips what is in.
+- **Indexed columns:** table size, effective stack in bb, pot type,
+  players per street, known cards, pot at the flop.
+- **Replay:** `Hand.streets()` replays every action with its size in bb,
+  the pot before it and the amount faced.
+- **Upgrades:** `rederive` rebuilds rows from what is stored with them
+  when a derivation changes. It was exercised for real here (v1 -> v2).
+
+**Three format facts learned on real data, each tested.**
+
+- **PHH reverse-assigns blinds and antes heads-up:** p1 is the big blind.
+  The first reading had it backwards, and real hands caught it: p2 acts
+  first preflop and p1 first after the flop.
+- **`inf` means an unknown stack, and every iPoker hand has one** (24,657
+  hands). They are kept with `clean = 0` and NULL stack columns.
+- **About 1,230 hands carry a negative forced bet, which the spec
+  forbids.** It was caught by the pot SHRINKING mid-hand (36 actions).
+  Those hands are also `clean = 0`.
+
+**Validation.**
+
+- On the 113,617 clean hands: 0 replay errors, 0 negative amounts faced,
+  0 pot decreases.
+- On Pluribus: 0 chip-conservation failures in 10,000.
+
+**First look** (not a finding yet):
+
+- Median effective stack 116 bb; a quarter of hands sit at exactly
+  100 bb.
+- **23% of flops are 3+ way**, the population where this engine is least
+  reliable.
+
+**Next** (the report's R12-R15, now feedable from real data):
+
+- which stack buckets to warm first;
+- a replay of real decisions through `/advise`;
+- Pluribus as the first outside reference for multiway play.
