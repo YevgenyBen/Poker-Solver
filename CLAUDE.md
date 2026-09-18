@@ -3444,6 +3444,23 @@ while the opponent's range was flat, because conservation holds for ANY
 reach weights so long as both sides use the same ones. **M219's dead
 guard in another shape.**
 
+**THE WALK'S FLOP LEAF WAS SAMPLED, AND ITS CHANCE CARDS ARE WEIGHTED
+EQUALLY (M275/A12).** A leaf on a THREE-card board fell through to the
+sampled equity table while turn and river leaves were exact;
+`LeafEquity._hero_row` now enumerates both cards (1,081 runouts), and a
+board shorter than a flop raises. **No published figure moves** - a
+three-round dump has 205,504 leaves and every one is on a five-card
+board, and M260 priced no flop.
+**`Walk(chance_weighting="reach")` is derived and DEFAULT OFF**: cards
+are not equally likely once blockers are out, but adopting it changes
+every figure taken off a dump with a chance node (the turn bank), whose
+dumps are deleted - M161's precedent. **Conservation cannot referee it**
+(F59: both sides share the weights).
+**The villain's combos come from the node the VILLAIN acts at.** Taking
+them from the root's table - the ACTING player's hands - prices hero
+against their own range and invents slack: 7.8 bb where the truth is
+1.84.
+
 **A CONTROL THAT PASSES AGAINST A LOOSE REFERENCE CAN FAIL AGAINST A
 TIGHT ONE (M273/A8).** Five four-bet flop spots passed `dump_control` at
 0.33% exploitability; re-solved to **0.042%**, three of five FAIL (ratios
