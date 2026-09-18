@@ -682,3 +682,16 @@ can use the product at all.
 (non-equilibrium) opponents. It needs play data this project does not
 have. The win-rate bound in the usability section stays a bound against
 a near-equilibrium opponent.
+
+## CORRECTION (M277/A14): the turn grades are withdrawn
+
+The turn references were re-solved from these same params and scored by
+best response off their own dumps: **1.87-3.91% of pot**, against the
+0.33-0.49% they report, and their own per-hand slack is **0.49-0.96%**.
+The turn's grades here - 0.71% of pot opening, 1.20% facing - sit at or
+barely above the instrument's own level, so they are not resolvable by
+this reference and are withdrawn as grades.
+
+**The turn-shove price (2.408 bb, 16% of pot) stands**: 4-8x that
+level, and already published as a floor. River and flop figures are
+unaffected (M276).

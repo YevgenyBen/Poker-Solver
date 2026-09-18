@@ -2983,6 +2983,14 @@ TURN_SHOVE_COST_PCT_POT = 16
 TURN_SHOVE_ROWS = 21
 TURN_SHOVE_REFERENCE_NEVER = 17
 TURN_SHOVE_BOARDS = 9
+# A14 (M277) measured what the reference behind this figure is worth.
+# Scored by best response off its own dump, it sits 1.87-3.91% of pot
+# from equilibrium while reporting 0.33-0.49%, and its own per-hand slack
+# is 0.49-0.96%. **The 2.4 bb here is 16% of the pot, 4-8x that**, so the
+# figure survives its instrument being weaker than it claimed - which is
+# also why the copy says "at least". M260's turn GRADES did not survive
+# it and are withdrawn; this is the one turn figure large enough to
+# outlive the measurement.
 TURN_SHOVE_NOTE = (
     " A warning specific to this decision: this engine is recommending moving ALL IN on the "
     "turn in response to a bet. An independent solver that plays the river out almost never "

@@ -542,7 +542,7 @@ same nine references, re-scored against heroes drawn by range weight -
 | street | opening | facing a bet |
 |---|---|---|
 | river | **0.41% of pot (A)** | **0.88% (B)** |
-| turn | 0.71% (B) | 1.20% (C) |
+| turn | ~~0.71% (B)~~ / ~~1.20% (C)~~ **WITHDRAWN (M277)** - see below |
 | flop | same bet frequency (kind TVD 0.067), different SIZE (0.418) | kind TVD 0.256, no direction; unpriced |
 
 - **"The flop agrees on whether to bet" IS A 100bb STATEMENT (M274/A7).**
@@ -552,6 +552,18 @@ same nine references, re-scored against heroes drawn by range weight -
 - **Single-raised references cost an hour and sometimes overrun** - 2,801s
   on one board, past 7,200s on another (M257's 1,226s was optimistic).
 
+- **THE TURN'S GRADES ARE WITHDRAWN (M277/A14), AND THE SHOVE PRICE IS
+  NOT.** Five turn references re-solved from M260's own params and scored
+  by `BestResponseWalk` off their own dumps measure **1.87-3.91% of pot**
+  against the **0.33-0.49%** they report, with per-hand slack
+  **0.49-0.96%**. The turn's graded figures (0.71% opening, 1.20%
+  facing) sit AT that level, so this reference cannot resolve them.
+  **Converging harder does not help**: 7.2x tighter moves the reported
+  figure 0.329 -> 0.046% and the dumped strategy 3.91 -> 3.81%.
+  **The shove price survives** - 2.408 bb is 16% of pot, 4-8x the
+  instrument's own slack, and was always published as a floor.
+  **Next**: the turn's distance needs the reference-FREE instrument
+  (M233's exploitability), not a better dump (A15).
 - **THE TURN SHOVES FACING A BET WHERE THE REFERENCE NEVER DOES.**
   - **The behaviour:** strong made hands facing a turn bet move all-in
     ~0.9998. The reference calls, or raises small.
