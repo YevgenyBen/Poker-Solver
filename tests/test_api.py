@@ -8796,6 +8796,12 @@ def test_the_two_live_warning_quotes_its_own_measurement():
     assert str(api_config.PREFLOP_TWO_LIVE_NODES) in reason
     assert f"{round(api_config.PREFLOP_TWO_LIVE_TRASH_CONTINUES * 100)}%" in reason
     assert f"{round(api_config.PREFLOP_MANY_LIVE_TRASH_CONTINUES * 100)}%" in reason
+    # M281: the mean improved and the TAIL did not, so the copy carries
+    # both. Quoting 66% alone would describe six of these fourteen spots
+    # as half as bad as they are.
+    assert str(api_config.PREFLOP_TWO_LIVE_NODES_OVER_90) in reason
+    assert api_config.PREFLOP_TWO_LIVE_TRASH_CONTINUES < api_config.PREFLOP_TWO_LIVE_WAS
+    assert api_config.PREFLOP_TWO_LIVE_WORST > 0.99
 
 
 def test_the_sizing_caveat_no_longer_claims_trash_is_always_folded():
@@ -9130,16 +9136,20 @@ def test_emptying_the_prewarm_depths_switches_every_table_off(monkeypatch):
     assert api_config.multiway_prewarm_plan() == []
 
 
-def test_a_deep_preflop_node_is_trained_against_a_uniform_reach_by_default(monkeypatch):
-    """M279. The reach is what M251's defect is made of, and changing it
-    is a decision: `derived` moves trash facing a four-bet from 0.978
-    continuing to 0.567, which is large and short of the bar that study
-    fixed before it ran."""
+def test_a_deep_preflop_node_is_trained_against_the_paths_own_ranges(monkeypatch):
+    """M279 measured it, M281 turned it on. Trained against a UNIFORM
+    range, `72o` facing a four-bet calls 0.9697 - and correctly so, since
+    against a uniform range it holds 34% equity. Against the path's own
+    ranges the same row folds 0.4902.
+
+    M280 is why this is on rather than waiting for the 0.50 bar: the
+    parents are already learned and the residual is the modelled
+    four-bet range's composition, which no reach can fix."""
     import numpy as np
 
     from api import solving as solving_module
 
-    assert api_config.PREFLOP_TRAINING_REACH == "uniform"
+    assert api_config.PREFLOP_TRAINING_REACH == "derived"
 
     class _Scenario:
         ranges = {"BTN": {"AA": 1.0}, "BB": {"AA": 1.0}}
@@ -9147,12 +9157,14 @@ def test_a_deep_preflop_node_is_trained_against_a_uniform_reach_by_default(monke
     monkeypatch.setattr(solving_module, "derive_ranges_from_path",
                         lambda *a, **k: _Scenario())
     hands, live = ["AA", "72o"], ("BTN", "BB")
-    uniform = solving_module._training_reach(object(), object(), hands, live, ["x"])
-    assert all(np.array_equal(v, np.ones(2)) for v in uniform.values())
-
-    monkeypatch.setattr(api_config, "PREFLOP_TRAINING_REACH", "derived")
     derived = solving_module._training_reach(object(), object(), hands, live, ["x"])
     assert derived["BTN"].tolist() == [1.0, 0.0], "the path's own range, not a flat one"
+
+    # One constant restores M150's behaviour exactly.
+    monkeypatch.setattr(api_config, "PREFLOP_TRAINING_REACH", "uniform")
+    uniform = solving_module._training_reach(object(), object(), hands, live, ["x"])
+    assert all(np.array_equal(v, np.ones(2)) for v in uniform.values())
+    monkeypatch.setattr(api_config, "PREFLOP_TRAINING_REACH", "derived")
 
     # No path to derive from, and an empty range, both fall back.
     assert np.array_equal(

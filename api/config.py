@@ -1837,20 +1837,30 @@ LOW_CONFIDENCE_TABLE_SIZES = {
 # every measured node against half a blind. 3.0 sits well above any blind
 # completion or limp and well below the measured 9.0.
 PREFLOP_TWO_LIVE_MIN_TO_CALL_BB = 3.0
-PREFLOP_TWO_LIVE_TRASH_CONTINUES = 0.9823
-PREFLOP_TWO_LIVE_NODES = 22
-PREFLOP_MANY_LIVE_TRASH_CONTINUES = 0.3899
+# M281 re-measured M251's own 22-spot study after turning the derived
+# training reach on: the two-live cells go from 0.9823 to **0.6559** over
+# 14 nodes, and six of them are STILL above 0.90 (worst 0.9961), while
+# the three-or-more-live control stays correct at 0.0122 and premiums are
+# untouched (0.9982 mean, 0.9760 worst). The defect is smaller and it is
+# not gone, so the copy quotes the new figure AND the tail.
+PREFLOP_TWO_LIVE_TRASH_CONTINUES = 0.6559
+PREFLOP_TWO_LIVE_WORST = 0.9961
+PREFLOP_TWO_LIVE_NODES_OVER_90 = 6
+PREFLOP_TWO_LIVE_NODES = 14
+PREFLOP_TWO_LIVE_WAS = 0.9823          # M251, before M281
+PREFLOP_MANY_LIVE_TRASH_CONTINUES = 0.0122   # M281 re-measured (was 0.3899, M251)
 
 PREFLOP_TWO_LIVE_REASON = (
     "Everyone else has folded, so this is now a two-player pot — and that is where this "
-    "engine's weak-hand folding breaks down. Measured over 22 such spots, hands as weak "
-    "as 72o are told to continue against a re-raise 98% of the time; at the same price "
-    "with three or more players still live, the same hands continue 39% of the time and "
-    "almost never above 90%. The call here typically needs about 27% equity, which 72o "
-    "has against a random hand and not against anyone's re-raising range — it would take "
-    "an opponent re-raising the top 23% of all hands to make it break even. Strong hands "
-    "are still handled correctly, so treat the raise/all-in numbers as usable and do NOT "
-    "trust this node's advice to continue with a weak one."
+    "engine's weak-hand folding breaks down. Measured over 14 such spots, hands as weak "
+    "as 72o are told to continue against a re-raise about 66% of the time on average, and "
+    "at 6 of those 14 spots still more than 90% of the time; at the same price with three "
+    "or more players still live, the same hands continue about 1% of the time. The call "
+    "here typically needs about 27% equity, which 72o has against a random hand and not "
+    "against anyone's re-raising range — it would take an opponent re-raising the top 23% "
+    "of all hands to make it break even, and this engine models one re-raising 13%. "
+    "Strong hands are still handled correctly, so treat the raise/all-in numbers as usable "
+    "and do NOT trust this node's advice to continue with a weak one."
 )
 
 SIZING_CAVEAT_TABLE_SIZES = {
@@ -3377,11 +3387,27 @@ PREFLOP_PATH_NODE_TRAINING = False
 # that depth. It leaves this node untouched and makes AA's jam worse
 # (0.0339 -> 0.0778). The defect is the reach, not the pricing.
 #
-# What remains is the derived ranges themselves: they are computed from a
-# solve whose deep nodes are unlearned (M149), so the four-bet range they
-# describe is wider than a real one, and trash calling 0.567 against it is
-# the correct answer to a question that is still slightly wrong.
-PREFLOP_TRAINING_REACH = "uniform"
+# **M281 TURNS IT ON, and the reason is M280.** The bar above - a mean
+# under 0.50 - was set for a FULL fix, and M280 then measured that no
+# amount of reach work can reach it: the parents on this line are already
+# learned (the path trainer trains 0 nodes, and the derived ranges
+# re-compose with ratio spread 0.3185 / 0.2052 where M250's defect reads
+# 0), and the residual is the modelled four-bet range itself - **13.2% of
+# all hands at 3.0% premium**, against a real few-percent range. Trash
+# calling 0.567 against THAT is nearly the correct answer to a badly
+# wrong question, and the question is M98's pricing at learned nodes,
+# four failed attempts deep (M100, M113-M115, M279).
+#
+# So the choice is between 0.978 and 0.567 continuing, not between 0.978
+# and correct. Taking the improvement:
+#
+#     reach      mean continue   worst    AA's jam   cold 6-max
+#     uniform         0.978      0.9961     0.0339      53.5s
+#     derived         0.567      0.6365     0.0339      53.8s
+#
+# `"uniform"` restores M150's behaviour exactly, in one constant, and the
+# study that measured both is M279.
+PREFLOP_TRAINING_REACH = "derived"
 
 UNIFORM_ROW_REASON = (
     "Your hand's numbers here are an even split across every action, which is the "
