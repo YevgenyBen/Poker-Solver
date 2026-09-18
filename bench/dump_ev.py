@@ -678,6 +678,39 @@ MIN_ACTION_SUPPORT = 0.01
 SIZE_MATCH_TOLERANCE = 0.05
 
 
+class BestResponseWalk(Walk):
+    """Hero plays a BEST RESPONSE: the max over actions at every hero node.
+
+    A13 (M276). The gain over hero's own row bounds every deviation,
+    including the root-only one `regret_of_row` prices, so it is the
+    measure of how exploitable a dumped strategy actually is - computed
+    FROM the dump, and therefore not dependent on the solver's own
+    reported figure being about the same object.
+
+    That distinction is the finding. On the same four-bet flop spot:
+
+    | solve | solver's figure | this walk | ratio |
+    |---|---|---|---|
+    | 100 iterations | 2.057% of pot | 1.677% | **0.82** |
+    | 700 iterations | 0.054% | 1.463% | **27.3** |
+
+    The dumped strategy barely improved while the reported number fell
+    38x. On a RIVER dump - no chance node - the two agree (1.46x). So the
+    reported exploitability stops describing the dumped strategy as a
+    DEEP solve converges, and a control that divides by it gets stricter
+    while the thing it is checking does not get better (M273's "passes
+    loose, fails tight", explained).
+    """
+
+    def _hero_node(self, node, board, reach, street_in, total_in):
+        best = None
+        for label in node.get("actions") or []:
+            got = self._child_value(node, label, board, reach, street_in, total_in)
+            if got is not None and (best is None or got > best):
+                best = got
+        return best
+
+
 def map_row(our_row, dump_actions, facing):
     """Our engine's strategy row, expressed in the dump's action labels.
 

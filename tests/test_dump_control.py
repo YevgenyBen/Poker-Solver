@@ -105,3 +105,21 @@ def test_an_impossible_reach_is_refused():
         with pytest.raises(ValueError, match="reach"):
             check(_summary(0.1), pot=33.0, reported_exploitability_pct=0.256,
                   reach=bad)
+
+
+def test_a_reference_is_judged_on_its_own_best_response_too():
+    """A13 (M276). The solver's reported figure stops describing the
+    strategy it dumps once the tree is deep: on one four-bet flop spot it
+    fell 38x between 100 and 700 iterations while the dumped strategy's
+    own best-response gain barely moved (1.68% -> 1.46% of pot). So a
+    reference is also gated on what the DUMP says about itself."""
+    from bench.dump_control import (MAX_REFERENCE_BR_PCT,
+                                    reference_is_precise_enough)
+
+    ok, pct = reference_is_precise_enough(0.48, 33.0)      # the four-bet flop
+    assert not ok and pct == pytest.approx(1.4545, abs=1e-3)
+    ok, pct = reference_is_precise_enough(0.059, 15.0)     # a river reference
+    assert ok and pct == pytest.approx(0.3933, abs=1e-3)
+    assert MAX_REFERENCE_BR_PCT == 1.0
+    with pytest.raises(ValueError):
+        reference_is_precise_enough(0.1, 0.0)

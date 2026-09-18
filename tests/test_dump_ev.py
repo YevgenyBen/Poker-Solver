@@ -17,7 +17,8 @@ the first version's actual bug.
 import numpy as np
 import pytest
 
-from bench.dump_ev import (LeafEquity, Walk, class_label, map_row,
+from bench.dump_ev import (BestResponseWalk, LeafEquity, Walk,  # noqa: F401
+                           class_label, map_row,
                            parse_action, parse_params_ranges,
                            realisation)
 from bench.solver_dump import strategy_at
@@ -210,6 +211,48 @@ def test_the_two_chance_weightings_agree_when_nothing_is_blocked():
                    leaf=leaf(), pot0=POT, chance_weighting=mode).value(tree, board, reach)
               for mode in ("equal", "reach")]
     assert values[0] == pytest.approx(values[1], abs=1e-12)
+
+
+def test_a_best_response_takes_the_best_action_and_bounds_the_row():
+    """A13 (M276). The BR walk must be >= hero's own row everywhere, and
+    equal to it when the row already plays the best action purely - it is
+    the bound the root-only regret has to sit under."""
+    tree = _action(HERO, ["CHECK", "BET 5.000000"], {"KhKd": [0.5, 0.5]},
+                   children={
+                       "CHECK": _action(VILLAIN, ["CHECK"],
+                                        {c: [1.0] for c in VILLAIN_COMBOS},
+                                        children={"CHECK": _chance()}),
+                       "BET 5.000000": _action(VILLAIN, ["FOLD"],
+                                               {c: [1.0] for c in VILLAIN_COMBOS}),
+                   })
+    board, reach = ("8h", "6h", "2s"), _reach(1.0, 1.0)
+    leaf = lambda: LeafEquity("KhKd", VILLAIN_COMBOS,
+                              equity_fn=lambda b: np.array([0.2, 0.2], dtype=float))
+    kw = dict(hero_index=HERO, hero_key="KhKd", villain_combos=VILLAIN_COMBOS, pot0=POT)
+    row_ev = Walk(leaf=leaf(), **kw).value(tree, board, reach)
+    br = BestResponseWalk(leaf=leaf(), **kw).value(tree, board, reach)
+
+    # checking is worth equity * pot; betting takes the pot outright.
+    assert row_ev == pytest.approx(0.5 * (0.2 * POT) + 0.5 * POT, abs=1e-12)
+    assert br == pytest.approx(POT, abs=1e-12)
+    assert br >= row_ev
+
+
+def test_a_best_response_equals_the_row_that_already_plays_it():
+    tree = _action(HERO, ["CHECK", "BET 5.000000"], {"KhKd": [0.0, 1.0]},
+                   children={
+                       "CHECK": _action(VILLAIN, ["CHECK"],
+                                        {c: [1.0] for c in VILLAIN_COMBOS},
+                                        children={"CHECK": _chance()}),
+                       "BET 5.000000": _action(VILLAIN, ["FOLD"],
+                                               {c: [1.0] for c in VILLAIN_COMBOS}),
+                   })
+    board, reach = ("8h", "6h", "2s"), _reach(1.0, 1.0)
+    leaf = lambda: LeafEquity("KhKd", VILLAIN_COMBOS,
+                              equity_fn=lambda b: np.array([0.2, 0.2], dtype=float))
+    kw = dict(hero_index=HERO, hero_key="KhKd", villain_combos=VILLAIN_COMBOS, pot0=POT)
+    assert (BestResponseWalk(leaf=leaf(), **kw).value(tree, board, reach)
+            == pytest.approx(Walk(leaf=leaf(), **kw).value(tree, board, reach), abs=1e-12))
 
 
 def test_the_amounts_are_street_totals_not_increments():

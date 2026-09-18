@@ -83,6 +83,29 @@ def range_weighted_slack(node, walk_for, board, weights, hero_keys,
             "negative_slacks": int((slacks < -1e-9).sum())}
 
 
+#: What a reference's OWN best-response gain may be, as a percent of the
+#: pot, before the spot is too loose to price against. A13 measured a
+#: four-bet flop reference at **1.46% of pot** while it reported 0.045%,
+#: and a river reference at 0.39% against a reported 0.27% - so this is
+#: the figure to gate on when the solver's own number has stopped
+#: describing the strategy it dumped.
+MAX_REFERENCE_BR_PCT = 1.0
+
+
+def reference_is_precise_enough(br_gain_bb, pot, max_pct=MAX_REFERENCE_BR_PCT):
+    """`(ok, pct)` - is this dump converged enough to price against?
+
+    Measured from the dump with `BestResponseWalk`, so unlike `check`
+    below it does not assume the solver's reported figure is about the
+    strategy in the file. Use both: `check` catches a walk that
+    overstates, this catches a reference that is not what it claims.
+    """
+    if pot <= 0:
+        raise ValueError("pot must be positive, got %r" % (pot,))
+    pct = 100.0 * float(br_gain_bb) / pot
+    return pct <= max_pct, pct
+
+
 def check(summary, pot, reported_exploitability_pct,
           max_ratio=MAX_PLAUSIBLE_RATIO, reach=1.0):
     """`(ok, detail)` - does the walk reproduce the solver's own figure?

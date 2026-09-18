@@ -16243,3 +16243,51 @@ is ~18x the reported exploitability, and it is none of the above. Named
 next tests: a full best response from the walk (it must bound the root
 slack from above), and the per-hand EVs the GUI writes to
 `output_result.json`, which the console dump does not carry.
+
+## M276 - the reference's own figure stops describing what it dumps (A13)
+
+A12 fixed one defect, ruled out three causes and left the M273 anomaly
+open: on two of five four-bet flop references the walk reported ~18x
+more slack than the solver's exploitability allows. A13 settles it, and
+**the walk is not the thing that is wrong.**
+
+**The measurement.** `BestResponseWalk` plays the max at every hero node,
+so its gain over hero's own row bounds every deviation - including the
+root-only one - and is computed FROM the dump rather than from the
+solver's claim about it. The same spot, solved twice:
+
+| solve | solver's reported figure | best response off its own dump | ratio |
+|---|---|---|---|
+| 100 iterations | 2.057% of pot | 1.677% | **0.82 - passes** |
+| 700 iterations | **0.054%** | **1.463%** | **27.3 - fails** |
+
+**The dumped strategy barely improved (1.68% -> 1.46%) while the
+reported number fell 38x.** On a RIVER reference - no chance node - the
+two agree: reported 0.269%, best response 0.394%, ratio 1.46.
+
+**So the reported exploitability is not a property of the strategy in the
+file once the tree is deep**, and M273's "a control that passes against a
+loose reference fails against a tight one" follows directly: the control
+divides by a figure that keeps falling while the dump does not improve
+with it. At 100 iterations the same control passes at 0.82.
+
+**What this changes.**
+
+- **`BestResponseWalk` ships** (`bench/dump_ev.py`), with the internal
+  ordering pinned: BR >= the row's own EV, and equal where the row
+  already plays the best action.
+- **`bench.dump_control.reference_is_precise_enough`** gates a reference
+  on what its own dump says - `MAX_REFERENCE_BR_PCT = 1.0` of pot.
+  Measured: the four-bet flop reference is 1.46% (refused), a river
+  reference 0.39% (accepted).
+- **The river figures stand.** M259's river price and M260's river grades
+  came off dumps with no chance node, where the two measures agree at
+  1.46x, inside the control's 4x allowance.
+- **The TURN bank is the open question** (one chance level, between the
+  two cases measured here) and it carries M260's turn grades and the
+  turn-shove price. Queued as A14: its dumps were deleted, so this is
+  ~40 minutes a spot.
+
+**A rule worth carrying: a solver's own convergence number is a claim
+about its search, not about the file it wrote.** Score a reference by
+walking what it dumped.

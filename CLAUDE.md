@@ -3444,6 +3444,23 @@ while the opponent's range was flat, because conservation holds for ANY
 reach weights so long as both sides use the same ones. **M219's dead
 guard in another shape.**
 
+**A SOLVER'S CONVERGENCE NUMBER IS A CLAIM ABOUT ITS SEARCH, NOT ABOUT
+THE FILE IT WROTE (M276/A13).** Same four-bet flop spot, solved twice:
+at 100 iterations it reports 2.057% of pot and `BestResponseWalk` off
+its own dump says 1.677% (ratio 0.82, passes); at 700 it reports
+**0.054%** and the dump still says **1.463%** (27.3, fails). **The
+dumped strategy barely improved while the number fell 38x.** On a RIVER
+dump - no chance node - the two agree (0.269% against 0.394%, 1.46x).
+- **So M273's "passes loose, fails tight" is EXPLAINED**, and the walk is
+  not what was wrong.
+- **Score a reference by walking what it dumped**:
+  `bench.dump_control.reference_is_precise_enough`, `MAX_REFERENCE_BR_PCT
+  = 1.0` of pot. The four-bet flop reference is 1.46% (refused); a river
+  reference 0.39% (accepted).
+- **River figures stand** (M259's price, M260's river grades). **The TURN
+  bank is unchecked** - one chance level, between the two cases measured
+  - and it carries M260's turn grades and the turn-shove price (A14).
+
 **THE WALK'S FLOP LEAF WAS SAMPLED, AND ITS CHANCE CARDS ARE WEIGHTED
 EQUALLY (M275/A12).** A leaf on a THREE-card board fell through to the
 sampled equity table while turn and river leaves were exact;
