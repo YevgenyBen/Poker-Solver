@@ -2860,6 +2860,55 @@ TURN_INDEPENDENT_NOTE = (
 # showing up directly. It is still not literal indifference, so the copy
 # says "more likely cheap than expensive" and calls that an argument.
 RIVER_UNDER_FOLD_MAX_BET_FRACTION = 0.75
+
+# A6 (M272). FACING A SMALL FLOP BET, THIS ENGINE CALLS TOO OFTEN.
+#
+# M260 measured the flop facing a bet at 32 rows and could only say it was
+# the weakest cell in that table (74% agreement where the reference is
+# clear). A dump carries every combo's row, so its nine flop references
+# were re-scored against 14 heroes per bet size, drawn by range weight:
+# 336 rows, 238 after dropping rows the reference's villain reaches less
+# than 5% of the time.
+#
+# Overall we fold 0.092 LESS than the reference (4.19 sigma) and bet
+# 0.074 more (3.78 sigma), with 71% agreement where the reference is
+# clear. Split by what a player can see at the table:
+#
+#   bet faced      n    fold gap        hand strength      n    fold gap
+#   0.33x pot     112   -0.1683 (5.5s)  weak (<0.40)       49   -0.053 (0.9s)
+#   0.75x pot     112   -0.0130 (0.4s)  middling .40-.75  134   -0.139 (4.4s)
+#   2.5x pot       14   -0.1088 (2.1s)  strong (>=0.75)    55   -0.010 (1.0s)
+#
+# Separation 3.45 sigma by size (split halves 1.74 / 3.17, same
+# direction) and 3.83 sigma by strength (split halves 3.04 / 2.22).
+# Neither solver's MIXEDNESS predicts it (1.1 sigma both ways), which is
+# where the river's own note found its signal - so this gate is the size
+# and the hand, not the shape of the row.
+#
+# NOT priced in chips, and the copy says so. A flop leaf's value needs
+# the turn and river serialised (F67: 3.5 GB a spot), which is A8.
+#
+# Exposure: 6.1% of real decisions are a flop facing a bet and 5.96% face
+# half the pot or less (24,948 real decisions from the hand store).
+FLOP_UNDER_FOLD_MAX_BET_FRACTION = 0.5
+FLOP_UNDER_FOLD_MIN_STRENGTH = 0.40
+FLOP_UNDER_FOLD_MAX_STRENGTH = 0.75
+FLOP_UNDER_FOLD_ROWS = 134
+FLOP_UNDER_FOLD_GAP = 0.139
+FLOP_UNDER_FOLD_SMALL_BET_GAP = 0.168
+FLOP_UNDER_FOLD_AGREEMENT_PCT = 71
+FLOP_UNDER_FOLD_NOTE = (
+    " A warning specific to this decision: facing a SMALL flop bet with a hand in the middle "
+    "of your range, this engine calls too often. Measured against an independent solver over "
+    "134 such rows, it folds about 14 points less than the reference does, and against a "
+    "third-pot bet specifically about 17 points less - so when it leans toward calling here, "
+    "treat FOLDING as the serious alternative. Where the reference's answer is clear this "
+    "engine still names the same action 71% of the time, and the gap is absent for strong "
+    "hands and for larger bets, which is why this note is silent there. What this costs in "
+    "chips has NOT been measured on the flop - pricing a flop decision needs the turn and "
+    "river played out inside the reference - so read it as a frequency disagreement, not as "
+    "a price."
+)
 RIVER_UNDER_FOLD_MIXED_MAX_TOP_ACTION = 0.80
 #
 # M259 PRICED IT FROM OUTSIDE, and the argument above was wrong. EV no

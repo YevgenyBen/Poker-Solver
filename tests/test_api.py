@@ -8863,6 +8863,75 @@ def _turn_facing_raw(row, positions=("BB", "BTN"), entering=92.5, bet=4.95, pot=
             "hero": {"strategy": row}}
 
 
+def _flop_facing_raw(cards, board="Kd7c2h", entering=92.5, bet=5.0, pot=15.0):
+    """A heads-up flop response facing `bet` into `pot`."""
+    return ({"street": "flop", "board": board, "positions": ["BB", "BTN"],
+             "pot": pot + bet, "max_affordable_bb": entering,
+             "effective_stack_bb": entering - bet,
+             "hero": {"cards": cards, "strategy": {"fold": 0.1, "call_or_check": 0.9}}},
+            {"cards": cards, "strategy": {"fold": 0.1, "call_or_check": 0.9}})
+
+
+def test_the_flop_under_fold_note_fires_on_a_small_bet_with_a_middling_hand():
+    """A6 (M272). Facing a third-pot flop bet with a hand in the middle of
+    the range, this engine folds 0.139 less than an independent solver
+    (4.35 sigma over 134 rows); facing 0.75x pot the gap is 0.40 sigma."""
+    from api import main as api_main
+
+    raw, hero = _flop_facing_raw("Ah9h")            # ace-high on Kd7c2h, mid-range
+    strength = api_main._hand_strength_percentile(raw, hero)
+    assert api_config.FLOP_UNDER_FOLD_MIN_STRENGTH <= strength < api_config.FLOP_UNDER_FOLD_MAX_STRENGTH, strength
+    assert api_main._flop_under_folds_applies(raw, "flop", hero)
+    ids = [i for i, _text in api_main._advisory_notes(raw, hero)]
+    assert "flop-under-fold" in ids
+
+
+@pytest.mark.parametrize("why, cards, kwargs, street", [
+    ("a big bet is not where the gap is", "Ah9h", {"bet": 15.0}, "flop"),
+    ("strong hands agree", "KsKc", {}, "flop"),
+    ("weak hands agree", "9h8h", {}, "flop"),
+    ("the turn was not measured this way", "Ah9h", {}, "turn"),
+])
+def test_the_flop_under_fold_note_is_silent_everywhere_else(why, cards, kwargs, street):
+    from api import main as api_main
+
+    raw, hero = _flop_facing_raw(cards, **kwargs)
+    raw["street"] = street
+    assert not api_main._flop_under_folds_applies(raw, street, hero), why
+
+
+def test_every_facing_a_bet_note_still_fires_together():
+    """A6 (M272) was first written one indent too far out, which nested
+    `turn-shove` and `costly-band` inside the new flop note and silenced
+    them. The suite caught it; this pins the whole facing-a-bet family."""
+    from api import main as api_main
+
+    raw, hero = _flop_facing_raw("Ah9h")
+    ids = [i for i, _text in api_main._advisory_notes(raw, hero)]
+    assert "facing-a-bet-cost" in ids
+    assert "flop-under-fold" in ids
+    assert "costly-band" in ids, "the costly band covers this decision too"
+
+    shove = {"fold": 0.0001, "call_or_check": 0.0003, "raise:9.90": 0.0032,
+             "all_in:92.50": 0.9964}
+    turn = _turn_facing_raw(shove)
+    turn_ids = [i for i, _text in api_main._advisory_notes(turn)]
+    assert "turn-shove" in turn_ids
+    assert "flop-under-fold" not in turn_ids
+
+
+def test_the_flop_under_fold_note_quotes_its_own_measurement():
+    """M232's rule: a warning quotes the population it fires on."""
+    note = api_config.FLOP_UNDER_FOLD_NOTE
+    assert str(api_config.FLOP_UNDER_FOLD_ROWS) in note
+    assert "%d points" % round(api_config.FLOP_UNDER_FOLD_GAP * 100) in note
+    assert "%d points" % round(api_config.FLOP_UNDER_FOLD_SMALL_BET_GAP * 100) in note
+    assert "%d%%" % api_config.FLOP_UNDER_FOLD_AGREEMENT_PCT in note
+    assert "NOT been measured" in note, (
+        "a flop leaf cannot be priced without the turn and river serialised, "
+        "and a frequency gap read as a price is M237's error")
+
+
 def test_the_turn_shove_note_fires_where_it_was_priced():
     """M260. Heads-up, facing a bet, mostly all-in, a deep street."""
     shove = {"fold": 0.0001, "call_or_check": 0.0003, "raise:9.90": 0.0032,
