@@ -3734,6 +3734,13 @@ def _advise_preflop(request, iterations: int, hero_combo=None) -> dict:
         # Derived from the node the answer came from, which is what keeps
         # it true if the tree's sizes move (M144's rule).
         "to_call_bb": max(node.invested.values()) - node.invested[node.player_to_act],
+        # M282: how many raises deep this node is. `to_call_bb` cannot do
+        # this job - it is an AMOUNT, and the same 9.00 that means "a
+        # four-bet" at 100bb is a shove at 12bb - while the raise count is
+        # structural, the same key M279's continuation table is built on.
+        # It grades the two-live warning, whose defect is 0.93 at a
+        # four-bet against 0.35 at a three-bet.
+        "preflop_raises": node.raises_so_far,
     }
 
 

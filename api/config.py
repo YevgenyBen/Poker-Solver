@@ -1837,31 +1837,92 @@ LOW_CONFIDENCE_TABLE_SIZES = {
 # every measured node against half a blind. 3.0 sits well above any blind
 # completion or limp and well below the measured 9.0.
 PREFLOP_TWO_LIVE_MIN_TO_CALL_BB = 3.0
-# M281 re-measured M251's own 22-spot study after turning the derived
-# training reach on: the two-live cells go from 0.9823 to **0.6559** over
-# 14 nodes, and six of them are STILL above 0.90 (worst 0.9961), while
-# the three-or-more-live control stays correct at 0.0122 and premiums are
-# untouched (0.9982 mean, 0.9760 worst). The defect is smaller and it is
-# not gone, so the copy quotes the new figure AND the tail.
-PREFLOP_TWO_LIVE_TRASH_CONTINUES = 0.6559
-PREFLOP_TWO_LIVE_WORST = 0.9961
-PREFLOP_TWO_LIVE_NODES_OVER_90 = 6
-PREFLOP_TWO_LIVE_NODES = 14
-PREFLOP_TWO_LIVE_WAS = 0.9823          # M251, before M281
-PREFLOP_MANY_LIVE_TRASH_CONTINUES = 0.0122   # M281 re-measured (was 0.3899, M251)
+# **M282 re-measured all of this over the gate's OWN population, and the
+# figure M281 shipped was too kind.** M251 assembled 22 paths by hand and
+# M281 re-ran that same hand-written set; M252's rule says a benchmark
+# measures the population it generates, and a hand-written list generates
+# itself. Drawn off the real tree instead - 84 nodes, 12 at each of the
+# seven table sizes the warning can fire at, with the control that the
+# warning fired on 84 of 84:
+#
+#   quantity                  M281 (14 hand-picked)   M282 (84 enumerated)
+#   trash continues                  0.6559                 0.8081
+#   nodes over 0.90                   6 of 14               55 of 84
+#
+# **Why the old set flattered it: M251 only ever measured 3-max and
+# 6-max, and 3-max is the best cell in the population.** By table size
+# the figure runs 0.389 / 0.714 / 0.753 / 0.961 / 0.911 / 0.952 / 0.977
+# for 3- to 9-max, and five of those seven sizes had never been measured
+# at all.
+#
+# **The tail is predictable, and by RAISE COUNT, not by table size.**
+# Facing a four-bet the engine continues with trash 0.9336 (n=66);
+# facing a three-bet, 0.3482 (n=18) - 7.29 sigma, split halves 0.895 /
+# 0.972. Table size within four-bets is 2.31 sigma and depth 2.09, both
+# under the bar fixed before the run, so raise count is the signal and
+# the other two are its shadow. Hence the copy is GRADED: a player is
+# told the number for the node they are AT, which is also how M188's
+# "weight before quoting a share" rule is satisfied without needing a
+# frequency model.
+PREFLOP_TWO_LIVE_TRASH_CONTINUES = 0.8081    # population mean, n=84
+PREFLOP_TWO_LIVE_WORST = 0.9996
+PREFLOP_TWO_LIVE_NODES_OVER_90 = 55
+PREFLOP_TWO_LIVE_NODES = 84
+PREFLOP_TWO_LIVE_WAS = 0.9823          # M251, before M279/M281's reach fix
+# The graded cells. `raises_so_far` counts raises on the path, so an open
+# is 1, a three-bet 2 and a four-bet 3 - the same structural key M279's
+# continuation table is built on, and unlike an amount in bb it does not
+# move with the stack.
+PREFLOP_TWO_LIVE_GRADE_MIN_RAISES = 3
+PREFLOP_TWO_LIVE_FOUR_BET_CONTINUES = 0.9336
+PREFLOP_TWO_LIVE_FOUR_BET_NODES = 66
+PREFLOP_TWO_LIVE_THREE_BET_CONTINUES = 0.3482
+PREFLOP_TWO_LIVE_THREE_BET_NODES = 18
+# **The control was a hand-picked set too, and it is ten times worse than
+# quoted**: 0.1198 over 78 enumerated three-or-more-live nodes against
+# the 0.0122 M281 published. It is still a clean control - 0 of 78 over
+# 0.90, worst 0.6937 - but "about 1%" was false.
+#
+# **And it can only be compared at a THREE-BET.** Every one of those 78
+# nodes has two raises on it, because a four-bet almost always folds the
+# field down to two: the four-bet cell has no three-or-more-live control
+# BY CONSTRUCTION. So M251's headline contrast attributed to live count
+# what is mostly raise depth. Matched on raise count the live-count
+# effect is real and much smaller - 0.3482 against 0.1198, 2.80 sigma -
+# and that is the only contrast the copy is allowed to draw.
+PREFLOP_MANY_LIVE_TRASH_CONTINUES = 0.1198   # n=78, all three-bets
+PREFLOP_MANY_LIVE_NODES = 78
 
-PREFLOP_TWO_LIVE_REASON = (
-    "Everyone else has folded, so this is now a two-player pot — and that is where this "
-    "engine's weak-hand folding breaks down. Measured over 14 such spots, hands as weak "
-    "as 72o are told to continue against a re-raise about 66% of the time on average, and "
-    "at 6 of those 14 spots still more than 90% of the time; at the same price with three "
-    "or more players still live, the same hands continue about 1% of the time. The call "
-    "here typically needs about 27% equity, which 72o has against a random hand and not "
-    "against anyone's re-raising range — it would take an opponent re-raising the top 23% "
-    "of all hands to make it break even, and this engine models one re-raising 13%. "
-    "Strong hands are still handled correctly, so treat the raise/all-in numbers as usable "
-    "and do NOT trust this node's advice to continue with a weak one."
+# Two strings, one signal, chosen in `api/main.py` on the node's own
+# raise count. The same shape as `MULTIWAY_STABLE_REASON` /
+# `MULTIWAY_REPRODUCIBILITY_REASON` (M254), and for the same reason: one
+# average over a population whose cells run 0.35 to 0.93 is a number
+# that is wrong for nearly everyone who reads it.
+PREFLOP_TWO_LIVE_FOUR_BET_REASON = (
+    "Everyone else has folded, so this is now a two-player pot against a four-bet — the "
+    "single worst cell this engine has measured in itself. Over 66 such spots, hands as "
+    "weak as 72o are told to continue about 93% of the time, and at the worst of them "
+    "essentially always. The call here typically needs about 27% equity, which 72o has "
+    "against a random hand and not against anyone's four-betting range — it would take an "
+    "opponent four-betting the top 23% of all hands to break even, and this engine models "
+    "one four-betting 13%. Strong hands are still handled correctly, so treat the "
+    "raise/all-in numbers as usable and do NOT trust this node's advice to continue with a "
+    "weak one — fold it."
 )
+PREFLOP_TWO_LIVE_THREE_BET_REASON = (
+    "Everyone else has folded, so this is now a two-player pot — and that is where this "
+    "engine's weak-hand folding starts to break down. Over 18 such spots facing a "
+    "three-bet, hands as weak as 72o are told to continue about 35% of the time, against "
+    "about 12% for the same hands at the same depth with three or more players still "
+    "live. That is milder than the same spot one raise deeper, where it reaches 93%, but "
+    "it is still too loose. Strong hands are handled correctly, so treat the raise/all-in "
+    "numbers as usable and be sceptical of advice to continue with a weak hand."
+)
+#: Kept as the name the rest of the codebase and the tests reach for when
+#: they mean "this warning", and deliberately the SEVERE one: a caller
+#: that forgets to grade shows the worse figure rather than the milder,
+#: which is the direction M232 says a warning may err in.
+PREFLOP_TWO_LIVE_REASON = PREFLOP_TWO_LIVE_FOUR_BET_REASON
 
 SIZING_CAVEAT_TABLE_SIZES = {
     3: True,

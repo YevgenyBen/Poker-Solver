@@ -2267,13 +2267,38 @@ requests now reject unknown fields by name rather than ignoring them.
   `PREFLOP_TRAINING_REACH = "derived"` is the default. On M251's own
   study: two-live trash continuing **0.9823 -> 0.6559** over 14 nodes,
   and **6 of them are still over 0.90** (worst 0.9961) - the mean
-  improves by a third, the tail does not. Control (3+ live) 0.0122,
-  premiums untouched, AA's jam and latency unchanged.
-  **The copy said 98% and was false the moment this shipped**; it now
-  says 66%, names the tail, and quotes M280's 13% modelled four-bet
-  range against a 23% break-even. **Rule: a setting that improves a
-  disclosed defect makes its own disclosure false - re-measure the copy
-  in the same change, on the study the copy quotes.**
+  improves by a third, the tail does not. Premiums untouched, AA's jam
+  and latency unchanged. **Rule: a setting that improves a disclosed
+  defect makes its own disclosure false - re-measure the copy in the same
+  change, on the study the copy quotes.**
+  **M282 THEN FOUND THAT STUDY WAS A HAND-WRITTEN LIST, AND THE
+  DISCLOSURE UNDERSTATED ITS OWN DEFECT.** M251 assembled 22 paths by
+  hand and M281 re-ran the same ones. Drawn off the tree instead - 84
+  nodes, 12 at each of the seven table sizes the warning fires at, with
+  the control that it fired on 84 of 84:
+  | | M281 (14 hand-picked) | **M282 (84 enumerated)** |
+  |---|---|---|
+  | trash continues | 0.6559 | **0.8081** |
+  | over 0.90 | 6 of 14 | **55 of 84** |
+  **M251 only ever measured 3-max and 6-max, and 3-max is the best cell**
+  (0.389, against 0.71-0.98 for the five sizes never measured).
+  **The tail is predictable by RAISE COUNT**: a four-bet continues
+  **0.9336** (n=66) against a three-bet's **0.3482** (n=18), 7.29 sigma,
+  halves 0.895/0.972. Table size within four-bets is 2.31 sigma and depth
+  2.09 - both under the pre-registered bar - so raise count is the signal
+  and the others are its shadow. The copy is now GRADED on
+  `preflop_raises`, so a player is told the number for the node they are
+  at, which also satisfies M188 without a frequency model.
+  **The CONTROL was hand-picked too: 0.1198 over 78 enumerated nodes,
+  not 0.0122** - still clean (0 of 78 over 0.90) but ten times the
+  published figure. **And it exists only at a three-bet**: every
+  three-or-more-live node has two raises on it, because a four-bet folds
+  the field down to two, so **the four-bet cell has no control by
+  construction**. M251's headline contrast therefore credited LIVE COUNT
+  with what is mostly RAISE DEPTH; matched on raise count the live-count
+  effect is real and far smaller, 0.3482 against 0.1198 at 2.80 sigma.
+  **Rule: re-measure a disclosed figure over the population its gate
+  fires on, not over the list that first found it.**
   **M279 FOUND THE CAUSE AND IT IS NOT THE PRICING.** M250's prescribed
   route was built exactly - a continuation table keyed on RAISE COUNT,
   entries from HEADS-UP ranges of that depth - and it leaves this node
