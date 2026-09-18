@@ -2263,8 +2263,21 @@ requests now reject unknown fields by name rather than ignoring them.
   the exact solver continues with trash 0.5832 / 0.4419 at the identical
   price. n=2, on a path this study did not set out to measure — recorded
   so nobody reads M251 as a clean bill of health for heads-up.
-  **Nothing was fixed** — M250 established the ranges cannot be repaired
-  before terminal pricing is, so this is disclosure.
+  **M279 FOUND THE CAUSE AND IT IS NOT THE PRICING.** M250's prescribed
+  route was built exactly - a continuation table keyed on RAISE COUNT,
+  entries from HEADS-UP ranges of that depth - and it leaves this node
+  untouched while making AA's jam worse (0.0339 -> 0.0778). **The reach
+  is what does it**: M150 trains deep nodes against a UNIFORM range, and
+  against a uniform range 72o really does hold 34% equity facing a
+  four-bet. Trained against the path's own derived ranges the same row
+  reads **fold 0.4902 / call 0.4459** and the five trash hands go
+  **0.978 -> 0.567** continuing, with AA's jam and latency unchanged.
+  **`PREFLOP_TRAINING_REACH = "derived"` ships OFF**: the bar fixed
+  before the run was 0.50 and this is 0.567, so taking it is an explicit
+  decision to accept a large partial fix. **Iterations do not close it**
+  (non-monotone: 72o 0.51 -> 0.17 while 83o 0.58 -> 0.99). What is left
+  is one layer up - the derived ranges come from unlearned parents
+  (M149), so the four-bet range they describe is too wide (A16).
 
 - **`aggression_confidence` IS A FUNCTION OF STREET AND NOTHING ELSE
   (F51, M252)** — measured "low" on **528 of 528** postflop decisions in

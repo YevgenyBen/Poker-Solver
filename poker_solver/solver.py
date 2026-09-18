@@ -264,6 +264,7 @@ def solve_preflop(
     equity_cache: MultiwayEquityCache = None,
     seed: int = 0,
     floor_regret: bool | None = None,
+    continuation_table: dict | None = None,
 ) -> StrategyResult:
     """Solve a preflop spot and return its strategy.
 
@@ -299,6 +300,14 @@ def solve_preflop(
         # which api/config.py does for 9-max only — see mccfr_solve's own
         # docstring for the measurements behind that exception.
         mccfr_kwargs = {} if floor_regret is None else {"floor_regret": floor_regret}
+        if continuation_table is not None:
+            # M279. Terminals with money behind get a SOLVED continuation
+            # value instead of raw showdown equity (M98's defect), keyed on
+            # the raise count that reached them. `stack_bb` is what tells
+            # `_mccfr_terminal_value` how much is behind, so the two travel
+            # together or neither does anything.
+            mccfr_kwargs.update(continuation_table=continuation_table,
+                                stack_bb=config.stack_bb)
         node_data = mccfr_solve(
             root, hands, config.positions, equity_cache, iterations=actual_iterations,
             seed=seed, **mccfr_kwargs,

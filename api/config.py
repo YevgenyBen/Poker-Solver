@@ -3344,6 +3344,45 @@ PREFLOP_DEEP_NODE_TRAIN_ITERATIONS = 200
 # non-all-in action correctly.
 PREFLOP_PATH_NODE_TRAINING = False
 
+# M279. WHICH RANGES A DEEP PREFLOP NODE IS TRAINED AGAINST.
+#
+# M150 trains these subtrees with a UNIFORM reach and says so in the
+# open: it "replaces 'never computed' with 'computed against a stated
+# prior'". M251 then measured what that prior costs - `72o` facing a
+# four-bet with two live comes back **fold 0.0269 / call 0.9697**,
+# because against a uniform range 72o really does hold 34% equity there.
+# The engine answers correctly about a game nobody is playing.
+#
+# "derived" trains the node against the ranges
+# `derive_ranges_from_path` gives at it instead. Measured through
+# /advise on M251's five trash hands facing a four-bet, two live:
+#
+#     reach      mean continue   worst    AA's jam   cold 6-max
+#     uniform         0.978      0.9961     0.0339      53.5s
+#     derived         0.567      0.6365     0.0339      53.8s
+#
+# **A 42-point improvement on the sharpest categorical failure in this
+# product, and it does NOT meet the bar this study fixed before running**
+# (mean under 0.50), so it ships OFF, as M169's ensemble and M250's own
+# gate did. Turning it on is a decision to take a large partial fix.
+#
+# **More training iterations do not close the gap** - they are
+# non-monotone across hands, M141's conservation law again: 200 -> 4,000
+# moves 72o 0.5098 -> 0.1725 while 83o goes 0.576 -> 0.9887 and T2o
+# 0.6365 -> 0.9945.
+#
+# **The OTHER hypothesis on record is falsified.** M250 named terminal
+# pricing, and M279 built exactly what it prescribed - a continuation
+# table keyed on RAISE COUNT, each entry built from a HEADS-UP range of
+# that depth. It leaves this node untouched and makes AA's jam worse
+# (0.0339 -> 0.0778). The defect is the reach, not the pricing.
+#
+# What remains is the derived ranges themselves: they are computed from a
+# solve whose deep nodes are unlearned (M149), so the four-bet range they
+# describe is wider than a real one, and trash calling 0.567 against it is
+# the correct answer to a question that is still slightly wrong.
+PREFLOP_TRAINING_REACH = "uniform"
+
 UNIFORM_ROW_REASON = (
     "Your hand's numbers here are an even split across every action, which is the "
     "solver's starting assumption rather than anything it worked out — the hand was "

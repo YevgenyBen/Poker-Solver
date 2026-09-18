@@ -97,7 +97,8 @@ def expected_values_at_root(
     return walk(result.root) @ weights
 
 
-def continuation_key(pot: float, chips_behind: float, live_seats: int) -> tuple:
+def continuation_key(pot: float, chips_behind: float, live_seats: int,
+                     raises: int | None = None) -> tuple:
     """The canonical identity of a preflop terminal's FOLLOWING game.
 
     M112's measurement: 6-max has 15,254 showdown terminals with money
@@ -111,11 +112,23 @@ def continuation_key(pot: float, chips_behind: float, live_seats: int) -> tuple:
     the ORDER of magnitude of the stack-to-pot ratio, not linearly with
     it. The difference between SPR 1 and 2 is a different game; the
     difference between 20 and 21 is not.
+
+    **M279 adds an optional RAISE COUNT, and it is the whole point of the
+    attempt.** M113-M115 keyed on SPR and live seats alone, so a limped
+    pot and a three-bet pot at the same SPR shared a value while their
+    ranges are nothing alike - M114 named that as the first thing to try
+    if validation failed, and it did. Range strength itself cannot be the
+    key (M250: it is wrong *because* of the pricing this exists to fix),
+    but the raise count is structural, read off the tree, and separates
+    exactly those spots. `raises=None` keeps the old two-part key, so
+    every figure taken before this is reproducible.
     """
     if pot <= 0:
         raise ValueError("pot must be positive to define an SPR")
     spr = max(chips_behind / pot, 1e-9)
-    return (round(math.log2(spr)), live_seats)
+    if raises is None:
+        return (round(math.log2(spr)), live_seats)
+    return (round(math.log2(spr)), live_seats, int(raises))
 
 
 def build_continuation_table(
@@ -125,6 +138,7 @@ def build_continuation_table(
     boards: int = 3,
     iterations: int = 200,
     seed: int = 0,
+    ranges_for_key=None,
 ) -> dict:
     """Solved postflop EV per hand class, per canonical spot.
 
@@ -159,10 +173,20 @@ def build_continuation_table(
 
     for key, (pot, chips_behind) in spots.items():
         per_class = {}
+        # M279: each entry may be built from the ranges that BELONG to its
+        # key, which is the second half of M250's route - a value keyed on
+        # raise count is only worth having if the range it is built from
+        # is the range at that depth. `ranges_for_key` returns
+        # (hero_classes, villain_classes) or None to fall back.
+        hero_classes_here, villain_classes_here = hero_classes, villain_classes
+        if ranges_for_key is not None:
+            got = ranges_for_key(key)
+            if got is not None:
+                hero_classes_here, villain_classes_here = got
         for board_index in range(boards):
             board = tuple(rng.sample(deck, 3))
-            hero_range = range_from_class_frequencies(hero_classes, exclude=list(board))
-            villain_range = range_from_class_frequencies(villain_classes, exclude=list(board))
+            hero_range = range_from_class_frequencies(hero_classes_here, exclude=list(board))
+            villain_range = range_from_class_frequencies(villain_classes_here, exclude=list(board))
             if not hero_range or not villain_range:
                 continue
             result = solve_flop(board, hero_range, villain_range, pot=pot,

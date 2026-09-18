@@ -846,7 +846,8 @@ def solve(
 # ---------------------------------------------------------------------------
 
 
-def _continuation_key(pot: float, chips_behind: float, live_seats: int) -> tuple:
+def _continuation_key(pot: float, chips_behind: float, live_seats: int,
+                      raises: int | None = None) -> tuple:
     """Local mirror of `continuation.continuation_key`.
 
     Imported lazily rather than at module scope because `continuation.py`
@@ -856,7 +857,20 @@ def _continuation_key(pot: float, chips_behind: float, live_seats: int) -> tuple
     """
     from .continuation import continuation_key
 
-    return continuation_key(pot, chips_behind, live_seats)
+    return continuation_key(pot, chips_behind, live_seats, raises)
+
+
+def _is_a_raise(action) -> bool:
+    """Does taking `action` deepen the betting?
+
+    M279. `continuation_key` keys a terminal's following game on how many
+    raises reached it - a STRUCTURAL quantity, read off the tree with no
+    strategy involved, which is what M250 named as the way out of the
+    circularity: the range strength a continuation value needs is itself
+    wrong because of terminal pricing, so the key cannot depend on it.
+    """
+    kind = getattr(action, "kind", action)
+    return kind in ("raise", "all_in")
 
 
 def _mccfr_terminal_value(
@@ -868,6 +882,7 @@ def _mccfr_terminal_value(
     continuation: float = 0.0,
     stack_bb: float | None = None,
     continuation_table: dict | None = None,
+    raises: int | None = None,
 ) -> np.ndarray:
     """The traverser's net payoff for each of their `num_hands` possible
     hands (length-`num_hands` vector), given the fixed `opponent_hands`
@@ -970,7 +985,7 @@ def _mccfr_terminal_value(
     if continuation_table is not None and stack_bb is not None:
         chips_behind = stack_bb - max(node.invested.values())
         if chips_behind > 0:
-            key = _continuation_key(node.pot, chips_behind, len(live))
+            key = _continuation_key(node.pot, chips_behind, len(live), raises)
             spot = continuation_table.get(key)
             if spot:
                 labels = getattr(equity_cache, "hands", None)
@@ -1103,6 +1118,7 @@ def _mccfr_recurse(
     stack_bb: float | None = None,
     continuation_table: dict | None = None,
     action_grouping: str | None = None,
+    raises: int = 0,
 ) -> np.ndarray:
     """Returns the traverser's payoff vector (length num_hands) from this
     node onward, given the fixed `opponent_hands` for this iteration.
@@ -1181,10 +1197,11 @@ def _mccfr_recurse(
                 strategy_weight=strategy_weight, floor_regret=floor_regret, optimism=optimism,
                 smoothing=smoothing, continuation=continuation, stack_bb=stack_bb,
                 continuation_table=continuation_table, action_grouping=action_grouping,
+                raises=raises,
             )
         return _mccfr_terminal_value(node, traverser, opponent_hands, num_hands, equity_cache,
                                     continuation=continuation, stack_bb=stack_bb,
-                                    continuation_table=continuation_table)
+                                    continuation_table=continuation_table, raises=raises)
 
     actions = node.legal_actions
     table = node_data.setdefault(id(node), InfoSetTable.zeros(num_hands, len(actions)))
@@ -1224,6 +1241,7 @@ def _mccfr_recurse(
                 stack_bb=stack_bb,
                 continuation_table=continuation_table,
                 action_grouping=action_grouping,
+                raises=raises + (1 if _is_a_raise(action) else 0),
             )
             for a_idx, action in enumerate(actions)
         ]
@@ -1354,6 +1372,7 @@ def _mccfr_recurse(
         stack_bb=stack_bb,
         continuation_table=continuation_table,
         action_grouping=action_grouping,
+        raises=raises + (1 if _is_a_raise(sampled_action) else 0),
     )
 
 

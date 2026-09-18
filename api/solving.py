@@ -3486,7 +3486,55 @@ def _ensure_flop_multiway_node_trained(result, node, board_cards, hero_key=None)
     return True
 
 
-def _ensure_preflop_node_trained(result, node, players: int, hero_key=None) -> bool:
+def _training_reach(result, node, hands, live, action_path):
+    """The ranges to train a deep preflop node against.
+
+    **M279. The reach is what M251's defect was made of, and it was
+    stated as an assumption rather than hidden**: M150 trained these
+    subtrees with `initial_reach = ones` and wrote that it "replaces
+    'never computed' with 'computed against a stated prior'". Against a
+    UNIFORM range `72o` really does hold 34% equity facing a four-bet, so
+    calling is correct in the game the trainer solved and wrong in the
+    one being played - which is exactly the row M251 measured at
+    fold 0.0269 / call 0.9697.
+
+    Trained against the ranges `derive_ranges_from_path` gives at the
+    same node, the same row reads **fold 0.4902 / call 0.4459 /
+    all-in 0.0639**.
+
+    M279 also tested the OTHER hypothesis on record - M250's, that the
+    terminal pricing is what does it - by building a continuation table
+    keyed on raise count from heads-up ranges. That moved learned nodes
+    (AA's jam 0.034 -> 0.078, the wrong way) and left this node
+    untouched, so it is the reach and not the pricing.
+
+    **Ships OFF** (`PREFLOP_TRAINING_REACH`), because the improvement is
+    large and does not reach the bar M279 fixed before measuring: the
+    five trash hands go from 0.978 continuing to 0.567, against a bar of
+    0.50. See the constant for the full table and for why more training
+    iterations do not close it.
+
+    Falls back to uniform whenever the mode is off, the path is
+    unavailable, or a position's derived range is empty, so a caller that
+    cannot supply one gets M150's behaviour exactly.
+    """
+    uniform = {position: np.ones(len(hands)) for position in live}
+    if cfg.PREFLOP_TRAINING_REACH != "derived" or not action_path:
+        return uniform
+    try:
+        scenario = derive_ranges_from_path(result, list(action_path))
+    except (ValueError, KeyError):
+        return uniform
+    out = {}
+    for position in live:
+        weights = scenario.ranges.get(position) or {}
+        vector = np.array([float(weights.get(hand, 0.0)) for hand in hands])
+        out[position] = vector if vector.sum() > 0 else uniform[position]
+    return out
+
+
+def _ensure_preflop_node_trained(result, node, players: int, hero_key=None,
+                                 action_path=None) -> bool:
     """Solve ONE deep preflop node's subtree on demand. Returns whether
     it did any work.
 
@@ -3545,7 +3593,7 @@ def _ensure_preflop_node_trained(result, node, players: int, hero_key=None) -> b
     if len(live) < 2:
         return False
     equity_cache = _get_multiway_equity_cache(cfg.MULTIWAY_PREFLOP_HANDS)
-    reach = {position: np.ones(len(hands)) for position in live}
+    reach = _training_reach(result, node, hands, live, action_path)
     with _multiway_cache.lock:
         # Re-check under the lock: a concurrent request may have trained
         # this same node already, and the solve is not free.
@@ -3596,11 +3644,14 @@ def _train_unlearned_nodes_on_path(result, action_path, players: int) -> int:
         return 0
     node = result.root
     trained = 0
+    walked = []
     for action in action_path:
         if not isinstance(node, DecisionNode):
             break
-        if _ensure_preflop_node_trained(result, node, players):
+        if _ensure_preflop_node_trained(result, node, players,
+                                        action_path=walked):
             trained += 1
+        walked.append(action)
         node = node.children[action]
     return trained
 
@@ -3627,7 +3678,8 @@ def _advise_preflop(request, iterations: int, hero_combo=None) -> dict:
     hero_key = None if hero_combo is None else str(_combo_to_class(hero_combo))
     # M150: a deep multiway node the shipped budget never learned gets
     # solved here, on demand, rather than answered with the prior.
-    _ensure_preflop_node_trained(preflop_result, node, request.players, hero_key)
+    _ensure_preflop_node_trained(preflop_result, node, request.players, hero_key,
+                                 action_path=_actions)
     strategy = preflop_result.strategy_at(node)
     trained = preflop_result.trained_hands(node)
     live_positions = [p for p in preflop_result.config.positions if p not in node.folded]
