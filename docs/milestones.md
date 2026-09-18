@@ -15929,3 +15929,63 @@ failed once with `PermissionError` (errno 13). The lock already rules
 out two writers, so this was Windows briefly refusing a just-written
 file. `equity._retry_on_sharing_violation` now retries the load and the
 replace.
+
+## M269 - grouped regret matching (A4d), and the 4+ live budget answered (A10)
+
+Two questions M264-M266 left open, both measured against the same
+outside reference.
+
+### A4d: near-duplicate bet sizes
+
+**The hypothesis** (standing since M264, untested): with three similar
+bet sizes, betting as a GROUP collects three actions' positive regret
+against checking's one, so the solver over-bets.
+
+Two forms of grouped matching, on M264's 579 multiway-postflop decisions
+against a production baseline re-run after M266:
+
+| arm | vs production | bets when checked to | p90 |
+|---|---|---|---|
+| production | — | 0.472 | 8.8s |
+| grouped **max** (each kind's best member) | -0.007, 0.69 sigma | 0.472 | 14.4s |
+| grouped **mean** (kind regret / members) | **+0.042, 3.65 sigma** | **0.410** | **6.3s** |
+
+- **The neutral form does nothing and the penalising form works.** "max"
+  makes the group weighting independent of how many sizes a kind holds
+  and is null. "mean" divides by the member count, so a menu where only
+  one size is good is penalised - and it is what moves the answer.
+- **It replicates:** split halves +0.049 (3.02) / +0.036 (2.14), and
+  every street is positive (flop +0.030, turn +0.041, river +0.108).
+- **It is FASTER** (p50 6.60 -> 5.10s), because a diluted aggressive
+  group explores fewer expensive subtrees.
+- **The reference-free criterion still holds** (M214/M220): facing
+  0.33x / 0.75x / 2.5x, fold frequency goes 0.4932 / 0.7125 / 0.7691
+  grouped against 0.4166 / 0.6230 / 0.7232 plain, ordered on 15 of 20
+  spots in both.
+- **All four pre-registered conditions passed**, so
+  `MULTIWAY_POSTFLOP_ACTION_GROUPING = "mean"` ships.
+- **Scope:** postflop multiway only, as a parameter. The preflop
+  multiway solve runs the same sampled solver and was never measured
+  under grouping, and `solve_preflop` takes no such parameter at all.
+- **Caveat kept in the open:** grouped matching has no convergence
+  guarantee of its own. This is an empirical setting chosen against an
+  outside reference, and multiway still scores below a card-blind prior.
+
+### A10: does the x4 budget pay with 4+ live?
+
+M266 reverted 4+ live pots to 1,000 iterations on COST, with 38
+decisions (+0.056, 1.01 sigma) - underpowered. The Pluribus logs show
+every player's cards, so the five professionals' decisions score the
+same way.
+
+- **The control passed first:** at 3 live the pros reproduce Pluribus's
+  budget gain, **+0.075 at 7.18 sigma over 818 decisions** (Pluribus's
+  own 182 give +0.139 at 6.14). So the pros can referee it.
+- **The test:** at 4+ live, x4 beats the shipped budget by **+0.040 at
+  2.01 sigma over 260 decisions**. The gain is real.
+- **And it is refused on latency.** The 4+ live flop goes from 4.89s
+  median (p90 5.85) to **14.30s median (p90 16.84, worst 19.41)**, three
+  times the cost against a 5s bar.
+- **So M266's revert stands, on better evidence**: not "no measurable
+  benefit" but "a small measured benefit, at a price the latency budget
+  refuses".

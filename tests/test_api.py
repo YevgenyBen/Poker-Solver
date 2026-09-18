@@ -9148,6 +9148,51 @@ def test_warm_status_reports_both_warm_phases(client, monkeypatch):
     assert body["background_last"] == "6-max stack_bb=110.0"
 
 
+def test_multiway_postflop_solves_group_actions_by_kind_and_preflop_does_not():
+    """A4d (M269). Grouped matching is measured for POSTFLOP multiway
+    only; the preflop multiway solve runs the same sampled solver and was
+    never measured under it, so it cannot reach the flag - `solve_preflop`
+    takes no `action_grouping` at all."""
+    import inspect
+    import pathlib
+
+    from api import solving
+    from poker_solver.solver import solve_flop_multiway, solve_preflop
+
+    assert api_config.MULTIWAY_POSTFLOP_ACTION_GROUPING == "mean"
+    assert "action_grouping" in inspect.signature(solve_flop_multiway).parameters
+    assert "action_grouping" not in inspect.signature(solve_preflop).parameters
+
+    source = pathlib.Path(solving.__file__).read_text(encoding="utf-8")
+    assert source.count("action_grouping=cfg.MULTIWAY_POSTFLOP_ACTION_GROUPING") == 5, (
+        "every multiway postflop solve passes the grouping, including the "
+        "chance-branch trainer - a site that misses it solves a different game")
+
+
+def test_grouping_changes_a_multiway_flop_answer_and_leaves_heads_up_alone(client, monkeypatch):
+    """The flag reaches the solver: the same multiway request answered
+    under both settings must differ, and a heads-up request must not."""
+    multiway = _advise_body(preflop_action_path=["fold", "call_or_check", "raise", "fold",
+                                                 "fold", "call_or_check", "call_or_check"],
+                            hero_cards="AsAh", board="Kd7c2h", players=6, stack_bb=100.0)
+    heads_up = _advise_body(preflop_action_path=["raise", "call_or_check"],
+                            hero_cards="AsAh", board="Kd7c2h", players=2, stack_bb=100.0)
+    # The fixture strips the bet menu for speed, and with one sized action
+    # per kind there is nothing to group - restore a real menu.
+    monkeypatch.setattr(api_config, "MULTIWAY_FLOP_RAISE_SIZES", ((0.33, 0.75, 2.5), 2.0))
+    monkeypatch.setattr(api_config, "MULTIWAY_FLOP_MAX_RAISES", 3)
+    answers = {}
+    for setting in ("none", "mean"):
+        monkeypatch.setattr(api_config, "MULTIWAY_POSTFLOP_ACTION_GROUPING", setting)
+        caches._SolveCache.clear_all()
+        answers[setting] = tuple(
+            tuple(sorted((client.post("/advise", json=body).json()
+                          .get("hero") or {}).get("strategy", {}).items()))
+            for body in (multiway, heads_up))
+    assert answers["none"][0] != answers["mean"][0], "the flag never reached the solver"
+    assert answers["none"][1] == answers["mean"][1], "heads-up is not sampled and must not move"
+
+
 def test_the_multiway_postflop_budget_is_the_one_an_outside_reference_chose():
     """M264. 4x the old budget beat the old one against 579 real decisions
     by a strong six-handed agent (+0.107 at 7.86 sigma); cap and ensemble

@@ -769,7 +769,8 @@ _SUPERSEDED_ENSEMBLE_DEFAULT = 4  # what a latency budget would buy, if one appe
 
 
 def _mccfr_ensemble(root, combos, positions, equity_cache, *, iterations, seed,
-                    initial_reach, runs, board, equity_kwargs):
+                    initial_reach, runs, board, equity_kwargs,
+                    action_grouping=None):
     """Average `runs` independent MCCFR solves into one node_data.
 
     Strategy sums are ADDED rather than the averaged strategies being
@@ -788,7 +789,8 @@ def _mccfr_ensemble(root, combos, positions, equity_cache, *, iterations, seed,
     if runs <= 1:
         return mccfr_solve(root, combos, positions, equity_cache,
                            iterations=iterations, seed=seed,
-                           initial_reach=initial_reach)
+                           initial_reach=initial_reach,
+                           action_grouping=action_grouping)
 
     merged: dict = {}
     for index in range(runs):
@@ -798,7 +800,8 @@ def _mccfr_ensemble(root, combos, positions, equity_cache, *, iterations, seed,
                "seed": equity_kwargs.get("seed", DEFAULT_EQUITY_SEED) + index})
         node_data = mccfr_solve(root, combos, positions, cache,
                                 iterations=iterations, seed=seed + index,
-                                initial_reach=initial_reach)
+                                initial_reach=initial_reach,
+                                action_grouping=action_grouping)
         for key, table in node_data.items():
             existing = merged.get(key)
             if existing is None:
@@ -822,6 +825,7 @@ def solve_flop_multiway(
     equity_seed: int = DEFAULT_EQUITY_SEED,
     seed: int = 0,
     ensemble: int | None = None,
+    action_grouping: str | None = None,
 ) -> StrategyResult:
     """Solve a single flop betting round for 2+ live positions and return
     its strategy — the direct N-position generalization of `solve_flop`
@@ -902,7 +906,7 @@ def solve_flop_multiway(
         root, combos, positions, equity_cache,
         iterations=actual_iterations, seed=seed, initial_reach=initial_reach,
         runs=ensemble if ensemble is not None else DEFAULT_MULTIWAY_ENSEMBLE_RUNS,
-        board=board, equity_kwargs=equity_kwargs,
+        board=board, equity_kwargs=equity_kwargs, action_grouping=action_grouping,
     )
     elapsed = time.perf_counter() - start
 
@@ -952,6 +956,7 @@ def solve_flop_turn_multiway(
     equity_samples: int = None,
     equity_seed: int = DEFAULT_EQUITY_SEED,
     seed: int = 0,
+    action_grouping: str | None = None,
 ) -> StrategyResult:
     """Solve a multiway flop betting round that, whenever action is
     capped without a fold, chains into a real multiway turn betting
@@ -1031,6 +1036,7 @@ def solve_flop_turn_multiway(
         board=board,
         chance_fn=chance_fn,
         chance_data=chance_data,
+        action_grouping=action_grouping,
     )
     elapsed = time.perf_counter() - start
 
@@ -1058,6 +1064,7 @@ def ensure_mccfr_chance_branch(
     equity_samples: int = None,
     equity_seed: int = DEFAULT_EQUITY_SEED,
     chain_to_river: bool = False,
+    action_grouping: str | None = None,
     train_iterations: int = 0,
     seed: int = 0,
 ) -> SampledChanceBranch:
@@ -1220,6 +1227,7 @@ def ensure_mccfr_chance_branch(
             iterations=train_iterations,
             seed=seed,
             initial_reach=reach,
+            action_grouping=action_grouping,
             board=branch.board,
             chance_fn=branch.chance_fn,
             chance_data=result.chance_data,
@@ -1280,6 +1288,7 @@ def solve_flop_to_river_multiway(
     equity_samples: int = None,
     equity_seed: int = DEFAULT_EQUITY_SEED,
     seed: int = 0,
+    action_grouping: str | None = None,
 ) -> StrategyResult:
     """Solve a multiway flop betting round that chains all the way to a
     real multiway river showdown — flop->turn via a real sampled chance
@@ -1369,6 +1378,7 @@ def solve_flop_to_river_multiway(
         board=board,
         chance_fn=chance_fn,
         chance_data=chance_data,
+        action_grouping=action_grouping,
     )
     elapsed = time.perf_counter() - start
 

@@ -1102,6 +1102,7 @@ def _mccfr_recurse(
     continuation: float = 0.0,
     stack_bb: float | None = None,
     continuation_table: dict | None = None,
+    action_grouping: str | None = None,
 ) -> np.ndarray:
     """Returns the traverser's payoff vector (length num_hands) from this
     node onward, given the fixed `opponent_hands` for this iteration.
@@ -1179,7 +1180,7 @@ def _mccfr_recurse(
                 board=branch.board, chance_fn=branch.chance_fn, chance_data=chance_data,
                 strategy_weight=strategy_weight, floor_regret=floor_regret, optimism=optimism,
                 smoothing=smoothing, continuation=continuation, stack_bb=stack_bb,
-                continuation_table=continuation_table,
+                continuation_table=continuation_table, action_grouping=action_grouping,
             )
         return _mccfr_terminal_value(node, traverser, opponent_hands, num_hands, equity_cache,
                                     continuation=continuation, stack_bb=stack_bb,
@@ -1189,9 +1190,10 @@ def _mccfr_recurse(
     table = node_data.setdefault(id(node), InfoSetTable.zeros(num_hands, len(actions)))
     strategy = table.current_strategy(optimism, smoothing,
                                       prior=_starting_prior(actions))
-    if ACTION_GROUPING != "none" and not smoothing and not optimism:
+    grouping = ACTION_GROUPING if action_grouping is None else action_grouping
+    if grouping != "none" and not smoothing and not optimism:
         strategy = grouped_strategy(table.regret_sum, _action_groups(actions),
-                                    ACTION_GROUPING, fallback=strategy)
+                                    grouping, fallback=strategy)
     if smoothing:
         # What this node actually played, for the next visit's blend.
         # Conditional for the same memory reason as `last_regret` below.
@@ -1221,6 +1223,7 @@ def _mccfr_recurse(
                 continuation=continuation,
                 stack_bb=stack_bb,
                 continuation_table=continuation_table,
+                action_grouping=action_grouping,
             )
             for a_idx, action in enumerate(actions)
         ]
@@ -1350,6 +1353,7 @@ def _mccfr_recurse(
         continuation=continuation,
         stack_bb=stack_bb,
         continuation_table=continuation_table,
+        action_grouping=action_grouping,
     )
 
 
@@ -1533,6 +1537,7 @@ def mccfr_solve(
     continuation: float = 0.0,
     stack_bb: float | None = None,
     continuation_table: dict | None = None,
+    action_grouping: str | None = None,
 ) -> dict:
     """Run `iterations` of External-Sampling MCCFR over `root`.
 
@@ -1749,6 +1754,7 @@ def mccfr_solve(
             continuation=continuation,
             stack_bb=stack_bb,
             continuation_table=continuation_table,
+            action_grouping=action_grouping,
         )
         if discount is not None:
             # Discounted CFR: shrink accumulated regret toward zero each
