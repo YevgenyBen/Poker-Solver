@@ -2765,3 +2765,31 @@ def test_pruning_actually_removes_the_empty_ones():
     assert removed >= 1, "prune_empty_nodes reported removing nothing"
     assert len(result.node_data) == before - removed
     assert key not in result.node_data
+
+
+def test_solve_preflop_passes_a_continuation_table_with_the_stack(monkeypatch):
+    """M279. The table is keyed by SPR and raise count, so it is useless
+    without the stack that says how much is behind - the two travel
+    together or neither does anything."""
+    import poker_solver.solver as solver_module
+    from poker_solver.game_tree import GameConfig
+
+    seen = {}
+
+    def fake_mccfr(*args, **kwargs):
+        seen.update(kwargs)
+        return {}
+
+    monkeypatch.setattr(solver_module, "mccfr_solve", fake_mccfr)
+    config = GameConfig(positions=("BTN", "SB", "BB"), stack_bb=100.0)
+    table = {(3, 3, 2): {"AA": 1.2}}
+    solver_module.solve_preflop(config=config, hands=[StartingHand("A", "A")],
+                                equity_cache=object(), iterations=1,
+                                continuation_table=table)
+    assert seen["continuation_table"] is table
+    assert seen["stack_bb"] == 100.0
+
+    seen.clear()
+    solver_module.solve_preflop(config=config, hands=[StartingHand("A", "A")],
+                                equity_cache=object(), iterations=1)
+    assert "continuation_table" not in seen and "stack_bb" not in seen

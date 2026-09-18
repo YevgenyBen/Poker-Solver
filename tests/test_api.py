@@ -5393,7 +5393,7 @@ def test_the_path_trainer_visits_every_decision_node_on_the_way():
     seen = []
     flag_on = mock.patch.object(cfg, "PREFLOP_PATH_NODE_TRAINING", True)
     with flag_on, mock.patch.object(solving, "_ensure_preflop_node_trained",
-                           side_effect=lambda r, n, p, *a: seen.append(n) or False):
+                           side_effect=lambda r, n, p, *a, **kw: seen.append(n) or False):
         solving._train_unlearned_nodes_on_path(result, actions, 3)
 
     assert len(seen) == len(actions), (
@@ -9128,6 +9128,40 @@ def test_seven_and_eight_handed_warm_at_100bb_only_and_are_low_confidence():
 def test_emptying_the_prewarm_depths_switches_every_table_off(monkeypatch):
     monkeypatch.setattr(api_config, "MULTIWAY_PREWARM_STACK_DEPTHS", ())
     assert api_config.multiway_prewarm_plan() == []
+
+
+def test_a_deep_preflop_node_is_trained_against_a_uniform_reach_by_default(monkeypatch):
+    """M279. The reach is what M251's defect is made of, and changing it
+    is a decision: `derived` moves trash facing a four-bet from 0.978
+    continuing to 0.567, which is large and short of the bar that study
+    fixed before it ran."""
+    import numpy as np
+
+    from api import solving as solving_module
+
+    assert api_config.PREFLOP_TRAINING_REACH == "uniform"
+
+    class _Scenario:
+        ranges = {"BTN": {"AA": 1.0}, "BB": {"AA": 1.0}}
+
+    monkeypatch.setattr(solving_module, "derive_ranges_from_path",
+                        lambda *a, **k: _Scenario())
+    hands, live = ["AA", "72o"], ("BTN", "BB")
+    uniform = solving_module._training_reach(object(), object(), hands, live, ["x"])
+    assert all(np.array_equal(v, np.ones(2)) for v in uniform.values())
+
+    monkeypatch.setattr(api_config, "PREFLOP_TRAINING_REACH", "derived")
+    derived = solving_module._training_reach(object(), object(), hands, live, ["x"])
+    assert derived["BTN"].tolist() == [1.0, 0.0], "the path's own range, not a flat one"
+
+    # No path to derive from, and an empty range, both fall back.
+    assert np.array_equal(
+        solving_module._training_reach(object(), object(), hands, live, None)["BTN"],
+        np.ones(2))
+    _Scenario.ranges = {"BTN": {}, "BB": {}}
+    assert np.array_equal(
+        solving_module._training_reach(object(), object(), hands, live, ["x"])["BTN"],
+        np.ones(2))
 
 
 def test_the_background_warm_list_is_well_formed():

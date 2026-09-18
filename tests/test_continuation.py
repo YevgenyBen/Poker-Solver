@@ -223,3 +223,52 @@ def test_the_table_is_strongly_sensitive_to_the_range_it_is_built_from():
     assert all(v < 0 for v in deltas.values()), (
         f"a hand gained value against a TIGHTER opponent range: {deltas}"
     )
+
+
+def test_the_key_can_carry_a_raise_count_and_defaults_without_one():
+    """M279. Range strength cannot key this table - it is wrong BECAUSE of
+    the pricing the table exists to fix (M250) - but the raise count is
+    structural, read off the tree, and separates a limped pot from a
+    three-bet pot at the same SPR, which M114 named as the first thing to
+    try after M115's null."""
+    from poker_solver.continuation import continuation_key
+
+    plain = continuation_key(10.0, 90.0, 2)
+    assert len(plain) == 2
+    assert continuation_key(10.0, 90.0, 2, raises=3) == plain + (3,)
+    assert continuation_key(10.0, 90.0, 2, raises=1) != continuation_key(10.0, 90.0, 2, raises=3)
+    # same SPR bucket, same seats, different depth of betting
+    assert continuation_key(10.0, 90.0, 2, 1)[:2] == continuation_key(10.0, 90.0, 2, 3)[:2]
+
+
+def test_a_raise_deepens_the_count_and_a_call_does_not():
+    from poker_solver.cfr import _is_a_raise
+    from poker_solver.game_tree import Action
+
+    assert _is_a_raise(Action(kind="raise", size=7.5))
+    assert _is_a_raise(Action(kind="all_in", size=100.0))
+    assert not _is_a_raise(Action(kind="call_or_check", size=None))
+    assert not _is_a_raise(Action(kind="fold", size=None))
+
+
+def test_each_entry_can_be_built_from_the_ranges_that_belong_to_it(monkeypatch):
+    """M279's second half: a value keyed on raise count is only worth
+    having if it is built from the range at that depth."""
+    import poker_solver.continuation as continuation
+    from poker_solver.starting_hands import StartingHand
+
+    seen = []
+
+    def fake_solve_flop(board, hero_range, villain_range, **kwargs):
+        seen.append((len(hero_range), len(villain_range)))
+        raise RuntimeError("stop here - the ranges are what this test reads")
+
+    monkeypatch.setattr(continuation, "solve_flop", fake_solve_flop)
+    wide = {StartingHand("A", "A"): 1.0, StartingHand("7", "2"): 1.0}
+    narrow = {StartingHand("A", "A"): 1.0}
+    spots = {(3, 2, 4): (10.0, 90.0)}
+    with pytest.raises(RuntimeError):
+        continuation.build_continuation_table(
+            spots, wide, wide, boards=1,
+            ranges_for_key=lambda key: (narrow, narrow) if key[-1] == 4 else None)
+    assert seen and seen[0][0] < 12, "the narrow range for this key was not used"

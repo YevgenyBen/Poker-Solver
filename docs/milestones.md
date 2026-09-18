@@ -16386,3 +16386,70 @@ question, and A15 does not either.
 from its own equilibrium (measured, replicated), 2.4 bb for the shove
 disagreement (a floor, M277), and no working instrument for the model
 error between them.
+
+## M279 - the two-live defect is the REACH, not the pricing (and the fix is partial)
+
+M251 measured the sharpest categorical failure in this product: at a
+multiway table that folds to two players, `72o` facing a four-bet comes
+back **fold 0.0269 / call 0.9697** at high confidence. M250 left one
+route recorded and untested - terminal pricing, corrected by a
+continuation table keyed on RAISE COUNT and built from HEADS-UP ranges of
+that depth, both halves sourced outside the multiway solve so the route
+is not circular. M279 built exactly that, and then found the cause
+somewhere else.
+
+**Built, as prescribed.** `continuation_key` now takes an optional raise
+count (structural, read off the tree); the count is threaded through
+`_mccfr_recurse`; entries can be built from the ranges belonging to each
+key. The table separates by depth as designed - four-bet entries are
+premium-heavy (AA/KK/QQ), three-bet entries are not - and 15 entries
+build in **7.7 minutes** once the ranges are capped at 12 classes
+(uncapped, each flop solve runs at ~1,300 combos, which is hours).
+
+**And it is a NULL on the defect, by the rule fixed before the build.**
+
+| arm | trash continuing vs a four-bet | AA's jam at the root |
+|---|---|---|
+| shipped | 0.978 | 0.0339 |
+| continuation table | **0.978** (untouched) | **0.0778** (worse) |
+| table + node training | 0.978 | 0.0778 |
+
+The table is live - it is hit 30 times in a real solve and AA's row
+moves - so this is a measured null and not a wiring failure. **Two
+wiring failures were found and fixed on the way there**, both of the
+shape this project keeps meeting: the first run had all three arms
+identical because the on-demand node trainer calls `mccfr_solve`
+DIRECTLY and never saw the table, and the build produced an empty table
+until the ranges were capped.
+
+**THE CAUSE IS THE REACH.** M150 trains these subtrees with a UNIFORM
+reach and said so in the open. Against a uniform range `72o` really does
+hold 34% equity facing a four-bet, so calling is correct in the game the
+trainer solved. Trained instead against the ranges
+`derive_ranges_from_path` gives at the same node:
+
+| reach | 72o facing a four-bet |
+|---|---|
+| uniform (shipped) | fold 0.0269 / **call 0.9697** |
+| derived | **fold 0.4902** / call 0.4459 / all-in 0.0639 |
+
+Over M251's five trash hands: **mean continuing 0.978 -> 0.567, worst
+0.9961 -> 0.6365**, with AA's jam unchanged (0.0339), trash still folding
+1.0 at 3+ live, and cold latency unchanged (53.5s -> 53.8s).
+
+**It ships OFF** (`PREFLOP_TRAINING_REACH = "uniform"`), because the bar
+this study fixed before running was a mean under 0.50 and this is 0.567.
+A 42-point improvement on the product's worst categorical failure is
+worth having; taking it is a decision to accept a large partial fix, and
+the flag makes that decision explicit rather than implicit.
+
+**More training iterations do not close it, and the shape says why.**
+200 -> 4,000 moves 72o 0.5098 -> 0.1725 while 83o goes 0.576 -> 0.9887
+and T2o 0.6365 -> 0.9945: non-monotone across hands, M141's conservation
+law again.
+
+**What is left is one layer further up.** The derived ranges come from a
+solve whose deep nodes are unlearned (M149), so the four-bet range they
+describe is wider than a real one - and trash calling 0.567 against THAT
+range is close to the right answer to a question that is still slightly
+wrong. Queued as A16.
