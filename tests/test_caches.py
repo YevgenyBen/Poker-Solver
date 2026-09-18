@@ -313,7 +313,7 @@ from api.caches import entry_bytes as _deep_size            # noqa: E402
 # entry larger than every other cache's whole budget - against a solve
 # costing 35s at 3-max and 525s at 9-max. It is sized at the prewarmed
 # working set and enforced by eviction (M216), not waived.
-_DECLARED_BUDGETS_MB = {"multiway": 2_816}
+_DECLARED_BUDGETS_MB = {"multiway": 3_072}
 
 
 def _allowance(name):

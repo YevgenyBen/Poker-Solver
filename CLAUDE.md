@@ -657,7 +657,15 @@ The overbet row and the turn stay excluded
     both low-confidence, warmed at 100bb only. 148 of 150 real
     decisions answered, 0 defects. Only 10-handed is unsupported.
   - **Stacks over 200bb were always supported.** The replay excluded
-    them. Deep MULTIWAY latency is unmeasured (A11).
+    them.
+  - **DEEP MULTIWAY IS WARMED WHERE PLAYERS SIT (M271/A11).** 15.1% of
+    real multiway flops are at 200-260bb and no warmer reached them: a
+    cold deep bucket cost **12.9s median, worst 39.3s**, and a deep solve
+    costs what a 100bb one does. 24 buckets (12 six-max, 12 five-max) are
+    background-warmed, paid for by dropping 9-max's 50/20bb prewarm - **2
+    of 4,935 real 9-max hands sit at 50bb and none at 20bb**. 90 real
+    deep decisions replay with 0 defects. Above 260bb (4.6%) still pays
+    the solve.
 
 ### The checks REPLICATE on fresh spots (M236) — n=42 per street
 

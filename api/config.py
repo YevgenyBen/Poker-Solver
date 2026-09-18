@@ -58,7 +58,14 @@ MULTIWAY_PREWARM_STACK_DEPTHS = (100.0, 50.0, 20.0)
 # 100bb only. A table size missing here warms every depth above; a depth
 # listed here but not above is never warmed (so emptying the list above
 # still switches all multiway warming off).
-MULTIWAY_PREWARM_DEPTHS_BY_TABLE = {7: (100.0,), 8: (100.0,)}
+# A11 (M271) added 9-max, and it is a MEASUREMENT, not a saving for its
+# own sake: of 4,935 real 9-max hands at 200bb or less, **2 sit in the
+# 50bb bucket and none in the 20bb bucket** - full-ring online cash is
+# played at ~100bb. Those two entries held 514 MB, which now warms the
+# deep buckets real multiway players do sit at. (The corpus is 2009
+# online CASH; a tournament population would look different, and a
+# 9-max player at 50bb still gets the same answer, 525s later.)
+MULTIWAY_PREWARM_DEPTHS_BY_TABLE = {7: (100.0,), 8: (100.0,), 9: (100.0,)}
 
 
 def multiway_prewarm_plan():
@@ -107,6 +114,15 @@ MULTIWAY_BACKGROUND_WARM = tuple(
                                30, 155, 135, 165, 175, 160)]
     + [(4, float(d)) for d in (95, 105, 110, 115, 120, 130, 30, 125, 65, 75,
                                140, 195, 145, 90, 60, 85)]
+    # A11 (M271). DEEP buckets: **15.1% of real multiway flops sit between
+    # 200 and 260bb** and no warmer reached them, so each was a cold solve
+    # for whoever asked first - measured at 47-73s (6-max), 21-24s
+    # (5-max), 5-8s (3-max), i.e. the same cost as 100bb. These 24 cover
+    # 1,298 of 12,472 real multiway flops (10.4%), ordered by how often
+    # each occurs. 4-max deep and 7/8/9-max deep are left out: thinner
+    # populations, and a 9-max entry is 257 MB.
+    + [(6, float(d)) for d in (205, 210, 220, 225, 215, 230, 240, 255, 235, 250, 245, 260)]
+    + [(5, float(d)) for d in (210, 215, 205, 225, 220, 230, 240, 235, 250, 245, 255, 260)]
     + [(3, float(d)) for d in sorted(
         (d for d in range(5, 205, 5) if float(d) not in (100.0, 50.0, 20.0)),
         key=lambda d: (abs(d - 100), d))]

@@ -9042,6 +9042,8 @@ def test_seven_and_eight_handed_warm_at_100bb_only_and_are_low_confidence():
     plan = api_config.multiway_prewarm_plan()
     assert [d for p, d in plan if p == 7] == [100.0]
     assert [d for p, d in plan if p == 8] == [100.0]
+    # A11 (M271): 2 real 9-max hands sit in the 50bb bucket and none at 20.
+    assert [d for p, d in plan if p == 9] == [100.0]
     assert [d for p, d in plan if p == 6] == list(api_config.MULTIWAY_PREWARM_STACK_DEPTHS)
     # The suite fixture shrinks budgets, so read the shipped ones afresh.
     import importlib.util
@@ -9066,14 +9068,17 @@ def test_the_background_warm_list_is_well_formed():
     assert len(set(warm)) == len(warm)
     for players, depth in warm:
         assert players in (3, 4, 5, 6)
-        assert depth % api_config.MULTIWAY_STACK_BUCKET_BB == 0 and 5 <= depth <= 200
+        assert depth % api_config.MULTIWAY_STACK_BUCKET_BB == 0 and 5 <= depth <= 260
         assert depth not in api_config.MULTIWAY_PREWARM_STACK_DEPTHS
     assert warm[:5] == ((6, 105.0), (6, 110.0), (6, 115.0), (6, 120.0), (6, 195.0))
     six = [d for p, d in warm if p == 6]
     three = [d for p, d in warm if p == 3]
-    assert len(six) == 22 and len(three) == 37
-    assert len([d for p, d in warm if p == 5]) == 16
+    assert len(six) == 22 + 12 and len(three) == 37
+    assert len([d for p, d in warm if p == 5]) == 16 + 12
     assert len([d for p, d in warm if p == 4]) == 16
+    # A11: the deep buckets nobody warmed before
+    deep = [(p, d) for p, d in warm if d > 200]
+    assert len(deep) == 24 and {p for p, _ in deep} == {5, 6}
 
 
 def test_the_background_warmer_waits_for_idle_and_skips_warm_buckets(monkeypatch):
