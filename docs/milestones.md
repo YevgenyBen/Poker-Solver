@@ -16083,3 +16083,101 @@ price is the error that milestone corrected.
 folds 1.000 with ace-high; on another board we fold 1.000 with a flush
 draw the reference never folds. The mean is an under-fold; the tail is
 categorical in both directions.
+
+## M273 - the flop's size disagreement cannot be priced this way (A8)
+
+M260 left the flop's opening decision agreeing on WHETHER to bet (kind
+TVD 0.067) and disagreeing on HOW MUCH (0.418), unpriced, because a flop
+leaf needs the turn and river serialised and that is 3.5 GB a spot at
+SPR 6.17 (F67).
+
+**Where it IS affordable.** M257 measured reference cost as governed by
+SPR: a four-bet pot sits at SPR 2.53. Six boards were solved with three
+dump rounds (999-1,536 MB each, deleted after the walk), five usable.
+
+**The decomposition, fixed before the run:** price our row inside the
+reference's game, then price a KIND-MATCHED row - our fold / passive /
+aggressive frequencies with the aggressive mass split the way the
+REFERENCE splits it. The difference is the size disagreement alone.
+
+**The answer is that this instrument cannot price it, and the reason is
+structural rather than a budget:**
+
+| arm | reference | usable rows | size price | our regret | reference's own slack |
+|---|---|---|---|---|---|
+| loose | 0.33% of pot | 35 | +0.0051 bb (0.43 sigma) | 0.573 bb | **0.619 bb** |
+| tight | **0.042%** | 20 | 0.0000 | 0.000 | 0.000 |
+
+1. **At the loose reference the instrument is the limit**: the
+   reference's own per-hand slack (0.619 bb) is LARGER than the quantity
+   being measured (our 0.573 bb), so nothing at this size can be
+   resolved.
+2. **Converging the reference 8x does not rescue it** - it empties it.
+   The 20 rows that survive are rows where BOTH arms check, so there is
+   no size to price; every row where we actually bet is a PURE-NODE row
+   (M258): the reference's aggression at these flops is 0.000-0.23, so
+   our bet sits off its support, and regret cannot express the
+   disagreement there. Those are precisely the rows the question is
+   about.
+3. **The disagreement is real and shows in frequencies**: on one board
+   we bet 0.873 where the reference bets 0.000.
+
+**AN INSTRUMENT FINDING, and it is the durable part: A CONTROL THAT
+PASSES AGAINST A LOOSE REFERENCE CAN FAIL AGAINST A TIGHT ONE.** All
+five boards passed `bench.dump_control` at 0.33%; at 0.042% **three of
+five fail** (ratios 4.89 and 17.85 on two boards, the third passing at
+0.001) - because the walk's own slack barely moved (0.8745% -> 0.8022%
+of pot on one board) while the solver's figure improved eightfold. The
+control compares the walk against the solver's reported exploitability,
+so a loose reference makes a wide bound, and passing it is evidence
+about the BOUND, not about the walk.
+
+**Rule: run the control against the tightest reference affordable, and
+treat a pass at a loose one as untested.**
+
+**Not priced, and the open route is recorded as A12**: the question
+needs a reference that BETS, which means three rounds at SPR ~6 (3.5 GB
+a dump, ~4.5x that resident). One spot may be affordable; a study is
+not, until the walk's board-specific slack is diagnosed.
+
+## M274 - external coverage past 100bb three-bet pots (A7)
+
+Every external figure this project carries was measured at 100bb, almost
+all of it in three-bet pots. A7 asks whether the findings describe the
+game or that corner. Frequency only, one dump round; the reading rule
+was fixed before the run.
+
+### 50bb three-bet pots (SPR 2.83) - 6 boards, 139 scored rows
+
+**A6's under-fold REPLICATES at a different stack**, with both of its
+splits:
+
+| | 100bb (A6, 238 rows) | 50bb (A7, 96 facing rows) |
+|---|---|---|
+| fold gap, facing a bet | -0.092 (4.19 sigma) | **-0.068 (2.71 sigma)** |
+| facing a small bet | -0.168 (5.47) | -0.100 (2.13) |
+| facing 0.75x pot | -0.013 (0.40) | -0.036 (2.13) |
+| middling hands (0.40-0.75) | -0.139 (4.35) | **-0.101 (2.19)** |
+| strong hands (>=0.75) | -0.010 (1.00) | **-0.009 (0.56)** |
+
+So `flop-under-fold` is not a 100bb artifact, and its gate carries no
+stack condition - which A7 now justifies rather than assumes.
+
+**A NEW SCOPE LIMIT, and it cuts the other way.** M260 measured the
+flop's OPENING decision agreeing on whether to bet at 100bb (kind TVD
+0.067). At 50bb it does not: **we bet 0.212 LESS than the reference
+(4.30 sigma over 43 rows), TVD 0.674.** The direction is the opposite of
+the turn's over-betting, and it is a frequency gap with no price
+attached (M237's rule), so it is recorded as scope, not as a new
+headline: **"the flop agrees on whether to bet" is a 100bb statement.**
+
+### 100bb single-raised (SPR 19.5) - 1 board, and the cost is the finding
+
+- **Board 1 solved in 2,801s (47 min)**; its 8 opening rows give
+  aggression **+0.083 (2.01 sigma), TVD 0.083**.
+- **Board 2 hit the 2-hour cap unfinished**, so the cell is one board -
+  a spot, not a measurement, and it is quoted as one.
+- **Cost, for anyone scoping the next campaign:** M257 put a
+  single-raised reference at ~1,226s. Measured again here it is 2,801s
+  and 7,200s+ on two boards of the same shape. **Budget SPR 19.5
+  references at an hour each and expect one in three to overrun.**

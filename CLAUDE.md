@@ -521,6 +521,9 @@ same nine references, re-scored against heroes drawn by range weight -
 - **Disclosed** as `flop-under-fold`, gated flop / facing <= 0.5 pot /
   strength 0.40-0.75, and shown first in the front end. **Exposure 6% of
   real decisions** - the highest of any single-street disclosure here.
+- **IT REPLICATES AT 50bb (M274/A7)**: -0.068 at 2.71 sigma, with both
+  splits intact (small bet -0.100, middling hands -0.101, strong hands
+  -0.009). The gate carries no stack condition and now does not need one.
 - **NOT priced**: a flop leaf needs the turn and river serialised inside
   the reference (A8). The copy says so.
 - **Texture is unjudgeable in this bank** - every paired board is the
@@ -541,6 +544,13 @@ same nine references, re-scored against heroes drawn by range weight -
 | river | **0.41% of pot (A)** | **0.88% (B)** |
 | turn | 0.71% (B) | 1.20% (C) |
 | flop | same bet frequency (kind TVD 0.067), different SIZE (0.418) | kind TVD 0.256, no direction; unpriced |
+
+- **"The flop agrees on whether to bet" IS A 100bb STATEMENT (M274/A7).**
+  At 50bb three-bet pots the same measurement gives **-0.2120 at 4.30
+  sigma** (TVD 0.674): we bet much LESS than the reference there. No
+  price attached (M237), so it is scope, not a headline.
+- **Single-raised references cost an hour and sometimes overrun** - 2,801s
+  on one board, past 7,200s on another (M257's 1,226s was optimistic).
 
 - **THE TURN SHOVES FACING A BET WHERE THE REFERENCE NEVER DOES.**
   - **The behaviour:** strong made hands facing a turn bet move all-in
@@ -3433,6 +3443,23 @@ took that walker's error from 0.80% to 0.00%, and then passed at 0.00%
 while the opponent's range was flat, because conservation holds for ANY
 reach weights so long as both sides use the same ones. **M219's dead
 guard in another shape.**
+
+**A CONTROL THAT PASSES AGAINST A LOOSE REFERENCE CAN FAIL AGAINST A
+TIGHT ONE (M273/A8).** Five four-bet flop spots passed `dump_control` at
+0.33% exploitability; re-solved to **0.042%**, three of five FAIL (ratios
+4.89, 17.85) because the walk's own slack barely moved (0.8745% ->
+0.8022% of pot) while the solver's figure improved eightfold. The control
+divides by the reported figure, so a loose reference is a wide bound.
+**Run the control against the tightest reference affordable; a pass at a
+loose one is untested.**
+
+**AND THE FLOP'S SIZE DISAGREEMENT STILL HAS NO PRICE (M273).** At the
+only depth where three-round dumps are affordable (SPR 2.53) the
+reference almost never bets, so every row where WE bet is a PURE NODE
+(M258) and regret cannot express it; the rows that survive are rows
+where both arms check. At the loose reference the instrument's own slack
+(0.619 bb) exceeds the quantity measured (0.573 bb). Pricing it needs a
+reference that BETS - three rounds at SPR ~6, 3.5 GB a dump (A12).
 
 **Use `bench.dump_control` before believing any figure off a dump.** The
 solver reports its own exploitability for the strategy it dumped, and
