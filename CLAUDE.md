@@ -2263,6 +2263,17 @@ requests now reject unknown fields by name rather than ignoring them.
   the exact solver continues with trash 0.5832 / 0.4419 at the identical
   price. n=2, on a path this study did not set out to measure — recorded
   so nobody reads M251 as a clean bill of health for heads-up.
+  **M281 SHIPPED THE REACH FIX AND RE-MEASURED THE WARNING.**
+  `PREFLOP_TRAINING_REACH = "derived"` is the default. On M251's own
+  study: two-live trash continuing **0.9823 -> 0.6559** over 14 nodes,
+  and **6 of them are still over 0.90** (worst 0.9961) - the mean
+  improves by a third, the tail does not. Control (3+ live) 0.0122,
+  premiums untouched, AA's jam and latency unchanged.
+  **The copy said 98% and was false the moment this shipped**; it now
+  says 66%, names the tail, and quotes M280's 13% modelled four-bet
+  range against a 23% break-even. **Rule: a setting that improves a
+  disclosed defect makes its own disclosure false - re-measure the copy
+  in the same change, on the study the copy quotes.**
   **M279 FOUND THE CAUSE AND IT IS NOT THE PRICING.** M250's prescribed
   route was built exactly - a continuation table keyed on RAISE COUNT,
   entries from HEADS-UP ranges of that depth - and it leaves this node

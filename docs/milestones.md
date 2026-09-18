@@ -16496,3 +16496,41 @@ the node it ends at, which is what a postflop request already does. It
 is inert at the shipped configuration (`PREFLOP_PATH_NODE_TRAINING` is
 False) and trained 0 nodes on the measured line, so it is consistency
 rather than a fix.
+
+## M281 - the derived training reach ships, and the warning is re-measured
+
+M279 measured it and left it off, because it missed a bar set for a FULL
+fix. M280 then showed that bar was unreachable by the reach at all - the
+parents are already learned, and the residual is the modelled four-bet
+range's composition (13.2% of hands at 3.0% premium). So the choice is
+between 0.978 and 0.567, not between 0.978 and correct, and
+`PREFLOP_TRAINING_REACH = "derived"` is now the default.
+
+**Re-measured on M251's OWN study, not on M279's five hands** - the
+narrower probe would have flattered it:
+
+| cell | nodes | trash continues | worst | over 0.90 |
+|---|---|---|---|---|
+| two live (6-max and 3-max) | 14 | **0.6559** (was 0.9823) | **0.9961** | **6** |
+| three or more live (control) | 8 | 0.0122 | 0.0398 | 0 |
+| premiums at two live | — | 0.9982 continue | 0.9760 | — |
+
+- **The mean improves by a third and the TAIL does not move**: six of
+  fourteen spots still tell a hand as weak as 72o to continue more than
+  90% of the time, worst 0.9961.
+- **Nothing else moves**: AA's jam 0.0339, trash folding 1.0 at a full
+  table, premiums untouched at two live, cold six-max solve 59.7s inside
+  its ~66s budget.
+
+**The user-facing copy was FALSE the moment this shipped and is
+corrected in the same change.** `PREFLOP_TWO_LIVE_REASON` said "98% of
+the time"; it now says about 66%, names the 6-of-14 tail, and adds the
+figure M280 measured - that this engine models an opponent re-raising
+13% of hands where the break-even is 23%. The three-or-more-live control
+in the same sentence went 39% -> 1%, which was stale from M251 and is
+now re-measured too.
+
+**Rule, and it is the third time this paragraph has needed it (M110,
+M123, M251):** a setting that improves a disclosed defect makes its own
+disclosure false. Re-measure the copy in the change that moves the
+number, on the study the copy quotes.
