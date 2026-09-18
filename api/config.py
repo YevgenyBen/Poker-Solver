@@ -1430,6 +1430,37 @@ MAX_MULTIWAY_PATH_QUERY_CLASSES_PER_POSITION = 8
 # Cost: multiway postflop p50 0.98 -> 2.87s, max 7.4s, 22 of 579 over 5s.
 DEFAULT_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = 4000
 
+# A4d (M269). MULTIWAY POSTFLOP SOLVES MATCH ACROSS ACTION KINDS FIRST.
+#
+# M264 found a one-size bet menu reaching the card-blind prior and M265
+# falsified its first explanation (the starting strategy). The standing
+# hypothesis was that regret matching over-weights a GROUP of
+# near-duplicate bet sizes: with three sizes, betting collects three
+# actions' positive regret against checking's one.
+#
+# Two forms were measured on M264's 579 outside-reference decisions:
+#
+#   arm      vs production   bets when checked to   p90
+#   max      -0.007 (0.7s)   0.472                  14.4s
+#   mean     +0.042 (3.65s)  0.410                  6.3s
+#
+# (s = sigma; production 0.472, the reference 0.194.) "max" takes each kind's
+# BEST member and is the neutral form - it does nothing. "mean" divides a
+# kind's regret by how many actions it holds, so a menu of sizes where
+# only one is good is penalised, and it is what works: +0.042 at 3.65
+# sigma, split halves +0.049 / +0.036, positive on all three streets, and
+# FASTER (p90 8.8 -> 6.3s).
+#
+# So the hypothesis is supported in its consequence and not in its
+# simplest form: making the group weighting neutral changes nothing;
+# penalising a wide group helps. Grouped matching carries no convergence
+# guarantee of its own - this is an empirical setting, chosen against an
+# outside reference.
+#
+# Postflop multiway ONLY. The preflop multiway solve runs the same
+# sampled solver and was not measured under grouping.
+MULTIWAY_POSTFLOP_ACTION_GROUPING = "mean"
+
 # A5 (M266): the x4 budget above was chosen on 3-live pots, and it does
 # not hold for 4 or more. On the same outside-agent replay, split by live
 # count, x4 gained +0.110 at 7.88 sigma with 3 live (n=541) and +0.056

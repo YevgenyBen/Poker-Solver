@@ -383,6 +383,7 @@ def _get_or_solve_flop_multiway(board_cards: tuple, pot: float, stack_bb: float,
         raise_sizes=cfg.MULTIWAY_FLOP_RAISE_SIZES,
         max_raises=cfg.MULTIWAY_FLOP_MAX_RAISES,
         iterations=iterations,
+        action_grouping=cfg.MULTIWAY_POSTFLOP_ACTION_GROUPING,
     )
 
     with _flop_multiway_cache.lock:
@@ -1384,6 +1385,7 @@ def _query_flop_multiway_from_path(
             raise_sizes=cfg.MULTIWAY_FLOP_RAISE_SIZES,
             max_raises=cfg.MULTIWAY_FLOP_MAX_RAISES,
             iterations=flop_iterations,
+            action_grouping=cfg.MULTIWAY_POSTFLOP_ACTION_GROUPING,
         )
         with _flop_multiway_path_cache.lock:
             _flop_multiway_path_cache.store(key, result)
@@ -2159,6 +2161,7 @@ def _query_river_multiway_standalone(*, situation, board_cards, turn_card,
             # drives the RIVER solve - the same correction M218 had to
             # make after hardcoding the config default.
             iterations=flop_iterations,
+            action_grouping=cfg.MULTIWAY_POSTFLOP_ACTION_GROUPING,
         ),
     )
     response["elapsed_seconds"] = result.elapsed_seconds
@@ -2329,6 +2332,7 @@ def _query_turn_multiway_standalone(*, situation, board_cards, turn_card,
             # production budgets under a fixture that deliberately shrinks
             # them.
             iterations=flop_iterations,
+            action_grouping=cfg.MULTIWAY_POSTFLOP_ACTION_GROUPING,
         ),
     )
     response["elapsed_seconds"] = result.elapsed_seconds
@@ -2473,6 +2477,7 @@ def _query_turn_multiway_from_path(
             raise_sizes=cfg.MULTIWAY_FLOP_RAISE_SIZES,
             max_raises=cfg.MULTIWAY_FLOP_MAX_RAISES,
             iterations=flop_iterations,
+            action_grouping=cfg.MULTIWAY_POSTFLOP_ACTION_GROUPING,
         )
         with _turn_multiway_path_cache.lock:
             _turn_multiway_path_cache.store(turn_solve_key, result)
@@ -2535,6 +2540,7 @@ def _query_turn_multiway_from_path(
         "chain_to_river": to_river,
         # M75: solve the branch rather than returning it untrained.
         "train_iterations": cfg.MULTIWAY_BRANCH_TRAIN_ITERATIONS,
+        "action_grouping": cfg.MULTIWAY_POSTFLOP_ACTION_GROUPING,
     }
     with _turn_multiway_path_cache.lock:
         try:

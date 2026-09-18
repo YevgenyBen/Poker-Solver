@@ -1851,3 +1851,44 @@ def test_the_starting_prior_is_uniform_unless_switched(monkeypatch):
     monkeypatch.setattr(cfr, "ACTION_PRIOR", "nonsense")
     with pytest.raises(ValueError):
         cfr._starting_prior(["fold"])
+
+
+def test_grouped_matching_weighs_a_group_once_however_many_sizes_it_holds():
+    """A4d (M269). Plain regret matching gives three equal bet sizes three
+    times the weight of one check with the same regret; grouped matching
+    gives the bet GROUP the weight of one."""
+    import numpy as np
+    from poker_solver.cfr import grouped_strategy
+    regrets = np.array([[1.0, 1.0, 1.0, 1.0]])      # check, bet, bet, all-in
+    groups = np.array([0, 1, 1, 1])
+    fallback = np.full((1, 4), 0.25)
+    for mode in ("max", "mean"):
+        row = grouped_strategy(regrets, groups, mode, fallback)[0]
+        assert row.sum() == pytest.approx(1.0)
+        assert row[0] == pytest.approx(0.5)
+        assert row[1:].sum() == pytest.approx(0.5)
+    # max takes the best member, mean dilutes by members without regret
+    regrets = np.array([[1.0, 2.0, 0.0, 0.0]])
+    assert grouped_strategy(regrets, groups, "max", fallback)[0][0] == pytest.approx(1 / 3)
+    assert grouped_strategy(regrets, groups, "mean", fallback)[0][0] == pytest.approx(0.6)
+    assert grouped_strategy(regrets, groups, "max", fallback)[0][1] == pytest.approx(2 / 3)
+
+
+def test_grouped_matching_keeps_the_fallback_where_nothing_has_regret():
+    import numpy as np
+    from poker_solver.cfr import grouped_strategy
+    regrets = np.array([[-1.0, 0.0, -2.0], [0.0, 3.0, 0.0]])
+    groups = np.array([0, 1, 1])
+    fallback = np.array([[0.2, 0.3, 0.5], [0.2, 0.3, 0.5]])
+    out = grouped_strategy(regrets, groups, "max", fallback)
+    assert out[0].tolist() == [0.2, 0.3, 0.5]
+    assert out[1].tolist() == pytest.approx([0.0, 1.0, 0.0])
+    with pytest.raises(ValueError):
+        grouped_strategy(regrets, groups, "median", fallback)
+
+
+def test_grouping_is_off_by_default_and_groups_actions_by_kind():
+    from poker_solver import cfr
+    assert cfr.ACTION_GROUPING == "none"
+    groups = cfr._action_groups(["fold", "call_or_check", "raise", "raise", "all_in"])
+    assert groups.tolist() == [1, 2, 0, 0, 0]

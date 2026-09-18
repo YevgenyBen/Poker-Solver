@@ -610,8 +610,20 @@ The overbet row and the turn stay excluded
   - **Not the starting strategy.** M264 first said the uniform start
     (80% aggressive with three sizes) was the cause. **M265 falsified
     that**: a kind-balanced start changed nothing (-0.005, -0.49 sigma).
-  - **Standing hypothesis, untested:** regret matching over-weights a
-    GROUP of near-duplicate actions all through the solve.
+  - **THE GROUP HYPOTHESIS IS CONFIRMED, IN ONE FORM ONLY (M269/A4d).**
+    `MULTIWAY_POSTFLOP_ACTION_GROUPING = "mean"` matches across action
+    KINDS first, dividing a kind's regret by how many actions it holds:
+    **+0.042 at 3.65 sigma**, bets 0.472 -> 0.410 when checked to (the
+    reference bets 0.194), split halves 3.02 / 2.14, every street
+    positive, and FASTER (p90 8.8 -> 6.3s). The reference-free ordering
+    criterion still holds.
+  - **The NEUTRAL form is null.** Taking each kind's best member ("max")
+    measured -0.007 (0.69 sigma). So it is not group-neutrality that
+    helps; it is PENALISING a wide group.
+  - **Postflop multiway only, as a parameter.** Preflop multiway runs the
+    same sampled solver and was never measured under grouping.
+  - **No convergence guarantee** - an empirical setting chosen against an
+    outside reference.
   - **Rule:** not a smaller menu (players need the sizes, M209-M220), not
     more width, not a new starting prior.
 
@@ -622,9 +634,13 @@ The overbet row and the turn stay excluded
   - **A preflop line ending all in** (the model's fourth raise is all in,
     so a real 5-bet pot is one) was refused as "stack_bb must be
     positive". It is now refused by name, before any solve.
-  - **M264's x4 budget cost 3.4x with 4+ live, for +0.056 at 1.01
-    sigma.** Real 4-live flops took 13.5s median.
+  - **M264's x4 budget cost 3.4x with 4+ live.**
     `MULTIWAY_WIDE_POT_MIN_LIVE = 4` keeps 1,000 iterations there.
+    **A10 (M269) answered whether it pays**, using the five
+    professionals' decisions as well as Pluribus's (n=260): **+0.040 at
+    2.01 sigma - real, and refused on latency** (4+ live flop 4.9s ->
+    14.3s median, p90 16.8s). The control ran first: at 3 live the pros
+    reproduce the budget gain at 7.18 sigma.
   - **Rule:** **split latency by live count**. A pooled p90 over a sample
     that was 93% three-handed hid it.
 
