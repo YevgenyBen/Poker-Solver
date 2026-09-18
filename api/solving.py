@@ -3676,6 +3676,15 @@ def _advise_preflop(request, iterations: int, hero_combo=None) -> dict:
         )
 
     hero_key = None if hero_combo is None else str(_combo_to_class(hero_combo))
+    # M280. Train the path BEFORE the node it ends at. M279 showed the
+    # answer at a deep node is decided by the reach it is trained
+    # against, and that reach is derived from the strategies on the way
+    # in - which are themselves unlearned at 94% of 6-max lines (M246).
+    # Training the parents first is what makes the derived reach describe
+    # a real four-bet range rather than a scaled uniform one; the order
+    # is the whole point, and each node's own reach is derived after its
+    # parents have been improved.
+    _train_unlearned_nodes_on_path(preflop_result, _actions, request.players)
     # M150: a deep multiway node the shipped budget never learned gets
     # solved here, on demand, rather than answered with the prior.
     _ensure_preflop_node_trained(preflop_result, node, request.players, hero_key,
