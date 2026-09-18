@@ -15989,3 +15989,46 @@ same way.
 - **So M266's revert stands, on better evidence**: not "no measurable
   benefit" but "a small measured benefit, at a price the latency budget
   refuses".
+
+## M271 - deep stacks, warmed where real players sit (A11)
+
+M270 found that stacks over 200bb were never unsupported - the benchmark
+had excluded them - and left their cost unmeasured. This measures it.
+
+**The exposure.** 18,108 clean real hands sit above 200bb and 92% are
+multiway. **15.1% of all real multiway flops sit between 200 and 260bb**,
+and no warmer reached past 200.
+
+**A deep solve costs what a 100bb solve costs** (the tree's shape does
+not change with depth):
+
+| table | 205bb | 250bb | 300bb | 400bb | entry |
+|---|---|---|---|---|---|
+| 6-max | 72.5s | 58.9s | 49.6s | 47.2s | 35-40 MB |
+| 5-max | 24.0s | 23.1s | 23.3s | 20.8s | 17-19 MB |
+| 3-max | 8.0s | 6.9s | 5.4s | 7.3s | ~2 MB |
+
+**The change, and it pays for itself.** 24 deep buckets are warmed in the
+background - 12 six-max and 12 five-max, 205-260bb, ordered by how often
+each occurs - covering 1,298 of 12,472 real multiway flops (10.4%).
+
+- **What paid for them:** 9-max no longer prewarms 50 and 20bb. Of 4,935
+  real 9-max hands at or under 200bb, **2 are in the 50bb bucket and
+  none in the 20bb bucket**; those two entries held 514 MB. (The corpus
+  is 2009 online CASH. A tournament population would differ, and a 9-max
+  player at 50bb still gets the same answer, 525s later.)
+- **Budget:** `_multiway_cache` holds 3 GB against a warmed working set
+  of 2,810 MB.
+
+**Real deep hands answer clean.** 90 decisions from hands above 200bb
+(stacks 200-398bb, heads-up through 6-max):
+
+- **90 answered, 0 defects.**
+- **Warm:** p50 0.01s, p90 2.07s, one decision over 5s (5.1s).
+- **Cold:** the first request at an unwarmed deep bucket took **12.9s
+  median, worst 39.3s** - which is what the 24 warmed buckets remove for
+  the band real players actually sit in.
+
+**Still uncovered, and named rather than implied:** 4.6% of real multiway
+flops sit above 260bb, and deep 4-, 7-, 8- and 9-max buckets are not
+warmed (a 9-max entry is 257 MB). Those still pay the cold solve.
