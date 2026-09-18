@@ -16181,3 +16181,65 @@ headline: **"the flop agrees on whether to bet" is a 100bb statement.**
   single-raised reference at ~1,226s. Measured again here it is 2,801s
   and 7,200s+ on two boards of the same shape. **Budget SPR 19.5
   references at an hour each and expect one in three to overrun.**
+
+## M275 - diagnosing the dump walk (A12): one defect fixed, one derived, one still open
+
+M273 left the walk reporting slack a converged reference cannot have:
+three of five four-bet flop spots failed `dump_control` at 0.042%
+exploitability, and the walk's own slack would not fall when the solver
+converged eightfold. A12 is that diagnosis.
+
+**FIXED - the FLOP LEAF was sampled.** A leaf on a three-card board
+(what an all-in on the flop reaches) fell through to
+`build_board_equity_table`, which Monte-Carlos two cards to come, while
+turn and river leaves were exact: the walk was exact where it was cheap
+and sampled where the money is. `LeafEquity._hero_row` now enumerates
+both cards (1,081 runouts against a turn's 46), paid once per (hero,
+board), pinned against a brute-force enumeration written the slow way.
+**No published figure moves** - M260 deliberately priced no flop, and a
+board shorter than a flop now raises instead of being priced by
+something unmeasured.
+
+**And it is NOT what M273 hit.** A three-round dump has **205,504
+leaves, every one on a five-card board**, so that path is never taken
+there.
+
+**RULED OUT, each by measurement rather than argument:**
+
+| candidate | test | result |
+|---|---|---|
+| the walk's arithmetic | exact pairwise conservation, `EV(h\|v) + EV(v\|h) == pot` | **0.0 error** on every pair |
+| villain tables differing by branch | row counts at all four root children | 52 everywhere, no asymmetry |
+| a general regression | four river references re-run | byte-identical, all pass (0.16-0.82) |
+| chance-card weighting | see below | moves it the WRONG way |
+
+**DERIVED, and DEFAULT OFF - `Walk(chance_weighting=...)`.** Cards at a
+chance node are not equally likely once blockers are out: given hero's
+hand and one villain hand the next card is uniform over 45, and summing
+over villain hands weights each card by the villain reach that survives
+it (`sum_c sub(c) = 45 * sum_v reach(v)`). The walk averages them
+equally. **Conservation cannot see the difference** - both sides use the
+same weights, F59's shape exactly - and the two agree whenever nothing
+is blocked.
+- **It does not explain M273**: on that board it moves the slack
+  0.80% -> **1.08%** of pot, the wrong way.
+- **It is off by default on M161's precedent**: turning it on changes
+  every figure ever taken off a dump with a chance node - the turn bank
+  behind M260's grades and the turn-shove price - and those dumps are
+  deleted, so adopting it costs ~40 minutes a spot to re-derive. River
+  figures are unaffected either way (no chance node), verified
+  byte-identical.
+
+**A PROBE ERROR OF MY OWN, recorded because it cost an hour and would
+cost the next person the same.** The first diagnostic built the villain
+list from the ROOT node's strategy table - which holds the ACTING
+player's hands - and so priced hero against their own range. It reported
+a 7.8 bb slack that does not exist; with the responder's table the same
+hand reads 1.84 bb. **The villain's combos come from the node the
+villain acts at, which is what `root_control` already did.**
+
+**STILL OPEN.** On two of five four-bet flop references the root slack
+is ~18x the reported exploitability, and it is none of the above. Named
+next tests: a full best response from the walk (it must bound the root
+slack from above), and the per-hand EVs the GUI writes to
+`output_result.json`, which the console dump does not carry.

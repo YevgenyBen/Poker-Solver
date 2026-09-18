@@ -157,6 +157,61 @@ def test_a_chance_node_averages_over_unblocked_cards_only():
     assert ev == pytest.approx((only_trash + both) / 2.0, abs=1e-12)
 
 
+def test_a_chance_node_can_weight_its_cards_by_surviving_reach():
+    """A12 (M275). A card blocked by much of villain's range comes LESS
+    often, so the cards combine by the reach that survives them.
+
+    Kept behind a flag and OFF by default: turning it on changes every
+    figure taken off a dump with a chance node in it (M161's precedent),
+    and the two agree exactly when no card blocks anything.
+    """
+    from bench.dump_ev import DEFAULT_CHANCE_WEIGHTING
+
+    assert DEFAULT_CHANCE_WEIGHTING == "equal"
+    leafnode = _action(HERO, ["CHECK"], {"KhKd": [1.0]},
+                       children={"CHECK": _action(
+                           VILLAIN, ["CHECK"],
+                           {c: [1.0] for c in VILLAIN_COMBOS},
+                           children={"CHECK": _chance()})})
+    tree = _chance({"As": leafnode, "9d": leafnode})
+    board, reach = ("8h", "6h", "2s"), _reach(1.0, 1.0)
+
+    # As blocks AsAd, so that branch carries half the reach of 9d's.
+    both = (0.10 + 0.90) / 2.0 * POT
+    only_trash = 0.90 * POT
+    equal = _walk([0.10, 0.90]).value(tree, board, reach)
+    assert equal == pytest.approx((only_trash + both) / 2.0, abs=1e-12)
+
+    leaf = LeafEquity("KhKd", VILLAIN_COMBOS,
+                      equity_fn=lambda b: np.array([0.10, 0.90], dtype=float))
+    weighted = Walk(hero_index=HERO, hero_key="KhKd", villain_combos=VILLAIN_COMBOS,
+                    leaf=leaf, pot0=POT, chance_weighting="reach").value(tree, board, reach)
+    assert weighted == pytest.approx((1.0 * only_trash + 2.0 * both) / 3.0, abs=1e-12)
+    assert weighted != pytest.approx(equal, abs=1e-9)
+
+    with pytest.raises(ValueError, match="chance_weighting"):
+        Walk(hero_index=HERO, hero_key="KhKd", villain_combos=VILLAIN_COMBOS,
+             leaf=leaf, pot0=POT, chance_weighting="proportional")
+
+
+def test_the_two_chance_weightings_agree_when_nothing_is_blocked():
+    """The correction is invisible where villain blocks no runout - which
+    is why a uniform-range check could never have caught it (F59)."""
+    leafnode = _action(HERO, ["CHECK"], {"KhKd": [1.0]},
+                       children={"CHECK": _action(
+                           VILLAIN, ["CHECK"],
+                           {c: [1.0] for c in VILLAIN_COMBOS},
+                           children={"CHECK": _chance()})})
+    tree = _chance({"4d": leafnode, "9d": leafnode})
+    board, reach = ("8h", "6h", "2s"), _reach(1.0, 1.0)
+    leaf = lambda: LeafEquity("KhKd", VILLAIN_COMBOS,
+                              equity_fn=lambda b: np.array([0.10, 0.90], dtype=float))
+    values = [Walk(hero_index=HERO, hero_key="KhKd", villain_combos=VILLAIN_COMBOS,
+                   leaf=leaf(), pot0=POT, chance_weighting=mode).value(tree, board, reach)
+              for mode in ("equal", "reach")]
+    assert values[0] == pytest.approx(values[1], abs=1e-12)
+
+
 def test_the_amounts_are_street_totals_not_increments():
     """`BET 8` after `BET 3` on the same street means committed TO 8.
 
@@ -721,3 +776,66 @@ def test_the_hero_row_equals_the_full_table(board_text):
     assert np.array_equal(np.isnan(fast), np.isnan(slow))
     ok = ~np.isnan(slow)
     assert np.allclose(fast[ok], slow[ok], atol=1e-12)
+
+
+def _enumerated_flop_equity(hero, villain, board):
+    """Hero's equity against ONE villain on a flop, by brute force.
+
+    Deliberately written the slow, obvious way - every two-card runout,
+    ranked one at a time - so it shares no code with the thing it checks.
+    """
+    import itertools
+
+    from poker_solver.cards import Card
+    from poker_solver.hand_eval import best_hand_rank
+
+    used = {str(c) for c in board} | {str(hero.card_a), str(hero.card_b),
+                                      str(villain.card_a), str(villain.card_b)}
+    deck = [Card.from_str(r + s) for r in "23456789TJQKA" for s in "shdc"
+            if r + s not in used]
+    total = won = 0.0
+    for run in itertools.combinations(deck, 2):
+        full = tuple(board) + run
+        h = best_hand_rank([hero.card_a, hero.card_b, *full])
+        v = best_hand_rank([villain.card_a, villain.card_b, *full])
+        won += 1.0 if h > v else 0.5 if h == v else 0.0
+        total += 1
+    return won / total
+
+
+def test_a_flop_leaf_is_enumerated_not_sampled():
+    """A12. A leaf on a THREE-card board - what an all-in on the flop
+    reaches - used to fall through to the sampled equity table, so the
+    walk was exact on the turn and river and Monte Carlo exactly where
+    the money was. M273 measured what that cost: three of five four-bet
+    spots failed `dump_control` against a converged reference while the
+    walk's own slack would not move.
+    """
+    from poker_solver.cards import Card
+    from poker_solver.combos import HandCombo
+
+    board = tuple(Card.from_str(t) for t in ("3h", "4c", "Qs"))
+    hero = HandCombo(Card.from_str("Ah"), Card.from_str("Kd"))
+    names = ["7h6h", "2d2c", "JsTs", "AcQc"]
+    villains = [HandCombo(Card.from_str(n[:2]), Card.from_str(n[2:]))
+                for n in names]
+    row = LeafEquity(hero, villains).vector(board)
+    for i, villain in enumerate(villains):
+        assert row[i] == pytest.approx(
+            _enumerated_flop_equity(hero, villain, board), abs=1e-12), names[i]
+
+    # ... and it is deterministic, which a sampled table is only per seed.
+    again = LeafEquity(hero, villains).vector(board)
+    assert np.array_equal(row, again)
+
+
+def test_a_leaf_board_shorter_than_a_flop_is_refused():
+    """Silence is what the sampled fallback gave; a preflop board now
+    raises rather than being priced with something unmeasured."""
+    from poker_solver.cards import Card
+    from poker_solver.combos import HandCombo
+
+    hero = HandCombo(Card.from_str("Ah"), Card.from_str("Kd"))
+    villains = [HandCombo(Card.from_str("Qs"), Card.from_str("Qc"))]
+    with pytest.raises(ValueError, match="3, 4 or 5 cards"):
+        LeafEquity(hero, villains).vector((Card.from_str("3h"), Card.from_str("4c")))

@@ -106,12 +106,37 @@ def parse_params_ranges(text):
     return out
 
 
+#: How a chance node combines its cards. "equal" is what every figure
+#: published off a dump used; "reach" is the derivation in `Walk._chance`
+#: and needs the turn bank re-run before it can be adopted (A12/M275).
+DEFAULT_CHANCE_WEIGHTING = "equal"
+
+
 class LeafEquity:
     """Hero's exact equity against each villain combo, cached per board.
 
     A two-round dump revisits the same turn card under every flop line,
     and each table is an enumeration rather than a lookup, so caching is
     what makes the walk affordable.
+
+    **A12: the FLOP leaf used to be sampled, and it was the walk's own
+    error floor.** A leaf on a three-card board - what an all-in on the
+    flop reaches - fell through to `build_board_equity_table`, which
+    Monte-Carlos two cards to come (M154: only flop tables are sampled).
+    Turn and river leaves were exact, so the walk was exact exactly where
+    it was cheap and sampled where the money was.
+
+    It showed up in M273 as slack the solver could not explain: five
+    four-bet flop spots passed `dump_control` against a 0.33% reference
+    and three FAILED against a 0.042% one, because the walk's own slack
+    barely moved (0.8745% -> 0.8022% of pot) while the solver's figure
+    improved eightfold. The boards that failed were the ones where the
+    reference actually BETS, i.e. the ones whose lines reach a flop
+    all-in; boards where it never bets scored 0.000 either way.
+
+    Enumerating both cards is 1,081 runouts against a turn's 46, and it
+    is paid ONCE per (hero, board) because a flop dump has exactly one
+    flop board.
     """
 
     def __init__(self, hero, villain_combos, equity_fn=None):
@@ -133,8 +158,10 @@ class LeafEquity:
         return self._arrays
 
     def _hero_row(self, cards):
-        """Hero's exact equity against every villain on a board with at
-        most ONE card to come - hero's row alone, O(N) per board.
+        """Hero's exact equity against every villain, hero's row alone.
+
+        Handles a river (nothing to come), a turn (one card) and - since
+        A12 - a FLOP (two cards, 1,081 runouts enumerated).
 
         M260. The general path builds the whole (N+1) x (N+1) table and
         keeps row 0, which is O(N^2) per board; a turn dump walks ~46
@@ -152,13 +179,19 @@ class LeafEquity:
         hero = (self._hero.card_a, self._hero.card_b)
         hero_names = {str(c) for c in hero}
         board_names = {str(c) for c in cards}
+        deck = [Card.from_str(r + s) for r in "23456789TJQKA" for s in "shdc"
+                if r + s not in board_names and r + s not in hero_names]
         if len(cards) == 5:
             runouts = [()]
+        elif len(cards) == 4:
+            runouts = [(c,) for c in deck]
         else:
-            deck = [Card.from_str(r + s) for r in "23456789TJQKA" for s in "shdc"]
-            runouts = [(c,) for c in deck
-                       if str(c) not in board_names and str(c) not in hero_names]
+            # A12: the flop leaf, enumerated rather than sampled. See
+            # `vector` for why this exists and what it was costing.
+            runouts = [(deck[i], deck[j])
+                       for i in range(len(deck)) for j in range(i + 1, len(deck))]
         n, k = len(self._villain), len(runouts)
+        width = len(cards) + len(runouts[0])
         full = [tuple(cards) + run for run in runouts]
         b_values = np.array([[c.value for c in b] for b in full], dtype=np.int64)
         b_suits = np.array([[_SUIT_INDEX[c.suit] for c in b] for b in full],
@@ -170,12 +203,12 @@ class LeafEquity:
         hero_scores = best_hand_rank_batch(h_values, h_suits)             # (k,)
         v_values = np.concatenate(
             [np.repeat(values[:, None, :], k, axis=1),
-             np.broadcast_to(b_values, (n, k, 5))], axis=2).reshape(n * k, 7)
+             np.broadcast_to(b_values, (n, k, width))], axis=2).reshape(n * k, width + 2)
         v_suits = np.concatenate(
             [np.repeat(suits[:, None, :], k, axis=1),
-             np.broadcast_to(b_suits, (n, k, 5))], axis=2).reshape(n * k, 7)
+             np.broadcast_to(b_suits, (n, k, width))], axis=2).reshape(n * k, width + 2)
         v_scores = best_hand_rank_batch(v_values, v_suits).reshape(n, k)
-        run_names = [str(run[0]) if run else None for run in runouts]
+        run_names = [{str(c) for c in run} for run in runouts]
         valid = np.ones((n, k), dtype=bool)
         row = np.full(n, np.nan)
         for i, (a, b) in enumerate(names):
@@ -183,7 +216,7 @@ class LeafEquity:
                 valid[i, :] = False
                 continue
             for j, r in enumerate(run_names):
-                if r is not None and (r == a or r == b):
+                if a in r or b in r:
                     valid[i, j] = False
         share = np.where(hero_scores[None, :] > v_scores, 1.0,
                          np.where(hero_scores[None, :] == v_scores, 0.5, 0.0))
@@ -198,23 +231,14 @@ class LeafEquity:
             return self._cache[key]
         if self._equity_fn is not None:
             row = np.asarray(self._equity_fn(board), dtype=np.float64)
-        elif len(board) >= 4:
+        elif len(board) >= 3:
             from poker_solver.cards import Card
             cards = tuple(Card.from_str(c) if isinstance(c, str) else c
                           for c in board)
             row = self._hero_row(cards)
         else:
-            from poker_solver.board_equity import build_board_equity_table
-            from poker_solver.cards import Card
-            # A board grows by CARD NAMES taken from `dealcards` keys and
-            # starts as Card objects, so it arrives mixed. Coerce here,
-            # at the one boundary that cares, rather than making every
-            # caller remember which half it is holding.
-            cards = tuple(Card.from_str(c) if isinstance(c, str) else c
-                          for c in board)
-            table = build_board_equity_table(
-                cards, [self._hero] + self._villain)
-            row = np.asarray(table[0, 1:], dtype=np.float64)
+            raise ValueError(
+                "a leaf board must have 3, 4 or 5 cards, got %d" % len(board))
         self._cache[key] = row
         return row
 
@@ -222,7 +246,12 @@ class LeafEquity:
 class Walk:
     """One hero hand's EV over one dump."""
 
-    def __init__(self, *, hero_index, hero_key, villain_combos, leaf, pot0):
+    def __init__(self, *, hero_index, hero_key, villain_combos, leaf, pot0,
+                 chance_weighting=DEFAULT_CHANCE_WEIGHTING):
+        if chance_weighting not in ("equal", "reach"):
+            raise ValueError("chance_weighting must be 'equal' or 'reach', got %r"
+                             % (chance_weighting,))
+        self.chance_weighting = chance_weighting
         self.hero_index = hero_index
         self.hero_key = hero_key
         self.villain = list(villain_combos)
@@ -317,19 +346,47 @@ class Walk:
         # Measured before this line existed: 0.80% of the pot.
         seen = {str(c) for c in board} | {self.hero_key[0:2],
                                           self.hero_key[2:4]}
-        values = []
+        # A12 (M275). Cards are NOT equally likely once villain's
+        # blockers are taken out. Given hero's hand and ONE villain hand
+        # the next card is uniform over 45, and summing over villain
+        # hands makes P(card) proportional to the villain reach that
+        # SURVIVES it, since each villain hand blocks two of the 47
+        # candidates: sum_c sub(c) = 45 * sum_v reach(v), so the outer
+        # combination is that weighted average and not a plain mean.
+        # `_villain_node` already makes this argument for actions.
+        #
+        # **Derived, and DEFAULT OFF.** It is M161's situation: turning
+        # it on changes every figure ever taken off a dump with a chance
+        # node in it - the turn bank behind M260's grades and the
+        # turn-shove price - and those dumps are deleted, so re-deriving
+        # them is ~40 minutes a spot. Adopting it is a measurement, not a
+        # tidy-up; until that is run, the shipped default reproduces what
+        # every published figure used.
+        #
+        # It is also NOT the four-bet control failure it was written to
+        # explain: on that board the reported slack went 0.80% -> 1.08%
+        # of pot, i.e. the wrong way. Conservation cannot referee it
+        # either (F59's shape) - both sides use the same weights, so
+        # `EV(h|v) + EV(v|h) == pot` holds under either convention.
+        values, weights = [], []
         for card, child in kids.items():
             if card in seen:
                 continue
             sub = reach.copy()
             sub[self._blocks(card)] = 0.0
-            if sub.sum() <= 0:
+            mass = float(sub.sum())
+            if mass <= 0:
                 continue
             got = self.value(child, tuple(board) + (card,), sub,
                              (0.0, 0.0), total_in)
             if got is not None:
                 values.append(got)
-        return float(np.mean(values)) if values else None
+                weights.append(mass)
+        if not values:
+            return None
+        if self.chance_weighting == "reach":
+            return float(np.average(values, weights=weights))
+        return float(np.mean(values))
 
     def _child_value(self, node, label, board, reach, street_in, total_in):
         """The value behind one action, whoever took it."""
