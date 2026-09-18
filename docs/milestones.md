@@ -16291,3 +16291,56 @@ with it. At 100 iterations the same control passes at 0.82.
 **A rule worth carrying: a solver's own convergence number is a claim
 about its search, not about the file it wrote.** Score a reference by
 walking what it dumped.
+
+## M277 - the turn bank, judged by its own dumps (A14): two grades withdrawn
+
+A13 showed a solver's reported convergence drifting away from the
+strategy it writes as the tree deepens. The turn sits between the two
+cases it measured - one chance level - and it carries M260's turn grades
+and the shipped turn-shove price. A14 re-solves five of those references
+from M260's own params and scores each by `BestResponseWalk` off its own
+dump.
+
+| turn reference | reported | its own dump (BR) | ratio | its own per-hand slack |
+|---|---|---|---|---|
+| As8c7c6c | 0.329% | **3.91%** | 11.9 | 0.86% |
+| 3c4hKc7h | 0.375% | 3.37% | 9.0 | 0.49% |
+| 5cTs7d8c | 0.414% | 1.87% | 4.5 | 0.10% |
+| 9h7hAs4c | 0.372% | 2.43% | 6.5 | 0.96% |
+| 7cQdKh5h | 0.485% | 2.65% | 5.5 | 0.49% |
+
+**All five fail the 1% gate**, so by the rule fixed before the run
+M260's turn figures are upper bounds rather than measurements.
+
+**A tighter reference is NOT available by converging harder.** The same
+spot re-solved to a 0.05% target: the reported figure improves **7.2x**
+(0.329% -> 0.046%) and the dumped strategy does not move
+(3.91% -> **3.81%** of pot), taking the ratio to **83x**. A13's
+signature, on the turn.
+
+**Two explanations are ruled out by measurement, not argument.** The
+river IS serialised in these dumps (13,988 action nodes on five-card
+boards, every leaf at five cards), so a best response is not exploiting
+a missing street; and the walk's own arithmetic was checked in M275 by
+exact conservation.
+
+### What this costs, stated per figure
+
+- **The turn GRADES are withdrawn.** M260 graded the turn's opening
+  decision at **0.71% of pot** and facing a bet at **1.20%** - against a
+  reference whose own rows sit **0.49-0.96%** from their best response on
+  the same quantity. The opening grade is AT the instrument's own level
+  and the facing grade is 1.8x it. Neither is resolvable by this
+  reference, so `docs/wide-benchmark-2026-09-16.md`'s turn row is no
+  longer a grade.
+- **The TURN-SHOVE PRICE STANDS.** 2.408 bb is **16% of the pot**,
+  4-8x the instrument's own per-hand slack, and `TURN_SHOVE_NOTE`
+  already quotes it as "at least" with the reference's untrained reply
+  disclosed. Its precision is now measured rather than assumed.
+- **River figures are unaffected** (M276: no chance node, the two
+  measures agree at 1.46x).
+
+**The route out is NOT a better reference** - more convergence was
+measured not to produce one. It is the instrument that needs no
+reference at all: M233 priced the turn's gap by EXPLOITABILITY, which
+has no shared blind spot and no dump to disagree with. Queued as A15.
