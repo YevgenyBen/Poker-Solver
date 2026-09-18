@@ -16453,3 +16453,46 @@ solve whose deep nodes are unlearned (M149), so the four-bet range they
 describe is wider than a real one - and trash calling 0.567 against THAT
 range is close to the right answer to a question that is still slightly
 wrong. Queued as A16.
+
+## M280 - A16's premise is false, and the defect is now localised
+
+M279 left the reach fix short of its bar (trash continuing 0.567 against
+0.50) and blamed the derived ranges: they come from a solve whose deep
+nodes are unlearned (M149), so the four-bet range they describe should
+be too wide. A16 was to train the path's own nodes first and re-measure.
+
+**Built, and it changes nothing: the path trainer trains ZERO nodes on
+this line.** Every node on it reports all 169 hands visited, and - the
+test that matters, since visited is not learned (F43) - the ranges
+genuinely RE-COMPOSE along the path: the ratio spread between the
+shallow and deep derived ranges is **0.3185 (BTN) and 0.2052 (BB)**,
+where M250's defect shows as exactly 0. So the parents are learned, the
+derived reach is the model's honest belief, and A16's premise does not
+hold here.
+
+**What IS wrong is the range's composition**, and it is now measurable:
+
+| the modelled four-bettor's range | |
+|---|---|
+| share of all hands | **13.2%** |
+| premium share (AA/KK/QQ/AKs) | **3.0%** |
+| top holdings by frequency | KJo 0.858, A6s 0.811, A5o 0.797 |
+
+A real four-bet range is a few percent of hands and mostly premiums.
+This one is four to five times too wide and barely premium at all - and
+M251 priced `72o`'s call as break-even against a **23.2%** four-bet
+range, so against a 13.2% one the engine's 0.567 is a nearly reasonable
+answer to a badly wrong question.
+
+**So the residual is not the reach and not the parents: it is WHICH
+HANDS FOUR-BET**, which is M98's terminal pricing at the nodes that are
+learned. That is the defect four milestones have now failed to move -
+M100 (crude continuation term), M113-M115 (solved continuation values),
+M279 (the same keyed on raise count) - and this one localises it rather
+than attempting it again.
+
+**Kept from the attempt**: `_advise_preflop` now trains the path before
+the node it ends at, which is what a postflop request already does. It
+is inert at the shipped configuration (`PREFLOP_PATH_NODE_TRAINING` is
+False) and trained 0 nodes on the measured line, so it is consistency
+rather than a fix.
