@@ -8786,22 +8786,75 @@ def test_the_two_live_warning_needs_a_real_price_not_just_two_seats(client):
 
 
 def test_the_two_live_warning_quotes_its_own_measurement():
-    """M251. The copy has to move when the measurement does.
+    """M251/M281/M282. The copy has to move when the measurement does.
 
     M232's rule: a warning may not quote a figure taken at a width or a
-    population the product does not run. Both numbers in the sentence are
-    the measured ones, and both are pinned here.
+    population the product does not run. M282 is the case that rule was
+    written for - the figure was measured on 14 hand-written paths and
+    the gate's real population of 84 says 0.8081, so the disclosure
+    UNDERSTATED its own defect, which is the one direction a warning may
+    not err in.
+
+    Each graded string is pinned to its OWN cell's numbers, so neither
+    can drift onto the other's.
     """
-    reason = api_config.PREFLOP_TWO_LIVE_REASON
-    assert str(api_config.PREFLOP_TWO_LIVE_NODES) in reason
-    assert f"{round(api_config.PREFLOP_TWO_LIVE_TRASH_CONTINUES * 100)}%" in reason
-    assert f"{round(api_config.PREFLOP_MANY_LIVE_TRASH_CONTINUES * 100)}%" in reason
-    # M281: the mean improved and the TAIL did not, so the copy carries
-    # both. Quoting 66% alone would describe six of these fourteen spots
-    # as half as bad as they are.
-    assert str(api_config.PREFLOP_TWO_LIVE_NODES_OVER_90) in reason
+    four = api_config.PREFLOP_TWO_LIVE_FOUR_BET_REASON
+    three = api_config.PREFLOP_TWO_LIVE_THREE_BET_REASON
+
+    assert str(api_config.PREFLOP_TWO_LIVE_FOUR_BET_NODES) in four
+    assert f"{round(api_config.PREFLOP_TWO_LIVE_FOUR_BET_CONTINUES * 100)}%" in four
+    assert str(api_config.PREFLOP_TWO_LIVE_THREE_BET_NODES) in three
+    assert f"{round(api_config.PREFLOP_TWO_LIVE_THREE_BET_CONTINUES * 100)}%" in three
+    # The three-bet string's contrast is the CONTROL, and it may only be
+    # drawn at a matched raise count - the four-bet cell has no
+    # three-or-more-live control at all, because a four-bet folds the
+    # field down to two (M282).
+    assert f"{round(api_config.PREFLOP_MANY_LIVE_TRASH_CONTINUES * 100)}%" in three
+    # The milder string must name the worse cell, or a player at a
+    # three-bet has no way to learn the same spot one raise deeper is
+    # three times worse.
+    assert f"{round(api_config.PREFLOP_TWO_LIVE_FOUR_BET_CONTINUES * 100)}%" in three
+
+    # The reach fix (M279/M281) really did improve the level, and the
+    # population re-measurement did not undo that.
     assert api_config.PREFLOP_TWO_LIVE_TRASH_CONTINUES < api_config.PREFLOP_TWO_LIVE_WAS
     assert api_config.PREFLOP_TWO_LIVE_WORST > 0.99
+    # The graded cells have to bracket the population mean, or one of the
+    # three numbers came from a different study than the other two.
+    assert (api_config.PREFLOP_TWO_LIVE_THREE_BET_CONTINUES
+            < api_config.PREFLOP_TWO_LIVE_TRASH_CONTINUES
+            < api_config.PREFLOP_TWO_LIVE_FOUR_BET_CONTINUES)
+    assert (api_config.PREFLOP_TWO_LIVE_FOUR_BET_NODES
+            + api_config.PREFLOP_TWO_LIVE_THREE_BET_NODES
+            == api_config.PREFLOP_TWO_LIVE_NODES)
+
+
+def test_the_two_live_warning_is_graded_by_raise_count():
+    """M282. A four-bet is 0.9336 and a three-bet 0.3482 - 7.29 sigma.
+
+    Quoting one average over that would be M254's failure in the preflop
+    cell: a number that is wrong for nearly every player who reads it.
+
+    The default direction is pinned too. When the node cannot say how
+    deep it is, the SEVERE string is the safe one - understating a defect
+    is the single failure mode M232 says a warning may not have, and the
+    first draft of this gate defaulted the wrong way.
+    """
+    two_live = {"street": "preflop", "positions": ["BTN", "BB"], "to_call_bb": 9.0}
+
+    def reason_for(raises):
+        raw = dict(two_live)
+        if raises is not None:
+            raw["preflop_raises"] = raises
+        level, text = api_main._solver_confidence(raw, 6)
+        return text or ""
+
+    assert api_config.PREFLOP_TWO_LIVE_FOUR_BET_REASON in reason_for(3)
+    assert api_config.PREFLOP_TWO_LIVE_THREE_BET_REASON in reason_for(2)
+    assert api_config.PREFLOP_TWO_LIVE_FOUR_BET_REASON in reason_for(None), (
+        "a node that cannot report its raise count must fall to the "
+        "SEVERE string, never the milder one"
+    )
 
 
 def test_the_sizing_caveat_no_longer_claims_trash_is_always_folded():

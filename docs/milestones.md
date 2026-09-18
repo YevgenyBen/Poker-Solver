@@ -16534,3 +16534,80 @@ now re-measured too.
 M123, M251):** a setting that improves a disclosed defect makes its own
 disclosure false. Re-measure the copy in the change that moves the
 number, on the study the copy quotes.
+
+## M282 - the two-live figure, measured over the population its gate fires on
+
+M281 shipped a corrected number into user-facing copy and the number was
+still wrong, because the study behind it was a list somebody typed.
+M251 assembled 22 paths by hand; M281 re-ran those same paths. M252's
+rule - a benchmark measures the population it generates - had never been
+applied to this warning, and a hand-written list generates itself.
+
+**Method.** Reject-sample the gate's own predicate off the real tree
+(`bench.spot_population`'s walker, raise-weighted so it reaches a
+four-bet): exactly two live, owed at least `PREFLOP_TWO_LIVE_MIN_TO_CALL_BB`.
+84 nodes, 12 at each of the seven table sizes the warning can fire at,
+asked with M251's own five trash hands so the figures stay comparable.
+**Control: the warning fired on 84 of 84**, so these are its population
+and not a description of it that has drifted.
+
+The reading rule was fixed before the run: correct the copy if the
+population differs from the shipped figure by more than the sample's own
+95% interval; grade the warning only on a signal that clears 3 sigma AND
+a split-half; a null retires the objection.
+
+| | M281 (14 hand-picked) | M282 (84 enumerated) |
+|---|---|---|
+| trash continues | 0.6559 | **0.8081** +/- 0.0662 |
+| over 0.90 | 6 of 14 | **55 of 84** |
+| worst | 0.9961 | 0.9996 |
+
+**The disclosure understated its own defect** - M232's one forbidden
+direction - and the cause is plain: M251 measured 3-max and 6-max only,
+and 3-max is the best cell in the population.
+
+| table | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+|---|---|---|---|---|---|---|---|
+| trash continues | 0.389 | 0.714 | 0.753 | 0.961 | 0.911 | 0.952 | 0.977 |
+
+Five of those seven sizes had never been measured at all.
+
+**THE TAIL IS PREDICTABLE, BY RAISE COUNT.** Facing a four-bet the engine
+continues with trash **0.9336** (n=66); facing a three-bet, **0.3482**
+(n=18) - **7.29 sigma**, split halves 0.895 / 0.972. Table size within
+four-bets is 2.31 sigma and depth 2.09, both under the bar, so raise
+count is the signal and the other two are its shadow. `preflop_raises`
+is now derived from the node beside `to_call_bb` (M144's rule) and the
+copy is graded on it: an amount in bb cannot do this job, because the
+same 9.00 that means "a four-bet" at 100bb is a shove at 12bb.
+
+Grading is also how M188's "weight before quoting any share" is satisfied
+here without a frequency model - a player is told the figure for the node
+they are at, so how often each cell occurs stops mattering.
+
+**THE CONTROL WAS HAND-PICKED TOO, AND IT IS TEN TIMES WORSE THAN
+QUOTED**: 0.1198 over 78 enumerated three-or-more-live nodes against the
+0.0122 M281 published. Still a clean control - 0 of 78 over 0.90, worst
+0.6937 - but "about 1%" was false.
+
+**And the four-bet cell has NO control, by construction.** All 78 of
+those nodes carry two raises, because a four-bet almost always folds the
+field down to two. So M251's headline contrast credited LIVE COUNT with
+what is mostly RAISE DEPTH. Matched on raise count the live-count effect
+survives and is much smaller: **0.3482 against 0.1198, 2.80 sigma**.
+M251's finding is not withdrawn - two-live nodes really are worse - but
+its mechanism is re-attributed.
+
+**Also fixed**: two stale figures M281 left behind in `api/main.py`, one
+in the gate's docstring and one in a comment, both still saying "22 of
+22". The docstring now points at the constants rather than repeating
+them, since a second copy of a number that moves is how this paragraph
+went stale three times.
+
+**Rule: re-measure a disclosed figure over the population its gate fires
+on, not over the list that first found it.**
+
+Deliberately not done: the 0-1 raise two-live cell, where the gate stays
+SILENT, is still unmeasured - that is the audit's own R2 from
+`docs/audit-2026-09-08.md`, still open.
+

@@ -1505,11 +1505,17 @@ def _is_multiway_postflop(raw: dict, street: str | None) -> bool:
 def _is_two_live_multiway_preflop(raw: dict, players: int) -> bool:
     """A multiway preflop pot that has folded down to two, facing a raise.
 
-    M251. This is the cell where weak-hand folding fails: 22 of 22 such
-    nodes tell 72o-class hands to continue against a re-raise (mean
-    0.9823), against 3 of 60 at the same depths with three or more live
-    (0.3899). Held at matched PRICE the separation is total - 17 of 17
-    against 0 of 23.
+    M251. This is the cell where weak-hand folding fails: it tells
+    72o-class hands to continue against a re-raise, where three or more
+    live is the clean control. Held at matched PRICE the separation was
+    total - 17 of 17 against 0 of 23.
+
+    **The LEVEL moved when M281 shipped the derived training reach**, so
+    the figures above are M251's and no longer current. The live ones are
+    the `PREFLOP_TWO_LIVE_*` constants in `api/config.py`, which the
+    user-facing copy also quotes and a test pins to it. Deliberately not
+    repeated here: this gate's job is WHERE to fire, and a second copy of
+    a number that moves is how the copy went stale three times.
 
     Read off the RESPONSE, not the request (M144): `positions` is who is
     still live, the same field `_is_multiway_postflop` uses and for the
@@ -1563,9 +1569,18 @@ def _solver_confidence(raw: dict, players: int, hero: dict | None = None,
                        else cfg.MULTIWAY_REPRODUCIBILITY_REASON)
     # M251: the preflop counterpart, and a sharper failure than the
     # postflop one - not "the answer moves between seeds" but "the answer
-    # is categorically wrong for weak hands", 22 nodes of 22.
+    # is categorically wrong for weak hands". M281 shrank it and did not
+    # close it; the surviving tail is what the copy now leads with.
     if _is_two_live_multiway_preflop(raw, players):
-        reasons.append(cfg.PREFLOP_TWO_LIVE_REASON)
+        # M282: graded, because one average over this population is wrong
+        # for nearly everyone who reads it - a four-bet measures 0.9336
+        # and a three-bet 0.3482 (7.29 sigma). Falls to the SEVERE string
+        # when the node cannot say how deep it is, which is the direction
+        # M232 allows a warning to err in.
+        raises = raw.get("preflop_raises")
+        deep = raises is None or raises >= cfg.PREFLOP_TWO_LIVE_GRADE_MIN_RAISES
+        reasons.append(cfg.PREFLOP_TWO_LIVE_FOUR_BET_REASON if deep
+                       else cfg.PREFLOP_TWO_LIVE_THREE_BET_REASON)
     if _node_is_untrained(raw):
         reasons.append(cfg.UNTRAINED_NODE_REASON)
     elif _hero_row_is_the_prior(hero):
