@@ -1863,6 +1863,49 @@ def _river_under_folds_applies(raw: dict, street: str | None,
     return faced / pot_before_the_bet <= cfg.RIVER_UNDER_FOLD_MAX_BET_FRACTION
 
 
+def _flop_under_folds_applies(raw: dict, street: str | None,
+                              hero: dict | None = None) -> bool:
+    """Is this a flop decision facing a SMALL bet with a middling hand?
+
+    A6 (M272). Over 238 scored rows this engine folds 0.092 less than an
+    independent solver facing a flop bet; the gap lives in two places a
+    player can see, and nowhere else. Facing a third-pot bet it is
+    -0.1683 (5.47 sigma) and facing three-quarters of the pot it is
+    -0.0130 (0.40 sigma); in the middle strength band it is -0.1392
+    (4.35 sigma) against -0.0103 for strong hands.
+
+    How mixed either row is - the signal the RIVER's note gates on -
+    carries nothing here (1.15 and 1.11 sigma), which is why this gate
+    reads the bet size and the hand instead. M168's rule, in the other
+    direction: one street's predictor is not another's.
+
+    The bet faced is derived from the response (M144's rule), the same
+    way `_river_under_folds_applies` does it, and overstates the fraction
+    when more than one bet is already in - so the gate fails toward
+    silence.
+    """
+    if street != "flop":
+        return False
+    if not _is_facing_a_bet(raw):
+        return False
+    percentile = _hand_strength_percentile(raw, hero)
+    if percentile is None:
+        return False
+    if not (cfg.FLOP_UNDER_FOLD_MIN_STRENGTH <= percentile
+            < cfg.FLOP_UNDER_FOLD_MAX_STRENGTH):
+        return False
+    pot = raw.get("pot")
+    entering = raw.get("max_affordable_bb")
+    behind = raw.get("effective_stack_bb")
+    if not all(isinstance(v, (int, float)) for v in (pot, entering, behind)):
+        return False
+    faced = entering - behind
+    pot_before_the_bet = pot - faced
+    if faced <= 0 or pot_before_the_bet <= 0:
+        return False
+    return faced / pot_before_the_bet <= cfg.FLOP_UNDER_FOLD_MAX_BET_FRACTION
+
+
 def _multiway_bet_applies(raw: dict, street: str | None,
                           hero: dict | None = None) -> bool:
     """Is this a multiway decision where our row leans to betting (M262)?
@@ -2102,6 +2145,11 @@ def _advisory_notes(raw: dict, hero: dict | None = None) -> list:
         if (percentile is not None
                 and cfg.COSTLY_BAND_LOW <= percentile < cfg.COSTLY_BAND_HIGH):
             notes.append(("costly-band", cfg.COSTLY_BAND_NOTE))
+        # A6 (M272): the flop's own facing-a-bet gap, gated on the bet
+        # size and the hand rather than on how mixed the row is - the
+        # river's predictor carries nothing here (1.15 / 1.11 sigma).
+        if _flop_under_folds_applies(raw, street, hero):
+            notes.append(("flop-under-fold", cfg.FLOP_UNDER_FOLD_NOTE))
     return notes
 
 

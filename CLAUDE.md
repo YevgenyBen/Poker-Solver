@@ -503,6 +503,29 @@ REFERENCE's game instead.
 The overbet row and the turn stay excluded
 (M168). The gate reads the RESPONSE, so it fails toward silence.
 
+
+### THE FLOP FACING A BET, LOCATED (M272/A6)
+
+M260 called this the weak cell and could not say where it lived. The
+same nine references, re-scored against heroes drawn by range weight -
+**238 rows, no new solves**, because a dump carries every combo's row.
+
+- **We UNDER-FOLD: -0.092 (4.19 sigma)**, aggression +0.074 (3.78
+  sigma), 71% agreement where the reference is clear.
+- **Facing a THIRD-POT bet: -0.1683 (5.47 sigma).** Facing 0.75x pot:
+  -0.0130 (0.40 sigma). Separation 3.45 sigma, split halves 1.74 / 3.17.
+- **Middling hands (strength 0.40-0.75): -0.1392 (4.35 sigma)**, against
+  -0.010 for strong hands. Separation 3.83 sigma, halves 3.04 / 2.22.
+- **MIXEDNESS DOES NOT TRANSFER FROM THE RIVER** (1.15 / 1.11 sigma), so
+  this gate reads the bet size and the hand instead.
+- **Disclosed** as `flop-under-fold`, gated flop / facing <= 0.5 pot /
+  strength 0.40-0.75, and shown first in the front end. **Exposure 6% of
+  real decisions** - the highest of any single-street disclosure here.
+- **NOT priced**: a flop leaf needs the turn and river serialised inside
+  the reference (A8). The copy says so.
+- **Texture is unjudgeable in this bank** - every paired board is the
+  same board.
+
 ### THE WIDE BENCHMARK (M260) — every street priced from outside
 
 `docs/wide-benchmark-2026-09-16.md`. Grades were fixed in advance.

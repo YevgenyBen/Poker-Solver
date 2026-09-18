@@ -13,6 +13,7 @@ export const PRIORITY_NOTES: Record<string, string> = {
   'multiway-bet': 'Multiway pot: this engine bets and raises far more than a strong player does',
   'turn-shove': 'Turn: shoving here is costly — calling is the serious alternative',
   'river-under-fold': 'River, close decision: folding is the serious alternative',
+  'flop-under-fold': 'Flop, small bet: this engine calls too often — folding is the serious alternative',
   'costly-band': 'An expensive kind of decision — take extra care',
 };
 

@@ -16032,3 +16032,54 @@ each occurs - covering 1,298 of 12,472 real multiway flops (10.4%).
 **Still uncovered, and named rather than implied:** 4.6% of real multiway
 flops sit above 260bb, and deep 4-, 7-, 8- and 9-max buckets are not
 warmed (a 9-max entry is 257 MB). Those still pay the cold solve.
+
+## M272 - where the flop facing a bet disagrees (A6)
+
+M260 left this cell as "the weak spot, and it is not priced": 32 rows,
+74% agreement where the reference is clear, no idea where the
+disagreement lived.
+
+**No new solves.** A dump carries every combo's row, so M260's nine flop
+references were re-scored against 14 heroes per bet size, drawn by range
+weight with `hero_combo=None` (M243). **336 rows, 238 after dropping
+rows the reference's villain reaches under 5% of the time.**
+
+**The headline: we UNDER-FOLD.** Fold frequency sits **0.092 below** the
+reference (4.19 sigma) and aggression 0.074 above (3.78 sigma).
+Agreement where the reference is clear: **71%**, replicating M260's 74%
+at 7x the rows.
+
+**Two splits carry it, and both are visible at the table:**
+
+| bet faced | n | fold gap | | hand strength | n | fold gap |
+|---|---|---|---|---|---|---|
+| 0.33x pot | 112 | **-0.1683 (5.47)** | | weak (<0.40) | 49 | -0.053 (0.93) |
+| 0.75x pot | 112 | -0.0130 (0.40) | | **middling (0.40-0.75)** | 134 | **-0.1392 (4.35)** |
+| 2.5x pot | 14 | -0.1088 (2.06) | | strong (>=0.75) | 55 | -0.010 (1.00) |
+
+- **Size:** separation 3.45 sigma. Split halves +0.1115 (1.74) / +0.1990
+  (3.17) - same direction, and the weaker half does not clear 2 sigma on
+  its own, which is stated rather than rounded away.
+- **Strength:** separation 3.83 sigma, split halves 3.04 / 2.22.
+- **MIXEDNESS CARRIES NOTHING HERE** - 1.15 sigma for the reference's row
+  and 1.11 for ours. That is the signal M243 built the river's note on,
+  and it does not transfer. M168's rule in the other direction.
+- **Texture cannot be judged:** every paired board in the bank is the
+  same board, so that split is one board, not a finding.
+
+**Disclosed.** `FLOP_UNDER_FOLD_NOTE` (`flop-under-fold`) fires on the
+flop, facing a bet of at most half the pot, with hero's strength in
+0.40-0.75. **Exposure is high: 6.1% of real decisions are a flop facing
+a bet and 5.96% face half the pot or less** (24,948 real decisions).
+It is first-class in the front end, beside the turn-shove and
+river-under-fold warnings.
+
+**The copy says the cost is NOT known**, because it is not: pricing a
+flop leaf needs the turn and river serialised inside the reference (F67,
+3.5 GB a spot), which is A8. M237's rule - a frequency gap read as a
+price is the error that milestone corrected.
+
+**Both directions occur.** On a paired board we call where the reference
+folds 1.000 with ace-high; on another board we fold 1.000 with a flush
+draw the reference never folds. The mean is an under-fold; the tail is
+categorical in both directions.
