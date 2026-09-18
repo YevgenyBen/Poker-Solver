@@ -16344,3 +16344,45 @@ exact conservation.
 measured not to produce one. It is the instrument that needs no
 reference at all: M233 priced the turn's gap by EXPLOITABILITY, which
 has no shared blind spot and no dump to disagree with. Queued as A15.
+
+## M278 - the turn measured without a reference (A15)
+
+A14 withdrew the turn's grades because the references behind them could
+not resolve a gap their own size. A15 measures what CAN still be
+measured there: distance from equilibrium inside this engine's own
+model, which needs no reference and has no shared blind spot (M211's
+instrument, M233's application).
+
+**24 fresh turn spots at the SHIPPED configuration** (cap 140, 250
+iterations, the M213 menu), 3-bet pots at 100bb, SPR 6.17:
+
+| | % of pot |
+|---|---|
+| median | **0.559** |
+| mean | 0.571 |
+| p90 | 0.674 |
+| worst | 0.738 |
+| over 1.0% | **0 of 24** |
+
+- **It replicates M233 on fresh spots**: that milestone measured 0.562%
+  at the same budget over 10 spots; this is 0.559% over 24 sharing
+  nothing with them. The bar fixed before the run - a median at or under
+  1% of pot, the same one A13 applies to a reference - is met.
+- **1.7s a spot**, so this is a check that can be run routinely rather
+  than a campaign.
+- **The lever, for the record and not adopted**: M233 measured 1,000
+  iterations at 0.083%, and M213 refused that budget for the turn on
+  latency (0.97s -> 6.06s through `/advise`). Nothing here reopens it.
+
+**WHAT THIS DOES NOT RESTORE, said in the same breath as the figure.**
+Exploitability says the turn is solved well INSIDE its own model. The
+withdrawn grades asked a different question - whether the model is the
+game - and M233 already showed the two come apart there: converging to
+0.083% took the engine FURTHER from the independent reference. A14
+established that the reference cannot currently adjudicate that
+question, and A15 does not either.
+
+**So the turn's honest status is two numbers and one gap:** 0.56% of pot
+from its own equilibrium (measured, replicated), 2.4 bb for the shove
+disagreement (a floor, M277), and no working instrument for the model
+error between them.

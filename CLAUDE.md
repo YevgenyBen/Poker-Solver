@@ -562,8 +562,14 @@ same nine references, re-scored against heroes drawn by range weight -
   figure 0.329 -> 0.046% and the dumped strategy 3.91 -> 3.81%.
   **The shove price survives** - 2.408 bb is 16% of pot, 4-8x the
   instrument's own slack, and was always published as a floor.
-  **Next**: the turn's distance needs the reference-FREE instrument
-  (M233's exploitability), not a better dump (A15).
+  **A15 (M278) ran that instrument**: at the shipped settings the turn is
+  **0.559% of pot from its own equilibrium** (24 fresh spots, worst
+  0.738%, none over 1%, 1.7s a spot), replicating M233's 0.562%. **It
+  restores no grade** - exploitability says the turn is SOLVED well, not
+  that the model is the game, and M233 showed those come apart. The
+  turn's honest status is now: 0.56% from its own equilibrium, 2.4 bb on
+  the shove disagreement (a floor), and no instrument for the model error
+  between them.
 - **THE TURN SHOVES FACING A BET WHERE THE REFERENCE NEVER DOES.**
   - **The behaviour:** strong made hands facing a turn bet move all-in
     ~0.9998. The reference calls, or raises small.
