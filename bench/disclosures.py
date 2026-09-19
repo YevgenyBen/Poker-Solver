@@ -139,9 +139,6 @@ REGISTRY = (
         "PREFLOP_TWO_LIVE_ONE_RAISE_REASON", "M287", HAND_STORE, _ONE_RAISE,
         study="bench/studies/two_live_silent.py"),
     Disclosure(
-        "PREFLOP_FOLD_SEED_6_REASON", "M289", ENGINE, ("PREFLOP_FOLD_SEED_MOVE_6",),
-        literals={"6": "table size"}, study="bench/studies/preflop_fold_seeds.py"),
-    Disclosure(
         "PREFLOP_FOLD_SEED_8_REASON", "M289", ENGINE, ("PREFLOP_FOLD_SEED_MOVE_8",),
         literals={"8": "table size"}, study="bench/studies/preflop_fold_seeds.py"),
     Disclosure(

@@ -267,6 +267,9 @@ def _load_or_solve_multiway(solved_stack_bb: float, players: int) -> StrategyRes
         iterations=table["iterations"],
         seed=1,
         floor_regret=table.get("floor_regret"),
+        # M290: several traversal seeds, sums added. 1 (the default) is the
+        # single solve exactly.
+        ensemble=table.get("ensemble", 1),
     )
     # M215. Drop the node_data entries that never accumulated
     # anything before this is cached. MCCFR VISITS far more nodes

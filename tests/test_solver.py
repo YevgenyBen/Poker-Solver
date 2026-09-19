@@ -2793,3 +2793,59 @@ def test_solve_preflop_passes_a_continuation_table_with_the_stack(monkeypatch):
     solver_module.solve_preflop(config=config, hands=[StartingHand("A", "A")],
                                 equity_cache=object(), iterations=1)
     assert "continuation_table" not in seen and "stack_bb" not in seen
+
+
+# -- M290: a preflop seed ensemble ---------------------------------------
+
+def _three_max_solve(**kwargs):
+    config = GameConfig(positions=("BTN", "SB", "BB"))
+    cache = MultiwayEquityCache(hands=_M9_HANDS, samples=50, seed=1)
+    return solve_preflop(config=config, hands=_M9_HANDS, equity_cache=cache,
+                         iterations=60, **kwargs)
+
+
+def _sums_by_path(result):
+    from poker_solver.persist import built_walk
+    out = {}
+    for node, path in built_walk(result.root):
+        table = result.node_data.get(id(node))
+        if table is not None:
+            out[path] = (table.strategy_sum.copy(), table.regret_sum.copy())
+    return out
+
+
+def test_an_ensemble_of_one_is_the_single_solve_exactly():
+    a, b = _sums_by_path(_three_max_solve(seed=3)), _sums_by_path(_three_max_solve(seed=3, ensemble=1))
+    assert a.keys() == b.keys()
+    for path in a:
+        assert np.array_equal(a[path][0], b[path][0]) and np.array_equal(a[path][1], b[path][1])
+
+
+def test_an_ensemble_adds_the_sums_of_its_runs():
+    """M290: sums ADDED over runs at seeds seed, seed+1 - M169's rule, so an
+    untrained row stays zero. Checked against the two runs solved alone."""
+    both = _sums_by_path(_three_max_solve(seed=3, ensemble=2))
+    first, second = _sums_by_path(_three_max_solve(seed=3)), _sums_by_path(_three_max_solve(seed=4))
+    assert set(both) == set(first) | set(second)
+    for path, (strategy, regret) in both.items():
+        expect_s = sum(x[path][0] for x in (first, second) if path in x)
+        expect_r = sum(x[path][1] for x in (first, second) if path in x)
+        assert np.allclose(strategy, expect_s) and np.allclose(regret, expect_r)
+
+
+def test_an_ensemble_keeps_untrained_rows_untrained():
+    """A row is trained in the ensemble exactly when some run trained it -
+    never because averaging turned "unreached" into a prior that sums to
+    1 (the prototype M169 caught)."""
+    both = _sums_by_path(_three_max_solve(seed=3, ensemble=2))
+    runs = [_sums_by_path(_three_max_solve(seed=s)) for s in (3, 4)]
+    untrained_somewhere = 0
+    for path, (strategy, _) in both.items():
+        merged = strategy.sum(axis=1) > 0
+        union = np.zeros_like(merged)
+        for run in runs:
+            if path in run:
+                union |= run[path][0].sum(axis=1) > 0
+        assert np.array_equal(merged, union)
+        untrained_somewhere += int((~merged).sum())
+    assert untrained_somewhere > 0, "the fixture must contain untrained rows to test this"
