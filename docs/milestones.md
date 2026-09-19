@@ -16867,3 +16867,80 @@ Not claimed as a win: 6% of wall time on one sample, one arm.
 Deliberately not done: filling the store before the replay (~2.9h idle),
 and any comparison of units against the 2026-09-08 audit, which has no
 units to compare with.
+
+## M287 - the two-live gate's silence, measured from outside (audit R5)
+
+`_is_two_live_multiway_preflop` fired only at 3bb or more owed, so the big
+blind facing a single open heads-up was never warned. M253 tried to
+settle whether that was right and could not: its verdict flipped at a
+realisation factor of ~0.87, inside the plausible band.
+`bench/studies/two_live_silent.py` needs no such assumption. It compares
+our continue probability with what the published six-handed AI in the
+hand store ACTUALLY did at the same node, on every such decision it made:
+1,774, split at the old gate by what OUR tree says is owed.
+
+**The rule was pre-registered, and amended once, before measuring.**
+Counting the population, before any `/advise` call, showed the gated
+cell's weak band held 5 rows of 347: that player almost never reaches a
+three-bet with trash. The registered control would have failed on power
+alone. The amendment hands the control to the whole gated cell when the
+weak band has fewer than 20 rows. It is written into the study, tested
+both ways, and reported beside the registered form.
+
+| cell | n | weak n | ours (weak) | reference (weak) | excess | sigma |
+|---|---|---|---|---|---|---|
+| gated (>= 3.0 owed), whole cell | 347 | - | - | - | +0.447 | **16.4** (control) |
+| gated, weak band | 347 | 5 | 0.872 | 0.400 | +0.472 | 1.94 |
+| silent (< 3.0 owed) | 1,427 | 338 | 0.421 | 0.207 | **+0.214** | **8.70** |
+
+The split halves are 5.66 and 6.63. **Verdict: WIDEN.** Split by what is
+owed, the silent cell is two different things:
+
+| owed | band | n | ours | reference | excess | sigma |
+|---|---|---|---|---|---|---|
+| 0.5 (small blind completes) | weak | 107 | 0.028 | 0.112 | -0.084 | -2.8 |
+| **1.5 (big blind facing an open)** | **weak** | 231 | **0.603** | **0.251** | **+0.352** | **12.2** |
+| 1.5 | mid | 257 | 0.623 | 0.280 | +0.343 | 12.0 |
+
+The excess is positive against every opener: +0.54 under the gun, +0.27
+middle position, +0.25 cutoff, +0.36 button, and +0.33 small blind.
+**Under the gun the big blind's row is close to uniform for every hand**:
+72o fold 0.28 / call 0.28 / raise 0.22 / all-in 0.22, and KQo nearly the
+same, served at `trained: true` and "high" (F60).
+
+**Shipped:**
+- **The gate:** `PREFLOP_TWO_LIVE_MIN_TO_CALL_BB` 3.0 -> **1.0**, which
+  sits between the completion's 0.5 and the big blind's 1.5.
+- **M282's population is unchanged:**
+  `PREFLOP_TWO_LIVE_RERAISE_MIN_TO_CALL_BB = 3.0` keeps
+  `bench/studies/two_live.py` drawing the same 84 nodes.
+- **A third copy grade:** `PREFLOP_TWO_LIVE_ONE_RAISE_REASON` (60%
+  against 25%, 231 decisions), chosen on `preflop_raises == 1`. Unknown
+  depth still falls to the four-bet string.
+- **`SIZING_CAVEAT_REASON` says "a raise", not "a re-raise"**, and quotes
+  the same constants. M285's lesson: one number, two strings, one change.
+- **Re-derivable:** the rows are committed
+  (`tests/data/two_live_silent_m287.json`), and `shipped_figures`
+  reproduces every new constant from them exactly. The recorded verdict
+  is re-derived in a test.
+
+**Guards:** the new tests fail when the gate goes back to 3.0 (4 of them).
+
+**Exposure: 3.4% -> 13.3% of six-handed preflop decisions** in the hand
+store, which makes it the most-met preflop warning. It lowers
+`solver_confidence` there, which is the point: that confidence was not
+earned.
+
+**Scope:**
+- **The reference is ONE strong player's choices.** The copy says
+  "further from strong play", never "wrong".
+- **Measured at six-handed 100bb only.** The gate fires at every table
+  size, the same extrapolation M251's cell made from 3- and 6-max, which
+  M282 then found was a floor.
+
+**Deliberately not done:**
+- **Fixing the node.** F60 (a near-uniform row) wants a near-prior test,
+  and near-indifference is also a real answer, so it needs a threshold
+  study first (R8).
+- **Pricing the excess in bb.** M253 showed a price here rests on
+  realisation.

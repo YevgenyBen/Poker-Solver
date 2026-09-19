@@ -37,7 +37,7 @@ def _node_at(players, path):
 def test_every_drawn_spot_is_the_population_it_claims(control):
     """The gate's predicate re-checked on each spot by walking its path,
     not trusted from the sampler that produced it."""
-    gate = cfg.PREFLOP_TWO_LIVE_MIN_TO_CALL_BB
+    gate = cfg.PREFLOP_TWO_LIVE_RERAISE_MIN_TO_CALL_BB
     spots = study.draw_spots(gate, control=control, target=3, sizes=(3, 6, 9))
     assert spots
     for spot in spots:
@@ -50,7 +50,7 @@ def test_every_drawn_spot_is_the_population_it_claims(control):
 
 
 def test_the_draw_is_seeded():
-    gate = cfg.PREFLOP_TWO_LIVE_MIN_TO_CALL_BB
+    gate = cfg.PREFLOP_TWO_LIVE_RERAISE_MIN_TO_CALL_BB
     assert (study.draw_spots(gate, target=4, sizes=(4, 7))
             == study.draw_spots(gate, target=4, sizes=(4, 7)))
 
@@ -59,7 +59,7 @@ def test_the_draw_reproduces_the_population_m282_measured():
     """The same seed and rules give the same 84 spots M282 measured, so a
     re-run measures the population the shipped figure describes."""
     data = json.loads(FIXTURE.read_text())
-    spots = study.draw_spots(cfg.PREFLOP_TWO_LIVE_MIN_TO_CALL_BB)
+    spots = study.draw_spots(cfg.PREFLOP_TWO_LIVE_RERAISE_MIN_TO_CALL_BB)
     assert len(spots) == len(data["rows"]) == cfg.PREFLOP_TWO_LIVE_NODES
     assert (sorted((s["players"], s["raises"]) for s in spots)
             == sorted((r["players"], r["raises"]) for r in data["rows"]))

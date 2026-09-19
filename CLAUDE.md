@@ -2289,8 +2289,9 @@ requests now reject unknown fields by name rather than ignoring them.
   why**: an unraised small blind owes 0.5 into a 1.5 pot — a price of
   0.25, inside the measured band of 0.2222-0.2727, because a ratio
   cannot tell a blind completion from a 4-bet.
-  `PREFLOP_TWO_LIVE_MIN_TO_CALL_BB = 3.0` against 9.0 at every measured
-  node.
+  The gate was 3.0 at the time, against 9.0 at every measured node
+  (`PREFLOP_TWO_LIVE_RERAISE_MIN_TO_CALL_BB = 3.0` still bounds M282's
+  population); M287 widened it to `PREFLOP_TWO_LIVE_MIN_TO_CALL_BB = 1.0`.
   **Heads-up is NOT clean either and is deliberately not warned about**:
   the exact solver continues with trash 0.5832 / 0.4419 at the identical
   price. n=2, on a path this study did not set out to measure — recorded
@@ -2331,6 +2332,27 @@ requests now reject unknown fields by name rather than ignoring them.
   effect is real and far smaller, 0.3482 against 0.1198 at 2.80 sigma.
   **Rule: re-measure a disclosed figure over the population its gate
   fires on, not over the list that first found it.**
+  **M287 (audit R5) FOUND THE GATE'S SILENCE WAS NOT EARNED.** Below 3bb
+  owed it said nothing, and M253 could not settle whether that was right
+  because its verdict hung on a realisation assumption. So it was
+  measured against what a strong outside player actually did at the same
+  nodes: 1,774 real six-handed decisions, under a pre-registered rule.
+  - **The control passed.** The re-raise cell over-continues +0.447 at
+    16.4 sigma. Its weak band held only 5 rows, so an amendment, written
+    before any of our answers were seen, gave the control to the whole
+    cell.
+  - **The big blind facing ONE open fails.** The weakest quarter of
+    hands continues **0.603 against 0.251, +0.352 at 12.2 sigma**, with
+    split halves 5.66 / 6.63. It is positive against every opener, and
+    worst under the gun (+0.54), where the row is close to uniform over
+    four actions for every hand, 72o included - served at "high".
+  - **The blind completion (0.5 owed) earned its silence**: there we are
+    TIGHTER than the reference (-0.084).
+  - **Shipped:** the gate fires from 1.0bb, with a third copy grade
+    (`PREFLOP_TWO_LIVE_ONE_RAISE_REASON`) re-derived from committed rows.
+    Exposure rises from **3.4% to 13.3%** of six-handed preflop decisions.
+  - **Not a fix.** A near-uniform row slips past `_row_is_the_prior`,
+    which wants EXACT uniformity (F60 in the 2026-09-18 audit).
   **M279 FOUND THE CAUSE AND IT IS NOT THE PRICING.** M250's prescribed
   route was built exactly - a continuation table keyed on RAISE COUNT,
   entries from HEADS-UP ranges of that depth - and it leaves this node

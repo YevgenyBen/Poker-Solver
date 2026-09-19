@@ -1888,7 +1888,25 @@ LOW_CONFIDENCE_TABLE_SIZES = {
 # What separates them is the absolute size of what is owed: 9.0bb at
 # every measured node against half a blind. 3.0 sits well above any blind
 # completion or limp and well below the measured 9.0.
-PREFLOP_TWO_LIVE_MIN_TO_CALL_BB = 3.0
+#
+# **M287 WIDENED IT TO A SINGLE RAISE (audit R5).** 3.0 left the big blind
+# facing one open silent, and nobody had established that the silence was
+# earned (M253 could not: its verdict flipped on a realisation assumption).
+# Measured against what a strong outside player ACTUALLY did at the same
+# nodes - 1,774 real six-handed decisions, pre-registered rule - the
+# positive control reproduced M282 (whole re-raise cell +0.447, 16.4
+# sigma) and the single-raise cell failed its silence: weakest quarter of
+# hands continued 0.603 against 0.251, **+0.352 at 12.2 sigma**, split
+# halves 5.66 / 6.63, and positive against every opener (+0.25 cutoff to
+# +0.54 under the gun). The blind completion (0.5 owed) stays silent and
+# EARNED it: there we are TIGHTER than the reference (-0.084). 1.0 sits
+# between the 0.5 of a completion and the 1.5 of a big blind facing an
+# open.
+PREFLOP_TWO_LIVE_MIN_TO_CALL_BB = 1.0
+# The re-raise cells M282 measured, and the population
+# `bench/studies/two_live.py` draws: its 84 nodes and every figure below
+# describe what is owed at or above this, not the widened gate.
+PREFLOP_TWO_LIVE_RERAISE_MIN_TO_CALL_BB = 3.0
 # **M282 re-measured all of this over the gate's OWN population, and the
 # figure M281 shipped was too kind.** M251 assembled 22 paths by hand and
 # M281 re-ran that same hand-written set; M252's rule says a benchmark
@@ -1970,6 +1988,25 @@ PREFLOP_TWO_LIVE_THREE_BET_REASON = (
     "it is still too loose. Strong hands are handled correctly, so treat the raise/all-in "
     "numbers as usable and be sceptical of advice to continue with a weak hand."
 )
+# M287: the single-raise cell, from the silent-cell study
+# (`bench/studies/two_live_silent.py`, rows committed as
+# `tests/data/two_live_silent_m287.json`). Weakest quarter of hands by
+# equity against a random hand; the reference is one strong player's
+# choices at the same nodes, so the copy says "further from strong play",
+# never "wrong".
+PREFLOP_TWO_LIVE_ONE_RAISE_CONTINUES = 0.603
+PREFLOP_TWO_LIVE_ONE_RAISE_REFERENCE = 0.251
+PREFLOP_TWO_LIVE_ONE_RAISE_DECISIONS = 231
+PREFLOP_TWO_LIVE_ONE_RAISE_REASON = (
+    "Everyone else has folded, so this is a two-player pot facing a single raise — and "
+    "here this engine continues too often with weak hands. Over 231 real six-handed "
+    "decisions at this kind of node, it continued about 60% of the time with the weakest "
+    "quarter of hands, where a strong outside player continued about 25%. Against an "
+    "early-position open it is at its worst: the row is close to an even split across "
+    "every action whatever the hand, which is not a considered defence. Strong hands are "
+    "handled sensibly, so treat those numbers as usable and be sceptical of advice to "
+    "continue with a weak one."
+)
 #: Kept as the name the rest of the codebase and the tests reach for when
 #: they mean "this warning", and deliberately the SEVERE one: a caller
 #: that forgets to grade shows the worse figure rather than the milder,
@@ -2025,11 +2062,13 @@ SIZING_CAVEAT_REASON = (
     "solve puts it near 0.03. The fold-vs-play call is sounder but is NOT a positional "
     "range chart. Individual hands are classified sensibly while three or more players "
     "are live — premiums are never folded, trash is — but NOT once everyone else has "
-    "folded and you face a re-raise heads-up, where hands as weak as 72o are told to "
+    "folded and you face a raise heads-up, where hands as weak as 72o are told to "
     f"continue about {round(PREFLOP_TWO_LIVE_FOUR_BET_CONTINUES * 100)}% of the time "
     f"against a four-bet and about {round(PREFLOP_TWO_LIVE_THREE_BET_CONTINUES * 100)}% "
     f"against a three-bet (measured over {PREFLOP_TWO_LIVE_NODES} spots) and folding is "
-    "correct. The "
+    "correct, and the weakest quarter of hands continues about "
+    f"{round(PREFLOP_TWO_LIVE_ONE_RAISE_CONTINUES * 100)}% against a single open where a "
+    f"strong player continued about {round(PREFLOP_TWO_LIVE_ONE_RAISE_REFERENCE * 100)}%. The "
     "opening range also does not widen with position at all — at 6-max "
     "the fold frequency is flat across UTG, MP, CO and BTN, where real GTO play widens "
     "from roughly 15% of hands under the gun to roughly 45% on the button. Treat this "
