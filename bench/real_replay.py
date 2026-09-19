@@ -139,8 +139,17 @@ def request_for(hand, acts: list, upto: int, stack_bb: float,
     return req, None, worst
 
 
-def replay_one(hand, rng: random.Random, post: Callable) -> dict:
-    """Pick one decision in `hand` at random and ask `/advise` about it."""
+def replay_one(hand, rng: random.Random, post: Callable, clock=None) -> dict:
+    """Pick one decision in `hand` at random and ask `/advise` about it.
+
+    `clock` (a `bench.reference_units.DriftClock`) adds `units` - the
+    request's time over a reference workload timed beside it - to each
+    answered row. M286: the 2026-09-18 audit could draw NO latency
+    comparison with the audit before it, because wall-clock seconds on
+    this machine drift up to 9.7x inside one run (M240); units are what
+    make two replays comparable. Off by default, since it adds ~0.28s a
+    decision.
+    """
     stack = round(hand.row["eff_stack_bb"], 2)
     acts = [a for a in hand.streets() if a.kind != "show"]
     cards = deal(hand.board, hand.n_players, rng)
@@ -155,9 +164,14 @@ def replay_one(hand, rng: random.Random, post: Callable) -> dict:
     if req is None:
         return dict(row, outcome="unrepresentable", why=why)
     req["hero_cards"] = cards[a.player]
-    t0 = time.perf_counter()
-    status, js = post(req)
-    row["seconds"] = round(time.perf_counter() - t0, 3)
+    if clock is None:
+        t0 = time.perf_counter()
+        status, js = post(req)
+        row["seconds"] = round(time.perf_counter() - t0, 3)
+    else:
+        (status, js), m = clock.measure(post, req)
+        row.update(seconds=round(m.seconds, 3), units=round(m.units, 3),
+                   reference_seconds=round(m.reference_seconds, 4))
     if status != 200:
         return dict(row, outcome="refused", why=str(js.get("detail"))[:160])
     return dict(row, outcome="answered", defects=response_defects(js, req),
@@ -186,6 +200,28 @@ def sample_hands(db, sample: int, seed: int, where: str = DEFAULT_WHERE,
         yield hand
 
 
+def replay_to(out: str, hands, rng: random.Random, post: Callable, clock=None):
+    """Replay `hands` into `out` as JSON lines, one row per hand.
+
+    With a `clock`, every row carries units and the run's drift report is
+    written to `out + ".drift.json"` and returned - the number that says
+    whether this run's seconds can be read at all (M240). M286's first
+    baseline run parsed `--units` in `main` and never passed the clock on,
+    so 1,200 rows came back in seconds alone. The loop lives here so the
+    wiring is tested rather than trusted.
+    """
+    with open(out, "w") as fh:
+        for hand in hands:
+            fh.write(json.dumps(replay_one(hand, rng, post, clock)) + "\n")
+            fh.flush()
+    if clock is None:
+        return None
+    report = clock.report()
+    with open(out + ".drift.json", "w") as fh:
+        json.dump(report, fh, indent=1)
+    return report
+
+
 def main(argv=None):                                      # pragma: no cover
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sample", type=int, default=1200)
@@ -196,6 +232,9 @@ def main(argv=None):                                      # pragma: no cover
                         help="multiway table sizes to prewarm")
     parser.add_argument("--depths", default="100,50,20",
                         help="stack depths to prewarm them at")
+    parser.add_argument("--units", action="store_true",
+                        help="time each request in reference units too (M286), and "
+                             "write the run's drift report beside --out")
     args = parser.parse_args(argv)
 
     from fastapi.testclient import TestClient
@@ -215,12 +254,15 @@ def main(argv=None):                                      # pragma: no cover
         return hand.n_players != 9 or math.floor(hand.row["eff_stack_bb"] / 5) * 5 == 100
 
     db = hand_db.connect()
-    rng = random.Random(args.seed)
-    with open(args.out, "w") as fh:
-        for hand in sample_hands(db, args.sample, args.seed, where=args.where,
-                                 accept=not_cold_nine_max):
-            fh.write(json.dumps(replay_one(hand, rng, post)) + "\n")
-            fh.flush()
+    clock = None
+    if args.units:
+        from bench.reference_units import DriftClock
+        clock = DriftClock()
+    report = replay_to(args.out, sample_hands(db, args.sample, args.seed, where=args.where,
+                                              accept=not_cold_nine_max),
+                       random.Random(args.seed), post, clock)
+    if report is not None:
+        print(json.dumps(report, indent=1))
 
 
 if __name__ == "__main__":                                # pragma: no cover
