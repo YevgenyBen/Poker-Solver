@@ -7,7 +7,7 @@ this is the figure that went stale three times (M281, M282, and the
 sizing caveat's duplicate found in M285).
 
 **Method (M282).** Reject-sample the gate's own predicate off the real
-tree - exactly two live, owed at least `PREFLOP_TWO_LIVE_MIN_TO_CALL_BB` -
+tree - exactly two live, owed at least `PREFLOP_TWO_LIVE_RERAISE_MIN_TO_CALL_BB` -
 at every table size the warning can fire at, and ask `/advise` with the
 five trash hands M251 used. The control is the same sampler with three or
 more live. A hand-written list of paths generates itself (M252), which is
@@ -153,7 +153,7 @@ def main(argv=None) -> int:                              # pragma: no cover
         r = client.post("/advise", json=body)
         return r.status_code, (r.json() if r.status_code == 200 else {})
 
-    gate = cfg.PREFLOP_TWO_LIVE_MIN_TO_CALL_BB
+    gate = cfg.PREFLOP_TWO_LIVE_RERAISE_MIN_TO_CALL_BB
     rows = measure(draw_spots(gate, target=target), post)
     control = measure(draw_spots(gate, control=True, target=target), post)
     fresh = summarise(rows, control, cfg.PREFLOP_TWO_LIVE_GRADE_MIN_RAISES)

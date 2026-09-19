@@ -112,6 +112,8 @@ def unsourced_numbers(entry: Disclosure, cfg) -> list:
 _TWO_LIVE = ("PREFLOP_TWO_LIVE_FOUR_BET_CONTINUES", "PREFLOP_TWO_LIVE_FOUR_BET_NODES",
              "PREFLOP_TWO_LIVE_THREE_BET_CONTINUES", "PREFLOP_TWO_LIVE_THREE_BET_NODES",
              "PREFLOP_TWO_LIVE_NODES", "PREFLOP_MANY_LIVE_TRASH_CONTINUES")
+_ONE_RAISE = ("PREFLOP_TWO_LIVE_ONE_RAISE_CONTINUES", "PREFLOP_TWO_LIVE_ONE_RAISE_REFERENCE",
+              "PREFLOP_TWO_LIVE_ONE_RAISE_DECISIONS")
 _TWO_LIVE_PRICE = {
     "72": "hand name (72o), not a measurement",
     "27%": "M251: the equity the call needs - 9.00 owed into a 24.00 pot, read off the tree",
@@ -133,6 +135,9 @@ REGISTRY = (
         "PREFLOP_TWO_LIVE_REASON", "M282", ENGINE, _TWO_LIVE,
         literals=_TWO_LIVE_PRICE, study="bench/studies/two_live.py",
         provenance="a18_sample.py"),
+    Disclosure(
+        "PREFLOP_TWO_LIVE_ONE_RAISE_REASON", "M287", HAND_STORE, _ONE_RAISE,
+        study="bench/studies/two_live_silent.py"),
     Disclosure(
         "FLOP_UNDER_FOLD_NOTE", "M272", REFERENCE,
         ("FLOP_UNDER_FOLD_ROWS", "FLOP_UNDER_FOLD_GAP",
@@ -201,8 +206,8 @@ REGISTRY = (
         superseded_by="M269 grouped action matching (see MULTIWAY_STABLE_REASON)",
         provenance="m254_predict_instability.py"),
     Disclosure(
-        "SIZING_CAVEAT_REASON", "M110/M282", ENGINE,
-        _TWO_LIVE,
+        "SIZING_CAVEAT_REASON", "M110/M282/M287", ENGINE,
+        _TWO_LIVE + _ONE_RAISE,
         literals={"72": "hand name (72o)", "6": "6-max",
                   "0.03": "M72/M139: AA's jam at the shipped 6-max budget and its converged value",
                   "0.92": "M110: AA's jam at 12,000 iterations, worst seed",

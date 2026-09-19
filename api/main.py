@@ -1630,10 +1630,17 @@ def _solver_confidence(raw: dict, players: int, hero: dict | None = None,
         # and a three-bet 0.3482 (7.29 sigma). Falls to the SEVERE string
         # when the node cannot say how deep it is, which is the direction
         # M232 allows a warning to err in.
+        #
+        # M287 widened the gate to a single raise, a third grade with its
+        # own measurement (the silent-cell study, 0.603 against a strong
+        # player's 0.251). Unknown depth still falls to the severe string.
         raises = raw.get("preflop_raises")
-        deep = raises is None or raises >= cfg.PREFLOP_TWO_LIVE_GRADE_MIN_RAISES
-        reasons.append(cfg.PREFLOP_TWO_LIVE_FOUR_BET_REASON if deep
-                       else cfg.PREFLOP_TWO_LIVE_THREE_BET_REASON)
+        if raises is None or raises >= cfg.PREFLOP_TWO_LIVE_GRADE_MIN_RAISES:
+            reasons.append(cfg.PREFLOP_TWO_LIVE_FOUR_BET_REASON)
+        elif raises >= 2:
+            reasons.append(cfg.PREFLOP_TWO_LIVE_THREE_BET_REASON)
+        else:
+            reasons.append(cfg.PREFLOP_TWO_LIVE_ONE_RAISE_REASON)
     if _node_is_untrained(raw):
         reasons.append(cfg.UNTRAINED_NODE_REASON)
     elif _hero_row_is_the_prior(hero):

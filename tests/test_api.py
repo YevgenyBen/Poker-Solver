@@ -8851,10 +8851,58 @@ def test_the_two_live_warning_is_graded_by_raise_count():
 
     assert api_config.PREFLOP_TWO_LIVE_FOUR_BET_REASON in reason_for(3)
     assert api_config.PREFLOP_TWO_LIVE_THREE_BET_REASON in reason_for(2)
+    # M287: the single-raise cell has its own measurement, and a node
+    # there must not borrow either re-raise figure.
+    one = reason_for(1)
+    assert api_config.PREFLOP_TWO_LIVE_ONE_RAISE_REASON in one
+    assert api_config.PREFLOP_TWO_LIVE_THREE_BET_REASON not in one
+    assert api_config.PREFLOP_TWO_LIVE_FOUR_BET_REASON not in one
     assert api_config.PREFLOP_TWO_LIVE_FOUR_BET_REASON in reason_for(None), (
         "a node that cannot report its raise count must fall to the "
         "SEVERE string, never the milder one"
     )
+
+
+def test_the_big_blind_facing_one_open_heads_up_is_warned(client):
+    """M287 (audit R5). The gate was silent below a three-bet, and the
+    silence was never earned: over 231 real six-handed decisions the
+    weakest quarter of hands continued 0.603 here against a strong
+    player's 0.251, +0.352 at 12.2 sigma. Against an under-the-gun open
+    the row is close to uniform over four actions - jamming 100bb with
+    72o about a fifth of the time - and it was served at "high".
+    """
+    response = client.post("/advise", json=_advise_body(
+        stack_bb=100.0, players=6, hero_cards="7c2d",
+        preflop_action_path=["raise", "fold", "fold", "fold", "fold"]))
+    assert response.status_code == 200, response.json()
+    payload = response.json()
+    assert len(payload["positions"]) == 2
+    assert payload["solver_confidence"] == "low"
+    assert (api_config.PREFLOP_TWO_LIVE_ONE_RAISE_REASON.strip()[:60]
+            in (payload["solver_confidence_reason"] or ""))
+
+
+def test_the_widened_gate_still_leaves_the_blind_completion_alone():
+    """M287 measured the 0.5bb completion too, and there we are TIGHTER
+    than the reference with weak hands (-0.084). The gate has to sit
+    between 0.5 and the big blind's 1.5 facing an open, or it quotes a
+    defect onto a spot measured not to have it."""
+    from api import main as api_main
+    base = {"street": "preflop", "positions": ["SB", "BB"]}
+    assert not api_main._is_two_live_multiway_preflop({**base, "to_call_bb": 0.5}, 6)
+    assert api_main._is_two_live_multiway_preflop({**base, "to_call_bb": 1.5}, 6)
+    assert 0.5 < api_config.PREFLOP_TWO_LIVE_MIN_TO_CALL_BB <= 1.5
+    assert (api_config.PREFLOP_TWO_LIVE_MIN_TO_CALL_BB
+            < api_config.PREFLOP_TWO_LIVE_RERAISE_MIN_TO_CALL_BB)
+
+
+def test_the_one_raise_warning_quotes_its_own_measurement():
+    one = api_config.PREFLOP_TWO_LIVE_ONE_RAISE_REASON
+    assert str(api_config.PREFLOP_TWO_LIVE_ONE_RAISE_DECISIONS) in one
+    assert f"{round(api_config.PREFLOP_TWO_LIVE_ONE_RAISE_CONTINUES * 100)}%" in one
+    assert f"{round(api_config.PREFLOP_TWO_LIVE_ONE_RAISE_REFERENCE * 100)}%" in one
+    assert (api_config.PREFLOP_TWO_LIVE_ONE_RAISE_REFERENCE
+            < api_config.PREFLOP_TWO_LIVE_ONE_RAISE_CONTINUES)
 
 
 def test_the_sizing_caveat_no_longer_claims_trash_is_always_folded():
@@ -8875,7 +8923,10 @@ def test_the_sizing_caveat_no_longer_claims_trash_is_always_folded():
         "be stated - what M251 corrected is its SCOPE, not its truth"
     )
     assert "three or more players are live" in reason
-    assert "re-raise" in reason
+    # M287 widened the scope from a re-raise to any raise once two are left.
+    assert "face a raise heads-up" in reason
+    assert f"{round(api_config.PREFLOP_TWO_LIVE_ONE_RAISE_CONTINUES * 100)}%" in reason
+    assert f"{round(api_config.PREFLOP_TWO_LIVE_ONE_RAISE_REFERENCE * 100)}%" in reason
     # M285: this asserted the literal "98%", which pinned the copy to a
     # number typed into the TEST - so when M281 and M282 re-measured the
     # figure, this caveat kept M251's value and any correction would have
