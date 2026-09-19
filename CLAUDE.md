@@ -975,7 +975,8 @@ requests now reject unknown fields by name rather than ignoring them.
                            configuration (M285)
       studies/             studies that re-derive shipped figures, runnable
                            from the repo - `two_live.py` first (M285),
-                           `two_live_silent.py` (M287), `node_spread.py` (M288)
+                           `two_live_silent.py` (M287), `node_spread.py` (M288),
+                           `preflop_fold_seeds.py` (M289)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools
@@ -2366,6 +2367,15 @@ requests now reject unknown fields by name rather than ignoring them.
     call moves by more than ten points with the seed.** Facing an open
     it is 0.15-0.20; first-in opens are stable (UTG 0.023). The caveat's
     "the fold-vs-play call is sounder" holds at the open only (R9).
+  **M289 (R9) measured every multiway size and DISCLOSED it.** Fresh
+  seeds, real hands of each size, a pre-registered rule. Facing a raise
+  the fold call moves **0.150 / 0.130 / 0.147** at **6 / 8 / 9-handed**,
+  against 0.056-0.067 first in. `PREFLOP_FOLD_SEED_{6,8,9}_REASON` fires
+  there and lowers confidence. At 4, 5 and 7 EVERYTHING moves, so the
+  contrast would be false and they stay silent; 7-handed's string no
+  longer recommends the fold call. 3-handed is quiet (0.046). Reduction
+  by seed ensemble is R10: a preflop solve is precomputed, so averaging
+  seeds costs warm-up time rather than request latency.
   **M279 FOUND THE CAUSE AND IT IS NOT THE PRICING.** M250's prescribed
   route was built exactly - a continuation table keyed on RAISE COUNT,
   entries from HEADS-UP ranges of that depth - and it leaves this node

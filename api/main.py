@@ -1594,6 +1594,19 @@ def _is_two_live_multiway_preflop(raw: dict, players: int) -> bool:
     return bool(owed) and owed >= cfg.PREFLOP_TWO_LIVE_MIN_TO_CALL_BB
 
 
+def _preflop_fold_is_seed_dependent(raw: dict, players: int) -> bool:
+    """M289 (audit R9 / F61): a multiway preflop node where the player faces
+    a raise, at a table size where the fold call was measured moving with
+    the solver's seed. A raise on the path AND something owed - so a
+    first-in decision, a limped pot and a checked option stay silent,
+    because the study measured those as the steadier half."""
+    if raw.get("street") != "preflop" or players not in cfg.PREFLOP_FOLD_SEED_REASONS:
+        return False
+    raises = raw.get("preflop_raises")
+    owed = raw.get("to_call_bb") or 0.0
+    return bool(raises) and raises >= 1 and owed > 1e-9
+
+
 def _solver_confidence(raw: dict, players: int, hero: dict | None = None,
                        street: str | None = None):
     """(level, reason) for the headline confidence signal.
@@ -1641,6 +1654,10 @@ def _solver_confidence(raw: dict, players: int, hero: dict | None = None,
             reasons.append(cfg.PREFLOP_TWO_LIVE_THREE_BET_REASON)
         else:
             reasons.append(cfg.PREFLOP_TWO_LIVE_ONE_RAISE_REASON)
+    # M289 (R9 / F61): facing a raise, the multiway preflop fold call moves
+    # with the seed - fired only at the table sizes the study qualified.
+    if _preflop_fold_is_seed_dependent(raw, players):
+        reasons.append(cfg.PREFLOP_FOLD_SEED_REASONS[players])
     if _node_is_untrained(raw):
         reasons.append(cfg.UNTRAINED_NODE_REASON)
     elif _hero_row_is_the_prior(hero):
