@@ -16611,3 +16611,40 @@ Deliberately not done: the 0-1 raise two-live cell, where the gate stays
 SILENT, is still unmeasured - that is the audit's own R2 from
 `docs/audit-2026-09-08.md`, still open.
 
+## M283 - deep-dive audit: ourselves, the independent solver, and real hands
+
+`docs/audit-2026-09-18.md`. Three arms, graded on USABILITY AT THE TABLE
+against a rubric fixed before any number landed: U1 can it answer, U2 in
+time, U3 right where the money is, U4 does it say when not to trust it.
+
+| axis | grade |
+|---|---|
+| U1 coverage | **A** - 99.63% of clean real hands at a supported size; 1,200 of 1,200 replayed decisions answered, 0 defects |
+| U2 latency | **C overall, F at 7- and 8-handed** |
+| U3 accuracy | exploitability PASSES on every street (flop 0.368%, turn 0.537%, river 0.095% median); river graded A/B from outside; **flop and turn UNGRADED** |
+| U4 honesty | **B** |
+
+**F55 - the replay instrument was stale** (`SUPPORTED_TABLE_SIZES` still
+2/3/4/5/6/9, stacks capped at 200bb), so every replay measured a
+population 22% narrower than the product supports. Fixed; it is what
+surfaced F56.
+
+**F56 (high) - 7- and 8-handed are warmed at 100bb only, and the
+background warmer covers table sizes 3-6.** Real stacks are not at
+100bb: 5.81% of all real hands hit a cold preflop solve, worst 211s.
+
+**F57 - the flop bank has never passed the gate that withdrew the
+turn's grades**, and cannot be gated off its one-round dumps. A
+three-round pilot was started and did not complete; queued.
+
+**F58 - the 18 quotes-its-own-measurement tests pin the copy to the
+constant and the constant to nothing.** M281 and M282 both shipped a
+stale figure through a green suite.
+
+The turn's exploitability (0.537%) replicates M278 and M233 on fresh
+spots. No latency comparison with the 2026-09-08 audit is drawn: this run
+warmed one depth where that one warmed three, on a machine that drifts
+9.7x inside a run.
+
+Recommendations R1-R6 are in the report; R2 (warm 7/8-max) is next.
+
