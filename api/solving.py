@@ -70,6 +70,7 @@ from .parallel import parallel_board_equity_table, parallel_equity_batch
 # and a module-level `config` would be silently shadowed inside exactly
 # those functions — it was, and surfaced as an UnboundLocalError.
 from . import config as cfg
+from . import solve_store
 from .caches import (
     _flop_cache,
     _flop_multiway_cache,
@@ -82,6 +83,7 @@ from .caches import (
     _flop_node_cache,
     _multiway_cache,
     _multiway_equity_caches,
+    _multiway_store,
     _canonical_warm_starts,
     _flop_node_warm_starts,
     _path_query_libraries,
@@ -174,6 +176,19 @@ def _get_multiway_equity_cache(hands) -> MultiwayEquityCache:
     )
 
 
+def _multiway_store_key(solved_stack_bb: float, players: int) -> str:
+    """M284: the disk key for one multiway preflop solve.
+
+    Built by `api.solve_store.fingerprint`, which reads the `cfg.X`
+    constants these two functions reference straight out of their source
+    - so a constant added to the solve is covered the moment it is used,
+    with no list to keep in step.
+    """
+    return solve_store.fingerprint(
+        {"kind": "multiway_preflop", "players": players, "stack": solved_stack_bb},
+        (_load_or_solve_multiway, _get_multiway_equity_cache), cfg)
+
+
 def _get_or_solve_multiway(stack_bb: float, players: int) -> StrategyResult:
     """Solves (or returns the cached result of solving) the full
     `players`-max tree once for `stack_bb`, over
@@ -218,37 +233,82 @@ def _get_or_solve_multiway(stack_bb: float, players: int) -> StrategyResult:
     # justification — do not widen the bucket without re-measuring it.**
     solved_stack_bb = canonical_stack_depth(stack_bb, cfg.MULTIWAY_STACK_BUCKET_BB)
     key = (solved_stack_bb, players)
-    table = cfg.MULTIWAY_TABLE_CONFIGS[players]
-
-    def _solve():
-        config = GameConfig(positions=table["positions"], stack_bb=solved_stack_bb)
-        equity_cache = _get_multiway_equity_cache(cfg.MULTIWAY_PREFLOP_HANDS)
-        result = solve_preflop(
-            config=config,
-            hands=cfg.MULTIWAY_PREFLOP_HANDS,
-            equity_cache=equity_cache,
-            iterations=table["iterations"],
-            seed=1,
-            floor_regret=table.get("floor_regret"),
-        )
-        # M215. Drop the node_data entries that never accumulated
-        # anything before this is cached. MCCFR VISITS far more nodes
-        # than it learns at, and an all-zero table is what `strategy_at`
-        # and `trained_hands` already synthesise for an ABSENT node — so
-        # this changes no answer and is the difference between an entry
-        # that fits a memory budget and one that does not.
-        #
-        # This is the most expensive artifact the product builds and the
-        # largest thing it holds: measured at 632 MB for a 9-max entry,
-        # of which node_data is 466 MB.
-        result.prune_empty_nodes()
-        return result
 
     # M92: single-flight. This is the most expensive solve in the product
     # (75-140s at 6-max/9-max), so it is the worst possible thundering
     # herd: N users opening the same table size cold would each have run
     # the whole thing. See _SolveCache.get_or_compute.
-    return _multiway_cache.get_or_compute(key, _solve)
+    return _multiway_cache.get_or_compute(
+        key, lambda: _load_or_solve_multiway(solved_stack_bb, players))
+
+
+def _load_or_solve_multiway(solved_stack_bb: float, players: int) -> StrategyResult:
+    """M284: read the stored solve for this configuration, or make one.
+
+    Split out of `_get_or_solve_multiway` so the disk-only warmer can fill
+    the store WITHOUT putting 194 MB into `_multiway_cache` - which is the
+    whole reason 7- and 8-handed could not simply join the RAM warm list.
+    """
+    table = cfg.MULTIWAY_TABLE_CONFIGS[players]
+    config = GameConfig(positions=table["positions"], stack_bb=solved_stack_bb)
+    # A stored solve of exactly this configuration is a file read (0.22s
+    # at 7-max, 1.48s at 8-max) where solving is 157s / 580s. Read BEFORE
+    # the equity cache is built, which is itself a cost.
+    store_key = _multiway_store_key(solved_stack_bb, players)
+    stored = _multiway_store.get(store_key, config, cfg.MULTIWAY_PREFLOP_HANDS,
+                                 build_game_tree)
+    if stored is not None:
+        return stored
+    equity_cache = _get_multiway_equity_cache(cfg.MULTIWAY_PREFLOP_HANDS)
+    result = solve_preflop(
+        config=config,
+        hands=cfg.MULTIWAY_PREFLOP_HANDS,
+        equity_cache=equity_cache,
+        iterations=table["iterations"],
+        seed=1,
+        floor_regret=table.get("floor_regret"),
+    )
+    # M215. Drop the node_data entries that never accumulated
+    # anything before this is cached. MCCFR VISITS far more nodes
+    # than it learns at, and an all-zero table is what `strategy_at`
+    # and `trained_hands` already synthesise for an ABSENT node — so
+    # this changes no answer and is the difference between an entry
+    # that fits a memory budget and one that does not.
+    #
+    # This is the most expensive artifact the product builds and the
+    # largest thing it holds: measured at 632 MB for a 9-max entry,
+    # of which node_data is 466 MB.
+    result.prune_empty_nodes()
+    # Written BEFORE anything reads it, so the stored copy is the cold
+    # solve alone - never one the on-demand node trainer (M150/M279) has
+    # since mutated. M158's rule for warm starts: store only cold.
+    _multiway_store.put(store_key, result)
+    return result
+
+
+def _ensure_multiway_stored(stack_bb: float, players: int) -> bool:
+    """M284: make sure this bucket's solve is on DISK, touching no memory
+    cache. Returns True if a solve was paid for, False if it was already
+    stored (or the store is disabled, in which case there is nothing to
+    fill and nothing is solved).
+
+    Not single-flighted against a player's request for the same bucket:
+    the warmer only runs while the server is idle, and a collision costs
+    one duplicate solve, never a wrong answer - both writes are atomic
+    and identical.
+    """
+    if not _multiway_store.enabled or _multiway_is_stored(stack_bb, players):
+        return False
+    _load_or_solve_multiway(
+        canonical_stack_depth(stack_bb, cfg.MULTIWAY_STACK_BUCKET_BB), players)
+    return True
+
+
+def _multiway_is_stored(stack_bb: float, players: int) -> bool:
+    """M284: is this bucket's solve on disk under the CURRENT fingerprint?
+    A file from an older engine or configuration does not count."""
+    solved_stack_bb = canonical_stack_depth(stack_bb, cfg.MULTIWAY_STACK_BUCKET_BB)
+    return _multiway_store.contains(_multiway_store_key(solved_stack_bb, players))
 
 
 def _get_or_solve_flop(board_cards: tuple, pot: float, stack_bb: float, iterations: int) -> StrategyResult:

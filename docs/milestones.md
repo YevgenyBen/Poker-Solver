@@ -16648,3 +16648,86 @@ warmed one depth where that one warmed three, on a machine that drifts
 
 Recommendations R1-R6 are in the report; R2 (warm 7/8-max) is next.
 
+## M284 - a disk tier for the multiway preflop solve (audit R2 / F56)
+
+The 2026-09-18 audit's highest-severity finding: 7- and 8-handed tables
+were warmed at 100bb only, so **5.81% of real hands** waited on a cold
+preflop solve - worst 211s in the replay. Extending M271's RAM warmer does
+not work: an 8-max entry is 194 MB against a `_multiway_cache` budget of
+3 GB that is already spent, so every new bucket would evict a warmer one.
+
+**Feasibility first.** `node_data` is keyed by `id(node)`, which no
+restart preserves, so a solve cannot be written out as it stands. Re-keyed
+by action path (M158's observation) and walking only `LazyChildren._built`
+- every table is on a node the solve built, and walking every child of a
+9-max tree dies with MemoryError (M216):
+
+| | 7-max @120 | 8-max @145 |
+|---|---|---|
+| cold solve | 156.6s | 580.4s |
+| read back | **0.22s** | **1.48s** |
+| on disk | 23.7 MB | 79.3 MB |
+| tables recovered | 3,590 / 3,590 | 12,276 / 12,276 |
+| worst strategy diff | **0.0** | **0.0** |
+
+**Then through `/advise`** (M174's rule - a probe is not the product), a
+player's first ask, cold and after a restart:
+
+| | cold first ask | after restart | speedup | same advice |
+|---|---|---|---|---|
+| 7-max @120bb | 89.0s | **0.30s** | 297x | yes |
+| 8-max @145bb | 415.5s | **1.02s** | 407x | yes |
+
+Single-arm in seconds, which is acceptable only because the arms are
+300-400x apart and the machine's worst measured drift is 9.7x (M240).
+
+**What shipped.**
+- `poker_solver/persist.py` - a solve to path-keyed arrays and back. Not
+  pickle: `numpy.load(allow_pickle=False)`, so reading a file cannot run
+  code. A different hand pool, a path that leaves the tree, a table with
+  the wrong action count or an unknown format version are all REFUSED.
+- `api/solve_store.py` - the disk tier: atomic writes, an 8 GiB cap with
+  least-recently-READ eviction, an unreadable file treated as a miss and
+  removed.
+- **Every** multiway preflop solve writes through, so a restart re-reads
+  what it solved before.
+- `MULTIWAY_DISK_WARM` - the 14 most common real 7- and 8-handed buckets
+  after the 100bb prewarm, warmed to DISK ONLY so they never evict memory.
+  Ordered over ALL hands at that size, not multiway flops, because a
+  preflop solve is keyed on the bucket whether or not a flop follows.
+  Coverage of real hands goes 19.4% -> 74.5% (7-max) and 15.8% -> 73.7%
+  (8-max).
+- `/warm_status` reports the disk tier; `POKER_SOLVER_SOLVE_STORE`
+  overrides the directory, "0" disables it.
+
+**The fingerprint is the part that matters.** A disk tier makes M245's
+trap permanent - a solve of one configuration served under another,
+surviving restarts. The key hashes the solve's parameters, **every
+`cfg.X` the solving functions read, found by reading their source** (so
+a constant added to the solve is covered with no list to maintain), those
+functions' source, and every engine file. It captures exactly
+`MULTIWAY_PREFLOP_HANDS`, `MULTIWAY_PREFLOP_SAMPLES` and
+`MULTIWAY_TABLE_CONFIGS`, and a constant the solve does not read leaves
+it alone, so copy edits do not throw the store away.
+
+**Mutation-tested, and two of my own guards were dead.** Dropping each of
+the four fingerprint components in turn: the constants part was caught,
+but **dropping the engine hash or the function source broke nothing** -
+the function-source test compared two functions that also read different
+constants, so the constants carried it alone. M214's dead guard again.
+Both rewritten so each can only pass through the component it names; all
+four mutations now fail a test. A mismatched-tree test also caught a real
+crash - a stored path that lands on a TERMINAL in another tree raised
+AttributeError instead of refusing.
+
+**The suite runs with the tier off** (`tests/conftest.py`): with it on,
+tests that count solves (M101) would pass by reading files an earlier run
+left behind.
+
+**The cost, stated**: any engine commit invalidates the whole store by
+design, and the 7/8-max list costs ~2.9 hours of idle-time solving to
+refill. A stored answer from last week's engine is last week's engine.
+
+Not done: 9-max off 100bb and stacks above 260bb are the same problem and
+now have the machinery; they are not on the warm list yet.
+

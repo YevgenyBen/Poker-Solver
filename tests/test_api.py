@@ -9287,6 +9287,150 @@ def test_the_background_warmer_stops_when_switched_off(monkeypatch):
     assert calls == []
 
 
+def test_the_suite_runs_with_the_multiway_disk_tier_off():
+    """M284. With the store on, a test could pass by reading a solve some
+    earlier run left in data/solve_store - and the tests that count SOLVES
+    (M101) would stop testing anything. tests/conftest.py turns it off."""
+    assert not caches._multiway_store.enabled
+
+
+@pytest.fixture
+def disk_tier(monkeypatch, tmp_path):
+    monkeypatch.setattr(caches._multiway_store, "directory", tmp_path)
+    return tmp_path
+
+
+def _count_preflop_solves(monkeypatch):
+    calls = []
+    real = api_solving.solve_preflop
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(api_solving, "solve_preflop", counting)
+    return calls
+
+
+def test_a_restart_reads_the_multiway_solve_instead_of_solving(monkeypatch, disk_tier):
+    """M284. A cleared memory cache is a restart. The second ask must cost
+    a file read, not a solve - and answer identically, row for row."""
+    solves = _count_preflop_solves(monkeypatch)
+    first = api_solving._get_or_solve_multiway(100.0, 3)
+    first_rows = {h: dict(r) for h, r in first.opening_range().items()}
+    assert len(solves) == 1
+    assert len(list(disk_tier.glob("*.npz"))) == 1
+
+    caches._multiway_cache.entries.clear()
+    second = api_solving._get_or_solve_multiway(100.0, 3)
+    assert len(solves) == 1, "the stored solve was ignored and re-solved"
+    assert second is not first
+    assert {h: dict(r) for h, r in second.opening_range().items()} == first_rows
+
+
+def test_a_changed_table_budget_is_never_served_from_disk(monkeypatch, disk_tier):
+    """M284. The failure the fingerprint exists to prevent: a solve made
+    under one configuration served under another (M245's trap, made to
+    survive restarts)."""
+    solves = _count_preflop_solves(monkeypatch)
+    api_solving._get_or_solve_multiway(100.0, 3)
+    caches._multiway_cache.entries.clear()
+    tables = dict(api_config.MULTIWAY_TABLE_CONFIGS)
+    tables[3] = {**tables[3], "iterations": tables[3]["iterations"] + 1}
+    monkeypatch.setattr(api_config, "MULTIWAY_TABLE_CONFIGS", tables)
+    api_solving._get_or_solve_multiway(100.0, 3)
+    assert len(solves) == 2
+    assert len(list(disk_tier.glob("*.npz"))) == 2
+
+
+def test_the_disk_copy_is_the_cold_solve_not_a_trained_one(monkeypatch, disk_tier):
+    """M284. The on-demand trainer (M150/M279) mutates the cached result
+    after it is served. What reaches disk must be the solve alone - M158's
+    rule that only COLD solves are stored."""
+    result = api_solving._get_or_solve_multiway(100.0, 3)
+    cold = {k: t.strategy_sum.copy() for k, t in result.node_data.items()}
+    for table in result.node_data.values():
+        table.strategy_sum += 1.0        # what a later training pass does
+    api_solving._get_or_solve_multiway(100.0, 3)
+
+    caches._multiway_cache.entries.clear()
+    reread = api_solving._get_or_solve_multiway(100.0, 3)
+    from poker_solver import persist
+    old_paths = {id(n): p for n, p in persist.built_walk(result.root)}
+    new_nodes = {p: n for n, p in persist.built_walk(reread.root)}
+    for key, strategy in cold.items():
+        on_disk = reread.node_data[id(new_nodes[old_paths[key]])].strategy_sum
+        assert (on_disk == strategy).all(), "the stored copy carries later training"
+
+
+def test_ensure_stored_fills_disk_and_leaves_memory_alone(monkeypatch, disk_tier):
+    """M284. The whole reason 7- and 8-handed could not join the RAM warm
+    list is that each entry would evict a warmer one. Filling the disk
+    tier must not touch `_multiway_cache` at all."""
+    solves = _count_preflop_solves(monkeypatch)
+    assert api_solving._ensure_multiway_stored(100.0, 3) is True
+    assert len(caches._multiway_cache.entries) == 0
+    assert api_solving._multiway_is_stored(100.0, 3)
+    assert api_solving._ensure_multiway_stored(102.0, 3) is False   # same bucket
+    assert len(solves) == 1
+
+
+def test_ensure_stored_does_nothing_when_the_tier_is_off(monkeypatch):
+    solves = _count_preflop_solves(monkeypatch)
+    assert api_solving._ensure_multiway_stored(100.0, 3) is False
+    assert solves == []
+
+
+def test_the_disk_warm_list_is_the_uncovered_seven_and_eight_max_buckets():
+    """M284 / the 2026-09-18 audit's F56. 7- and 8-handed only (the sizes
+    the RAM warmer never reached), bucket-aligned, no repeats, nothing the
+    100bb prewarm already covers, and nothing the RAM list covers."""
+    warm = api_config.MULTIWAY_DISK_WARM
+    assert len(set(warm)) == len(warm)
+    assert {p for p, _ in warm} == {7, 8}
+    assert len([1 for p, _ in warm if p == 7]) == 14
+    assert len([1 for p, _ in warm if p == 8]) == 14
+    for players, depth in warm:
+        assert depth % api_config.MULTIWAY_STACK_BUCKET_BB == 0
+        assert depth not in api_config.MULTIWAY_PREWARM_DEPTHS_BY_TABLE.get(players, ())
+    assert not set(warm) & set(api_config.MULTIWAY_BACKGROUND_WARM)
+
+
+def test_the_disk_warmer_skips_stored_buckets_before_waiting(monkeypatch, disk_tier):
+    """M284. After the first run nearly every bucket is on disk, and a
+    restart must not sit polling for idle windows it does not need."""
+    monkeypatch.setattr(api_config, "MULTIWAY_DISK_WARM", ((7, 105.0), (8, 120.0)))
+    monkeypatch.setattr(api_main, "_multiway_is_stored",
+                        lambda depth, players: players == 7)
+    ensured, slept = [], []
+    monkeypatch.setattr(api_main, "_ensure_multiway_stored",
+                        lambda depth, players: ensured.append((players, depth)) or True)
+    api_main._ACTIVITY.update(in_flight=0, last_finished=0.0)
+    api_main.PREWARM_STATUS["disk"] = []
+    api_main._disk_warm(clock=lambda: 1e9, sleep=slept.append, enabled=lambda: True)
+    assert ensured == [(8, 120.0)]
+    assert slept == []
+    assert [(s["name"], s["skipped"]) for s in api_main.PREWARM_STATUS["disk"]] == [
+        ("7-max stack_bb=105.0", True), ("8-max stack_bb=120.0", False)]
+
+
+def test_the_disk_warmer_is_silent_when_the_tier_is_off(monkeypatch):
+    ensured = []
+    monkeypatch.setattr(api_main, "_ensure_multiway_stored",
+                        lambda depth, players: ensured.append(depth))
+    api_main._disk_warm(enabled=lambda: True)
+    assert ensured == []
+
+
+def test_warm_status_reports_the_disk_tier(client):
+    body = client.get("/warm_status").json()
+    for field in ("disk_planned", "disk_done", "disk_solved", "disk_failed",
+                  "disk_store_enabled", "disk_store_bytes", "disk_store_stats"):
+        assert field in body
+    assert body["disk_planned"] == len(api_config.MULTIWAY_DISK_WARM)
+    assert body["disk_store_enabled"] is False
+
+
 def test_requests_are_counted_while_in_flight(client):
     """A3. The idle gate reads this; a request must raise and then release it."""
     seen = {}

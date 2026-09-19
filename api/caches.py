@@ -454,6 +454,14 @@ _multiway_cache = _SolveCache(
 # costs ~525s, which no test should pay. That is exactly why it is
 # recorded here rather than left implicit.
 MULTIWAY_PREFLOP_WORST_MB = 256.56
+
+# M284. The disk tier behind `_multiway_cache`: a RAM miss reads a stored
+# solve before paying for a new one. Disabled when the directory is None,
+# which is how the suite runs (tests/conftest.py).
+from api import config as _config  # noqa: E402  (config <- caches, M60's layering)
+from api.solve_store import SolveStore  # noqa: E402
+_multiway_store = SolveStore(_config.MULTIWAY_SOLVE_STORE_DIR,
+                             _config.MULTIWAY_SOLVE_STORE_MAX_BYTES)
 MULTIWAY_PREFLOP_DECLARED_BUDGET_MB = 3_100
 _flop_cache = _SolveCache("flop", maxsize=256)
 # Deliberately separate from _flop_cache and from each other, not one

@@ -18,6 +18,7 @@ shrink pools for speed exactly as before — the split changed where these
 live, not how they are read or overridden.
 """
 
+import os
 from pathlib import Path as FilePath
 
 from poker_solver.solver import (
@@ -128,6 +129,57 @@ MULTIWAY_BACKGROUND_WARM = tuple(
         key=lambda d: (abs(d - 100), d))]
 )
 MULTIWAY_BACKGROUND_WARM_IDLE_SECONDS = 2.0
+
+# M284 (the 2026-09-18 audit's R2/F56). A DISK TIER for the multiway
+# preflop solve, and the warm list that fills it.
+#
+# 7- and 8-handed shipped warmed at 100bb only (M270), and the background
+# warmer above never reached them: 5.81% of real hands waited on a cold
+# preflop solve, worst 211s in the audit's replay. Adding them to the list
+# above does not work - an 8-max entry is 194 MB in memory and
+# `_multiway_cache`'s 3 GB budget is already spent, so each new bucket
+# would evict a warmer one.
+#
+# On disk the same solves are small and fast, measured on real buckets:
+#
+#   table  bucket  cold solve  read back  on disk  nodes      strategy diff
+#   7-max  120bb    156.6s      0.22s     23.7 MB  3,590/3,590    0.0
+#   8-max  145bb    580.4s      1.48s     79.3 MB  12,276/12,276  0.0
+#
+# EVERY multiway preflop solve is written through, so a restart re-reads
+# the prewarm instead of re-paying it. `api/solve_store.py` files each
+# solve under a fingerprint of everything that shapes it, including every
+# engine source file - any engine change invalidates the store and the
+# warmer refills it.
+#
+# `POKER_SOLVER_SOLVE_STORE` overrides the directory, and "0" disables
+# the tier. The suite runs with it disabled (tests/conftest.py).
+_SOLVE_STORE_ENV = os.environ.get("POKER_SOLVER_SOLVE_STORE")
+MULTIWAY_SOLVE_STORE_DIR = (
+    None if _SOLVE_STORE_ENV == "0"
+    else _SOLVE_STORE_ENV or str(FilePath(__file__).resolve().parent.parent
+                                 / "data" / "solve_store"))
+# ~3.5 GB is the planned contents (everything the two warm lists and the
+# prewarm produce, at the measured file sizes); 8 GiB leaves room for the
+# buckets real players reach beyond them. Evicted least-recently-READ.
+MULTIWAY_SOLVE_STORE_MAX_BYTES = 8 * 1024 ** 3
+# The buckets warmed to DISK ONLY - never into `_multiway_cache` - so
+# filling them cannot evict anything from memory. The 14 most common real
+# 7- and 8-handed stack buckets after the 100bb prewarm, ordered by how
+# often each occurs over ALL clean hands at that size (a preflop solve is
+# keyed on the bucket whether or not a flop follows - ordering by
+# multiway flops, as the list above does, would have been the wrong
+# population here). They take the warm share of real hands from 19.4% to
+# 74.5% at 7-max and from 15.8% to 73.7% at 8-max.
+#
+# Cost, once per engine version, in idle time only: ~14 x 157s at 7-max
+# and ~14 x 580s at 8-max, about 2.9 hours; ~1.5 GB of disk.
+MULTIWAY_DISK_WARM = tuple(
+    [(7, float(d)) for d in (105, 120, 115, 110, 95, 130, 125, 140, 135, 195,
+                             200, 85, 145, 160)]
+    + [(8, float(d)) for d in (105, 120, 115, 110, 130, 125, 95, 135, 200, 195,
+                               140, 145, 210, 150)]
+)
 # The ceiling on a client-supplied `iterations` for the heads-up preflop
 # solve — the one endpoint that exposes the knob at all (multiway ignores
 # it outright, per MULTIWAY_TABLE_CONFIGS' fixed-menu discipline).

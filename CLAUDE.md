@@ -718,6 +718,24 @@ same nine references, re-scored against heroes drawn by range weight -
     deep decisions replay with 0 defects. Above 260bb (4.6%) still pays
     the solve.
 
+- **COLD MULTIWAY BUCKETS ARE A FILE READ NOW (M284, the 2026-09-18
+  audit's F56).** 7- and 8-handed shipped warmed at 100bb only and 5.81%
+  of real hands waited on a cold preflop solve. Their entries (194 MB at
+  8-max) do not fit memory, so `api/solve_store.py` keeps every multiway
+  preflop solve ON DISK and `MULTIWAY_DISK_WARM` fills 7/8-max there.
+  Through `/advise`: **7-max 89.0s -> 0.30s, 8-max 415.5s -> 1.02s**, same
+  advice, bit-identical tables.
+  - **Keyed by a fingerprint** of the solve's parameters, every `cfg.X`
+    the solving functions read (parsed from their source), their source,
+    and every engine file. All four parts are mutation-tested.
+  - **Any engine change invalidates the store**, deliberately; the warmer
+    refills it (~2.9h idle for the 7/8-max list).
+  - **Off under the suite** (`tests/conftest.py`), or solve-counting
+    tests would pass by reading old files.
+  - **`node_data` is keyed by `id(node)`** - `poker_solver/persist.py`
+    re-keys by path and walks only `LazyChildren._built`, never every
+    child (M216's MemoryError).
+
 ### The checks REPLICATE on fresh spots (M236) — n=42 per street
 
 M222/M224's figures rested on ~21 spots each and carry a user-facing
@@ -912,11 +930,16 @@ requests now reject unknown fields by name rather than ignoring them.
       solver.py            the public solve_* API + derive_ranges_from_path
       library.py           canonical spot library (canonicalize -> lookup -> solve on miss)
       canonicalize.py      suit-isomorphism canonicalization
+      persist.py           a solved tree as path-keyed arrays and back - `node_data`
+                           is keyed by id(node), which no restart preserves (M284)
       combos.py, cards.py, starting_hands.py, abstraction.py, strategy_format.py
 
     api/                   one-way layering, no cycles: config <- caches <- solving <- main
       config.py            every tunable constant, each with its measured justification
       caches.py            _SolveCache + one instance per endpoint (self-registering)
+      solve_store.py       the DISK tier behind the multiway preflop cache, keyed by a
+                           fingerprint of every constant and source line that shapes
+                           the solve (M284)
       solving.py           all _get_or_solve_* / _query_* / _advise* orchestration
       main.py              routes, validation, response shaping, app wiring
       schemas.py           Pydantic request/response models
