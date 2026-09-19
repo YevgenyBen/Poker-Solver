@@ -8876,7 +8876,15 @@ def test_the_sizing_caveat_no_longer_claims_trash_is_always_folded():
     )
     assert "three or more players are live" in reason
     assert "re-raise" in reason
-    assert "98%" in reason
+    # M285: this asserted the literal "98%", which pinned the copy to a
+    # number typed into the TEST - so when M281 and M282 re-measured the
+    # figure, this caveat kept M251's value and any correction would have
+    # failed here. It now checks the copy against the constants the other
+    # two-live string quotes, so the two cannot disagree.
+    assert f"{round(api_config.PREFLOP_TWO_LIVE_FOUR_BET_CONTINUES * 100)}%" in reason
+    assert f"{round(api_config.PREFLOP_TWO_LIVE_THREE_BET_CONTINUES * 100)}%" in reason
+    assert str(api_config.PREFLOP_TWO_LIVE_NODES) in reason
+    assert "98%" not in reason and "22 spots" not in reason
 
 def test_the_reproducibility_warning_quotes_its_own_measurement(client):
     """The copy moves if the measurement does (M232's rule).

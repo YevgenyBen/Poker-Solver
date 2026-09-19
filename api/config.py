@@ -2011,6 +2011,13 @@ SIZING_CAVEAT_TABLE_SIZES = {
 # learned AT ALL, with fold mass flat at 0.82-0.84 across UTG/MP/CO/BTN.
 # A user-facing string is the last place a retracted measurement should
 # survive, so this now says the thing that was measured.
+# M285 (the 2026-09-18 audit's R3/F58). The two-live clause below used to
+# say "continue 98% of the time (measured over 22 spots)" - M251's figure -
+# and it stayed that way through M281 AND M282, both of which corrected
+# the same number in PREFLOP_TWO_LIVE_*_REASON and never saw it was quoted
+# here too. Its test asserted the literal "98%", so a correction would have
+# failed the build and been reverted. It is now BUILT from the two-live
+# constants, so the two places cannot disagree again.
 SIZING_CAVEAT_REASON = (
     "Multiway preflop is unreliable for which sizing to use: the split among the "
     "non-fold actions (limp / raise / all-in) moves with the random seed — at 6-max, "
@@ -2019,7 +2026,10 @@ SIZING_CAVEAT_REASON = (
     "range chart. Individual hands are classified sensibly while three or more players "
     "are live — premiums are never folded, trash is — but NOT once everyone else has "
     "folded and you face a re-raise heads-up, where hands as weak as 72o are told to "
-    "continue 98% of the time (measured over 22 spots) and folding is correct. The "
+    f"continue about {round(PREFLOP_TWO_LIVE_FOUR_BET_CONTINUES * 100)}% of the time "
+    f"against a four-bet and about {round(PREFLOP_TWO_LIVE_THREE_BET_CONTINUES * 100)}% "
+    f"against a three-bet (measured over {PREFLOP_TWO_LIVE_NODES} spots) and folding is "
+    "correct. The "
     "opening range also does not widen with position at all — at 6-max "
     "the fold frequency is flat across UTG, MP, CO and BTN, where real GTO play widens "
     "from roughly 15% of hands under the gun to roughly 45% on the button. Treat this "
@@ -3165,23 +3175,44 @@ MULTIWAY_BET_MIN_AGGRESSIVE = 0.5
 MULTIWAY_BET_MIN_SPR = 1.5
 MULTIWAY_BET_TABLE_SIZES = (6,)
 MULTIWAY_BET_DECISIONS = 579
-MULTIWAY_BET_WE_BET = 0.47
+# M285 re-measured every figure here on the SHIPPED arm. M264 measured
+# 47% / 35% / 26-49-26; then M269's grouped action matching shipped and
+# moved "bets when checked to" 0.472 -> 0.410 on these same 579 decisions,
+# in M269's own table, and this note was not updated - so players were
+# told "about two and a half times as often" of a solver that no longer
+# did it. Recomputed from M269's per-decision rows:
+#
+#                                  M264 arm        shipped (M269)
+#   we bet, checked to               0.470            0.410
+#   ... hands below strength 0.5     0.354            0.269
+#   reference bets / weak half      0.194 / 0.143    0.194 / 0.143
+#   facing, where we lean raise -
+#     reference raises/calls/folds  .256/.488/.256   .278/.500/.222  (n 43 -> 36)
+#   vs a card-blind prior          -4.02 sigma      -1.89 sigma
+#
+# The M264 arm reproduces EVERY figure M264 published, exactly - that is
+# what licenses the method. "The weaker half of hands" means strength
+# percentile below 0.5 (weaker than half of ALL holdings), not the sample
+# median, which gives 0.379 and does not reproduce 35%. And -1.89 sigma
+# is still below the prior but no longer separable from it, so "did worse
+# than" became "still did no better than".
+MULTIWAY_BET_WE_BET = 0.41
 MULTIWAY_BET_REFERENCE_BETS = 0.19
-MULTIWAY_BET_WEAK_WE = 0.35
+MULTIWAY_BET_WEAK_WE = 0.27
 MULTIWAY_BET_WEAK_REFERENCE = 0.14
-MULTIWAY_BET_FACING_REFERENCE_RAISES = 0.26
-MULTIWAY_BET_FACING_REFERENCE_CALLS = 0.49
-MULTIWAY_BET_FACING_REFERENCE_FOLDS = 0.26
+MULTIWAY_BET_FACING_REFERENCE_RAISES = 0.28
+MULTIWAY_BET_FACING_REFERENCE_CALLS = 0.50
+MULTIWAY_BET_FACING_REFERENCE_FOLDS = 0.22
 MULTIWAY_BET_NOTE = (
     " A warning specific to this decision: this engine is recommending a BET or a RAISE in a "
     "pot three or more players saw, and that is where its multiway advice measured worst. "
     "Checked against 579 real six-handed decisions by a published poker AI that beat "
-    "professional players, played at this same 100-big-blind depth, this engine bets about "
-    "two and a half times as often when checked to: 47% against 19%, and with the weaker half "
-    "of hands 35% against 14%. Facing a bet where this engine leans toward raising, that "
-    "player raised 26% of the time, called 49% and folded 26%. Scored by how much weight the advice put "
-    "on what that player actually did, this engine's multiway advice did worse than simply "
-    "knowing how often such spots are checked. So in a multiway pot, treat a recommendation "
+    "professional players, played at this same 100-big-blind depth, this engine bets a little "
+    "over twice as often when checked to: 41% against 19%, and with the weaker half of hands "
+    "27% against 14%. Facing a bet where this engine leans toward raising, that player raised "
+    "28% of the time, called 50% and folded 22%. Scored by how much weight the advice put on "
+    "what that player actually did, this engine's multiway advice still did no better than "
+    "simply knowing how often such spots are checked. So in a multiway pot, treat a recommendation "
     "to bet or raise - especially without a strong hand - as a candidate to check or call "
     "instead. These are frequencies from one strong player, not a price in chips."
 )

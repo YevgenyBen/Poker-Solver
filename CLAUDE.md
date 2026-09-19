@@ -966,6 +966,13 @@ requests now reject unknown fields by name rather than ignoring them.
                            rederive`. Instrument only (M261)
       real_replay.py       replay real hands from that store through
                            /advise as a defect benchmark (M266)
+      disclosures.py       every number a player is shown, and its source: a
+                           number in copy with no registered constant or
+                           sourced literal FAILS THE BUILD, and each figure
+                           records whether it was measured at the shipped
+                           configuration (M285)
+      studies/             studies that re-derive shipped figures, runnable
+                           from the repo - `two_live.py` first (M285)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools
@@ -3743,7 +3750,10 @@ deliberately not checked.
   at the table graded against a pre-registered rubric across three arms
   (ourselves, the independent solver, 1,200 real decisions). U1 A, U2 C
   overall and F at 7-/8-handed (warmed at 100bb only, 5.81% of real
-  hands wait up to 211s cold), U3 flop and turn UNGRADED, U4 B.
+  hands wait up to 211s cold - fixed by M284), U3 flop and turn
+  UNGRADED, U4 published as B and CORRECTED to D by M285: two warnings
+  quoted figures a current measurement contradicted, and 12 of 23 quote
+  a configuration that no longer ships (`python -m bench.disclosures`).
 - **`docs/audit-2026-09-08.md`** — the previous whole-project audit
   (M252): a wide benchmark over 1,730 real decisions, the first
   measurement of how often a player MEETS each disclosed defect
