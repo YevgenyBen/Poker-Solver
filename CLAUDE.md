@@ -965,7 +965,9 @@ requests now reject unknown fields by name rather than ignoring them.
                            a no-op; `python -m bench.hand_db ingest|stats|
                            rederive`. Instrument only (M261)
       real_replay.py       replay real hands from that store through
-                           /advise as a defect benchmark (M266)
+                           /advise as a defect benchmark (M266); `--units`
+                           times each request in reference units and writes
+                           the run's drift (M286)
       disclosures.py       every number a player is shown, and its source: a
                            number in copy with no registered constant or
                            sourced literal FAILS THE BUILD, and each figure

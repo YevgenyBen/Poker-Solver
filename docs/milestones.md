@@ -16790,3 +16790,80 @@ while serialising a ~3.5 GB file. `bench.reference_solver` refused it,
 as built to. Two-round dumps cannot stand in (M257 F62). The flop stays
 ungraded.
 
+
+## M286 - the real-hand replay in reference units (audit R4)
+
+The 2026-09-18 audit drew no latency comparison with the audit before it,
+because wall-clock seconds on this machine drift up to 9.7x inside one
+run (M240) and M240's instrument was not used. `bench/real_replay.py`
+now takes `--units`: every row carries `units` (seconds over a reference
+workload timed beside it) and `reference_seconds`, and the run writes its
+drift report to `<out>.drift.json`.
+
+**The first baseline run came back in seconds alone.** `main` parsed
+`--units` and never passed the clock on, and nothing tested `main`. The
+loop moved into `replay_to`, which is tested, and removing the clock
+there fails a test. Found by reading the output, not by a check.
+
+**The baseline**: the audit's own 1,200 decisions (seed 918, warm 3-9
+max at 100bb), 1,200 answered, 0 defects. One reference unit is
+**0.277s** here (p10 0.273, p90 0.286), and it drifted **1.30x** inside
+the run.
+
+| table | n | units p50 | p90 | max |
+|---|---|---|---|---|
+| 3-max | 47 | 7.25 | 8.61 | 27.4 |
+| 4-max | 121 | 0.10 | 8.70 | 30.9 |
+| 5-max | 284 | 0.06 | 18.7 | 72.3 |
+| 6-max | 397 | 0.08 | 40.8 | 101.8 |
+| 7-max | 24 | 72.5 | 117.1 | 158.1 |
+| 8-max | 73 | 4.17 | **598.6** | 713.1 |
+| 9-max | 11 | 0.02 | 6.15 | 9.5 |
+
+| street | live | n | units p50 | p90 |
+|---|---|---|---|---|
+| preflop | 2 | 337 | 0.07 | 7.45 |
+| preflop | 3+ | 586 | 0.03 | 35.4 |
+| flop | 2 | 111 | 8.70 | 14.8 |
+| flop | 3+ | 35 | 19.5 | 30.2 |
+| turn | 2 | 70 | 5.15 | 6.62 |
+| turn | 3+ | 12 | 17.3 | 21.0 |
+| river | 2 | 42 | 5.80 | 13.5 |
+| river | 3+ | 7 | 1.65 | 1.69 |
+
+**What this baseline is NOT.** `TestClient` runs no lifespan, so M284's
+disk warmer never ran and 7-/8-handed first asks are still cold solves
+here (8-max p90 599 units, ~166s). It measures the audit's condition, so
+the two runs compare. The next audit must fill the store first to measure
+what M284 delivers.
+
+**Was the audit's latency drift-contaminated? At this sample, no.** Two
+replays of the same decisions today agree per decision at a median ratio
+of **1.00** (p10 0.93, p90 1.05). With the disk store off, the audit's
+commit and today's code give **identical answers on 300 of 300
+decisions** and the same timings (2,925s, 2,972s, and 2,961s for the
+audit's own run). The seconds were readable. Units are what let the next
+audit SHOW that rather than assume it, as it could not in 2026-09-18.
+
+**What did move is M284, and not where it was aimed.** Across all 1,200
+decisions the store-on run was 6% faster than the audit (5,594s against
+5,942s): 160 decisions faster, 349s saved, against 7 slower, 26s lost.
+Almost all of it is preflop multiway. Instrumented:
+- **The cause is the byte bound.** `_multiway_cache` fills its byte
+  budget by decision 124 (about 75 entries, 3.2 GB) and starts evicting
+  least-recently-used buckets. A request for an evicted bucket re-solves
+  it: **~1.3s at 6-max, ~0.7s at 4-max, 7-11s at 8-max.** A FIRST solve
+  of a bucket costs ~20s, most of it filling the equity cache, so the
+  re-solve is cheap but not free.
+- **With the store on those decisions come back fast.** The instrumented
+  store-on arm never missed on the traced decisions: the eviction order
+  shifted between arms, so those entries were still in memory. So the 6%
+  is net and not attributed row by row.
+- **Answers are identical, store on or off, on 300 of 300 decisions**, so
+  it changes cost and not advice.
+
+Not claimed as a win: 6% of wall time on one sample, one arm.
+
+Deliberately not done: filling the store before the replay (~2.9h idle),
+and any comparison of units against the 2026-09-08 audit, which has no
+units to compare with.
