@@ -16731,3 +16731,62 @@ refill. A stored answer from last week's engine is last week's engine.
 Not done: 9-max off 100bb and stacks above 260bb are the same problem and
 now have the machinery; they are not on the warm list yet.
 
+## M285 - every number a player is shown has a source (audit R3 / F58)
+
+The audit's F58: eighteen `quotes_its_own_measurement` tests pin each
+warning's copy to a constant, and nothing pins the constant to reality.
+Building the fix found it had already failed twice more, live.
+
+**Two warnings quoted figures a current measurement contradicted.**
+- `SIZING_CAVEAT_REASON` said trash continues "98% of the time (measured
+  over 22 spots)" - M251's figure - through M281 AND M282, both of which
+  corrected that same number in the two-live warning and never saw it was
+  typed into a second string. Its test asserted the literal "98%", so a
+  correction would have FAILED THE BUILD. The clause is now built from
+  the two-live constants (93% four-bet / 35% three-bet / 84 spots) and the
+  test checks it against them.
+- `MULTIWAY_BET_NOTE` said "47% against 19% ... about two and a half
+  times as often". M269 measured 41% on the same 579 decisions and
+  shipped; the note was never updated. Recomputed from M269's own
+  per-decision rows, with the method validated by reproducing EVERY
+  figure M264 published exactly on M264's arm:
+
+| | M264 | shipped (M269) |
+|---|---|---|
+| we bet, checked to | 47% | **41%** |
+| weaker half (strength < 0.5) | 35% | **27%** |
+| facing, where we lean raise: ref raises / calls / folds | 26/49/26 | **28/50/22** |
+| vs a card-blind prior | -4.02 sigma | **-1.89 sigma** |
+
+"The weaker half" turned out to mean strength percentile below 0.5, not
+the sample median (which gives 0.379 and reproduces nothing). At -1.89
+sigma the claim "did worse than" became "still did no better than".
+
+**`bench/disclosures.py`** registers all 25 numeric user-facing strings.
+Every number in each must render from a registered constant or be a
+literal WITH its source, or `tests/test_disclosures.py` fails - so a
+figure typed into copy can no longer outlive the constant it came from.
+The matcher is deliberately tight (0.9661 cannot "explain" a 1) and was
+mutation-tested: loosening it fails a test. Two of my own assertions were
+weak and are fixed - one sat outside its loop and checked only the last
+entry, one was a tautology.
+
+**F59: 12 of 23 disclosures that reach players quote a configuration that
+no longer ships**, each with what shipped afterwards recorded. That is a
+worklist (R7), not a build failure: unverified is not shown false.
+Before M285 NO shipped figure could be re-derived from the repository -
+every study lived in a session temp directory. `bench/studies/two_live.py`
+is the first: it redraws M282's exact 84 spots from the tree, and its
+reduction reproduces every shipped two-live constant from M282's recorded
+rows, now a committed fixture.
+
+**The audit's U4 was wrong** - published B, corrected to D - because the
+two contradicted figures above were live when it was graded, and the
+audit did not run the one mechanical check that finds them.
+
+**R1 is blocked on hardware.** The three-round flop reference finished
+(0.302% reported) and wrote a 0-byte dump: it held 23.8 GB of 31.7 GB
+while serialising a ~3.5 GB file. `bench.reference_solver` refused it,
+as built to. Two-round dumps cannot stand in (M257 F62). The flop stays
+ungraded.
+

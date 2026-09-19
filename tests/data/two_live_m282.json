@@ -1,0 +1,978 @@
+{
+"rows": [
+{
+"players": 3,
+"raises": 2,
+"trash_continue": 0.0053,
+"warning_fired": true
+},
+{
+"players": 3,
+"raises": 2,
+"trash_continue": 0.254,
+"warning_fired": true
+},
+{
+"players": 3,
+"raises": 3,
+"trash_continue": 0.0855,
+"warning_fired": true
+},
+{
+"players": 3,
+"raises": 2,
+"trash_continue": 0.0421,
+"warning_fired": true
+},
+{
+"players": 3,
+"raises": 2,
+"trash_continue": 0.542,
+"warning_fired": true
+},
+{
+"players": 3,
+"raises": 2,
+"trash_continue": 0.0087,
+"warning_fired": true
+},
+{
+"players": 3,
+"raises": 3,
+"trash_continue": 0.9766,
+"warning_fired": true
+},
+{
+"players": 3,
+"raises": 2,
+"trash_continue": 0.5216,
+"warning_fired": true
+},
+{
+"players": 3,
+"raises": 2,
+"trash_continue": 0.0369,
+"warning_fired": true
+},
+{
+"players": 3,
+"raises": 3,
+"trash_continue": 0.8437,
+"warning_fired": true
+},
+{
+"players": 3,
+"raises": 2,
+"trash_continue": 0.6099,
+"warning_fired": true
+},
+{
+"players": 3,
+"raises": 3,
+"trash_continue": 0.7466,
+"warning_fired": true
+},
+{
+"players": 4,
+"raises": 3,
+"trash_continue": 0.9964,
+"warning_fired": true
+},
+{
+"players": 4,
+"raises": 3,
+"trash_continue": 0.9546,
+"warning_fired": true
+},
+{
+"players": 4,
+"raises": 3,
+"trash_continue": 0.9913,
+"warning_fired": true
+},
+{
+"players": 4,
+"raises": 3,
+"trash_continue": 0.7641,
+"warning_fired": true
+},
+{
+"players": 4,
+"raises": 3,
+"trash_continue": 0.9833,
+"warning_fired": true
+},
+{
+"players": 4,
+"raises": 3,
+"trash_continue": 0.9929,
+"warning_fired": true
+},
+{
+"players": 4,
+"raises": 3,
+"trash_continue": 0.9972,
+"warning_fired": true
+},
+{
+"players": 4,
+"raises": 2,
+"trash_continue": 0.0415,
+"warning_fired": true
+},
+{
+"players": 4,
+"raises": 2,
+"trash_continue": 0.1115,
+"warning_fired": true
+},
+{
+"players": 4,
+"raises": 3,
+"trash_continue": 0.6538,
+"warning_fired": true
+},
+{
+"players": 4,
+"raises": 2,
+"trash_continue": 0.0785,
+"warning_fired": true
+},
+{
+"players": 4,
+"raises": 3,
+"trash_continue": 0.9996,
+"warning_fired": true
+},
+{
+"players": 5,
+"raises": 3,
+"trash_continue": 0.9628,
+"warning_fired": true
+},
+{
+"players": 5,
+"raises": 2,
+"trash_continue": 0.1979,
+"warning_fired": true
+},
+{
+"players": 5,
+"raises": 3,
+"trash_continue": 0.9174,
+"warning_fired": true
+},
+{
+"players": 5,
+"raises": 3,
+"trash_continue": 0.743,
+"warning_fired": true
+},
+{
+"players": 5,
+"raises": 3,
+"trash_continue": 0.8786,
+"warning_fired": true
+},
+{
+"players": 5,
+"raises": 2,
+"trash_continue": 0.903,
+"warning_fired": true
+},
+{
+"players": 5,
+"raises": 3,
+"trash_continue": 0.9636,
+"warning_fired": true
+},
+{
+"players": 5,
+"raises": 3,
+"trash_continue": 0.9965,
+"warning_fired": true
+},
+{
+"players": 5,
+"raises": 3,
+"trash_continue": 0.9965,
+"warning_fired": true
+},
+{
+"players": 5,
+"raises": 3,
+"trash_continue": 0.5672,
+"warning_fired": true
+},
+{
+"players": 5,
+"raises": 2,
+"trash_continue": 0.8243,
+"warning_fired": true
+},
+{
+"players": 5,
+"raises": 2,
+"trash_continue": 0.0856,
+"warning_fired": true
+},
+{
+"players": 6,
+"raises": 3,
+"trash_continue": 0.9162,
+"warning_fired": true
+},
+{
+"players": 6,
+"raises": 3,
+"trash_continue": 0.9962,
+"warning_fired": true
+},
+{
+"players": 6,
+"raises": 3,
+"trash_continue": 0.9967,
+"warning_fired": true
+},
+{
+"players": 6,
+"raises": 3,
+"trash_continue": 0.9873,
+"warning_fired": true
+},
+{
+"players": 6,
+"raises": 3,
+"trash_continue": 0.7803,
+"warning_fired": true
+},
+{
+"players": 6,
+"raises": 3,
+"trash_continue": 0.95,
+"warning_fired": true
+},
+{
+"players": 6,
+"raises": 3,
+"trash_continue": 0.995,
+"warning_fired": true
+},
+{
+"players": 6,
+"raises": 3,
+"trash_continue": 0.9927,
+"warning_fired": true
+},
+{
+"players": 6,
+"raises": 3,
+"trash_continue": 0.9921,
+"warning_fired": true
+},
+{
+"players": 6,
+"raises": 3,
+"trash_continue": 0.9978,
+"warning_fired": true
+},
+{
+"players": 6,
+"raises": 3,
+"trash_continue": 0.9976,
+"warning_fired": true
+},
+{
+"players": 6,
+"raises": 3,
+"trash_continue": 0.9299,
+"warning_fired": true
+},
+{
+"players": 7,
+"raises": 3,
+"trash_continue": 0.9969,
+"warning_fired": true
+},
+{
+"players": 7,
+"raises": 3,
+"trash_continue": 0.9893,
+"warning_fired": true
+},
+{
+"players": 7,
+"raises": 3,
+"trash_continue": 0.9969,
+"warning_fired": true
+},
+{
+"players": 7,
+"raises": 2,
+"trash_continue": 0.5029,
+"warning_fired": true
+},
+{
+"players": 7,
+"raises": 3,
+"trash_continue": 0.9958,
+"warning_fired": true
+},
+{
+"players": 7,
+"raises": 3,
+"trash_continue": 0.9868,
+"warning_fired": true
+},
+{
+"players": 7,
+"raises": 3,
+"trash_continue": 0.9967,
+"warning_fired": true
+},
+{
+"players": 7,
+"raises": 3,
+"trash_continue": 0.981,
+"warning_fired": true
+},
+{
+"players": 7,
+"raises": 3,
+"trash_continue": 0.9921,
+"warning_fired": true
+},
+{
+"players": 7,
+"raises": 2,
+"trash_continue": 0.504,
+"warning_fired": true
+},
+{
+"players": 7,
+"raises": 3,
+"trash_continue": 0.9989,
+"warning_fired": true
+},
+{
+"players": 7,
+"raises": 3,
+"trash_continue": 0.9883,
+"warning_fired": true
+},
+{
+"players": 8,
+"raises": 3,
+"trash_continue": 0.8918,
+"warning_fired": true
+},
+{
+"players": 8,
+"raises": 3,
+"trash_continue": 0.8979,
+"warning_fired": true
+},
+{
+"players": 8,
+"raises": 3,
+"trash_continue": 0.9442,
+"warning_fired": true
+},
+{
+"players": 8,
+"raises": 3,
+"trash_continue": 0.9985,
+"warning_fired": true
+},
+{
+"players": 8,
+"raises": 3,
+"trash_continue": 0.995,
+"warning_fired": true
+},
+{
+"players": 8,
+"raises": 3,
+"trash_continue": 0.995,
+"warning_fired": true
+},
+{
+"players": 8,
+"raises": 3,
+"trash_continue": 0.9647,
+"warning_fired": true
+},
+{
+"players": 8,
+"raises": 3,
+"trash_continue": 0.8683,
+"warning_fired": true
+},
+{
+"players": 8,
+"raises": 3,
+"trash_continue": 0.9914,
+"warning_fired": true
+},
+{
+"players": 8,
+"raises": 3,
+"trash_continue": 0.964,
+"warning_fired": true
+},
+{
+"players": 8,
+"raises": 2,
+"trash_continue": 0.9972,
+"warning_fired": true
+},
+{
+"players": 8,
+"raises": 3,
+"trash_continue": 0.911,
+"warning_fired": true
+},
+{
+"players": 9,
+"raises": 3,
+"trash_continue": 0.995,
+"warning_fired": true
+},
+{
+"players": 9,
+"raises": 3,
+"trash_continue": 0.9783,
+"warning_fired": true
+},
+{
+"players": 9,
+"raises": 3,
+"trash_continue": 0.8939,
+"warning_fired": true
+},
+{
+"players": 9,
+"raises": 3,
+"trash_continue": 0.9983,
+"warning_fired": true
+},
+{
+"players": 9,
+"raises": 3,
+"trash_continue": 0.9725,
+"warning_fired": true
+},
+{
+"players": 9,
+"raises": 3,
+"trash_continue": 0.9923,
+"warning_fired": true
+},
+{
+"players": 9,
+"raises": 3,
+"trash_continue": 0.995,
+"warning_fired": true
+},
+{
+"players": 9,
+"raises": 3,
+"trash_continue": 0.9901,
+"warning_fired": true
+},
+{
+"players": 9,
+"raises": 3,
+"trash_continue": 0.9983,
+"warning_fired": true
+},
+{
+"players": 9,
+"raises": 3,
+"trash_continue": 0.991,
+"warning_fired": true
+},
+{
+"players": 9,
+"raises": 3,
+"trash_continue": 0.9256,
+"warning_fired": true
+},
+{
+"players": 9,
+"raises": 3,
+"trash_continue": 0.9983,
+"warning_fired": true
+}
+],
+"control": [
+{
+"players": 3,
+"raises": 2,
+"trash_continue": 0.0168,
+"warning_fired": false
+},
+{
+"players": 3,
+"raises": 2,
+"trash_continue": 0.0018,
+"warning_fired": false
+},
+{
+"players": 3,
+"raises": 2,
+"trash_continue": 0.0017,
+"warning_fired": false
+},
+{
+"players": 3,
+"raises": 2,
+"trash_continue": 0.0014,
+"warning_fired": false
+},
+{
+"players": 3,
+"raises": 2,
+"trash_continue": 0.0777,
+"warning_fired": false
+},
+{
+"players": 3,
+"raises": 2,
+"trash_continue": 0.0947,
+"warning_fired": false
+},
+{
+"players": 4,
+"raises": 2,
+"trash_continue": 0.1521,
+"warning_fired": false
+},
+{
+"players": 4,
+"raises": 2,
+"trash_continue": 0.0275,
+"warning_fired": false
+},
+{
+"players": 4,
+"raises": 2,
+"trash_continue": 0.0935,
+"warning_fired": false
+},
+{
+"players": 4,
+"raises": 2,
+"trash_continue": 0.1131,
+"warning_fired": false
+},
+{
+"players": 4,
+"raises": 2,
+"trash_continue": 0.0016,
+"warning_fired": false
+},
+{
+"players": 4,
+"raises": 2,
+"trash_continue": 0.0028,
+"warning_fired": false
+},
+{
+"players": 4,
+"raises": 2,
+"trash_continue": 0.0016,
+"warning_fired": false
+},
+{
+"players": 4,
+"raises": 2,
+"trash_continue": 0.0005,
+"warning_fired": false
+},
+{
+"players": 4,
+"raises": 2,
+"trash_continue": 0.001,
+"warning_fired": false
+},
+{
+"players": 4,
+"raises": 2,
+"trash_continue": 0.0036,
+"warning_fired": false
+},
+{
+"players": 4,
+"raises": 2,
+"trash_continue": 0.0003,
+"warning_fired": false
+},
+{
+"players": 4,
+"raises": 2,
+"trash_continue": 0.0004,
+"warning_fired": false
+},
+{
+"players": 5,
+"raises": 2,
+"trash_continue": 0.087,
+"warning_fired": false
+},
+{
+"players": 5,
+"raises": 2,
+"trash_continue": 0.369,
+"warning_fired": false
+},
+{
+"players": 5,
+"raises": 2,
+"trash_continue": 0.0746,
+"warning_fired": false
+},
+{
+"players": 5,
+"raises": 2,
+"trash_continue": 0.0021,
+"warning_fired": false
+},
+{
+"players": 5,
+"raises": 2,
+"trash_continue": 0.141,
+"warning_fired": false
+},
+{
+"players": 5,
+"raises": 2,
+"trash_continue": 0.6937,
+"warning_fired": false
+},
+{
+"players": 5,
+"raises": 2,
+"trash_continue": 0.2047,
+"warning_fired": false
+},
+{
+"players": 5,
+"raises": 2,
+"trash_continue": 0.0479,
+"warning_fired": false
+},
+{
+"players": 5,
+"raises": 2,
+"trash_continue": 0.2668,
+"warning_fired": false
+},
+{
+"players": 5,
+"raises": 2,
+"trash_continue": 0.0007,
+"warning_fired": false
+},
+{
+"players": 5,
+"raises": 2,
+"trash_continue": 0.3814,
+"warning_fired": false
+},
+{
+"players": 5,
+"raises": 2,
+"trash_continue": 0.0002,
+"warning_fired": false
+},
+{
+"players": 6,
+"raises": 2,
+"trash_continue": 0.0415,
+"warning_fired": false
+},
+{
+"players": 6,
+"raises": 2,
+"trash_continue": 0.1162,
+"warning_fired": false
+},
+{
+"players": 6,
+"raises": 2,
+"trash_continue": 0.0019,
+"warning_fired": false
+},
+{
+"players": 6,
+"raises": 2,
+"trash_continue": 0.6883,
+"warning_fired": false
+},
+{
+"players": 6,
+"raises": 2,
+"trash_continue": 0.6467,
+"warning_fired": false
+},
+{
+"players": 6,
+"raises": 2,
+"trash_continue": 0.0071,
+"warning_fired": false
+},
+{
+"players": 6,
+"raises": 2,
+"trash_continue": 0.0021,
+"warning_fired": false
+},
+{
+"players": 6,
+"raises": 2,
+"trash_continue": 0.0017,
+"warning_fired": false
+},
+{
+"players": 6,
+"raises": 2,
+"trash_continue": 0.6678,
+"warning_fired": false
+},
+{
+"players": 6,
+"raises": 2,
+"trash_continue": 0.004,
+"warning_fired": false
+},
+{
+"players": 6,
+"raises": 2,
+"trash_continue": 0.0027,
+"warning_fired": false
+},
+{
+"players": 6,
+"raises": 2,
+"trash_continue": 0.4048,
+"warning_fired": false
+},
+{
+"players": 7,
+"raises": 2,
+"trash_continue": 0.2437,
+"warning_fired": false
+},
+{
+"players": 7,
+"raises": 2,
+"trash_continue": 0.5736,
+"warning_fired": false
+},
+{
+"players": 7,
+"raises": 2,
+"trash_continue": 0.0079,
+"warning_fired": false
+},
+{
+"players": 7,
+"raises": 2,
+"trash_continue": 0.0034,
+"warning_fired": false
+},
+{
+"players": 7,
+"raises": 2,
+"trash_continue": 0.3235,
+"warning_fired": false
+},
+{
+"players": 7,
+"raises": 2,
+"trash_continue": 0.0008,
+"warning_fired": false
+},
+{
+"players": 7,
+"raises": 2,
+"trash_continue": 0.0055,
+"warning_fired": false
+},
+{
+"players": 7,
+"raises": 2,
+"trash_continue": 0.0212,
+"warning_fired": false
+},
+{
+"players": 7,
+"raises": 2,
+"trash_continue": 0.1614,
+"warning_fired": false
+},
+{
+"players": 7,
+"raises": 2,
+"trash_continue": 0.4196,
+"warning_fired": false
+},
+{
+"players": 7,
+"raises": 2,
+"trash_continue": 0.5672,
+"warning_fired": false
+},
+{
+"players": 7,
+"raises": 2,
+"trash_continue": 0.004,
+"warning_fired": false
+},
+{
+"players": 8,
+"raises": 2,
+"trash_continue": 0.0136,
+"warning_fired": false
+},
+{
+"players": 8,
+"raises": 2,
+"trash_continue": 0.0435,
+"warning_fired": false
+},
+{
+"players": 8,
+"raises": 2,
+"trash_continue": 0.0077,
+"warning_fired": false
+},
+{
+"players": 8,
+"raises": 2,
+"trash_continue": 0.0018,
+"warning_fired": false
+},
+{
+"players": 8,
+"raises": 2,
+"trash_continue": 0.1169,
+"warning_fired": false
+},
+{
+"players": 8,
+"raises": 2,
+"trash_continue": 0.0027,
+"warning_fired": false
+},
+{
+"players": 8,
+"raises": 2,
+"trash_continue": 0.1006,
+"warning_fired": false
+},
+{
+"players": 8,
+"raises": 2,
+"trash_continue": 0.0034,
+"warning_fired": false
+},
+{
+"players": 8,
+"raises": 2,
+"trash_continue": 0.2183,
+"warning_fired": false
+},
+{
+"players": 8,
+"raises": 2,
+"trash_continue": 0.0015,
+"warning_fired": false
+},
+{
+"players": 8,
+"raises": 2,
+"trash_continue": 0.0027,
+"warning_fired": false
+},
+{
+"players": 8,
+"raises": 2,
+"trash_continue": 0.0025,
+"warning_fired": false
+},
+{
+"players": 9,
+"raises": 2,
+"trash_continue": 0.0194,
+"warning_fired": false
+},
+{
+"players": 9,
+"raises": 2,
+"trash_continue": 0.005,
+"warning_fired": false
+},
+{
+"players": 9,
+"raises": 2,
+"trash_continue": 0.036,
+"warning_fired": false
+},
+{
+"players": 9,
+"raises": 2,
+"trash_continue": 0.0245,
+"warning_fired": false
+},
+{
+"players": 9,
+"raises": 2,
+"trash_continue": 0.0233,
+"warning_fired": false
+},
+{
+"players": 9,
+"raises": 2,
+"trash_continue": 0.0175,
+"warning_fired": false
+},
+{
+"players": 9,
+"raises": 2,
+"trash_continue": 0.3268,
+"warning_fired": false
+},
+{
+"players": 9,
+"raises": 2,
+"trash_continue": 0.4712,
+"warning_fired": false
+},
+{
+"players": 9,
+"raises": 2,
+"trash_continue": 0.0055,
+"warning_fired": false
+},
+{
+"players": 9,
+"raises": 2,
+"trash_continue": 0.0301,
+"warning_fired": false
+},
+{
+"players": 9,
+"raises": 2,
+"trash_continue": 0.0204,
+"warning_fired": false
+},
+{
+"players": 9,
+"raises": 2,
+"trash_continue": 0.0692,
+"warning_fired": false
+}
+]
+}
