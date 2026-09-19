@@ -17002,3 +17002,67 @@ covers that node.
 Both runs' rows are committed (`tests/data/node_spread_*_m288.json`) and
 both NULLs re-derive in tests. So do the rule's arms: separation, the
 split halves, and that fold-TVD ignores a raise/all-in reshuffle.
+
+## M289 - the preflop fold call moves with the seed facing a raise (audit R9 / F61)
+
+M288 found, at six-handed only, that the multiway preflop FOLD call moves
+with the solver's seed once the player faces a raise. Meanwhile three
+strings told 7-, 8- and 9-handed players to "lean on the fold-or-play
+call", and `SIZING_CAVEAT_REASON` called it "sounder". M282's lesson is
+that one table size is not all of them, so `bench/studies/
+preflop_fold_seeds.py` measured every multiway size:
+- **Solves:** the shipped 100bb preflop at seed 1 plus FRESH seeds 8, 9
+  and 10 (untouched by any earlier study), equity fixed.
+- **Population:** every preflop decision in the hand store's clean hands
+  of that size, walked on our tree and weighted by occurrence (about
+  489,000 decisions).
+- **Rule, fixed before any seed was solved:** fire where facing a raise
+  moves the average hand's fold probability by >= 0.10, AND by >= 0.05
+  more than a first-in decision, in both split halves.
+
+| size | facing a raise | first in | verdict |
+|---|---|---|---|
+| 3 | 0.046 | 0.032 | silent - small |
+| 4 | 0.114 | 0.059 | silent - first-in moves 0.132 in one half |
+| 5 | 0.121 | 0.069 | silent - first-in moves 0.145 in one half |
+| **6** | **0.150** | 0.067 | **fires** |
+| 7 | 0.161 | 0.093 | silent - gap 0.027 in one half |
+| **8** | **0.130** | 0.056 | **fires** |
+| **9** | **0.147** | 0.065 | **fires** |
+
+**Shipped.**
+- **The note:** `PREFLOP_FOLD_SEED_{6,8,9}_REASON` fires on a multiway
+  preflop node with a raise on the path and something owed, at those
+  three sizes, and drops `solver_confidence` to "low". It quotes each
+  size's own figure.
+- **Where it stays silent:** first-in decisions, limped pots and a
+  checked option, verified at production settings (6-max: open and
+  limped option "high", three raise nodes "low").
+- **Exposure:** facing a raise is 42% / 31% / 30% of preflop decisions
+  at 6 / 8 / 9-handed.
+- **8- and 9-handed** now say the fold call is steadier first in, and
+  not once facing a raise.
+- **7-handed stops recommending the fold call altogether.** There it
+  moves whether or not a raise is faced: 57% of its decisions sit at
+  nodes moving more than 0.10. Withdrawing a claim needs only the
+  absence of support (M168's asymmetry).
+- **`SIZING_CAVEAT_REASON`** says the fold call is sounder "when you are
+  first in".
+- **Re-derivable:** the rows are committed
+  (`tests/data/preflop_fold_seeds_m289.json`), and a test re-derives
+  which sizes fire and each quoted number from them.
+- **Guard:** dropping the facing-a-raise condition from the gate fails
+  two tests.
+
+**4-, 5- and 7-handed are silent for the opposite reason to 3-handed.**
+There EVERYTHING moves, so a note contrasting facing a raise with
+first-in would be false. Whether they need a sentence of their own is
+left for R10, which should reduce the movement rather than describe more
+of it.
+
+**Not done: reduction (R10).** A multiway preflop solve is precomputed
+and cached, so averaging K seeds (M169's ensemble, which was refused on
+the flop for request LATENCY) costs warm-up time here, not a player's
+wait. Whether it tightens the fold call without moving it away from
+outside play is a measurement: M169 found the middle tightens while the
+worst cases do not.

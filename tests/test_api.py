@@ -8905,6 +8905,59 @@ def test_the_one_raise_warning_quotes_its_own_measurement():
             < api_config.PREFLOP_TWO_LIVE_ONE_RAISE_CONTINUES)
 
 
+def test_the_preflop_fold_seed_note_fires_facing_a_raise_only_where_measured():
+    """M289 (audit R9 / F61). Facing a raise, the multiway preflop fold
+    call moves with the solver's seed by 0.13-0.15 for the average hand at
+    6-, 8- and 9-handed; first-in decisions are steadier. It fires on the
+    raise, at those sizes, and nowhere else."""
+    facing = {"street": "preflop", "positions": ["UTG", "MP", "BB"],
+              "preflop_raises": 1, "to_call_bb": 1.5}
+    for size in (6, 8, 9):
+        assert api_main._preflop_fold_is_seed_dependent(facing, size)
+        text = api_main._solver_confidence(facing, size)[1] or ""
+        assert api_config.PREFLOP_FOLD_SEED_REASONS[size] in text
+    for size in (3, 4, 5, 7):          # measured and not qualified
+        assert not api_main._preflop_fold_is_seed_dependent(facing, size)
+    first_in = {**facing, "preflop_raises": 0, "to_call_bb": 0.0}
+    limped_option = {**facing, "preflop_raises": 0, "to_call_bb": 0.0}
+    completion = {**facing, "preflop_raises": 0, "to_call_bb": 0.5}
+    for raw in (first_in, limped_option, completion):
+        assert not api_main._preflop_fold_is_seed_dependent(raw, 6)
+    assert not api_main._preflop_fold_is_seed_dependent({**facing, "street": "flop"}, 6)
+    assert not api_main._preflop_fold_is_seed_dependent({**facing, "preflop_raises": None}, 6)
+
+
+def test_a_six_handed_player_facing_a_raise_is_told_the_fold_call_moves(client):
+    response = client.post("/advise", json=_advise_body(
+        stack_bb=100.0, players=6, hero_cards="9c8c",
+        preflop_action_path=["raise"]))
+    assert response.status_code == 200, response.json()
+    payload = response.json()
+    assert payload["solver_confidence"] == "low"
+    assert (api_config.PREFLOP_FOLD_SEED_REASONS[6][:60]
+            in (payload["solver_confidence_reason"] or ""))
+    opener = client.post("/advise", json=_advise_body(
+        stack_bb=100.0, players=6, hero_cards="9c8c", preflop_action_path=[])).json()
+    assert (api_config.PREFLOP_FOLD_SEED_REASONS[6][:60]
+            not in (opener["solver_confidence_reason"] or ""))
+
+
+def test_the_fold_seed_note_quotes_its_own_measurement():
+    for size in (6, 8, 9):
+        move = getattr(api_config, f"PREFLOP_FOLD_SEED_MOVE_{size}")
+        text = api_config.PREFLOP_FOLD_SEED_REASONS[size]
+        assert f"about {round(move * 100)} points" in text and f"{size}-handed" in text
+
+
+def test_no_table_size_string_recommends_the_fold_call_where_it_moves():
+    """M289: 7-, 8- and 9-handed told players to "lean on the fold-or-play
+    call". Measured, it moves with the seed facing a raise at 8 and 9, and
+    at 7 it moves whether or not a raise is faced."""
+    for size in (7, 8, 9):
+        assert "lean on the fold-or-play call" not in api_config.LOW_CONFIDENCE_TABLE_SIZES[size]
+    assert "first in" in api_config.SIZING_CAVEAT_REASON
+
+
 def test_the_sizing_caveat_no_longer_claims_trash_is_always_folded():
     """M251, and the THIRD correction to this one paragraph.
 

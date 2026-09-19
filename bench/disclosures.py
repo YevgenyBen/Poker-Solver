@@ -139,6 +139,15 @@ REGISTRY = (
         "PREFLOP_TWO_LIVE_ONE_RAISE_REASON", "M287", HAND_STORE, _ONE_RAISE,
         study="bench/studies/two_live_silent.py"),
     Disclosure(
+        "PREFLOP_FOLD_SEED_6_REASON", "M289", ENGINE, ("PREFLOP_FOLD_SEED_MOVE_6",),
+        literals={"6": "table size"}, study="bench/studies/preflop_fold_seeds.py"),
+    Disclosure(
+        "PREFLOP_FOLD_SEED_8_REASON", "M289", ENGINE, ("PREFLOP_FOLD_SEED_MOVE_8",),
+        literals={"8": "table size"}, study="bench/studies/preflop_fold_seeds.py"),
+    Disclosure(
+        "PREFLOP_FOLD_SEED_9_REASON", "M289", ENGINE, ("PREFLOP_FOLD_SEED_MOVE_9",),
+        literals={"9": "table size"}, study="bench/studies/preflop_fold_seeds.py"),
+    Disclosure(
         "FLOP_UNDER_FOLD_NOTE", "M272", REFERENCE,
         ("FLOP_UNDER_FOLD_ROWS", "FLOP_UNDER_FOLD_GAP",
          "FLOP_UNDER_FOLD_SMALL_BET_GAP", "FLOP_UNDER_FOLD_AGREEMENT_PCT"),

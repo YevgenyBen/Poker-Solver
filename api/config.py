@@ -1767,18 +1767,67 @@ MULTIWAY_REPRODUCIBILITY_REASON = (
     "recommendation here as genuinely unsettled."
 )
 
+# M289 (audit R9 / F61). The multiway preflop FOLD call moves with the
+# solver's seed once the player faces a raise. `bench/studies/
+# preflop_fold_seeds.py` re-solved each table size at 100bb under three
+# fresh traversal seeds, equity fixed, over every preflop decision in the
+# hand store's clean hands of that size (weighted by occurrence), under a
+# rule fixed before any seed was solved: fire where facing a raise moves
+# the average hand's fold probability by >= 0.10 AND >= 0.05 more than a
+# first-in decision, in both split halves. Rows committed as
+# `tests/data/preflop_fold_seeds_m289.json`.
+#
+#   size  facing  first-in   verdict
+#    3    0.046   0.032      silent - small
+#    4    0.114   0.059      silent - first-in moves 0.132 in one half
+#    5    0.121   0.069      silent - first-in moves 0.145 in one half
+#    6    0.150   0.067      FIRES
+#    7    0.161   0.093      silent - the gap is 0.027 in one half
+#    8    0.130   0.056      FIRES
+#    9    0.147   0.065      FIRES
+#
+# 4, 5 and 7 are silent because EVERYTHING moves there, not because
+# facing a raise is sound - so this note, which contrasts the two, would
+# be false there. 7-max's table-size string no longer recommends the fold
+# call at all; 4- and 5-max carry `SIZING_CAVEAT_REASON` only (R9's
+# follow-on is whether they need their own sentence).
+PREFLOP_FOLD_SEED_MOVE_6 = 0.15
+PREFLOP_FOLD_SEED_MOVE_8 = 0.13
+PREFLOP_FOLD_SEED_MOVE_9 = 0.147
+
+
+def _fold_seed_reason(players: int, move: float) -> str:
+    return (
+        f"Facing a raise at {players}-handed, whether to fold is not reproducible: re-solving "
+        "this same spot with a different random seed, changing nothing else, moves the average "
+        f"hand's fold probability by about {round(move * 100)} points (measured over the "
+        f"preflop decisions of real {players}-handed hands). Decisions where you are first in "
+        "are much steadier. Treat the fold/continue split here as a range, not a verdict, and "
+        "be wary of a marginal recommendation either way."
+    )
+
+
+PREFLOP_FOLD_SEED_6_REASON = _fold_seed_reason(6, PREFLOP_FOLD_SEED_MOVE_6)
+PREFLOP_FOLD_SEED_8_REASON = _fold_seed_reason(8, PREFLOP_FOLD_SEED_MOVE_8)
+PREFLOP_FOLD_SEED_9_REASON = _fold_seed_reason(9, PREFLOP_FOLD_SEED_MOVE_9)
+PREFLOP_FOLD_SEED_REASONS = {6: PREFLOP_FOLD_SEED_6_REASON,
+                             8: PREFLOP_FOLD_SEED_8_REASON,
+                             9: PREFLOP_FOLD_SEED_9_REASON}
+
 LOW_CONFIDENCE_TABLE_SIZES = {
     7: (
         "7-handed preflop is not converged. How often it moves all in with a premium such "
         "as aces changes with the solver's random seed by up to 0.44, and on average it "
-        "shoves them far more often than a strong player would. Treat it as a strong hint "
-        "rather than GTO, and lean on the fold-or-play call rather than the exact frequency."
+        "shoves them far more often than a strong player would. The fold-or-play call "
+        "moves with the seed too, whether or not you face a raise, so treat both as a strong "
+        "hint rather than GTO."
     ),
     8: (
         "8-handed preflop is not converged. Iterations divide among eight seats, and how "
         "often it moves all in with a premium such as aces still changes with the solver's "
-        "random seed by up to 0.35. Treat it as a strong hint rather than GTO, and lean on "
-        "the fold-or-play call rather than the exact frequency."
+        "random seed by up to 0.35. Treat it as a strong hint rather than GTO. The "
+        "fold-or-play call is steadier than the exact frequency when you are first in, and "
+        "not once you face a raise."
     ),
     9: (
         "9-max preflop is the least converged table size: iterations divide among "
@@ -1787,8 +1836,8 @@ LOW_CONFIDENCE_TABLE_SIZES = {
         "time on average where it used to fold 12%, and the answer for a premium "
         "no longer swings wildly — but it still varies with the solver's random "
         "seed, by up to 0.43 on that same hand. Treat it as a strong hint rather "
-        "than GTO, and lean on the fold-or-play call rather than the exact "
-        "frequency."
+        "than GTO. The fold-or-play call is steadier than the exact frequency when "
+        "you are first in, and not once you face a raise."
     ),
 }
 
@@ -2059,7 +2108,8 @@ SIZING_CAVEAT_REASON = (
     "Multiway preflop is unreliable for which sizing to use: the split among the "
     "non-fold actions (limp / raise / all-in) moves with the random seed — at 6-max, "
     "AA's all-in frequency has measured anywhere from 0.03 to 0.92 where a converged "
-    "solve puts it near 0.03. The fold-vs-play call is sounder but is NOT a positional "
+    "solve puts it near 0.03. The fold-vs-play call is sounder when you are first in — it too moves with the "
+    "seed once you face a raise — and it is NOT a positional "
     "range chart. Individual hands are classified sensibly while three or more players "
     "are live — premiums are never folded, trash is — but NOT once everyone else has "
     "folded and you face a raise heads-up, where hands as weak as 72o are told to "
