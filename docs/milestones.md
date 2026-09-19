@@ -17144,3 +17144,56 @@ and live: a job allocating 0.8 GB against a 0.3 GB cap was stopped in
   4/5/7 move everywhere.
 - **Making a cold ensemble solve cheaper.** Sharing the equity sample
   across seeds would remove most of the 8.5x.
+
+## M291 - the multiway cost peaks at THREE live, and it is paid for (audit R6)
+
+R6 asked for a cap on total multiway work by live count: M253 measured a
+six-live flop at ~11.4 reference units and width is capped per seat, so a
+six-way pot pays for six seats.
+
+**The premise is gone.** `bench/studies/multiway_live_cost.py` - ten cold
+six-handed decisions per (street, live), timed in reference units, bar =
+five seconds at the run's median reference second (19.0 units), machine
+quiet (drift 1.09), peak memory 0.65 GB under the new watchdog:
+
+| street | live | p50 units | p90 | seconds p50 | over bar | real exposure |
+|---|---|---|---|---|---|---|
+| flop | **3** | **24.6** | 25.7 | 6.49 | YES | **22.19%** |
+| flop | 4 | 12.7 | 13.3 | 3.35 | no | 6.43% |
+| flop | 5 | 17.9 | 19.6 | 4.91 | YES | 1.65% |
+| flop | 6 | 19.3 | 20.5 | 5.29 | YES | 0.30% |
+| turn | 3 | 21.0 | 23.2 | 5.62 | YES | 14.54% |
+| turn | 4-6 | 9.9-17.3 | — | 2.7-4.0 | no | <3.3% |
+| river | 3-6 | 1.6-3.4 | — | 0.4-0.9 | no | — |
+
+Cost does not climb with live count: **it peaks at three**, because M266
+gave four or more live the smaller budget. The pre-registered rule said a
+cap is needed only if an over-bar cell carries >= 0.5% of its street's
+real decisions, and three-live flop (22%) and turn (15%) do - so the
+question became whether that budget can be halved.
+
+**It cannot.** Same 579 real multiway decisions M264 used, scored the
+same way, one fresh process per arm, rule fixed first (adopt only if not
+worse at 2 sigma over all decisions AND over three-live):
+
+| cell | n | shipped | half | delta | sigma | seconds p50 |
+|---|---|---|---|---|---|---|
+| all | 579 | 0.5814 | 0.5627 | **-0.0187** | **-2.78** | 5.45 -> 3.05 |
+| live 3 | 541 | 0.5861 | 0.5662 | -0.0200 | -2.78 | 5.55 -> 3.06 |
+| flop 3-live | 328 | 0.5754 | 0.5552 | -0.0202 | -2.03 | 6.05 -> 3.39 |
+| turn 3-live | 147 | 0.6436 | 0.6152 | -0.0284 | -2.00 | 5.38 -> 2.89 |
+| live 4 | 38 | 0.5135 | 0.5135 | 0.0000 | - | unchanged |
+
+**REFUSED.** Half the work is 1.8x faster and gives back part of M264's
++0.107. **So R6 ships nothing**, which is the answer: there is no cap to
+add and no cheap iteration to cut.
+
+**What is left is F62**, recorded for the next audit: the five-second bar
+is breached on ~22% of real flop decisions and ~15% of real turn
+decisions, on a quiet machine, and the cost buys measured accuracy.
+
+Both studies' rules are tested as code, and the 579 rows are committed
+(`tests/data/three_live_budget_m291.json`) so the refusal re-derives.
+**Two of my own fixtures were dead guards** and were caught here: one
+ended in `or True`, and one gave every row the same delta, so its sigma
+was undefined and the refusal test passed for the wrong reason.

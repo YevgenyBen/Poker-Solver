@@ -607,6 +607,24 @@ same nine references, re-scored against heroes drawn by range weight -
     smaller sizes.** That covered 189 of 303 firings, where the note was
     false.
 
+- **MULTIWAY COST PEAKS AT THREE LIVE, NOT AT SIX (M291, audit R6).**
+  Since M266 gave 4+ live the smaller budget, the most expensive cell in
+  the product is the THREE-way pot - and it is the common one.
+  | street | live | p50 units | seconds | real exposure |
+  |---|---|---|---|---|
+  | flop | **3** | **24.6** | 6.49 | **22.19%** |
+  | flop | 4 | 12.7 | 3.35 | 6.43% |
+  | flop | 5-6 | 17.9-19.3 | 4.9-5.3 | 1.95% |
+  | turn | 3 | 21.0 | 5.62 | 14.54% |
+  | river | any | 1.6-3.4 | 0.4-0.9 | - |
+  The bar (5s) is 19.0 units at that run's median reference second, so
+  **flop and turn at three live are over it**.
+  **Halving that budget is REFUSED**: 1.8x faster and separably worse
+  against real outside play (-0.0187, **-2.78 sigma**, n=579; flop -2.03,
+  turn -2.00). M264 paid for that accuracy.
+  **So there is no cap to add** - R6's "cap total work by live count" is
+  answered and closed. The breach is F62 in the 2026-09-18 audit.
+
 - **MULTIWAY AT AN UNPREWARMED STACK IS NOT LIVE-USABLE ON FIRST ASK.**
   - **The cost:** the multiway preflop solve is cached per 5 bb bucket,
     and only 100/50/20 bb are prewarmed. The first request elsewhere took
@@ -978,7 +996,8 @@ requests now reject unknown fields by name rather than ignoring them.
       studies/             studies that re-derive shipped figures, runnable
                            from the repo - `two_live.py` first (M285),
                            `two_live_silent.py` (M287), `node_spread.py` (M288),
-                           `preflop_fold_seeds.py` (M289)
+                           `preflop_fold_seeds.py` (M289),
+                           `multiway_live_cost.py` / `three_live_budget.py` (M291)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools
