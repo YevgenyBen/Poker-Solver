@@ -974,7 +974,8 @@ requests now reject unknown fields by name rather than ignoring them.
                            records whether it was measured at the shipped
                            configuration (M285)
       studies/             studies that re-derive shipped figures, runnable
-                           from the repo - `two_live.py` first (M285)
+                           from the repo - `two_live.py` first (M285),
+                           `two_live_silent.py` (M287), `node_spread.py` (M288)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools
@@ -2353,6 +2354,18 @@ requests now reject unknown fields by name rather than ignoring them.
     Exposure rises from **3.4% to 13.3%** of six-handed preflop decisions.
   - **Not a fix.** A near-uniform row slips past `_row_is_the_prior`,
     which wants EXACT uniformity (F60 in the 2026-09-18 audit).
+  **M288 (R8) could not gate F60, and found something larger.** Node
+  SPREAD across hands (AA and 72o playing alike) was graded against seed
+  reproducibility under a pre-registered rule:
+  - **Whole row: NULL.** 69% of real decisions sit at unstable nodes.
+  - **Fold axis, on fresh seeds: NULL.** Pooled passes, a split half
+    fails.
+  - **Training such a node is NOT a repair.** It moves learned nodes as
+    much (TVD 0.27-0.72) and can push trash to continue ~1.0.
+  - **F61: 37% of real 6-max preflop decisions sit at nodes whose FOLD
+    call moves by more than ten points with the seed.** Facing an open
+    it is 0.15-0.20; first-in opens are stable (UTG 0.023). The caveat's
+    "the fold-vs-play call is sounder" holds at the open only (R9).
   **M279 FOUND THE CAUSE AND IT IS NOT THE PRICING.** M250's prescribed
   route was built exactly - a continuation table keyed on RAISE COUNT,
   entries from HEADS-UP ranges of that depth - and it leaves this node
