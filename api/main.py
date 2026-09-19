@@ -633,6 +633,7 @@ from .caches import (
     _flop_node_cache,
     _multiway_cache,
     _multiway_equity_caches,
+    _multiway_store,
     _path_query_libraries,
     _preflop_raw_cache,
     _river_path_cache,
@@ -670,6 +671,8 @@ from .solving import (
     _get_or_solve_flop_turn,
     _get_or_solve_flop_turn_multiway,
     _get_or_solve_multiway,
+    _ensure_multiway_stored,
+    _multiway_is_stored,
     _get_or_solve_preflop_raw,
     _infer_street,
     _live_position_count,
@@ -883,6 +886,47 @@ def _background_warm(clock=time.monotonic, sleep=time.sleep, poll_seconds=0.5,
                        "error": None, "skipped": False})
         logger.info("background warm: %s-max stack_bb=%s in %.1fs",
                     players, depth, clock() - started)
+    _disk_warm(clock=clock, sleep=sleep, poll_seconds=poll_seconds, enabled=enabled)
+
+
+def _disk_warm(clock=time.monotonic, sleep=time.sleep, poll_seconds=0.5,
+               enabled=_background_warm_enabled) -> None:
+    """M284: fill the DISK tier for `MULTIWAY_DISK_WARM`, touching no
+    memory cache.
+
+    The 2026-09-18 audit's F56: 7- and 8-handed tables were warmed at
+    100bb only and 5.81% of real hands waited on a cold preflop solve,
+    worst 211s. Their entries do not fit `_multiway_cache` (194 MB each at
+    8-max), so they are solved once, while idle, straight to disk - and a
+    player's first ask becomes a 0.2-1.5s read instead of a 157-580s solve.
+    Same idle discipline as the RAM list above.
+    """
+    status = PREWARM_STATUS.setdefault("disk", [])
+    if not _multiway_store.enabled:
+        return
+    for players, depth in cfg.MULTIWAY_DISK_WARM:
+        if not enabled():
+            return
+        name = f"{players}-max stack_bb={depth}"
+        # Checked BEFORE waiting for idle, as the RAM list does: after the
+        # first run nearly every bucket is already stored, and a restart
+        # should not sit polling for idle windows it does not need.
+        if _multiway_is_stored(depth, players):
+            status.append({"name": name, "ok": True, "error": None, "skipped": True})
+            continue
+        while not _server_is_idle(clock()):
+            sleep(poll_seconds)
+        started = clock()
+        try:
+            solved = _ensure_multiway_stored(depth, players)
+        except Exception as exc:
+            logger.exception("disk warm failed for %s", name)
+            status.append({"name": name, "ok": False,
+                           "error": f"{type(exc).__name__}: {exc}", "skipped": False})
+            continue
+        status.append({"name": name, "ok": True, "error": None, "skipped": not solved})
+        if solved:
+            logger.info("disk warm: %s in %.1fs", name, clock() - started)
 
 
 def _warm_all() -> None:
@@ -922,6 +966,7 @@ async def warm_status_endpoint():
     operator (or a test) can tell whether a server is warm yet.
     """
     background = list(PREWARM_STATUS.get("background", []))
+    disk = list(PREWARM_STATUS.get("disk", []))
     return {
         "prewarm_started": PREWARM_STATUS["started"],
         "prewarm_finished": PREWARM_STATUS["finished"],
@@ -932,6 +977,14 @@ async def warm_status_endpoint():
         "background_solved": sum(1 for s in background if s["ok"] and not s["skipped"]),
         "background_failed": [s["name"] for s in background if not s["ok"]],
         "background_last": background[-1]["name"] if background else None,
+        # M284: the disk tier and its own warm list.
+        "disk_planned": len(cfg.MULTIWAY_DISK_WARM),
+        "disk_done": len(disk),
+        "disk_solved": sum(1 for s in disk if s["ok"] and not s["skipped"]),
+        "disk_failed": [s["name"] for s in disk if not s["ok"]],
+        "disk_store_enabled": _multiway_store.enabled,
+        "disk_store_bytes": _multiway_store.total_bytes(),
+        "disk_store_stats": dict(_multiway_store.stats),
     }
 
 

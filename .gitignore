@@ -11,3 +11,7 @@ poker_solver/data/
 
 # Real played hands (bench/hand_db.py) - local, large, never committed.
 data/hands/
+
+# Stored multiway preflop solves (api/solve_store.py, M284) - our own
+# engine's output, regenerated whenever the engine changes. Never committed.
+data/solve_store/
