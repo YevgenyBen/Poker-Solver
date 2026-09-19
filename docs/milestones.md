@@ -16944,3 +16944,61 @@ earned.
   study first (R8).
 - **Pricing the excess in bb.** M253 showed a price here rests on
   realisation.
+
+## M288 - a near-uniform node, measured and not gated (audit R8 / F60)
+
+F60: facing an under-the-gun open with everyone else folded, the big
+blind's row is close to uniform for every hand and was served at "high".
+`_row_is_the_prior` wants EXACT uniformity, and M149 kept it exact
+because one row near indifference can be a real decision.
+
+**The candidate signal was the NODE, not the row.** `spread` is the
+combo-weighted mean TVD of each hand's row from the node's mean row. On
+M287's paths, learned nodes measure 0.25-0.43, many deep cold nodes
+0.000 (the on-demand trainer owns those), and the F60 node 0.114.
+
+**Training is not a repair.** Forcing M150's trainer onto every node of
+that population moved well-learned nodes as much as the near-uniform one
+(TVD 0.27-0.72). At many deep nodes it pushed weak hands to continue
+0.96-1.00, which is M251's defect made larger. A trained row is another
+answer, not ground truth.
+
+**So the ground truth was reproducibility.** `bench/studies/node_spread.py`
+re-solves the shipped 6-max 100bb preflop at more traversal seeds (equity
+fixed). It weights each node by how often it occurs in the hand store's
+six-handed hands (59,733 decisions, 159 nodes the trainer does not own),
+and applies a rule fixed before any extra seed was solved:
+- **To fire:** spread < T.
+- **To qualify:** precision >= 0.75, >= 0.30 above silence, in both split
+  halves.
+- **To adopt:** the largest qualifying T, and never training.
+
+| run | ground truth | seeds | unstable overall | verdict |
+|---|---|---|---|---|
+| registered | whole-row TVD > 0.15 | 1-4 | 69% | **NULL** - nothing beats silence |
+| follow-up | fold-probability move > 0.10 | 1, 5-7 (fresh) | 37% | **NULL** - pooled passes at T=0.15 (0.83 vs 0.36), a split half does not (0.38) |
+
+**Why there was a follow-up.** The first rule's ground truth was the
+wrong axis: a whole row is dominated by the raise/all-in split, which M98
+measured as seed-driven and which is already disclosed. It was written
+after that NULL, run on fresh seeds so it could not reuse what motivated
+it, and held to the same bar. It failed on replication, the bar M166
+failed and M189 passed. **No gate ships.** The F60 node is itself
+low-spread AND fold-unstable (0.157). The signal is right about the case
+that prompted it and not as a rule, and M287's two-live warning already
+covers that node.
+
+**What both runs found instead (F61, high).**
+- **37% of real six-handed preflop decisions** sit at nodes where the
+  average hand's FOLD probability moves by more than ten points between
+  seeds.
+- **Facing an open, the nodes move 0.15-0.20.**
+- **First-in opens are stable:** under the gun 0.023, the next seats
+  0.06-0.09.
+- **So the "sounder" fold call** in `SIZING_CAVEAT_REASON` holds at the
+  open and not reliably once facing a raise. This is M163/F46's multiway
+  flop shape, in the preflop cell, undisclosed (R9).
+
+Both runs' rows are committed (`tests/data/node_spread_*_m288.json`) and
+both NULLs re-derive in tests. So do the rule's arms: separation, the
+split halves, and that fold-TVD ignores a raise/all-in reshuffle.
