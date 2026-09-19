@@ -30,10 +30,23 @@ from bench.advise_checks import response_defects
 
 # The preflop model's raise cap; the last raise is forced all in.
 PREFLOP_MAX_RAISES = 4
-SUPPORTED_TABLE_SIZES = (2, 3, 4, 5, 6, 9)
+# M270 added 7- and 8-handed and M271 warmed the deep buckets, and this
+# instrument was not updated for either - so a replay run with the old
+# filter measured coverage over a population chosen to be coverable, and
+# would have reported a flattering number. M252's F54 in a new place: the
+# benchmark measures the population it generates.
+SUPPORTED_TABLE_SIZES = (2, 3, 4, 5, 6, 7, 8, 9)
 RANKS, SUITS = "AKQJT98765432", "shdc"
-DEFAULT_WHERE = ("clean = 1 AND n_players IN (2,3,4,5,6,9) "
-                 "AND eff_stack_bb <= 200 AND eff_stack_bb >= 2")
+#: Every clean hand at a supported table size. **Deliberately NOT capped
+#: at 200bb**: stacks above it were always supported (M271 measured the
+#: latency, not a refusal), and excluding them hid 15% of real multiway
+#: flops from every replay that has ever run here.
+DEFAULT_WHERE = ("clean = 1 AND n_players IN (2,3,4,5,6,7,8,9) "
+                 "AND eff_stack_bb >= 2")
+#: The honest denominator for a COVERAGE claim: every clean hand,
+#: including the ones this engine cannot answer. A coverage figure taken
+#: over `DEFAULT_WHERE` is conditional on being answerable already.
+ALL_CLEAN_WHERE = "clean = 1 AND eff_stack_bb >= 2"
 
 
 def deal(board: str, n: int, rng: random.Random) -> dict:
@@ -179,7 +192,7 @@ def main(argv=None):                                      # pragma: no cover
     parser.add_argument("--seed", type=int, default=5)
     parser.add_argument("--out", required=True)
     parser.add_argument("--where", default=DEFAULT_WHERE)
-    parser.add_argument("--tables", default="3,4,5,6,9",
+    parser.add_argument("--tables", default="3,4,5,6,7,8,9",
                         help="multiway table sizes to prewarm")
     parser.add_argument("--depths", default="100,50,20",
                         help="stack depths to prewarm them at")

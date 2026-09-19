@@ -3716,7 +3716,12 @@ deliberately not checked.
 - **`docs/milestones.md`** — the full milestone log (M8-present): what
   was built, every measured number, and the corrections later
   milestones made to earlier claims.
-- **`docs/audit-2026-09-08.md`** — the latest whole-project audit
+- **`docs/audit-2026-09-18.md`** — the latest audit (M283): usability
+  at the table graded against a pre-registered rubric across three arms
+  (ourselves, the independent solver, 1,200 real decisions). U1 A, U2 C
+  overall and F at 7-/8-handed (warmed at 100bb only, 5.81% of real
+  hands wait up to 211s cold), U3 flop and turn UNGRADED, U4 B.
+- **`docs/audit-2026-09-08.md`** — the previous whole-project audit
   (M252): a wide benchmark over 1,730 real decisions, the first
   measurement of how often a player MEETS each disclosed defect
   (multiway postflop irreproducibility fires on **20%**; everything else
