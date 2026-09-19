@@ -17066,3 +17066,81 @@ the flop for request LATENCY) costs warm-up time here, not a player's
 wait. Whether it tightens the fold call without moving it away from
 outside play is a measurement: M169 found the middle tightens while the
 worst cases do not.
+
+## M290 - a seed ensemble for six-handed preflop (audit R10 / F61)
+
+M289 disclosed that, facing a raise, the multiway preflop fold call moves
+with the solver's seed. M169 built a seed ensemble for the multiway flop
+and refused it for REQUEST latency. A preflop solve is precomputed and
+cached, so here the cost lands on warm-up time and on a cold first ask.
+
+**Engine.** `solve_preflop(ensemble=K)` runs K sampled solves on ONE tree
+at traversal seeds `seed..seed+K-1`, with strategy and regret sums added
+(M169's rule, so an untrained row stays at zero). Tests check that an
+ensemble of 1 is bit-identical to the single solve, that the sums equal
+those of the runs solved alone, and that the trained mask is exactly the
+union of the runs'. A guard that ended in `or True` was caught before
+commit and replaced.
+
+**Study** (`bench/studies/preflop_ensemble.py`; K=4 and the rule fixed
+before any ensemble was solved). Six-handed, 100bb, equity fixed:
+- **Arms:** four singles (seed 1 and fresh 11-13) against four
+  ensembles (1-4 and fresh 21-24, 31-34, 41-44).
+- **Weighting:** by occurrence in the hand store's clean six-handed
+  hands.
+- **Outside:** scored on the published AI's own fold/continue choices.
+
+| condition | result | bar |
+|---|---|---|
+| fold move facing a raise, ensemble / single | **0.079 / 0.136 = 0.58** (halves 0.61, 0.57) | <= 0.70 |
+| agreement with the outside player, facing | +0.0012, **0.60 sigma**, n=4,607 | not worse at 2 sigma |
+| agreement, all decisions | +0.0006, 0.59 sigma, n=9,859 | not worse at 2 sigma |
+| real hands at warmed depths | **91.6%** | >= 95% |
+
+**Verdict: REFUSE, on coverage alone** - steadier and no worse outside.
+Coverage is a property of the warm lists, so eleven six-handed buckets
+(265-300bb and 80-90bb, chosen by real frequency) joined
+`MULTIWAY_DISK_WARM`, taking it to **96.2%**. The rule re-applied to the
+same recorded rows adopts. Both verdicts re-derive in tests.
+`MULTIWAY_TABLE_CONFIGS[6]["ensemble"] = 4`, read by
+`_load_or_solve_multiway`; a test checks it reaches the solve.
+
+**On the ensemble arm the six-handed fold-seed note stops firing**
+(facing 0.079, under M289's 0.10 bar). `PREFLOP_FOLD_SEED_6_REASON` and
+its constant are gone. M289's fixture test now subtracts the sizes an
+ensemble shipped at, so the retirement is re-derived rather than
+remembered.
+
+**Cost, measured under the new memory watchdog (peak 0.64 GB):**
+
+| | single | ensemble |
+|---|---|---|
+| solve, equity already sampled | 1.3s | 5.2s |
+| cache entry | 40.2 MB | 92.0 MB |
+| startup warm, 100bb | ~50-100s | **239.5s** |
+| cold first ask, unwarmed bucket | ~20s (M286) | **170.6s** |
+
+**The rule's cost premise was wrong by 2x.** Condition 3 assumed an
+unwarmed first ask costs K times as much; it costs ~8.5x, because each
+extra seed deals hands whose equity the lazy cache has not yet sampled.
+The rule passes as written. The cost lands on the ~4% of six-handed
+hands at unwarmed depths, and on a fresh server until the warmers
+finish (the disk store keeps every bucket after that). **The next audit
+must grade it**, not this milestone.
+
+Advice spot-checked at production settings: AA never folds, 72o folds
+under the gun 1.0, and the fold note is absent at six-handed.
+
+**Also shipped: `bench/memory_guard.py`.** Every long job now runs under
+a watchdog that kills the job's process tree when system available
+memory falls under a floor (default 4 GB) or the tree holds more than a
+cap (default 22 GB; the R1 reference died holding 23.8). It writes the
+run's peak and lowest-available figures. Tested with injected readings,
+and live: a job allocating 0.8 GB against a 0.3 GB cap was stopped in
+0.3s.
+
+**Not done:**
+- **Other table sizes** (M168). 8/9-handed still carry the note, and
+  4/5/7 move everywhere.
+- **Making a cold ensemble solve cheaper.** Sharing the equity sample
+  across seeds would remove most of the 8.5x.

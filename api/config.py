@@ -179,6 +179,12 @@ MULTIWAY_DISK_WARM = tuple(
                              200, 85, 145, 160)]
     + [(8, float(d)) for d in (105, 120, 115, 110, 130, 125, 95, 135, 200, 195,
                                140, 145, 210, 150)]
+    # M290: the six-handed buckets real hands sit at that no warmer reached
+    # - chosen greedily by real frequency until 96.2% of clean six-handed
+    # hands sit at a warmed depth (was 91.6%). The ensemble makes an
+    # unwarmed six-handed first ask cost about four solves, so its
+    # adoption was conditional on this.
+    + [(6, float(d)) for d in (265, 275, 285, 280, 290, 90, 270, 295, 85, 300, 80)]
 )
 # The ceiling on a client-supplied `iterations` for the heads-up preflop
 # solve — the one endpoint that exposes the knob at all (multiway ignores
@@ -437,7 +443,17 @@ MULTIWAY_TABLE_CONFIGS = {
     # earliest seats.
     4: {"positions": ("CO", "BTN", "SB", "BB"), "iterations": 3_000},
     5: {"positions": ("MP", "CO", "BTN", "SB", "BB"), "iterations": 3_000},
-    6: {"positions": ("UTG", "MP", "CO", "BTN", "SB", "BB"), "iterations": 3_000},
+    # M290 (audit R10 / F61): FOUR traversal seeds, their strategy sums
+    # added (`solve_preflop(ensemble=)`, M169's rule). Facing a raise the
+    # average hand's fold probability moved 0.136 between two single
+    # solves and 0.079 between two ensembles - 0.58x, halves 0.61 / 0.57 -
+    # with agreement with the outside player's own fold/continue choices
+    # unchanged (+0.001, 0.6 sigma, 4,607 decisions). Cost: 1.3s -> 5.2s a
+    # solve once equity is filled, 40.2 -> 92.0 MB an entry. The rule's
+    # coverage bar (95% of real hands at warmed depths) FAILED at 91.6%
+    # and was met by disk-warming eleven six-handed buckets (below).
+    6: {"positions": ("UTG", "MP", "CO", "BTN", "SB", "BB"), "iterations": 3_000,
+        "ensemble": 4},
     # A9 (M270): 7- and 8-handed (2.3% and 5.2% of clean real hands),
     # measured the same way as 4/5 above, three seeds at 100bb:
     #
@@ -1791,7 +1807,8 @@ MULTIWAY_REPRODUCIBILITY_REASON = (
 # be false there. 7-max's table-size string no longer recommends the fold
 # call at all; 4- and 5-max carry `SIZING_CAVEAT_REASON` only (R9's
 # follow-on is whether they need their own sentence).
-PREFLOP_FOLD_SEED_MOVE_6 = 0.15
+# 6-handed WAS 0.15 and fired; M290's ensemble took it to 0.079, under
+# M289's own 0.10 bar, so the six-handed note no longer fires.
 PREFLOP_FOLD_SEED_MOVE_8 = 0.13
 PREFLOP_FOLD_SEED_MOVE_9 = 0.147
 
@@ -1807,11 +1824,9 @@ def _fold_seed_reason(players: int, move: float) -> str:
     )
 
 
-PREFLOP_FOLD_SEED_6_REASON = _fold_seed_reason(6, PREFLOP_FOLD_SEED_MOVE_6)
 PREFLOP_FOLD_SEED_8_REASON = _fold_seed_reason(8, PREFLOP_FOLD_SEED_MOVE_8)
 PREFLOP_FOLD_SEED_9_REASON = _fold_seed_reason(9, PREFLOP_FOLD_SEED_MOVE_9)
-PREFLOP_FOLD_SEED_REASONS = {6: PREFLOP_FOLD_SEED_6_REASON,
-                             8: PREFLOP_FOLD_SEED_8_REASON,
+PREFLOP_FOLD_SEED_REASONS = {8: PREFLOP_FOLD_SEED_8_REASON,
                              9: PREFLOP_FOLD_SEED_9_REASON}
 
 LOW_CONFIDENCE_TABLE_SIZES = {

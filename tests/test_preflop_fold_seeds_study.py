@@ -71,9 +71,14 @@ def test_the_shipped_sizes_and_figures_reproduce_from_the_recorded_rows():
     """The table sizes the note fires at, and the number each quotes, are
     re-derived from the run - not remembered."""
     fired = study.verdict(study.summarise(json.loads(FIXTURE.read_text())))
-    assert set(fired) == set(cfg.PREFLOP_FOLD_SEED_REASONS)
-    for size, move in fired.items():
-        assert getattr(cfg, f"PREFLOP_FOLD_SEED_MOVE_{size}") == move
+    # M290 retired the note wherever an ensemble shipped: those sizes were
+    # re-judged on the ensemble arm (tests/test_preflop_ensemble_study.py).
+    ensembled = {size for size, table in cfg.MULTIWAY_TABLE_CONFIGS.items()
+                 if table.get("ensemble", 1) > 1}
+    assert ensembled <= set(fired)
+    assert set(fired) - ensembled == set(cfg.PREFLOP_FOLD_SEED_REASONS)
+    for size in cfg.PREFLOP_FOLD_SEED_REASONS:
+        assert getattr(cfg, f"PREFLOP_FOLD_SEED_MOVE_{size}") == fired[size]
 
 
 def test_every_multiway_size_was_measured():

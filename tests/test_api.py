@@ -8912,11 +8912,11 @@ def test_the_preflop_fold_seed_note_fires_facing_a_raise_only_where_measured():
     raise, at those sizes, and nowhere else."""
     facing = {"street": "preflop", "positions": ["UTG", "MP", "BB"],
               "preflop_raises": 1, "to_call_bb": 1.5}
-    for size in (6, 8, 9):
+    for size in (8, 9):
         assert api_main._preflop_fold_is_seed_dependent(facing, size)
         text = api_main._solver_confidence(facing, size)[1] or ""
         assert api_config.PREFLOP_FOLD_SEED_REASONS[size] in text
-    for size in (3, 4, 5, 7):          # measured and not qualified
+    for size in (3, 4, 5, 6, 7):       # not qualified, or retired by M290
         assert not api_main._preflop_fold_is_seed_dependent(facing, size)
     first_in = {**facing, "preflop_raises": 0, "to_call_bb": 0.0}
     limped_option = {**facing, "preflop_raises": 0, "to_call_bb": 0.0}
@@ -8927,23 +8927,54 @@ def test_the_preflop_fold_seed_note_fires_facing_a_raise_only_where_measured():
     assert not api_main._preflop_fold_is_seed_dependent({**facing, "preflop_raises": None}, 6)
 
 
-def test_a_six_handed_player_facing_a_raise_is_told_the_fold_call_moves(client):
+def test_a_player_facing_a_raise_is_told_the_fold_call_moves(client):
+    """8-handed since M290: the six-handed ensemble took six-handed below
+    M289's bar, so the note is checked end to end where it still fires."""
     response = client.post("/advise", json=_advise_body(
-        stack_bb=100.0, players=6, hero_cards="9c8c",
+        stack_bb=100.0, players=8, hero_cards="9c8c",
         preflop_action_path=["raise"]))
     assert response.status_code == 200, response.json()
     payload = response.json()
     assert payload["solver_confidence"] == "low"
-    assert (api_config.PREFLOP_FOLD_SEED_REASONS[6][:60]
+    assert (api_config.PREFLOP_FOLD_SEED_REASONS[8][:60]
             in (payload["solver_confidence_reason"] or ""))
     opener = client.post("/advise", json=_advise_body(
-        stack_bb=100.0, players=6, hero_cards="9c8c", preflop_action_path=[])).json()
-    assert (api_config.PREFLOP_FOLD_SEED_REASONS[6][:60]
+        stack_bb=100.0, players=8, hero_cards="9c8c", preflop_action_path=[])).json()
+    assert (api_config.PREFLOP_FOLD_SEED_REASONS[8][:60]
             not in (opener["solver_confidence_reason"] or ""))
 
 
+def test_six_handed_preflop_is_an_ensemble_and_the_fold_note_is_retired_there():
+    """M290 (audit R10): four traversal seeds, sums added, at six-handed.
+    Facing a raise the fold call moved 0.136 between singles and 0.079
+    between ensembles - under M289's 0.10 bar - so the six-handed note no
+    longer fires, and nothing reads a six-handed figure any more."""
+    assert api_config.MULTIWAY_TABLE_CONFIGS[6].get("ensemble") == 4
+    assert 6 not in api_config.PREFLOP_FOLD_SEED_REASONS
+    assert not hasattr(api_config, "PREFLOP_FOLD_SEED_MOVE_6")
+    facing = {"street": "preflop", "positions": ["UTG", "MP", "BB"],
+              "preflop_raises": 1, "to_call_bb": 1.5}
+    assert not api_main._preflop_fold_is_seed_dependent(facing, 6)
+
+
+def test_the_shipped_multiway_solve_passes_the_table_ensemble(monkeypatch):
+    """The config key must reach the solve - a constant nobody reads is
+    M155's trap."""
+    from api import solving
+    seen = {}
+
+    def fake_solve(**kwargs):
+        seen.update(kwargs)
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(solving, "solve_preflop", fake_solve)
+    with pytest.raises(RuntimeError):
+        solving._load_or_solve_multiway(100.0, 6)
+    assert seen["ensemble"] == api_config.MULTIWAY_TABLE_CONFIGS[6]["ensemble"]
+
+
 def test_the_fold_seed_note_quotes_its_own_measurement():
-    for size in (6, 8, 9):
+    for size in (8, 9):
         move = getattr(api_config, f"PREFLOP_FOLD_SEED_MOVE_{size}")
         text = api_config.PREFLOP_FOLD_SEED_REASONS[size]
         assert f"about {round(move * 100)} points" in text and f"{size}-handed" in text
@@ -9493,13 +9524,16 @@ def test_ensure_stored_does_nothing_when_the_tier_is_off(monkeypatch):
     assert solves == []
 
 
-def test_the_disk_warm_list_is_the_uncovered_seven_and_eight_max_buckets():
-    """M284 / the 2026-09-18 audit's F56. 7- and 8-handed only (the sizes
-    the RAM warmer never reached), bucket-aligned, no repeats, nothing the
-    100bb prewarm already covers, and nothing the RAM list covers."""
+def test_the_disk_warm_list_is_the_uncovered_buckets():
+    """M284 / the 2026-09-18 audit's F56: 7- and 8-handed, which the RAM
+    warmer never reached. M290 added the eleven six-handed buckets that
+    took real-hand coverage from 91.6% to 96.2% - the condition its
+    ensemble was adopted on. Bucket-aligned, no repeats, nothing the
+    prewarm or the RAM list already covers."""
     warm = api_config.MULTIWAY_DISK_WARM
     assert len(set(warm)) == len(warm)
-    assert {p for p, _ in warm} == {7, 8}
+    assert {p for p, _ in warm} == {6, 7, 8}
+    assert len([1 for p, _ in warm if p == 6]) == 11
     assert len([1 for p, _ in warm if p == 7]) == 14
     assert len([1 for p, _ in warm if p == 8]) == 14
     for players, depth in warm:

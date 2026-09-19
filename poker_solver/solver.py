@@ -265,8 +265,16 @@ def solve_preflop(
     seed: int = 0,
     floor_regret: bool | None = None,
     continuation_table: dict | None = None,
+    ensemble: int = 1,
 ) -> StrategyResult:
     """Solve a preflop spot and return its strategy.
+
+    `ensemble` (3+ players only, M290): run that many independent sampled
+    solves on the SAME tree, at traversal seeds `seed, seed+1, ...`, and
+    ADD their strategy and regret sums - `_mccfr_ensemble`'s rule, so an
+    untrained row stays at zero and `trained_mask` keeps working. The
+    equity cache is shared, so only the traversal seed varies, which is
+    the noise F61 measured the preflop fold call moving with.
 
     Either pass `stack_bb` for the default blind/sizing/raise-cap
     settings (heads-up), or pass a fully custom `config` directly (e.g.
@@ -308,10 +316,19 @@ def solve_preflop(
             # together or neither does anything.
             mccfr_kwargs.update(continuation_table=continuation_table,
                                 stack_bb=config.stack_bb)
-        node_data = mccfr_solve(
-            root, hands, config.positions, equity_cache, iterations=actual_iterations,
-            seed=seed, **mccfr_kwargs,
-        )
+        node_data = {}
+        for index in range(max(1, ensemble)):
+            run = mccfr_solve(
+                root, hands, config.positions, equity_cache, iterations=actual_iterations,
+                seed=seed + index, **mccfr_kwargs,
+            )
+            for key, table in run.items():
+                existing = node_data.get(key)
+                if existing is None:
+                    node_data[key] = table
+                else:
+                    existing.strategy_sum = existing.strategy_sum + table.strategy_sum
+                    existing.regret_sum = existing.regret_sum + table.regret_sum
     elapsed = time.perf_counter() - start
 
     return StrategyResult(

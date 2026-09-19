@@ -3,3 +3,4 @@
 -r requirements-api.txt
 pytest>=7.0
 httpx2>=2.0
+psutil>=5.9

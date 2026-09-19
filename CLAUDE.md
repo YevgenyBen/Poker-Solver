@@ -968,6 +968,8 @@ requests now reject unknown fields by name rather than ignoring them.
                            /advise as a defect benchmark (M266); `--units`
                            times each request in reference units and writes
                            the run's drift (M286)
+      memory_guard.py      run a long job under a RAM watchdog that stops it
+                           before the machine crashes, and records its peak (M290)
       disclosures.py       every number a player is shown, and its source: a
                            number in copy with no registered constant or
                            sourced literal FAILS THE BUILD, and each figure
@@ -2376,6 +2378,21 @@ requests now reject unknown fields by name rather than ignoring them.
   longer recommends the fold call. 3-handed is quiet (0.046). Reduction
   by seed ensemble is R10: a preflop solve is precomputed, so averaging
   seeds costs warm-up time rather than request latency.
+  **M290 (R10) shipped the ensemble at SIX-handed.**
+  `MULTIWAY_TABLE_CONFIGS[6]["ensemble"] = 4` means four traversal seeds
+  with their sums added (`solve_preflop(ensemble=)`).
+  - **Steadier, no worse outside.** Facing a raise the fold call moves
+    0.136 -> 0.079 (0.58x, both halves), with agreement with the outside
+    player's choices unchanged (0.6 sigma).
+  - **The six-handed fold note is retired.**
+  - **First refused on coverage** (91.6% of real hands at warmed depths,
+    against a 95% bar), then met by disk-warming eleven buckets (96.2%).
+  - **Cost:** 92 MB an entry (was 40). The startup warm at 100bb takes
+    240s. A cold first ask at an unwarmed six-handed bucket takes
+    **~170s against ~20s** - 8.5x, where the rule assumed 4x, because
+    each extra seed samples fresh equity.
+  - **Run long jobs under `bench/memory_guard.py`** - it stops a job
+    before the machine runs out of RAM.
   **M279 FOUND THE CAUSE AND IT IS NOT THE PRICING.** M250's prescribed
   route was built exactly - a continuation table keyed on RAISE COUNT,
   entries from HEADS-UP ranges of that depth - and it leaves this node
