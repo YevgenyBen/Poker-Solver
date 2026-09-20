@@ -3526,8 +3526,11 @@ requests now reject unknown fields by name rather than ignoring them.
   the direction is null (+0.0131, 0.67 sigma). What survives is the
   shape - mostly small, occasionally total (worst row bets 0.0716 where
   the fuller solve bets 0.9753).
-  **Facing a bet leans aggressive at +0.0376 (2.09 sigma, n=48)** and is
-  deliberately kept OUT of the copy until it replicates - M166's rule.
+  **Facing a bet leaned aggressive at +0.0376 (2.09 sigma, n=48)** and was
+  kept OUT of the copy until it replicated - M166's rule. **It did not
+  (M297, audit R5): 60 fresh rows give +0.0181 at 0.81 sigma and the
+  pooled 108 reach 1.82**, so it stays unpublished. First finding here
+  caught before shipping rather than withdrawn after.
   **Why eight attempts missed it:** all seven selection rules chose
   classes WITHIN a cap, so they shared the reference's blind spot and
   nothing disagreed. Bucketing broke the symmetry by seeing all 169

@@ -120,3 +120,43 @@ def test_the_reference_arm_really_was_the_expensive_one():
     shipped = sorted(r["shipped_seconds"] for r in rows)[len(rows) // 2]
     reference = sorted(r["reference_seconds"] for r in rows)[len(rows) // 2]
     assert reference > 3 * shipped, (shipped, reference)
+
+
+# -- M297 (audit R5): the facing-a-bet lean, on fresh spots ---------------
+
+FRESH = pathlib.Path(__file__).parent / "data" / "aggression_facing_m297.json"
+
+
+def _signed(rows):
+    import math
+    import statistics
+    values = [r["shipped_aggression"] - r["reference_aggression"] for r in rows]
+    mean = statistics.mean(values)
+    return mean, mean / (statistics.stdev(values) / math.sqrt(len(values)))
+
+
+def test_the_facing_lean_did_not_replicate_on_fresh_spots():
+    """M292 measured +0.0376 at 2.09 sigma in one cell and kept it out of
+    the copy until it replicated. It did not: 60 fresh facing-a-bet rows
+    give +0.0181 at 0.81 sigma, and the pooled 108 rows 1.82 - under the
+    bar that was fixed before either run."""
+    fresh = json.loads(FRESH.read_text())
+    old = [r for r in _recorded() if r["facing"]]
+    assert all(r["facing"] for r in fresh) and len(fresh) == 60
+    fresh_mean, fresh_sigma = _signed(fresh)
+    assert fresh_mean > 0 and fresh_sigma < 2.0
+    pooled_mean, pooled_sigma = _signed(old + fresh)
+    assert pooled_sigma < 2.0, "if this ever clears 2 sigma the claim may be revisited"
+
+
+def test_the_two_samples_share_no_decision():
+    fresh = {(r["hand"], r["i"]) for r in json.loads(FRESH.read_text())}
+    old = {(r["hand"], r["i"]) for r in _recorded()}
+    assert not fresh & old
+
+
+def test_no_player_facing_copy_claims_the_lean():
+    from api import config as cfg
+    reason = cfg.POSTFLOP_AGGRESSION_CAVEAT_REASON.lower()
+    for claim in ("more aggressive facing", "leans aggressive", "bets more facing"):
+        assert claim not in reason
