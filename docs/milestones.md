@@ -17450,3 +17450,41 @@ The histogram it was derived from is committed
 (`tests/data/real_stack_buckets.json`) and the test re-derives the 95%
 claim from it rather than pinning a count, so a future edit is checked
 against what it does for players.
+
+## M296 - the river's disagreement, priced in big blinds (audit R6)
+
+The audit graded the river against the independent solver in percent of
+pot - 0.325% opening (A), 0.985% facing a bet (B) - and this project's
+own thesis says that is the wrong unit. `bench/studies/river_price.py`
+prices the SAME rows in chips. No new solves: the 41 references already
+carry a regret in bb per row.
+
+**Rule fixed before the figures**: keep the audit's own rows (reference
+reaches >= 5%, our row on its support), report raw AND net of the
+reference's own slack, report the median beside the mean, and weight by
+real occurrence.
+
+| cell | n | per 100 such decisions | net | median | worst |
+|---|---|---|---|---|---|
+| opening | 123 | **3.01 bb** | 1.06 bb | 0.013 bb | 0.24 bb |
+| **facing a bet** | 180 | **11.05 bb** | **6.50 bb** | 0.031 bb | 5.48 bb |
+
+**Weighted by exposure** - heads-up river opening is 10.83% of real
+postflop decisions and facing a bet 4.96%, measured over 291,347 real
+postflop decisions - the street contributes **0.87 bb per 100 postflop
+decisions**, or **0.44 net**.
+
+**The shape is M183's, in a new instrument**: facing a bet the mean is
+**3.6x the median** and the worst row is 5.48 bb, so the average is not
+what a typical decision costs. That is the fourth population in this
+project to show it.
+
+**Facing a bet costs 3.7x an opening decision**, which is M188's
+standing split measured for the first time against an OUTSIDE reference
+rather than a fuller solve of our own model.
+
+**Not comparable with M183's 4.7 bb/100 postflop decisions**: that is
+distance from a fuller solve of this engine's own model, across all
+three streets; this is distance from an independent solver, on one
+street, and only where its dump passes its own control. The two answer
+different questions and must not be added.

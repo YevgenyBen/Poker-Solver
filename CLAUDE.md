@@ -542,6 +542,15 @@ same nine references, re-scored against heroes drawn by range weight -
 | street | opening | facing a bet |
 |---|---|---|
 | river | **0.41% of pot (A)** | **0.88% (B)** |
+
+**THE RIVER IS PRICED IN CHIPS NOW (M296, the 2026-09-20 audit's R6)**,
+from 41 fresh references: opening **3.01 bb per 100 such decisions**
+(1.06 net of the reference's own slack), facing a bet **11.05** (6.50
+net), median 0.031 bb and worst 5.48 - so the mean is 3.6x the median
+and the average is not the typical case. Weighted by real exposure the
+street contributes **0.87 bb per 100 postflop decisions** (0.44 net).
+**Not additive with M183's 4.7 bb/100**, which measures distance from a
+fuller solve of our OWN model across all three streets.
 | turn | ~~0.71% (B)~~ / ~~1.20% (C)~~ **WITHDRAWN (M277)** - see below |
 | flop | same bet frequency (kind TVD 0.067), different SIZE (0.418) | kind TVD 0.256, no direction; unpriced |
 
