@@ -17262,3 +17262,76 @@ same configuration, which is M245's trap.
 audit**, which re-measures the same figures through its own arms. This
 one cost ~7 machine-hours; eleven more would cost ~70 for work the audit
 does anyway.
+
+## M293 - deep-dive audit, 2026-09-20: three arms, one rubric
+
+`docs/audit-2026-09-20.md`. The same rubric as 2026-09-18, so the grades
+compare. Every long job under `bench/memory_guard.py`; nothing killed.
+
+| | | |
+|---|---|---|
+| U1 | can it answer? | **A** - 99.63% of clean real hands at a supported size, 1,200 of 1,200 answered, 0 defects |
+| U2 | in time? | **C, F on a cold first ask** - p90 5.75s, 133 of 1,200 over five seconds, an unwarmed 8-max first ask still 209s |
+| U3 | is it right? | **river A opening / B facing. Flop and turn UNGRADED** |
+| U4 | honest? | **D** - nothing known false, 11 of 26 shown disclosures not current |
+
+**Arm 1, against ourselves** (`bench/studies/street_exploitability.py`,
+new): 24 real decisions a street, solved exactly as the product solves
+them, scored with `poker_solver.exploitability`.
+
+| street | p50 | p90 | worst | p50 in bb |
+|---|---|---|---|---|
+| flop | 1.230% | 4.078% | 6.107% | 0.061 bb |
+| turn | 0.829% | 4.782% | 6.223% | 0.087 bb |
+| river | 0.107% | 0.479% | 1.351% | 0.020 bb |
+
+**The tail is the denominator, not the advice.** corr(pot, percentage) =
+**-0.68**, and every worst case is a limped 2bb pot. At pots of 5bb or
+more: flop 0.882 / 1.471, turn 0.686 / 1.312, river 0.106 / 0.405 (p50 /
+p90) - consistent with M212 and M233/M278 on a population neither used.
+In chips the figure hardly moves with the pot at all.
+
+**It grades nothing**, by M278's precedent: exploitability says we solve
+our own model well and is silent on whether the model is the game.
+
+**Arm 2, against the independent solver**: 41 FRESH river references,
+4.3s each, **41 of 41 controls pass** (reported 0.263-0.486% of pot).
+Heroes by range weight.
+
+| cell | n | regret | median | net | grade | M260 |
+|---|---|---|---|---|---|---|
+| opening | 123 | **0.325%** | 0.156% | 0.106% | **A** | 0.41% (A) |
+| facing a bet | 180 | **0.985%** | 0.347% | 0.532% | **B** | 0.88% (B) |
+
+**It replicates M260 on fresh boards** - the bar M166 failed. The flop
+and turn stay UNGRADED: the turn's dumps fail their own control (M276)
+and the flop needs three-round dumps this machine cannot serialise (R1).
+
+**Arm 3, against real hands**: the M286 replay (1,200 decisions, 0
+defects, 100% answered), M291's cost by live count, and the disclosure
+registry's own exposure figures.
+
+**The one number that got much worse is the one nobody was measuring.**
+2026-09-08 reported 1 decision of 1,730 over five seconds, drawing
+stacks from the prewarm grid; drawing REAL stacks, 133 of 1,200 (11.1%)
+exceed it on an unwarmed server - nearly all first asks at a depth no
+warmer has reached. M290's ensemble made a cold six-handed bucket 8.5x
+dearer in exchange for halving the fold call's seed dependence, and that
+trade is now visible in a grade rather than buried in a milestone.
+
+**Six recommendations**, in the audit. R1 (share the equity sample
+across an ensemble's seeds) is first: it is the largest measured
+regression this window and a cache-key change rather than a model one.
+
+**Method notes worth keeping.**
+- **A postflop study must derive ranges through `_derive_path_situation`**,
+  the production front half. Calling `derive_ranges_from_path` with a
+  request's bare action kinds raised "raise is not legal" on every spot:
+  those kinds are resolved into Actions INSIDE that helper (M164's rule,
+  in a new place).
+- **Score with the table the solve saw.** Blocked matchups are NaN by
+  contract and `solve_flop` neutralises them at 0.5; scoring against the
+  raw table returns NaN for every figure.
+- **Warm before measuring, and only at warmed depths.** The first attempt
+  at arm 1 produced no rows in ten minutes, because deriving a six-handed
+  hand's ranges at an unwarmed bucket is a ~170s solve per spot.
