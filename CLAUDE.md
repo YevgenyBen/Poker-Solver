@@ -3845,7 +3845,18 @@ deliberately not checked.
 - **`docs/milestones.md`** — the full milestone log (M8-present): what
   was built, every measured number, and the corrections later
   milestones made to earlier claims.
-- **`docs/audit-2026-09-18.md`** — the latest audit (M283): usability
+- **`docs/audit-2026-09-20.md`** — the latest audit (M293): three arms
+  against the same rubric. U1 **A** (99.63% coverage, 1,200 of 1,200
+  answered, 0 defects), U2 **C** and **F on a cold first ask** (133 of
+  1,200 decisions over five seconds on an unwarmed server; M290's
+  ensemble made a cold six-handed bucket 8.5x dearer), U3 **river A
+  opening / B facing** replicating M260 on 41 fresh references while the
+  flop and turn stay **UNGRADED**, U4 **D** (11 of 26 shown disclosures
+  quote a configuration that no longer ships). Exploitability at the
+  shipped settings is 0.061 / 0.087 / 0.020 bb a decision on flop / turn
+  / river, and its percent-of-pot tail is a small-pot artifact
+  (corr(pot, pct) = -0.68).
+- **`docs/audit-2026-09-18.md`** — the previous audit (M283): usability
   at the table graded against a pre-registered rubric across three arms
   (ourselves, the independent solver, 1,200 real decisions). U1 A, U2 C
   overall and F at 7-/8-handed (warmed at 100bb only, 5.81% of real
