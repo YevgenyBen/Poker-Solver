@@ -163,6 +163,29 @@ MULTIWAY_SOLVE_STORE_DIR = (
 # prewarm produce, at the measured file sizes); 8 GiB leaves room for the
 # buckets real players reach beyond them. Evicted least-recently-READ.
 MULTIWAY_SOLVE_STORE_MAX_BYTES = 8 * 1024 ** 3
+# M294 (audit R1, re-aimed). The shared multiway equity cache is the
+# expensive half of every multiway solve and dies with the process.
+# Measured on a fresh six-handed process: the first solve computes 3,651
+# opponent tuples in 112s; the fifth, against 24,308 cached, takes 48s
+# for the same work. Persisting it means a restart does not re-pay that.
+#
+# R1 assumed M290's four-seed ensemble duplicated equity work among its
+# own seeds. It does not - they sample DIFFERENT tuples (9,175 new
+# against a single solve's 3,651), so there was nothing to de-duplicate
+# inside a run, and this removes the duplication across RESTARTS instead.
+#
+# `POKER_SOLVER_EQUITY_STORE` overrides the directory and "0" disables
+# it; the suite runs with it disabled (tests/conftest.py).
+_EQUITY_STORE_ENV = os.environ.get("POKER_SOLVER_EQUITY_STORE")
+MULTIWAY_EQUITY_STORE_DIR = (
+    None if _EQUITY_STORE_ENV == "0"
+    else _EQUITY_STORE_ENV or str(FilePath(__file__).resolve().parent.parent
+                                  / "data" / "equity_store"))
+# 19,382 entries measured at 13.1 MB of float32 values; 1 GiB is room for
+# roughly a hundred times that, and a cache past the cap is simply not
+# persisted (it still works in memory).
+MULTIWAY_EQUITY_STORE_MAX_BYTES = 1024 ** 3
+
 # The buckets warmed to DISK ONLY - never into `_multiway_cache` - so
 # filling them cannot evict anything from memory. The 14 most common real
 # 7- and 8-handed stack buckets after the 100bb prewarm, ordered by how

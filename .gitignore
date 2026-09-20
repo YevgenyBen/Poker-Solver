@@ -15,3 +15,6 @@ data/hands/
 # Stored multiway preflop solves (api/solve_store.py, M284) - our own
 # engine's output, regenerated whenever the engine changes. Never committed.
 data/solve_store/
+# Stored multiway equity samples (api/equity_store.py, M294) - our own
+# Monte Carlo draws, rebuilt by warming if deleted.
+data/equity_store/
