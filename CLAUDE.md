@@ -3478,6 +3478,22 @@ requests now reject unknown fields by name rather than ignoring them.
   corrected; `POSTFLOP_AGGRESSION_ERROR_MEAN`/`_WORST` now record the
   measurement, pinned to the copy by
   `test_the_aggression_caveat_quotes_its_own_measurement`.
+  **M292 RE-MEASURED ALL OF THIS AT THE SHIPPED CONFIGURATION, AND EVERY
+  NAMED CASE DIED (audit R7).** 116 real heads-up flop decisions, shipped
+  against an uncapped 169-class solve of the same request:
+  | | M140/M142 | M292 |
+  |---|---|---|
+  | mean error | 0.1394 | **0.1026** |
+  | worst | 0.8810 | **0.9037** |
+  | open-ended draws | +0.170..+0.881 (n=3) | **-0.0748, 1.49 sigma (n=30)** |
+  | weak hand facing a bet | 0.5672 shove vs 0.9869 fold | **+0.0955, 1.40 sigma (n=13)** |
+  | made hand / strong draw | "essentially exact" | **0.1270** |
+  **So the copy names no hand type at all now**: no band separates and
+  the direction is null (+0.0131, 0.67 sigma). What survives is the
+  shape - mostly small, occasionally total (worst row bets 0.0716 where
+  the fuller solve bets 0.9753).
+  **Facing a bet leans aggressive at +0.0376 (2.09 sigma, n=48)** and is
+  deliberately kept OUT of the copy until it replicates - M166's rule.
   **Why eight attempts missed it:** all seven selection rules chose
   classes WITHIN a cap, so they shared the reference's blind spot and
   nothing disagreed. Bucketing broke the symmetry by seeing all 169

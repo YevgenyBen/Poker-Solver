@@ -3407,8 +3407,38 @@ STREET_ISOLATION_NOTE = (
     "appears only when there is real money behind relative to the pot."
 )
 
-POSTFLOP_AGGRESSION_ERROR_MEAN = 0.1394
-POSTFLOP_AGGRESSION_ERROR_WORST = 0.8810
+# M292 (audit R7). Re-measured at the configuration that SHIPS - flop cap
+# 100, the 0.33/0.75/2.5 menu, 250 iterations - against an uncapped
+# 169-class solve (200 equity samples, 2,500 iterations) answering the
+# same request, over 116 real heads-up flop decisions: 45 opening, 48
+# facing a bet, 30 holding an open-ended straight draw
+# (`bench/studies/aggression_caveat.py`, rows committed as
+# `tests/data/aggression_caveat_m292.json`).
+#
+# M140/M142's figures were 0.1394 mean / 0.8810 worst at flop cap 26 with
+# ONE bet size. The mean improved; the worst case did not.
+#
+# **Both named cases died on their own evidence**, under a rule fixed
+# before the arms were run:
+#   * OPEN-ENDED DRAWS, the clause that told players to discount these
+#     bets: n=30, signed **-0.0748 at 1.49 sigma** - the REVERSE of the
+#     direction the copy claimed (M140 saw +0.170 to +0.881 on 3 spots).
+#   * WEAK HANDS FACING A BET, the nine-high shove: n=13, +0.0955 at
+#     1.40 sigma, continuing 0.5114 against the reference's 0.4159. Real
+#     in direction, not separable, and nothing like the 0.5672-vs-0.9869
+#     case M142 published.
+# No hand-strength band separates (weak -0.011, middling +0.003, strong
+# +0.077, none over 1.85 sigma) and the overall direction is null
+# (+0.0131, 0.67 sigma). Facing a bet leans aggressive (+0.0376, 2.09
+# sigma) - ONE cell at barely 2 sigma, unreplicated, so it is recorded
+# here and not put in front of a player (M166's failure).
+#
+# What survives is the SHAPE: mostly small, occasionally categorical.
+# The worst row bets 9s3h on 6c8c7d 0.0716 where the fuller solve bets
+# 0.9753.
+POSTFLOP_AGGRESSION_ERROR_MEAN = 0.1026
+POSTFLOP_AGGRESSION_ERROR_WORST = 0.9037
+POSTFLOP_AGGRESSION_ERROR_ROWS = 116
 
 # M144/F40. Appended when the node offered no intermediate bet size at
 # all — the river, at production settings.
@@ -3712,23 +3742,21 @@ POSTFLOP_AGGRESSION_CAVEAT_REASON = (
     "models only part of the opponent's range, chosen by how consistently each hand "
     "took the action they took — and premium hands still get dropped by that rule, "
     "because they mix between raising and going all-in rather than always raising. "
-    "Measured against a genuinely uncapped solve across sixteen spots, the raising "
-    "frequency is off by about 14 percentage points on average and by 88 at worst, "
+    "Measured against a genuinely uncapped solve of the same spot, across "
+    f"{POSTFLOP_AGGRESSION_ERROR_ROWS} real decisions at the settings this product "
+    "runs at, the raising frequency is off by about "
+    f"{round(POSTFLOP_AGGRESSION_ERROR_MEAN * 100)} percentage points on average, "
     "without a "
-    "consistent direction overall. Two cases are specific enough to act on. First: "
-    "with an "
-    "open-ended straight draw this advice overstates betting badly and in every "
-    "case measured — in the worst, it recommends a bet of two and a half times the "
-    "pot 88% of the time where the correct play is to check. Discount any "
-    "suggestion to bet an open-ended straight draw. Second: facing a bet with a "
-    "weak hand, this continues far more often than it should, and sometimes "
-    "recommends going all-in — holding nine-high it went all-in 57% of the time "
-    "where the correct play is to fold 99%. Fold weak hands facing a bet more "
-    "often than this suggests, and treat any recommendation to commit chips with "
-    "one as unreliable. With a made hand or a strong draw, the continue-or-fold "
-    "call measured essentially exact. Everywhere else the residual has no reliable "
-    "direction, so treat the frequency as approximate rather than correcting it "
-    "yourself."
+    "consistent direction overall. That average is the wrong thing to plan around, "
+    "because the error is mostly small and occasionally total: by "
+    f"{round(POSTFLOP_AGGRESSION_ERROR_WORST * 100)} at worst — a hand this advice "
+    "bets 7% of the time where the fuller solve bets it 98%. Whether to fold is no "
+    "better and no worse; the same measurement covers both. No hand type predicts "
+    "which you are looking at. Weak hands, middling hands and strong hands all "
+    "measured the same, and so did open-ended straight draws, which an earlier "
+    "version of this warning singled out. So treat any single recommendation here "
+    "as approximate rather than correcting it yourself, and where the decision "
+    "matters, weigh it against the possibility that this one is the outlier."
 )
 
 

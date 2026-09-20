@@ -256,12 +256,12 @@ REGISTRY = (
         literals={"0.30": "M175: turn error at both ends of the strength range"},
         current=False, superseded_by="M179 took the turn cap 26 -> 140; M213 its bet menu"),
     Disclosure(
-        "POSTFLOP_AGGRESSION_CAVEAT_REASON", "M140/M142", ENGINE,
-        ("POSTFLOP_AGGRESSION_ERROR_MEAN", "POSTFLOP_AGGRESSION_ERROR_WORST"),
-        literals={"57%": "M142 (F38): nine-high shoving where the correct play folds",
-                  "99%": "M142: the correct fold frequency there"},
-        current=False,
-        superseded_by="measured at flop cap 26; M172 took it to 100, M207 shipped the menu"),
+        "POSTFLOP_AGGRESSION_CAVEAT_REASON", "M292", ENGINE,
+        ("POSTFLOP_AGGRESSION_ERROR_MEAN", "POSTFLOP_AGGRESSION_ERROR_WORST",
+         "POSTFLOP_AGGRESSION_ERROR_ROWS"),
+        literals={"7%": "M292: the worst row's shipped bet frequency (0.0716)",
+                  "98%": "M292: the same row's uncapped reference (0.9753)"},
+        study="bench/studies/aggression_caveat.py"),
     Disclosure(
         "STREET_ISOLATION_NOTE", "M197-M202", ENGINE,
         ("STREET_ISOLATION_SPR_MIN", "STREET_ISOLATION_MEDIAN_GAP",
