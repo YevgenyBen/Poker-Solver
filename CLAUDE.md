@@ -3720,6 +3720,16 @@ divides by the reported figure, so a loose reference is a wide bound.
 **Run the control against the tightest reference affordable; a pass at a
 loose one is untested.**
 
+**THE FLOP'S WALL IS MEASURED NOW, AND IT IS THE TREE (M298, audit R4).**
+Four probes, each stopped by the watchdog at the same ~18.2 GB: 100bb
+(18.35), 60bb (18.15), reference cap 60 (18.21), two threads (18.14).
+**Every lever moved the time and none moved the memory** - two threads
+took 4.3x as long to reach the identical ceiling. So a three-round flop
+dump is bound by the turn and river subtrees it must hold, not by stack
+depth, range width or threads, and this machine cannot do it: M255's
+3.47 GB file at ~4.5x resident wants roughly twice its 31.7 GB. The flop
+stays UNGRADED against the independent solver.
+
 **AND THE FLOP'S SIZE DISAGREEMENT STILL HAS NO PRICE (M273).** At the
 only depth where three-round dumps are affordable (SPR 2.53) the
 reference almost never bets, so every row where WE bet is a PURE NODE
