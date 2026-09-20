@@ -72,6 +72,7 @@ from .parallel import parallel_board_equity_table, parallel_equity_batch
 from . import config as cfg
 from . import solve_store
 from .caches import (
+    _equity_store,
     _flop_cache,
     _flop_multiway_cache,
     _flop_multiway_path_cache,
@@ -168,12 +169,18 @@ def _get_multiway_equity_cache(hands) -> MultiwayEquityCache:
     than being a single module-level instance.
     """
     key = (tuple(str(hand) for hand in hands), cfg.MULTIWAY_PREFLOP_SAMPLES)
-    return _multiway_equity_caches.get_or_compute(
-        key,
-        lambda: MultiwayEquityCache(
+
+    def build():
+        # M294: a fresh cache starts from disk when a stored one matches
+        # this pool, sample count, seed and engine source. Loading is
+        # ~0.2s for 19k entries against the ~112s of sampling it saves.
+        cache = MultiwayEquityCache(
             hands=list(hands), samples=cfg.MULTIWAY_PREFLOP_SAMPLES, seed=1
-        ),
-    )
+        )
+        _equity_store.load(cache)
+        return cache
+
+    return _multiway_equity_caches.get_or_compute(key, build)
 
 
 def _multiway_store_key(solved_stack_bb: float, players: int) -> str:

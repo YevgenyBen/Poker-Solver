@@ -13,3 +13,7 @@ import pytest
 def _no_solve_store(monkeypatch):
     from api import caches
     monkeypatch.setattr(caches._multiway_store, "directory", None)
+    # M294: the equity store too - a test that counts equity work would
+    # otherwise pass by reading a file an earlier run left behind.
+    monkeypatch.setattr(caches._equity_store, "directory", None)
+    monkeypatch.setattr(caches._equity_store, "enabled", False)

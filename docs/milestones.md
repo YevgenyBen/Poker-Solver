@@ -17335,3 +17335,56 @@ regression this window and a cache-key change rather than a model one.
 - **Warm before measuring, and only at warmed depths.** The first attempt
   at arm 1 produced no rows in ten minutes, because deriving a six-handed
   hand's ranges at an unwarmed bucket is a ~170s solve per spot.
+
+## M294 - the equity cache survives the process (audit R1, re-aimed)
+
+**The audit's R1 was wrong about the cause, and measuring it first is the
+milestone.** R1 said a cold six-handed bucket costs ~170s because M290's
+four ensemble seeds re-sample equity the others already paid for. They
+share one cache object, so there was nothing to de-duplicate - and the
+probe shows why it is slow anyway: each seed samples DIFFERENT opponent
+tuples.
+
+| solve | new equity tuples | seconds |
+|---|---|---|
+| single, cold cache | 3,651 | 112.5 |
+| single, warm cache | 2,905 | 94.3 |
+| **ensemble of 4** | **9,175** | **301.7** |
+| ensemble, warmer | 7,141 | 239.5 |
+| single, warmer | 1,436 | 48.3 |
+
+What the probe DID show is the real duplication: the cache is shared
+across every stack depth and table size, it gets cheaper as it fills
+(112s cold against 48s at 24,308 entries) - and it dies with the
+process, so every restart re-pays the whole bill.
+
+**Shipped.** `poker_solver/equity_persist.py` turns a
+`MultiwayEquityCache` into arrays and back (keys as indices into the
+hand pool, values float32, `allow_pickle=False`), and
+`api/equity_store.py` files one under a FINGERPRINT of the hand pool,
+the sample count, the seed and the engine source. It is loaded when the
+shared cache is created and saved once the warmers have filled it;
+`/warm_status` reports it.
+
+**Measured, three processes, the middle one filling the store:**
+
+| process | cold ensemble solve at a bucket nothing has seen |
+|---|---|
+| store disabled (control) | **370.5s** |
+| store holding 19,382 entries | **223.9s** (-40%) |
+
+Loading costs **0.12s** and the file is **6.3 MB**. It keeps improving as
+the warmers fill more buckets, since the cache is shared across all of
+them.
+
+**It cannot change advice, and that is pinned.** Each key's value is
+drawn from a per-key seeded stream, so a restored entry equals what a
+fresh sample would have produced - tested by computing the same keys in
+opposite orders and by comparing a restored entry against a freshly
+sampled one. A file from another pool, sample count, seed or engine
+source is REFUSED rather than mixed in, and a corrupt file is deleted
+rather than served.
+
+**Off under the suite** (`tests/conftest.py`), like M284's tier: a test
+that counts equity work would otherwise pass by reading a file an
+earlier run left behind.

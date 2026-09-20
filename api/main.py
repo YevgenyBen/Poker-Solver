@@ -634,6 +634,7 @@ from .caches import (
     _multiway_cache,
     _multiway_equity_caches,
     _multiway_store,
+    _equity_store,
     _path_query_libraries,
     _preflop_raw_cache,
     _river_path_cache,
@@ -653,6 +654,7 @@ def _prewarm_enabled() -> bool:
 # _query_*/_advise* orchestrator. Imported by name so this module's
 # routes and pre-warm read exactly as before.
 from .solving import (
+    _get_multiway_equity_cache,
     _ADVISE_ITERATION_CAPS,
     _ADVISE_STREETS,
     _ADVISE_UNSUPPORTED_CELLS,
@@ -933,6 +935,60 @@ def _warm_all() -> None:
     _prewarm_common_depths()
     if _background_warm_enabled():
         _background_warm()
+    _save_equity_cache()
+
+
+def _save_equity_cache() -> None:
+    """M294: persist the shared equity cache once the warmers have filled
+    it, so the next process starts from it instead of re-sampling.
+
+    Saved AFTER warming rather than per solve: the file is written whole,
+    and writing it on every solve would cost more than it saves."""
+    if not _equity_store.enabled:
+        return
+    try:
+        cache = _get_multiway_equity_cache(cfg.MULTIWAY_PREFLOP_HANDS)
+        if _equity_store.save(cache):
+            logger.info("equity store: %d entries, %.1f MB on disk",
+                        len(cache._cache), _equity_store.total_bytes() / 1e6)
+    except Exception:                    # noqa: BLE001 - never fail a warm over a cache file
+        logger.exception("equity store: save failed")
+    _save_equity_cache()
+
+
+def _save_equity_cache() -> None:
+    """M294: persist the shared equity cache once the warmers have filled
+    it, so the next process starts from it instead of re-sampling.
+
+    Saved AFTER warming rather than per solve: the file is written whole,
+    and writing it on every solve would cost more than it saves."""
+    if not _equity_store.enabled:
+        return
+    try:
+        cache = _get_multiway_equity_cache(cfg.MULTIWAY_PREFLOP_HANDS)
+        if _equity_store.save(cache):
+            logger.info("equity store: %d entries, %.1f MB on disk",
+                        len(cache._cache), _equity_store.total_bytes() / 1e6)
+    except Exception:                    # noqa: BLE001 - never fail a warm over a cache file
+        logger.exception("equity store: save failed")
+    _save_equity_cache()
+
+
+def _save_equity_cache() -> None:
+    """M294: persist the shared equity cache once the warmers have filled
+    it, so the next process starts from it instead of re-sampling.
+
+    Saved AFTER warming rather than per solve: the file is written whole,
+    and writing it on every solve would cost more than it saves."""
+    if not _equity_store.enabled:
+        return
+    try:
+        cache = _get_multiway_equity_cache(cfg.MULTIWAY_PREFLOP_HANDS)
+        if _equity_store.save(cache):
+            logger.info("equity store: %d entries, %.1f MB on disk",
+                        len(cache._cache), _equity_store.total_bytes() / 1e6)
+    except Exception:                    # noqa: BLE001 - never fail a warm over a cache file
+        logger.exception("equity store: save failed")
 
 
 @asynccontextmanager
@@ -985,6 +1041,10 @@ async def warm_status_endpoint():
         "disk_store_enabled": _multiway_store.enabled,
         "disk_store_bytes": _multiway_store.total_bytes(),
         "disk_store_stats": dict(_multiway_store.stats),
+        # M294: the shared equity cache's disk tier.
+        "equity_store_enabled": _equity_store.enabled,
+        "equity_store_bytes": _equity_store.total_bytes(),
+        "equity_store_stats": dict(_equity_store.stats),
     }
 
 

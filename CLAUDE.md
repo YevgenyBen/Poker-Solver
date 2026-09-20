@@ -950,6 +950,9 @@ requests now reject unknown fields by name rather than ignoring them.
       canonicalize.py      suit-isomorphism canonicalization
       persist.py           a solved tree as path-keyed arrays and back - `node_data`
                            is keyed by id(node), which no restart preserves (M284)
+      equity_persist.py    the shared multiway equity cache as arrays and back; each
+                           entry is drawn from a per-key seeded stream, so a restored
+                           value equals a freshly sampled one (M294)
       combos.py, cards.py, starting_hands.py, abstraction.py, strategy_format.py
 
     api/                   one-way layering, no cycles: config <- caches <- solving <- main
@@ -958,6 +961,8 @@ requests now reject unknown fields by name rather than ignoring them.
       solve_store.py       the DISK tier behind the multiway preflop cache, keyed by a
                            fingerprint of every constant and source line that shapes
                            the solve (M284)
+      equity_store.py      the DISK tier behind the SHARED multiway equity cache -
+                           a cold ensemble solve 370.5s -> 223.9s (M294)
       solving.py           all _get_or_solve_* / _query_* / _advise* orchestration
       main.py              routes, validation, response shaping, app wiring
       schemas.py           Pydantic request/response models
