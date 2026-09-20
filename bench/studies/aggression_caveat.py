@@ -63,11 +63,18 @@ import math
 import statistics
 import sys
 
-SPOTS = 120
+import os
+
+SPOTS = int(os.environ.get("AGGR_SPOTS", 120))
 #: 45 / 45 / 30 of the same 120 (see the AMENDMENT above). The open-ended
 #: quota is filled first, since those rows are ~6% of a random sample.
 QUOTAS = {"open_ended": 30, "facing": 45, "opening": 45}
-SEED = 292
+#: M297 (audit R5) re-runs this on FRESH spots to replicate one cell, so
+#: the sample seed and the quotas are settable - `AGGR_SEED` picks a
+#: different population, never a different rule.
+if os.environ.get("AGGR_FACING_ONLY"):
+    QUOTAS = {"open_ended": 0, "facing": SPOTS, "opening": 0}
+SEED = int(os.environ.get("AGGR_SEED", 292))
 WEAK_BAND = 0.25
 MIN_ROWS = 6
 MIN_SIGMA = 2.0

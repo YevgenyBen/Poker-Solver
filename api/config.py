@@ -3472,9 +3472,16 @@ STREET_ISOLATION_NOTE = (
 #     case M142 published.
 # No hand-strength band separates (weak -0.011, middling +0.003, strong
 # +0.077, none over 1.85 sigma) and the overall direction is null
-# (+0.0131, 0.67 sigma). Facing a bet leans aggressive (+0.0376, 2.09
-# sigma) - ONE cell at barely 2 sigma, unreplicated, so it is recorded
-# here and not put in front of a player (M166's failure).
+# (+0.0131, 0.67 sigma). Facing a bet leaned aggressive (+0.0376, 2.09
+# sigma) - ONE cell at barely 2 sigma, so it was recorded here and NOT
+# put in front of a player (M166's failure).
+#
+# **M297 (audit R5) re-ran that cell on 60 FRESH facing-a-bet rows and it
+# did not replicate: +0.0181 at 0.81 sigma, pooled +0.0267 at 1.82 over
+# 108 rows with no decision shared between the samples.** So the lean
+# stays out of the copy permanently, and the holding-back was worth its
+# cost - this is the first finding here caught BEFORE it shipped rather
+# than withdrawn after.
 #
 # What survives is the SHAPE: mostly small, occasionally categorical.
 # The worst row bets 9s3h on 6c8c7d 0.0716 where the fuller solve bets

@@ -17488,3 +17488,36 @@ distance from a fuller solve of this engine's own model, across all
 three streets; this is distance from an independent solver, on one
 street, and only where its dump passes its own control. The two answer
 different questions and must not be added.
+
+## M297 - the facing-a-bet lean did not replicate (audit R5)
+
+M292 re-measured the standing aggression caveat and found one cell that
+looked real: facing a bet, this engine leans more aggressive than an
+uncapped solve of the same spot, **+0.0376 at 2.09 sigma over 48 rows**.
+It was deliberately kept OUT of the copy - M166 shipped a split of that
+shape and M167 withdrew it - and the audit made replicating it R5.
+
+**Same arms, same rule, 60 FRESH facing-a-bet rows** (a different sample
+seed; the study's sampler is parameterised so the population changes and
+the rule cannot):
+
+| sample | n | signed lean | sigma |
+|---|---|---|---|
+| M292 | 48 | +0.0376 | **2.09** |
+| **M297, fresh** | 60 | **+0.0181** | **0.81** |
+| pooled | 108 | +0.0267 | **1.82** |
+
+**It does not replicate**, and the pooled sample is under the bar too.
+The two samples share no decision. So the lean stays out of player-facing
+copy, and `api/config.py` records why next to the constants.
+
+**This is the first finding in this project caught BEFORE it shipped**
+rather than withdrawn afterwards. The cost of that discipline is
+visible: about four machine-hours to establish that a number should
+never have been published. M166's cost was a user-facing claim that
+stood for a milestone and had to be retracted.
+
+**What it does NOT say**: the direction is positive in both samples, so
+this is "not established", not "shown absent". If a later study clears
+2 sigma on a fresh population the claim may be revisited - the test
+says so in as many words.
