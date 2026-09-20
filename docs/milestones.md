@@ -17521,3 +17521,40 @@ stood for a milestone and had to be retracted.
 this is "not established", not "shown absent". If a later study clears
 2 sigma on a fresh population the claim may be revisited - the test
 says so in as many words.
+
+## M298 - the flop cannot be graded on this machine, and now we know why (audit R4)
+
+The flop is the only street with no external grade: pricing one needs a
+THREE-ROUND dump (its leaves are turn cards whose river play the dump
+must carry, M258/F67), and R1 died at SPR 6.17 holding 23.8 GB of 31.7.
+R4 asked whether a shallower spot fits.
+
+**Four probes, each under `bench/memory_guard.py` with a 4 GB floor:**
+
+| probe | the lever | peak | time to the wall |
+|---|---|---|---|
+| 1 | 100bb, reference cap 100, 8 threads | **18.35 GB** | 4.3 min |
+| 2 | **60bb** - a shallower betting tree | 18.15 GB | 2.1 min |
+| 3 | **reference cap 60** - M242's narrower ranges | 18.21 GB | 6.3 min |
+| 4 | **2 threads** - less per-thread state | 18.14 GB | 18.3 min |
+
+**Every lever moved the TIME and none moved the MEMORY.** Two threads
+took 4.3x as long to reach the same ceiling. So the wall is the
+three-round tree itself - the turn and river subtrees it has to hold -
+and not the stack depth, the range width or the thread count. Halving
+the stack from 100bb to 60bb changed nothing at all.
+
+**R4 is BLOCKED ON HARDWARE and the flop stays UNGRADED.** M255 measured
+a three-round dump at 3.47 GB for this line and a resident dump at ~4.5x
+its file size, so the work wants roughly twice this machine's 31.7 GB.
+Two-round dumps cannot stand in: M257's F62 measured the same spot
+failing its control at two rounds (8.4x) and passing at three (2.5x).
+
+**What DID work is the watchdog.** All four probes were stopped cleanly
+with free memory never below 3.69 GB, and each wrote its peak. The
+session that first met this failure (R1, M285) lost its output and
+nearly the machine.
+
+**Not tried, and the honest next step**: nothing on this machine. The
+levers that exist have been measured. A rented box with 64 GB would
+settle the flop in an afternoon - eight references at ~20 minutes each.
