@@ -27,6 +27,16 @@ The first run of this study did exactly that and its weak-hand cell came
 back EMPTY - which would have retired the clause on a population that
 could not contain it (M252's failure).
 
+**AMENDMENT (after the discarded first run, before any arm of the real
+one).** That run drew 7 open-ended rows out of 120 - too few for a 2
+sigma test either way - so the sample is now STRATIFIED: 45 opening
+decisions, 45 facing a bet, and 30 spots where hero holds an open-ended
+straight draw, out of the same 120. The bars below are unchanged. The
+first run's open-ender cell leaned NEGATIVE (-0.2164, 1.47 sigma, i.e.
+against the clause), so this widening can only make its death easier to
+establish, not harder; it is recorded because the amendment was written
+after seeing that lean.
+
 **PRE-REGISTERED READING RULE (fixed before either arm was run):**
 
 1. HEADLINE: aggression = the probability mass on bet/raise/all-in.
@@ -54,6 +64,9 @@ import statistics
 import sys
 
 SPOTS = 120
+#: 45 / 45 / 30 of the same 120 (see the AMENDMENT above). The open-ended
+#: quota is filled first, since those rows are ~6% of a random sample.
+QUOTAS = {"open_ended": 30, "facing": 45, "opening": 45}
 SEED = 292
 WEAK_BAND = 0.25
 MIN_ROWS = 6
@@ -174,7 +187,8 @@ def main(argv=None) -> int:                              # pragma: no cover
     db = hand_db.connect()
     rng = random.Random(SEED)
     written = 0
-    counts = {"facing": 0, "opening": 0}
+    counts = {"facing": 0, "opening": 0, "open_ended": 0}
+    skips = {"unrepresentable": 0, "refused": 0, "not_heads_up": 0, "no_quota_match": 0}
     with open(out_path, "w") as fh:
         for hand in sample_hands(db, 4000, SEED, where=DEFAULT_WHERE):
             if written >= SPOTS:
@@ -184,31 +198,53 @@ def main(argv=None) -> int:                              # pragma: no cover
             if not flop:
                 continue
             facing = [i for i in flop if (acts[i].facing_bb or 0) > 1e-9]
-            need_facing = counts["facing"] < SPOTS // 2
-            need_opening = counts["opening"] < SPOTS // 2
-            if not need_facing and not need_opening:
+            if all(counts[k] >= QUOTAS[k] for k in QUOTAS):
                 break
-            if need_facing and facing:
-                index = facing[0]
-            elif need_opening and (acts[flop[0]].facing_bb or 0) <= 1e-9:
-                index = flop[0]
-            else:
-                continue
+            # The deal comes FIRST: the open-ended quota is a property of
+            # the cards this hand deals its actors, so it cannot be read
+            # before they exist.
             cards = deal(hand.board, hand.n_players, rng)
+            # Stratified: an open-ended draw counts toward its own quota
+            # whichever kind of decision it is, because the clause it
+            # tests is about the HAND, not the node.
+            index = None
+            if counts["open_ended"] < QUOTAS["open_ended"]:
+                for i in flop:
+                    hero_cards = cards.get(acts[i].player)
+                    if hero_cards and is_open_ended(hero_cards, hand.board[0:6]):
+                        index = i
+                        break
+            if index is None and counts["facing"] < QUOTAS["facing"] and facing:
+                index = facing[0]
+            elif index is None and counts["opening"] < QUOTAS["opening"] and (
+                    acts[flop[0]].facing_bb or 0) <= 1e-9:
+                index = flop[0]
+            if index is None:
+                skips["no_quota_match"] += 1
+                continue
             body, why, _ = request_for(hand, acts, index, round(hand.row["eff_stack_bb"], 2),
                                        cards, post=post)
             if body is None:
+                skips["unrepresentable"] += 1
                 continue
             body["hero_cards"] = cards[acts[index].player]
             clear_postflop_caches()
             status, js = post(body)
             hero = (js.get("hero") or {}).get("strategy") if status == 200 else None
-            if not hero or len(js.get("positions") or []) != 2:
+            if not hero:
+                skips["refused"] += 1
+                continue
+            if len(js.get("positions") or []) != 2:
+                skips["not_heads_up"] += 1
                 continue
             board = body["board"]
             fh.write(json.dumps({
                 "hand": hand.id, "i": index, "arm": arm, "board": board,
-                "hero": body["hero_cards"], "facing": bool(js.get("to_call_bb")),
+                # Facing a bet is read off the ROW, not the request: folding
+                # is only legal against a bet, and `to_call_bb` never leaves
+                # the internal dict (the first runs read it and every row
+                # came back "opening").
+                "hero": body["hero_cards"], "facing": "fold" in hero,
                 "percentile": percentile_of(body["hero_cards"], board),
                 "open_ended": is_open_ended(body["hero_cards"], board),
                 "aggression": aggression(hero), "continue": 1.0 - folding(hero),
@@ -216,10 +252,12 @@ def main(argv=None) -> int:                              # pragma: no cover
             }) + "\n")
             fh.flush()
             written += 1
-            counts["facing" if bool(js.get("to_call_bb")) else "opening"] += 1
+            counts["facing" if "fold" in hero else "opening"] += 1
+            if is_open_ended(body["hero_cards"], board):
+                counts["open_ended"] += 1
             if written % 20 == 0:
                 print(arm, written, flush=True)
-    print("DONE", arm, written, flush=True)
+    print("DONE", arm, written, json.dumps(counts), json.dumps(skips), flush=True)
     return 0
 
 

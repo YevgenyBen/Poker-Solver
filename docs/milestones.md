@@ -17197,3 +17197,68 @@ Both studies' rules are tested as code, and the 579 rows are committed
 **Two of my own fixtures were dead guards** and were caught here: one
 ended in `or True`, and one gave every row the same delta, so its sigma
 was undefined and the refusal test passed for the wrong reason.
+
+## M292 - the most-met warning in the product, re-measured (audit R7)
+
+`POSTFLOP_AGGRESSION_CAVEAT_REASON` fires on EVERY postflop decision -
+23% of the 1,200-decision replay, the highest exposure of any disclosure
+here - and quoted M140/M142's figures, measured at flop cap 26 with ONE
+bet size. The flop has shipped at cap 100 with a 0.33/0.75/2.5 menu since
+M207/M234 (F59).
+
+**Method** (`bench/studies/aggression_caveat.py`, rule fixed before
+either arm ran). The same real heads-up flop decisions through `/advise`
+twice, one process each, changing only the budget:
+- **shipped**: as it ships.
+- **reference**: uncapped 169 classes, 200 equity samples, 2,500
+  iterations - 27.7s a decision against the shipped 2.8s.
+
+116 paired rows: 45 opening, 48 facing a bet, 30 holding an open-ended
+draw. 3h05m and 3h53m, peak 8.8 GB under `bench/memory_guard.py`.
+
+| | M140/M142 | **M292 (shipped config)** |
+|---|---|---|
+| mean absolute error | 0.1394 | **0.1026** |
+| worst | 0.8810 | **0.9037** |
+| open-ended draws | +0.170 to +0.881, 3 of 3 | **-0.0748, 1.49 sigma (n=30)** |
+| weak hands facing a bet | nine-high shoves 0.5672 vs fold 0.9869 | **+0.0955, 1.40 sigma (n=13)** |
+| made hand / strong draw | "essentially exact" | **0.1270 mean error** |
+
+**All three named claims are gone**, each by the pre-registered bar:
+- **The open-ender clause REVERSED.** The copy told players to discount
+  bets with an open-ended straight draw; measured over 30 such rows at
+  the shipped configuration, this engine bets them slightly LESS than the
+  uncapped solve. M140 had 3 spots at cap 26.
+- **The weak-hand-facing-a-bet clause kept its direction and missed the
+  bar** (continuing 0.5114 against 0.4159). The direction is not
+  withdrawn; the instruction is, because a claim kept after failing its
+  own bar is M166's failure, and this project has made it twice.
+- **"Essentially exact with a made hand or a strong draw" did not
+  reproduce either.** Strong hands measure |error| 0.1270, signed +0.0770
+  at 1.85 sigma.
+
+**What survives is the SHAPE, and the copy now leads with it**: mostly
+small, occasionally total. The worst row bets `9s3h` on `6c8c7d` 0.0716
+where the fuller solve bets 0.9753. No hand-strength band separates
+(weak -0.011, middling +0.003, strong +0.077), and the overall direction
+is null (+0.0131, 0.67 sigma).
+
+**One cell is interesting and deliberately NOT in the copy**: facing a
+bet the engine leans aggressive, +0.0376 at 2.09 sigma (n=48). One cell
+at barely two sigma, unreplicated, is exactly what M166 shipped and M167
+withdrew. It is recorded in `api/config.py` for the next study.
+
+**The reference is a fuller solve of the SAME model**, so this is
+distance from a better-resourced version of ourselves, not from correct
+play - the standing caveat M182 attached to every internal figure.
+
+**Guards.** The rows are committed (`tests/data/aggression_caveat_m292.json`)
+and every figure, plus both clause verdicts, re-derives from them. A
+control asserts the reference arm really was the expensive one (27.7s
+against 2.8s median): if the two arms ever measure alike, they ran the
+same configuration, which is M245's trap.
+
+**R7 is 1 of 12 done and the remaining 11 are deferred to the next
+audit**, which re-measures the same figures through its own arms. This
+one cost ~7 machine-hours; eleven more would cost ~70 for work the audit
+does anyway.

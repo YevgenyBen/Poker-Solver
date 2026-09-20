@@ -4676,9 +4676,17 @@ def test_the_aggression_caveat_does_not_claim_the_fold_call_is_broken():
             f"the caveat still vouches for the fold call ({withdrawn!r}); M142 "
             "measured it as bad as the aggression call at a node facing a bet"
         )
-    assert "essentially exact" in reason, (
-        "the caveat should still say where the fold call IS reliable — with a "
-        "made hand or a strong draw — or it over-claims in the other direction"
+    # M292 retired the other half too. M142's "with a made hand or a strong
+    # draw the continue-or-fold call measured essentially exact" did not
+    # reproduce at the shipped configuration: strong hands measure |error|
+    # 0.1270 (signed +0.0770, 1.85 sigma), which is not exact and not
+    # separable either. So the copy vouches for NO band - and, because
+    # that is the direction M166 got wrong, it must say so explicitly
+    # rather than simply going quiet.
+    assert "essentially exact" not in reason
+    assert "no hand type predicts" in reason, (
+        "the caveat must say that hand type does not predict the error, or a "
+        "player is left to assume their strong hand is the safe case"
     )
     for overclaim in ("do not trust", "unusable", "ignore this advice"):
         assert overclaim not in reason, (
@@ -4757,7 +4765,7 @@ def test_the_aggression_caveat_names_the_mechanism_but_no_longer_a_direction():
     """
     reason = api_config.POSTFLOP_AGGRESSION_CAVEAT_REASON.lower()
     assert "mix" in reason, "the caveat should still name the mechanism"
-    assert "fold" in reason, "the caveat should still say which axis IS usable"
+    assert "continue" in reason, "the caveat should still address the fold axis"
     assert "without a consistent direction" in reason, (
         "the caveat should say the residual has no reliable direction"
     )
@@ -4809,64 +4817,61 @@ def test_the_aggression_caveat_quotes_its_own_measurement():
     )
 
 
-def test_the_caveat_names_the_open_ender_case_it_measured():
-    """M140. The one postflop error big enough, consistent enough and
-    nameable enough for a player to act on must stay in the copy.
+def test_the_caveat_no_longer_singles_out_open_ended_draws():
+    """M292 (audit R7) RETIRED M140's clause, on its own evidence.
 
-    Open-ended straight draws are over-bet 3 of 3 measured, by +0.170 to
-    +0.881. The worst is 7h8h on 2h6d9c, where the product recommends a
-    2.5x-pot bet 0.88 of the time and the converged solve checks 100% —
-    reproducible byte-identical across runs, with the reference itself
-    converged at that spot (0.0004 / 0.0001 / 0.0 at 1k / 2.5k / 5k).
+    M140 measured open-ended straight draws over-bet on 3 of 3 spots by
+    +0.170 to +0.881, at flop cap 26 with one bet size, and the copy told
+    players to discount those bets. Re-measured at the shipped
+    configuration over 30 such rows, the signed gap is **-0.0748 at 1.49
+    sigma** - the REVERSE direction, and not separable either way.
 
-    Gutshots and a no-draw control are clean, so the caveat must say
-    OPEN-ENDED rather than "draws": over-generalising here would be the
-    same over-claim M110/M111 had to withdraw, one step in the other
-    direction.
+    A clause that tells a player to discount a bet the measurement no
+    longer supports is worse than silence, so it is gone, along with its
+    "88% of the time" case.
     """
     reason = api_config.POSTFLOP_AGGRESSION_CAVEAT_REASON.lower()
-    assert "open-ended straight draw" in reason, (
-        "the caveat must name the one case measured consistent enough to act on"
+    assert "discount" not in reason, (
+        "the copy still tells players to discount a case that did not "
+        "reproduce at the shipped configuration"
     )
-    assert "discount" in reason, (
-        "naming the case without telling the player what to do with it is not "
-        "actionable — the measurement supports discounting these bets"
-    )
-    # It must not over-generalise to all draws: gutshots measured clean
-    # (+0.0006 and 0.0), so warning about them would be unsupported.
-    assert "discount any suggestion to bet a draw" not in reason, (
-        "gutshots measured clean; the warning is specific to open-enders"
-    )
-    # The worst case in the copy must be the open-ender's, not a stale one.
-    assert str(round(api_config.POSTFLOP_AGGRESSION_ERROR_WORST * 100)) in reason
+    assert "88%" not in reason and "two and a half times the pot" not in reason
+    # It may still MENTION open-enders - saying the earlier claim died is
+    # useful - but never as an instruction.
+    assert "open-ended straight draws, which an earlier" in reason
 
 
-def test_the_caveat_warns_about_weak_hands_facing_a_bet():
-    """M142 / F38. The most consequential warning in the response.
+def test_the_caveat_no_longer_claims_weak_hands_facing_a_bet_over_continue():
+    """M292 retired F38/M142's clause too, and this one is the harder
+    call.
 
-    Facing a bet with a weak hand the product does not merely over-call:
-    holding nine-high (8s9s on Ac7d2h) it recommends shoving 97.5bb
-    0.5672 of the time where the converged solve folds 0.9869. Verified
-    byte-identical across runs with the reference identical at 1k / 2.5k
-    / 5k iterations.
+    M142 measured nine-high (8s9s on Ac7d2h) shoving 0.5672 where the
+    converged solve folded 0.9869. Re-measured at the shipped
+    configuration over 13 weak-hand rows facing a bet, continuing runs
+    0.5114 against the reference's 0.4159: **+0.0955 at 1.40 sigma** -
+    the same DIRECTION, and under the 2 sigma bar fixed before the run.
 
-    A player who follows that loses a stack, so the copy must say it —
-    and must say it in terms a player can apply before knowing the
-    answer: weak hand, facing a bet.
+    So the direction is not withdrawn, the CLAIM is: the copy no longer
+    tells a player to fold weak hands more often than the advice says,
+    because that instruction now rests on a cell that did not separate.
+    A claim kept because it "feels right" after failing its own bar is
+    M166's failure, which this project has already made twice.
     """
     reason = api_config.POSTFLOP_AGGRESSION_CAVEAT_REASON.lower()
-    assert "facing a bet" in reason, (
-        "the warning must name the node type, since the same hands are fine "
-        "at a street's opening decision"
-    )
-    assert "weak hand" in reason, "the warning must name the hand type"
-    assert "all-in" in reason or "commit chips" in reason, (
-        "over-calling understates it — the product recommends going all-in "
-        "with nine-high 57% of the time here"
-    )
-    assert "fold weak hands facing a bet more often" in reason, (
-        "the warning must tell the player what to do, not only that the "
-        "number is unreliable"
+    assert "fold weak hands facing a bet more often" not in reason
+    assert "nine-high" not in reason and "57%" not in reason
+    # And the copy must not silently imply the opposite either.
+    assert "weak hands, middling hands and strong hands all" in reason
+
+
+def test_the_caveat_says_the_error_is_occasionally_total():
+    """M292. The mean is 0.1026 and the worst row is 0.9037 - the same
+    shape M183 found in chips: mostly free, occasionally expensive. A
+    player told only the average would plan around the wrong number."""
+    reason = api_config.POSTFLOP_AGGRESSION_CAVEAT_REASON.lower()
+    assert "occasionally total" in reason
+    assert str(round(api_config.POSTFLOP_AGGRESSION_ERROR_ROWS)) in reason, (
+        "the copy must say how many decisions it was measured over"
     )
 
 
