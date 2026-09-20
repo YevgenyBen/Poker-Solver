@@ -17388,3 +17388,65 @@ rather than served.
 **Off under the suite** (`tests/conftest.py`), like M284's tier: a test
 that counts equity work would otherwise pass by reading a file an
 earlier run left behind.
+
+## M295 - substitution refused, coverage shipped instead (audit R2)
+
+R2 asked for a first ask to be served from a NEIGHBOURING stored bucket
+while the exact one warms. M124 refused that shape once, and its control
+is what decides it: a substitution is allowed only if it moves the
+strategy no more than re-running the same solve under a different seed.
+
+**Re-run at today's configuration** (`bench/studies/stack_substitution.py`,
+six six-handed ensemble solves, 75 real preflop nodes weighted by
+occurrence, rule fixed before any arm):
+
+| arm | median TVD | hands whose top action changes |
+|---|---|---|
+| **seed noise** (same bucket, fresh seeds) | **0.1217** | **21.2%** |
+| 5bb below | 0.1239 | 22.1% |
+| 10bb | 0.1302 | 18.3% |
+| 20bb | 0.1300 | 20.5% |
+| 40bb | 0.1294 | 19.8% |
+
+**REFUSED**: every distance sits above the yardstick, so nothing is
+served from the wrong depth.
+
+**The finding underneath is more interesting than the verdict.**
+Substituting a bucket **40bb away moves the six-handed preflop strategy
+about as much as 5bb does**, and both are within a whisker of the
+solver's own seed noise - the depth signal is buried in noise of the
+same size, even after M290's ensemble halved that noise. The refusal is
+NARROW (worst distance is 0.008 TVD above the yardstick), which is
+recorded so a future attempt knows it needs a sharper yardstick rather
+than a bigger sample of the same thing.
+
+**A metric defect was caught before it decided anything.** The first
+pass counted a node as "changed" whenever ANY hand's top action moved,
+which made seed noise read 94.6% and left the rule unable to separate
+arms. Corrected to the combo-weighted share of hands, re-applied to the
+same rows: the verdict is the same, for a reason that can be read.
+
+**What shipped instead: coverage.** The audit's own numbers say the
+latency is an unwarmed-bucket problem, and only **80.8%** of real
+multiway hands sat at a warmed depth:
+
+| size | warmed before | worst gaps |
+|---|---|---|
+| 9-max | **13.2%** | 105-145bb, the most common depths there |
+| 4-max | 67.3% | 135-200bb |
+| 8-max | 73.9% | 155-205bb |
+| 7-max | 75.3% | 70-155bb |
+| 5-max | 79.8% | 140-200bb |
+| 3-max | 90.3% | 205-230bb |
+| 6-max | 96.2% | (M290 already covered it) |
+
+`MULTIWAY_DISK_WARM` now holds **160 buckets** (was 39), chosen greedily
+by hands covered per second of solve time, taking coverage to
+**95.04%**: ~3.4 hours of one-off idle time and ~2.1 GB of disk, inside
+the store's 8 GiB cap. **It changes no advice** - a warmed bucket is
+exactly the solve the player would otherwise have waited for.
+
+The histogram it was derived from is committed
+(`tests/data/real_stack_buckets.json`) and the test re-derives the 95%
+claim from it rather than pinning a count, so a future edit is checked
+against what it does for players.
