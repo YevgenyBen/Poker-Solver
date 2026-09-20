@@ -9529,20 +9529,38 @@ def test_ensure_stored_does_nothing_when_the_tier_is_off(monkeypatch):
     assert solves == []
 
 
-def test_the_disk_warm_list_is_the_uncovered_buckets():
-    """M284 / the 2026-09-18 audit's F56: 7- and 8-handed, which the RAM
-    warmer never reached. M290 added the eleven six-handed buckets that
-    took real-hand coverage from 91.6% to 96.2% - the condition its
-    ensemble was adopted on. Bucket-aligned, no repeats, nothing the
-    prewarm or the RAM list already covers."""
+def test_the_disk_warm_list_covers_the_buckets_real_players_sit_at():
+    """M284 / F56 warmed 7- and 8-handed; M290 added six-handed buckets;
+    **M295 made it a coverage target** after the 2026-09-20 audit found
+    only 80.8% of real multiway hands at a warmed depth (9-handed:
+    13.2%).
+
+    The claim is re-derived here from the committed histogram of real
+    stacks rather than pinned as a count, so adding or dropping a bucket
+    is checked against what it does for players."""
+    import json
+    import math
+    import pathlib
+
     warm = api_config.MULTIWAY_DISK_WARM
-    assert len(set(warm)) == len(warm)
-    assert {p for p, _ in warm} == {6, 7, 8}
-    assert len([1 for p, _ in warm if p == 6]) == 11
-    assert len([1 for p, _ in warm if p == 7]) == 14
-    assert len([1 for p, _ in warm if p == 8]) == 14
+    assert len(set(warm)) == len(warm), "a bucket warmed twice is wasted idle time"
+    hist = json.loads((pathlib.Path(__file__).parent / "data"
+                       / "real_stack_buckets.json").read_text())
+    total = covered = 0
+    for size, buckets in hist.items():
+        players = int(size)
+        warmed = {float(d) for d in api_config.MULTIWAY_PREWARM_STACK_DEPTHS}
+        warmed |= {float(d) for q, d in api_config.MULTIWAY_BACKGROUND_WARM if q == players}
+        warmed |= {float(d) for q, d in warm if q == players}
+        for bucket, count in buckets.items():
+            total += count
+            if float(bucket) in warmed:
+                covered += count
+    assert covered / total >= 0.95, f"warm coverage fell to {covered / total:.3f}"
     for players, depth in warm:
         assert depth % api_config.MULTIWAY_STACK_BUCKET_BB == 0
+        assert math.isclose(depth, math.floor(depth / 5) * 5)
+    for players, depth in warm:
         assert depth not in api_config.MULTIWAY_PREWARM_DEPTHS_BY_TABLE.get(players, ())
     assert not set(warm) & set(api_config.MULTIWAY_BACKGROUND_WARM)
 

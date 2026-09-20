@@ -208,6 +208,26 @@ MULTIWAY_DISK_WARM = tuple(
     # unwarmed six-handed first ask cost about four solves, so its
     # adoption was conditional on this.
     + [(6, float(d)) for d in (265, 275, 285, 280, 290, 90, 270, 295, 85, 300, 80)]
+    # M295 (audit R2, differently). The audit found 133 of 1,200 real
+    # decisions over five seconds, nearly all first asks at an unwarmed
+    # bucket - and only **80.8%** of real multiway hands sat at a warmed
+    # depth at all (9-handed: 13.2%, 4-handed: 67.3%). Serving a
+    # NEIGHBOURING stored bucket instead was measured and REFUSED
+    # (`bench/studies/stack_substitution.py`), so the fix is to warm the
+    # buckets players actually sit at, which changes no advice.
+    #
+    # Chosen greedily by hands covered per second of solve time, to
+    # **95.04%** coverage: 121 buckets, ~3.4h of one-off idle
+    # time and ~2.1 GB of disk (a 4-handed entry is 4.7 MB, a 9-handed
+    # one 87 MB) inside the store's 8 GiB cap. `tests/data/
+    # real_stack_buckets.json` holds the histogram this was derived from,
+    # and the test re-derives the coverage claim from it.
+    + [(3, float(d)) for d in (210, 205, 230, 220, 215, 225, 285, 245, 300, 240, 280)]
+    + [(4, float(d)) for d in (200, 135, 150, 155, 160, 165, 170, 205, 210, 190, 220, 225, 185, 215, 175, 180, 55, 80, 265, 40, 35, 255, 70, 250, 245, 25, 270, 45, 235, 230, 240, 335, 260, 325, 290, 295, 305, 310, 275, 15, 330, 300, 340, 285, 320, 280, 390, 345, 315)]
+    + [(5, float(d)) for d in (200, 140, 190, 170, 185, 180, 90, 85, 265, 60, 285, 70, 280, 55, 275, 80, 65, 35, 270, 75, 300, 45, 40, 295, 25, 305, 290, 315, 350, 325, 310, 320, 400, 380, 345, 355, 330)]
+    + [(6, float(d)) for d in (315, 65, 75, 305, 55, 320, 70, 35)]
+    + [(7, float(d)) for d in (150, 90, 155, 75)]
+    + [(9, float(d)) for d in (105, 110, 120, 115, 130, 125, 135, 195, 145, 95, 140, 200)]
 )
 # The ceiling on a client-supplied `iterations` for the heads-up preflop
 # solve — the one endpoint that exposes the knob at all (multiway ignores

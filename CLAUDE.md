@@ -607,6 +607,25 @@ same nine references, re-scored against heroes drawn by range weight -
     smaller sizes.** That covered 189 of 303 firings, where the note was
     false.
 
+- **A STORED SOLVE MAY NOT STAND IN FOR A NEIGHBOURING BUCKET (M295,
+  audit R2).** Re-running M124's control at today's configuration: no
+  substitution distance stays inside the solver's own seed noise, so
+  nothing is served from the wrong depth.
+  | arm | median TVD | top action changes |
+  |---|---|---|
+  | seed noise, same bucket | **0.1217** | 21.2% |
+  | 5bb below | 0.1239 | 22.1% |
+  | 40bb below | 0.1294 | 19.8% |
+  **40bb away moves the strategy about as much as 5bb does**, and both
+  are within a whisker of the noise floor - the depth signal is buried
+  in noise of the same size. The refusal is narrow (0.008 TVD), so a
+  future attempt needs a SHARPER yardstick, not more spots.
+  **What shipped instead is coverage**: only 80.8% of real multiway
+  hands sat at a warmed depth (9-max 13.2%, 4-max 67.3%), and
+  `MULTIWAY_DISK_WARM` now covers **95.04%** at ~3.4h of one-off idle
+  time and ~2.1 GB. A warmed bucket is the exact solve, so no advice
+  changes.
+
 - **MULTIWAY COST PEAKS AT THREE LIVE, NOT AT SIX (M291, audit R6).**
   Since M266 gave 4+ live the smaller budget, the most expensive cell in
   the product is the THREE-way pot - and it is the common one.
@@ -1002,7 +1021,8 @@ requests now reject unknown fields by name rather than ignoring them.
                            from the repo - `two_live.py` first (M285),
                            `two_live_silent.py` (M287), `node_spread.py` (M288),
                            `preflop_fold_seeds.py` (M289),
-                           `multiway_live_cost.py` / `three_live_budget.py` (M291)
+                           `multiway_live_cost.py` / `three_live_budget.py` (M291),
+                           `stack_substitution.py` (M295)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools
