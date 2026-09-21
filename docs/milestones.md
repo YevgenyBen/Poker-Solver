@@ -17668,3 +17668,74 @@ remaining R3 study inherits.
 
 **R3's stale count goes 11 -> 9**, and the registry now shows 25
 disclosures rather than 26.
+
+## M300 - the flop's reliability note was understating itself (audit R3)
+
+`FLOP_MEASURED_NOTE` is the highest-exposure stale disclosure left,
+reaching **12% of real decisions**, and it makes three claims: that about
+**one answer in seven** is off by more than 0.10 in betting frequency,
+that **neither hand strength nor facing a bet predicts** which, and that
+the worst case is a top pair a fuller solve bets where this engine
+checks. All three are M180's, measured at flop range cap 140 with ONE bet
+size - a tree M207's menu and M234's cap 100 replaced.
+
+**No new solving.** M292 and M297 already priced this exact comparison at
+the shipped configuration - real heads-up flop decisions through
+`/advise` against an uncapped 169-class solve of the same request - and
+their rows are committed. **176 of them, against M180's 56.** Re-reading
+a sample drawn for another question is legitimate only if the rule is
+fixed first and what was already known is written down, and
+`bench/studies/flop_measured.py` records both.
+
+**THE NOTE UNDERSTATED ITS OWN DEFECT, BY ABOUT HALF.**
+
+| stratum | n | off by more than 0.10 |
+|---|---|---|
+| opening | 41 | **36.6%** |
+| facing a bet | 103 | 14.6% |
+| open-ended draw | 32 | 28.1% |
+
+Weighted by real occurrence - opening decisions are ~68% of heads-up flop
+decisions, facing ~32%, open-ended ~6% - that is **29.5%, about one
+answer in three, against the published one in seven**. The unweighted
+share is 22.2%, so the direction does not rest on the weights, and it is
+insensitive to the open-ended rate (29.6% at zero). **A warning that
+understates its own defect is the one failure mode M232 says a warning
+may not have.** M299 found the opposite failure in the note beside it, so
+this round of R3 has now caught a disclosure erring in each direction.
+
+**HALF THE "NOTHING PREDICTS IT" CLAIM IS FALSE, AND THE HALF THAT
+SURVIVES IS THE ONE THAT MATTERED.** Hand strength still carries nothing
+- top quartile 0.1042 against 0.0855, **0.61 sigma** - which is the half
+M166 asserted from too few spots and M167 withdrew. But the node type
+separates:
+
+| | n | mean error |
+|---|---|---|
+| acting first | 68 | **0.1387** |
+| facing a bet | 108 | **0.0586** |
+
+**2.74 sigma, both split halves agreeing in direction.**
+
+**IT POINTS THE OPPOSITE WAY TO THE COST, AND BOTH ARE TRUE.** M299 (the
+milestone before this one) priced the same two node types in chips and
+measured facing a bet at **2.92x** an opening decision. Here the
+FREQUENCY error is 2.4x larger when acting first. That is this project's
+oldest finding restated - M182/M183/M186: the biggest frequency errors
+sit where they are cheapest, because solvers mix precisely when actions
+are near-indifferent. The copy now says so in as many words, because a
+player told "acting first is less reliable" and "facing a bet is more
+expensive" needs to know those are two axes rather than a contradiction.
+
+**The worst case is a different hand.** M180's was a top pair; at the
+shipped configuration it is `9s3h` on `6c8c7d` - air on a connected
+board at percentile 0.08, where the fuller solve **bluffs 0.9753** and
+this engine checks (0.0716). The shape M140 found in reverse: the engine
+is not failing to value-bet here, it is failing to bluff.
+
+**Cost: minutes.** The expensive half was paid by M292 and M297; what
+this milestone adds is a rule, a re-reading and the copy. That is the
+argument for committing rows with their requests - two disclosures have
+now been re-measured off one sample.
+
+**R3's stale count goes 9 -> 8.**

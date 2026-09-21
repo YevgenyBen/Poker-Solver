@@ -2524,6 +2524,61 @@ CERTIFY_RELIABILITY_ON_STREETS = ()
 FLOP_MEASURED_SPOTS = 56
 FLOP_MEASURED_FAILURES = 8
 
+# **RE-MEASURED AT THE SHIPPED CONFIGURATION (M300, the 2026-09-20
+# audit's R3), AND THE NOTE WAS UNDERSTATING ITSELF.**
+#
+# M180 measured at flop range cap 140 with ONE bet size. M207 gave the
+# flop a 0.33/0.75/2.5 menu and M234 took the cap to 100, so its figures
+# describe a tree this engine no longer builds. Re-read over the 176
+# rows M292 and M297 already priced at today's settings - real heads-up
+# flop decisions through `/advise` against an uncapped 169-class solve of
+# the same request - with the reading rule fixed first
+# (`bench/studies/flop_measured.py`):
+#
+#   stratum        n     off by more than 0.10
+#   opening       41                     36.6%
+#   facing a bet 103                     14.6%
+#   open-ended    32                     28.1%
+#
+# Weighted by real occurrence (opening decisions are ~68% of heads-up
+# flop decisions, facing ~32%, open-ended ~6%): **29.5%, about one
+# answer in three, against the "one in seven" the copy published.** The
+# unweighted share is 22.2%, so the direction does not depend on the
+# weights, and it is insensitive to the open-ended rate (29.6% at zero).
+# **A warning that understates its own defect is the one failure mode
+# M232 says a warning may not have**, and this one did, by about half.
+#
+# **HALF THE "NOTHING PREDICTS IT" CLAIM IS FALSE.** Hand strength still
+# carries nothing (top quartile 0.1042 against 0.0855, 0.61 sigma) - the
+# half M166/M167 exist to protect. But whether you are FACING A BET
+# separates at **2.74 sigma**, with both split halves agreeing in
+# direction, and the direction is the opposite of the old belief:
+#
+#   acting first    n=68    mean error 0.1387
+#   facing a bet    n=108   mean error 0.0586
+#
+# **Read that beside M299 and not instead of it.** This is FREQUENCY
+# error; M299 priced the same node types in chips and found facing a bet
+# costs 2.92x an opening decision. Both are true and they point opposite
+# ways, which is this project's oldest finding restated (M182/M183/M186:
+# the biggest frequency errors sit where they are cheapest). The copy
+# says so, because a player told "acting first is less reliable" and
+# "facing a bet is more expensive" needs to know those are two axes.
+#
+# **The worst case is a different hand now.** M180's was a top pair a
+# fuller solve bets and this engine checks; at the shipped configuration
+# it is `9s3h` on `6c8c7d` - air on a connected board, percentile 0.08,
+# where the fuller solve BLUFFS 0.9753 and this engine checks (0.0716).
+#
+# No new solving: the rows were already committed for M292/M297, which
+# is legitimate only because the rule was fixed before they were re-read
+# and what was already known about them is recorded in the study.
+FLOP_MEASURED_ROWS = 176
+FLOP_MEASURED_SHARE_OVER_TEN = 0.295
+FLOP_MEASURED_OPENING_ERROR = 0.1387
+FLOP_MEASURED_FACING_ERROR = 0.0586
+FLOP_MEASURED_WORST_ERROR = 0.9037
+
 # M180. The flop can no longer use UNMEASURED_STREET_NOTE — that note
 # says accuracy "has not been measured against a larger solve the way the
 # flop has", which is self-contradictory when shown ON the flop. The flop
@@ -2538,12 +2593,16 @@ FLOP_MEASURED_FAILURES = 8
 # rule the measurement does not support.
 FLOP_MEASURED_NOTE = (
     "RELIABILITY ON THE FLOP HAS BEEN MEASURED, AND IT IS NOT GOOD ENOUGH TO "
-    "CERTIFY. Against a fuller solve over 56 flop spots, about one answer in "
-    "seven was off by more than 0.10 in how often it bets or folds — and neither "
-    "how strong your hand is nor whether you are facing a bet predicts which "
-    "answers those are. The worst case measured was a top pair that a fuller "
-    "solve bets almost always, where this advice checks. Treat the action as a "
-    "suggestion rather than a solved answer. "
+    "CERTIFY. Against a fuller solve of the same spot over 176 real decisions, "
+    "about 30% of answers were off by more than 0.10 in how often they bet or "
+    "raise — roughly twice what this note used to say. How strong your hand is "
+    "does not predict which answers those are. Whether you are facing a bet "
+    "does: acting first the gap averages 0.14, facing a bet 0.06. The worst "
+    "case measured is air on a connected board that a fuller solve bluffs "
+    "almost always, where this advice checks. This is how OFTEN the advice "
+    "bets, not what the difference costs — measured in chips the two point "
+    "opposite ways. Treat the action as a suggestion rather than a solved "
+    "answer. "
 )
 
 FLOP_CERTIFICATION_SPOTS = 28

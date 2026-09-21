@@ -244,9 +244,11 @@ REGISTRY = (
         superseded_by="M231 took the river to cap 60 / 1,000 iterations, which cut its "
                       "over-aggression against an independent solver from +0.19 to +0.05"),
     Disclosure(
-        "FLOP_MEASURED_NOTE", "M180", ENGINE, ("FLOP_MEASURED_SPOTS", "FLOP_MEASURED_FAILURES"),
+        "FLOP_MEASURED_NOTE", "M300", ENGINE,
+        ("FLOP_MEASURED_ROWS", "FLOP_MEASURED_SHARE_OVER_TEN",
+         "FLOP_MEASURED_OPENING_ERROR", "FLOP_MEASURED_FACING_ERROR"),
         literals={"0.10": "the error threshold, 0.10"},
-        current=False, superseded_by="M207's flop bet menu shipped after M180 measured it"),
+        study="bench/studies/flop_measured.py"),
     Disclosure(
         "UNMEASURED_STREET_NOTE", "M175", ENGINE,
         literals={"0.30": "M175: turn error at both ends of the strength range"},
