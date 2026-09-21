@@ -6189,11 +6189,11 @@ def test_reliability_is_only_certified_on_the_street_where_it_was_measured(clien
     # The hand really is strong — this is not passing by accident.
     assert body["hand_strength_percentile"] >= api_config.RELIABLE_HAND_STRENGTH_PERCENTILE
     reason = body["aggression_confidence_reason"]
-    assert reason.startswith(api_config.UNMEASURED_STREET_NOTE), reason[:120]
+    assert reason.startswith(api_config.TURN_MEASURED_NOTE), reason[:120]
     assert not reason.startswith(api_config.RELIABLE_HAND_NOTE), (
-        "a strong TURN hand is still being certified as reliable — the turn "
-        "measurement says that band is the least accurate one"
-    )
+        "a strong TURN hand is still being certified as reliable - M303 "
+        "measured that band at 0.1764 against the rest's 0.0787, so the turn "
+        "is the one street where a strong hand is the LESS reliable case")
 
 
 def test_the_flop_no_longer_certifies_a_strong_hand(client):
@@ -6232,13 +6232,17 @@ def test_the_unmeasured_street_note_says_why_rather_than_only_that(client):
     indistinguishable — so the note must not say it, and must equally not
     let a reader infer that weak turn hands are the safe ones.
     """
-    note = api_config.UNMEASURED_STREET_NOTE.lower()
-    assert "has not been measured" in note
-    assert "does not substitute" in note
-    # The measured fact that replaces the withdrawn one: error is large at
-    # BOTH ends, so neither band is the safe one.
-    assert "both ends" in note
+    note = api_config.TURN_MEASURED_NOTE.lower()
+    # M303 measured the street, so the blanket "not measured" wording is
+    # gone and the note carries what was found instead.
+    assert "has not been measured" not in note
+    assert "does predict" in note, (
+        "the turn is the ONE street where hand strength separates (2.30 "
+        "sigma); a note that refuses the split here hides it")
     assert "least accurate" not in note
+    # M175's "0.30 at both ends" was false at BOTH ends when re-measured.
+    assert "both ends" not in note
+    assert "0.30" not in note
 
 
 def test_the_costly_band_note_is_withdrawn_and_stays_silent(client, monkeypatch):
@@ -6548,7 +6552,7 @@ def test_every_street_note_is_distinct_and_matches_its_evidence(client):
     split and must still refuse the other.
     """
     notes = {api_config.FLOP_MEASURED_NOTE,
-             api_config.UNMEASURED_STREET_NOTE,
+             api_config.TURN_MEASURED_NOTE,
              api_config.RIVER_MEASURED_NOTE}
     assert len(notes) == 3, "two streets are sharing a reliability statement"
     # NEITHER names a strength direction now: M301 re-measured the river
@@ -6623,7 +6627,7 @@ def test_the_turn_keeps_the_unmeasured_note_and_the_river_does_not(client):
         "turn_action_path": ["call_or_check", "call_or_check"], "river_card": "4c"}).json()
 
     assert turn["street"] == "turn" and river["street"] == "river"
-    assert turn["aggression_confidence_reason"].startswith(api_config.UNMEASURED_STREET_NOTE)
+    assert turn["aggression_confidence_reason"].startswith(api_config.TURN_MEASURED_NOTE)
     assert river["aggression_confidence_reason"].startswith(api_config.RIVER_MEASURED_NOTE)
     assert (turn["aggression_confidence_reason"]
             != river["aggression_confidence_reason"])
@@ -6668,7 +6672,8 @@ def test_the_unmeasured_street_note_quotes_its_own_measurement(client):
     measured = api_config.TURN_CERTIFIED_BAND_WORST_ERROR
     assert quoted <= measured, (
         f"the note quotes {quoted}, which the measurement ({measured}) does not reach")
-    assert f"{quoted:.2f}" in api_config.UNMEASURED_STREET_NOTE
+    # M303 replaced the copy, so what is pinned here is M175's recorded
+    # measurement rather than a string it no longer appears in.
 
     # And the refusal has to rest on the certified band specifically —
     # that is the band a certificate would vouch for.
@@ -6721,7 +6726,7 @@ def test_every_postflop_street_gets_some_reliability_statement(client):
     assert len({seen["flop"], seen["turn"], seen["river"]}) == 3, (
         "two streets are sharing a reliability statement despite resting on "
         "different evidence")
-    assert seen["turn"].startswith(api_config.UNMEASURED_STREET_NOTE)
+    assert seen["turn"].startswith(api_config.TURN_MEASURED_NOTE)
     assert seen["river"].startswith(api_config.RIVER_MEASURED_NOTE)
 
 
@@ -9850,3 +9855,49 @@ def test_the_bet_sizing_coverage_note_quotes_its_own_measurement():
     # The effect is small, and the copy must not inflate it.
     assert api_config.SIZING_COVERAGE_ALL_IN_CHANGE < 0.05
     assert api_config.SIZING_COVERAGE_NEW_SIZE_USED < 0.05
+
+
+def test_the_turn_measured_note_quotes_its_own_measurement():
+    """M303 (audit R3). The turn was the last street carrying the blanket
+    "accuracy here has not been measured", and M175's two supporting
+    claims came off a tree at range cap 26 with no bet menu.
+
+    Measured the way the flop (M300) and river (M301) were - 120 real
+    decisions against an uncapped solve of the same request - **35% of
+    answers are off by more than 0.10**, M175's "0.30 at BOTH ends" is
+    false at both (0.18 top, 0.05 bottom), and "strength does not
+    predict" is false: the turn is the ONE street where it does.
+    """
+    note = api_config.TURN_MEASURED_NOTE
+
+    assert str(api_config.TURN_MEASURED_ROWS) in note
+    assert f"{round(api_config.TURN_MEASURED_OVER_TEN * 100)}%" in note
+    assert f"{api_config.TURN_MEASURED_STRONG_ERROR:.2f}" in note
+    assert f"{api_config.TURN_MEASURED_WEAK_ERROR:.2f}" in note
+    assert f"{api_config.TURN_MEASURED_OPENING_ERROR:.2f}" in note
+    assert f"{api_config.TURN_MEASURED_FACING_ERROR:.2f}" in note
+
+    # The withdrawn wording must not survive.
+    assert "has not been measured" not in note
+    assert "0.30" not in note and "both ends" not in note.lower()
+
+    # The strength split is the turn's own finding and must be named -
+    # M168's rule cuts both ways, and this is the street that has it.
+    assert api_config.TURN_MEASURED_STRONG_ERROR > api_config.TURN_MEASURED_WEAK_ERROR
+    assert "top quarter" in note.lower()
+
+
+def test_each_street_names_its_own_strength_evidence():
+    """M300/M301/M303 together. Hand strength separates at 0.61 sigma on
+    the flop, -1.28 on the river and +2.30 on the turn, so exactly one
+    street may name it - and a future edit that copies one street's
+    wording onto another restores M167/M168's mistake."""
+    flop = api_config.FLOP_MEASURED_NOTE.lower()
+    turn = api_config.TURN_MEASURED_NOTE.lower()
+    river = api_config.RIVER_MEASURED_NOTE.lower()
+
+    assert "does not predict" in flop and "does not predict" in river
+    assert "does predict" in turn
+
+    # And the three must remain three separate statements.
+    assert len({flop, turn, river}) == 3
