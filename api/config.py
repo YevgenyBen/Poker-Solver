@@ -2683,15 +2683,75 @@ RIVER_MEASURED_NOTE = (
 # in a 30bb pot, verified real (its action spread is 76.81, so the loss
 # is inside what the decision can physically swing, and all 801 spots
 # pass that check). One spot in 267 moves its cell's mean by 0.27 bb.
+# **RE-MEASURED AT THE SHIPPED CONFIGURATION (M299, the 2026-09-20
+# audit's R3), AND EVERY FIGURE ABOVE SHRANK BY AN ORDER OF MAGNITUDE.**
+#
+# M188/M189 both predate the bet menu. Until M203-M213 the smallest bet
+# this engine could model was 2.5x the pot, so a player facing a half-pot
+# bet was answered at an overbet node and its fold frequency was
+# IDENTICAL against a third-pot bet and an overbet (M209). That is a
+# facing-a-bet defect by construction, priced at up to 1.85 bb on a
+# single decision - and it is gone. What those notes measured was
+# substantially a capability gap, not a standing weakness.
+#
+# 255 real decisions in pots that were heads-up from the flop, each
+# priced in chips against an uncapped, more-converged solve of the SAME
+# request (`bench/studies/facing_cost.py`, rule fixed before any row):
+#
+#   cell              n    mean |loss|   median   over 1 bb   over 5 bb
+#   flop / opening    25       0.0532    0.0357          0%          0%
+#   flop / facing     60       0.0932    0.0243        1.7%          0%
+#   turn / opening    25       0.0573    0.0310          0%          0%
+#   turn / facing     60       0.2117    0.0350          5%          0%
+#   river / opening   25       0.0454    0.0150          0%          0%
+#   river / facing    60       0.2521    0.0575        3.3%          0%
+#
+# Weighted by how often each cell actually occurs: facing a bet costs
+# **0.1544 bb against 0.0529** acting first - **2.92x at 2.79 sigma**,
+# where the copy claimed "at least 25 times" - and carries **56.2%** of
+# the measured cost, not 86%. **3.3% of facing decisions cost more than
+# a big blind (the copy said 18%) and 0 of 180 cost more than five (the
+# copy said 5%).** The whole covered population comes to 5.63 bb per 100
+# postflop decisions.
+#
+# **The direction SURVIVES and only the direction.** Facing a bet is
+# still separably the more expensive node type, which is why this note
+# is corrected rather than withdrawn - unlike `COSTLY_BAND_NOTE` below,
+# which failed outright.
+#
+# **A control worth carrying: the yardstick has its own slack.** The
+# reference's best deviation at the node - what IT leaves on the table
+# for that hand - is typically negligible (median 0.0063 bb against a
+# median loss of 0.0385) and is tail-heavy. Per cell it is 0.021/0.043
+# on the flop, 0.026/0.215 on the turn and 0.204/0.384 on the river, so
+# the flop cells sit clear of it (82-84% of rows) while the RIVER cells'
+# means do not (33-56%). The flop numbers are resolved; the river's are
+# at the limit of what this instrument can see, and no figure here is
+# corrected by subtracting slack - that would get the arithmetic
+# backwards, since a loss is already a difference between two rows.
+#
+# SCOPE: two-position solves, so pots heads-up from the flop - 67.1% of
+# real postflop decisions. The note also fires multiway, where F46/M163
+# says there is no converged reference to price against.
+FACING_A_BET_COST_ROWS = 255
+FACING_A_BET_COST_FACING_ROWS = 180
+FACING_A_BET_COST_FACING_BB = 0.1544
+FACING_A_BET_COST_OPENING_BB = 0.0529
+FACING_A_BET_COST_RATIO = 2.92
+FACING_A_BET_COST_SHARE = 0.562
+FACING_A_BET_COST_OVER_1BB = 0.0333
+
 FACING_A_BET_COST_NOTE = (
-    "THIS IS THE KIND OF DECISION THIS ADVICE GETS WRONG MOST EXPENSIVELY. Priced "
-    "against a fuller solve over 801 real spots facing a bet, these decisions carry "
-    "about 86% of everything the advice costs, averaging at least 25 times more than "
-    "decisions where you act first. Most individual answers here are still accurate "
-    "— the median one costs almost nothing — but 18% of them cost more than a big "
-    "blind and 5% cost more than five, because folding being available is what makes "
-    "it possible to lose a lot. Weigh this one more carefully than its confidence "
-    "label alone suggests. "
+    "THIS IS THE MORE EXPENSIVE KIND OF DECISION, BY ABOUT THREE TIMES. Priced "
+    "against a fuller solve of the same spot over 255 real decisions at the "
+    "settings shipping today, a decision facing a bet costs about 0.15 big blinds "
+    "against 0.05 for one where you act first, and carries 56% of everything "
+    "measured. Most individual answers here are still accurate — the median one "
+    "costs almost nothing, 3% cost more than a big blind, and none of the 180 "
+    "measured cost more than five. Give it a little more thought than its "
+    "confidence label alone suggests. This is a floor: it compares this engine "
+    "against a fuller solve of its own model, not against correct play, and it "
+    "covers pots that were heads-up from the flop. "
 )
 
 # M189: the sharpest runtime signal available, and it is much sharper

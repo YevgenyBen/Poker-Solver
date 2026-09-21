@@ -4,9 +4,18 @@ Every test here pins one clause of a rule that was fixed before any row
 was priced, so a later edit that would have changed the verdict fails
 loudly instead of quietly re-reading the same data.
 """
+import json
+import pathlib
+
 import pytest
 
 from bench.studies import facing_cost as study
+
+FIXTURE = pathlib.Path(__file__).parent / "data" / "facing_cost_m299.jsonl"
+
+
+def _recorded():
+    return [json.loads(line) for line in FIXTURE.read_text().splitlines() if line.strip()]
 
 
 def _row(street="flop", kind="facing", loss=0.5, percentile=0.7, **extra):
@@ -169,20 +178,29 @@ def test_a_loss_smaller_than_the_references_own_slack_is_not_visible():
     """The control run found the reference's own row beaten by a pure
     fold, so the yardstick has per-hand slack. A loss underneath it says
     nothing about the shipped answer."""
-    out = study.net_of_slack([_row(loss=0.02, reference_slack_bb=0.10)])
-    assert out["mean_net"] == pytest.approx(-0.08) and out["visible"] == 0.0
+    out = study.yardstick_slack([_row(loss=0.02, reference_slack_bb=0.10)])
+    assert out["visible"] == 0.0 and out["mean_slack"] == pytest.approx(0.10)
 
 
 def test_a_loss_clear_of_the_slack_is_visible():
-    out = study.net_of_slack([_row(loss=1.0, reference_slack_bb=0.05)])
-    assert out["mean_net"] == pytest.approx(0.95) and out["visible"] == 1.0
+    out = study.yardstick_slack([_row(loss=1.0, reference_slack_bb=0.05)])
+    assert out["visible"] == 1.0
+
+
+def test_the_slack_is_reported_and_never_subtracted():
+    """Saying "net of slack" would get the arithmetic backwards: `loss`
+    is already a difference between two rows in the same game, and the
+    slack says how steady the row being compared against is. A corrected
+    cost figure must not appear here for a later reader to quote."""
+    out = study.yardstick_slack([_row(loss=0.02, reference_slack_bb=0.10)])
+    assert not any("net" in key for key in out)
 
 
 def test_the_slack_reading_ignores_rows_that_have_none():
     """The slack is a second pass over the same rows, so a sample can be
     read before it has run - and must then report zero rows rather than
     an invented floor."""
-    assert study.net_of_slack([_row(loss=1.0)]) == {"n": 0}
+    assert study.yardstick_slack([_row(loss=1.0)]) == {"n": 0}
 
 
 def test_the_slack_does_not_change_either_verdict():
@@ -231,3 +249,69 @@ def test_a_pot_heads_up_from_the_flop_is_one_this_can_price():
             _Act("preflop", 2, "raise"), _Act("preflop", 3, "call"),
             _Act("flop", 2, "bet")]
     assert study.live_after_preflop(acts, 4) == 2
+
+
+# -- the shipped figures, re-derived from the committed rows -------------
+
+def test_the_shipped_constants_reproduce_from_the_recorded_rows():
+    """M299. The copy's numbers are not remembered, they are re-derived."""
+    from api import config as cfg
+
+    summary = study.summarise(_recorded())
+    assert summary["n_kept"] == cfg.FACING_A_BET_COST_ROWS
+    assert summary["ratio"]["facing"]["n"] == cfg.FACING_A_BET_COST_FACING_ROWS
+    assert round(summary["ratio"]["facing"]["mean_abs"], 4) == cfg.FACING_A_BET_COST_FACING_BB
+    assert round(summary["ratio"]["opening"]["mean_abs"], 4) == cfg.FACING_A_BET_COST_OPENING_BB
+    assert round(summary["ratio"]["ratio"], 2) == cfg.FACING_A_BET_COST_RATIO
+    assert round(summary["cost_share"]["facing_share"], 3) == cfg.FACING_A_BET_COST_SHARE
+    assert round(summary["ratio"]["facing"]["over_1bb"], 4) == cfg.FACING_A_BET_COST_OVER_1BB
+
+
+def test_both_controls_passed_on_every_recorded_row():
+    """Rule 1. No row was refused, so the sample is not a survivor of a
+    filter that could have shaped it."""
+    rows = _recorded()
+    assert study.keep(rows) == rows
+    assert max(abs(r["remapped_mass"]) for r in rows) == 0.0, (
+        "the two arms offered the same actions on every row, so nothing was "
+        "remapped between two different games (M202)")
+    assert max(r["reference_exploitability_pct"] for r in rows) < study.MAX_REFERENCE_PCT
+
+
+def test_the_claimed_ratio_dies_on_the_recorded_rows():
+    """The verdict that rewrote the copy, re-derived rather than recalled:
+    separable, and nowhere near 25x."""
+    summary = study.summarise(_recorded())
+    assert study.ratio_claim(summary) == "quote_measured"
+    assert summary["ratio"]["sigma"] >= study.MIN_SIGMA
+    assert summary["ratio"]["ratio"] < study.CLAIMED_RATIO / 5
+
+
+def test_the_band_note_dies_on_the_recorded_rows():
+    """The verdict that withdrew `COSTLY_BAND_NOTE`."""
+    summary = study.summarise(_recorded())
+    assert study.band_survives(summary) is False
+    assert summary["band"]["whole"]["sigma"] < study.MIN_SIGMA
+    # On the metric the withdrawn copy actually quoted - 44% in band
+    # against 4% out of it - there is no separation at all.
+    whole = summary["band"]["whole"]
+    assert abs(whole["over_1bb_in"] - whole["over_1bb_out"]) < 0.02
+
+
+def test_the_over_five_big_blind_tail_is_empty():
+    """M188 told players 5% of these decisions cost more than five big
+    blinds. Not one of 180 does."""
+    summary = study.summarise(_recorded())
+    assert summary["ratio"]["facing"]["over_5bb"] == 0.0
+
+
+def test_the_river_cells_sit_inside_the_yardsticks_own_slack():
+    """The control that decides how far these figures can be read. The
+    flop cells are clear of the reference's own per-hand slack; the
+    river's means are not, so the copy quotes a pooled figure and makes
+    no per-street claim."""
+    summary = study.summarise(_recorded())
+    flop = summary["slack"]["flop/facing"]
+    river = summary["slack"]["river/facing"]
+    assert flop["visible"] > 0.8
+    assert river["visible"] < 0.5

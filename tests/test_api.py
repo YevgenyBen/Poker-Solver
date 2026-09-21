@@ -6312,15 +6312,53 @@ def test_facing_a_bet_is_flagged_as_where_the_cost_is(client, monkeypatch):
         "legal — it would then be attached to every answer and mean nothing")
     assert api_config.FACING_A_BET_COST_NOTE in facing["aggression_confidence_reason"]
 
-    # It must not overstate: the MEDIAN facing decision costs 0.0235 bb,
-    # nearly as cheap as an opening one. It is the tail that differs.
+    # It must not overstate: the MEDIAN facing decision costs 0.0385 bb
+    # (M299), nearly as cheap as an opening one. It is the tail that
+    # differs, and even the tail is thin now - 3.3% over a big blind.
     note = api_config.FACING_A_BET_COST_NOTE.lower()
     assert "median one costs almost nothing" in note, (
-        "the note must say the typical decision here is cheap; M186 measured "
-        "the median facing-a-bet loss at 0.0096 bb")
+        "the note must say the typical decision here is cheap; M299 measured "
+        "the median facing-a-bet loss at 0.0385 bb")
     assert "most individual answers here are still accurate" in note, (
         "the note must not imply this particular answer is probably wrong; "
         "the median facing-a-bet decision is nearly as cheap as any other")
+
+
+def test_the_facing_a_bet_note_quotes_its_own_measurement():
+    """M299 (audit R3), and M140's standing rule: copy that states a
+    number states the number that was measured.
+
+    Every figure in the note this replaced was M188's, taken before the
+    bet menu existed - when the smallest bet this engine could model was
+    2.5x the pot, so a player facing a half-pot bet was answered at an
+    overbet node. Re-priced over 255 real decisions at today's settings
+    the split is **2.92x, not "at least 25 times"**, and the tail is
+    3.3% over a big blind against the claimed 18%.
+    """
+    note = api_config.FACING_A_BET_COST_NOTE
+
+    assert str(api_config.FACING_A_BET_COST_ROWS) in note
+    assert str(api_config.FACING_A_BET_COST_FACING_ROWS) in note
+    assert f"{api_config.FACING_A_BET_COST_FACING_BB:.2f}" in note
+    assert f"{api_config.FACING_A_BET_COST_OPENING_BB:.2f}" in note
+    assert f"{round(api_config.FACING_A_BET_COST_SHARE * 100)}%" in note
+    assert f"{round(api_config.FACING_A_BET_COST_OVER_1BB * 100)}%" in note
+
+    # The claims M299 killed must not survive anywhere in the text.
+    assert "25 times" not in note, "the withdrawn ratio is back in the copy"
+    assert "86%" not in note, "the withdrawn cost share is back in the copy"
+    assert "18%" not in note, "the withdrawn tail figure is back in the copy"
+
+    # M232's rule runs the other way too: a note may not overstate what
+    # it measured, and 0 of 180 decisions cost more than five big blinds.
+    assert "none of the" in note.lower() and "cost more than five" in note.lower(), (
+        "the note must say the over-five-big-blind tail is EMPTY at this "
+        "configuration; M188's 5% is what it replaced")
+
+    # It is distance from a fuller solve of our own model (M183's
+    # standing caveat), so it must not read as money against a real
+    # opponent.
+    assert "floor" in note.lower()
 
 
 def test_the_cost_flag_follows_the_rows_not_the_request(client, monkeypatch):

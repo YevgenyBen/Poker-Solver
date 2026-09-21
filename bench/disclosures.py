@@ -225,14 +225,11 @@ REGISTRY = (
                       "puts it near 0.03' predates F37/M139, which put the converged value at "
                       "0.0. The two-live clause is current (M282) and built from constants"),
     Disclosure(
-        "FACING_A_BET_COST_NOTE", "M188", ENGINE,
-        literals={"801": "M188: facing spots priced", "86%": "M188: share of all cost",
-                  "25": "M188: facing vs opening cost ratio, a floor",
-                  "18%": "M188: facing decisions costing over 1 bb",
-                  "5%": "M188: facing decisions costing over 5 bb"},
-        current=False,
-        superseded_by="M190 cap 140, M207 bet menu, M231 river; M192 then measured TOTAL cost "
-                      "at the shipped config as no longer separable from zero"),
+        "FACING_A_BET_COST_NOTE", "M299", ENGINE,
+        ("FACING_A_BET_COST_ROWS", "FACING_A_BET_COST_FACING_ROWS",
+         "FACING_A_BET_COST_FACING_BB", "FACING_A_BET_COST_OPENING_BB",
+         "FACING_A_BET_COST_SHARE", "FACING_A_BET_COST_OVER_1BB"),
+        study="bench/studies/facing_cost.py"),
     # COSTLY_BAND_NOTE was registered here until M299 (audit R3)
     # WITHDREW it. Re-priced at the shipped configuration the 0.55-0.90
     # band is 1.48x at 0.90 sigma with both split halves under the bar,

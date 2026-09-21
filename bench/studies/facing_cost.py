@@ -157,33 +157,35 @@ def keep(rows: list) -> list:
             and r.get("reference_exploitability_pct", 0.0) <= MAX_REFERENCE_PCT]
 
 
-def net_of_slack(rows: list) -> dict:
-    """How much of the measured loss the instrument can actually see.
+def yardstick_slack(rows: list) -> dict:
+    """How much the REFERENCE itself leaves on the table at these nodes.
 
-    **Added AFTER the verdicts were read, and it changes none of them**
-    - rules 3 and 6 are computed on the raw |loss| they were written
+    **Added AFTER the verdicts were read, and it changes none of them** -
+    rules 3 and 6 are computed on the raw |loss| they were written
     against, and this is reported beside them. It exists because the
-    control run found the reference's own row beatable by a pure fold on
-    two spots of three: the yardstick has per-hand slack, and a median
-    loss of 0.039 bb means nothing if the yardstick's own floor is that
-    size. M259 measured its figure net of exactly this, and M296
-    published raw and net side by side.
+    control run found the reference's own row beaten by a pure fold on
+    two spots of three.
 
-    `visible` is the share of rows whose loss exceeds the reference's own
-    best deviation at that node - the rows where something real is being
-    measured rather than the reference's own convergence error.
+    **It is NOT a correction to subtract**, and saying "net of slack"
+    would get the arithmetic backwards. `loss` is already a difference
+    between two rows scored in the same game; the slack is how far the
+    row being compared AGAINST sits from the best action available to it
+    there. Where the slack dwarfs the loss, the yardstick is not steady
+    enough at that node for the comparison to mean much - which is a
+    statement about resolution, not a number to adjust by.
+
+    `visible` is the share of rows whose loss exceeds it.
     """
     have = [r for r in rows if r.get("reference_slack_bb") is not None]
     if not have:
         return {"n": 0}
-    net = [abs(r["loss_bb"]) - r["reference_slack_bb"] for r in have]
+    slack = [r["reference_slack_bb"] for r in have]
     return {
         "n": len(have),
-        "mean_slack": statistics.mean(r["reference_slack_bb"] for r in have),
-        "median_slack": statistics.median(r["reference_slack_bb"] for r in have),
-        "mean_net": statistics.mean(net),
-        "median_net": statistics.median(net),
-        "visible": sum(1 for v in net if v > 0) / len(net),
+        "mean_slack": statistics.mean(slack),
+        "median_slack": statistics.median(slack),
+        "visible": sum(1 for r in have
+                       if abs(r["loss_bb"]) > r["reference_slack_bb"]) / len(have),
     }
 
 
@@ -345,9 +347,10 @@ def summarise(rows: list) -> dict:
         "cost_share": cost_share(kept),
         "band": band(kept),
         "slack": {
-            "all": net_of_slack(kept),
-            **{kind: net_of_slack([r for r in kept if r["kind"] == kind])
-               for kind in KINDS},
+            "all": yardstick_slack(kept),
+            **{f"{street}/{kind}": yardstick_slack(
+                [r for r in kept if r["street"] == street and r["kind"] == kind])
+               for street in STREETS for kind in KINDS},
         },
     }
 
