@@ -14,7 +14,11 @@ export const PRIORITY_NOTES: Record<string, string> = {
   'turn-shove': 'Turn: shoving here is costly — calling is the serious alternative',
   'river-under-fold': 'River, close decision: folding is the serious alternative',
   'flop-under-fold': 'Flop, small bet: this engine calls too often — folding is the serious alternative',
-  'costly-band': 'An expensive kind of decision — take extra care',
+  // 'costly-band' was here until M299 (audit R3) re-priced it at the
+  // shipped configuration and withdrew it: the 0.55-0.90 strength band
+  // measures 1.48x at 0.90 sigma, and on the metric its copy quoted it
+  // separates not at all. A withdrawn warning must leave the front end
+  // too, or the backend stops sending a note the UI still promises.
 };
 
 export function splitNotes(notes: AdvisoryNote[]): { priority: AdvisoryNote[]; other: AdvisoryNote[] } {

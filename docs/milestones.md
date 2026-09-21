@@ -17558,3 +17558,113 @@ nearly the machine.
 **Not tried, and the honest next step**: nothing on this machine. The
 levers that exist have been measured. A rented box with 64 GB would
 settle the flop in an afternoon - eight references at ~20 minutes each.
+
+## M299 - the two cost disclosures, re-priced at the shipped configuration (audit R3)
+
+The audit's R3 is eleven disclosures that quote a configuration no longer
+shipping. This takes the second-highest exposure of them, and it is two
+notes rather than one: `FACING_A_BET_COST_NOTE` (8.7% of real decisions)
+and `COSTLY_BAND_NOTE` (3.4%), which together told a player that a
+decision facing a bet costs **at least 25 times** one where they act
+first, carries **86%** of everything the advice costs, and that holding a
+hand in the 0.55-0.90 strength band there is where **74%** of the cost
+lives.
+
+**Every figure in both predates the bet menu.** Until M203-M213 the
+smallest bet this engine could model was 2.5x the pot, so a player facing
+a half-pot bet was answered at an overbet node - and M209 measured that
+arm's fold frequency as IDENTICAL against a third-pot bet and an overbet,
+because it only ever read one node, at up to 1.85 bb on a single
+decision. That is a facing-a-bet defect by construction, and it is gone.
+
+**The instrument had to be rebuilt first.** Every chips-priced figure
+this project carries - M183's 4.7 bb/100, M188's split, M189's band - came
+from a harness that lived in a scratchpad and is gone. `bench/price.py`
+is that instrument, written to the rules those measurements taught: the
+spot's own pot and stack (M180), a facing-a-bet reference built at the
+STREET's opening pot (M177), production's own range derivation (M164),
+and two controls on every row - the reference's own exploitability (M138)
+and the mass the two arms' action menus do not share (M202). It is
+reusable, which matters because R3 has nine disclosures left.
+
+**255 real decisions, six cells, rule fixed before any row was priced:**
+
+| cell | n | mean \|loss\| | median | over 1 bb | over 5 bb |
+|---|---|---|---|---|---|
+| flop / opening | 25 | 0.0532 | 0.0357 | 0% | 0% |
+| flop / facing | 60 | 0.0932 | 0.0243 | 1.7% | 0% |
+| turn / opening | 25 | 0.0573 | 0.0310 | 0% | 0% |
+| turn / facing | 60 | 0.2117 | 0.0350 | 5% | 0% |
+| river / opening | 25 | 0.0454 | 0.0150 | 0% | 0% |
+| river / facing | 60 | 0.2521 | 0.0575 | 3.3% | 0% |
+
+Weighted by real occurrence: **facing a bet costs 0.1544 bb against
+0.0529 - 2.92x at 2.79 sigma**, and carries **56.2%** of the measured
+cost. **3.3%** of facing decisions cost more than a big blind and **0 of
+180** cost more than five.
+
+| the copy said | measured now |
+|---|---|
+| at least 25 times | **2.92x** (2.79 sigma) |
+| 86% of all cost | **56.2%** |
+| 18% over a big blind | **3.3%** |
+| 5% over five big blinds | **0 of 180** |
+| band: 6.1x lift, 74% of cost | **1.48x at 0.90 sigma** |
+
+**`FACING_A_BET_COST_NOTE` is corrected; `COSTLY_BAND_NOTE` is
+WITHDRAWN.** The coarse split survives because its direction does -
+facing a bet is still separably the more expensive node type. The band
+does not: 1.48x at 0.90 sigma, both split halves under the bar (0.89 /
+0.48), and on the metric its own copy quoted it does not separate at all
+- **3.4% of in-band decisions cost over a big blind against 3.3% out of
+band**, where the copy claimed 44% against 4%. The strongest hands, which
+the copy called 12% expensive, are 0% here. The bounds stay live under a
+test so a future measurement can earn the claim back; the claim is gone
+from the API and from the front end's priority list.
+
+**THE YARDSTICK HAS ITS OWN SLACK, AND ON THE RIVER IT IS BIGGER THAN
+WHAT IT MEASURES.** A control run scored the reference's own row against
+itself (exactly 0.0, three of three) and against a pure fold - which BEAT
+it on two spots of three. So every row was re-priced to record the
+reference's best deviation at its own node:
+
+| cell | mean \|loss\| | reference's slack | loss > slack |
+|---|---|---|---|
+| flop / facing | 0.0932 | 0.0429 | 82% |
+| turn / facing | 0.2117 | 0.2149 | 72% |
+| river / facing | 0.2521 | 0.3836 | **33%** |
+
+Typically it is negligible - median 0.0063 bb against a median loss of
+0.0385 - and it is tail-heavy, so the flop cells sit clear of it while
+the river cells' MEANS do not. **It is not a correction to subtract**: a
+loss is already a difference between two rows in the same game, and the
+slack says how steady the row being compared against is. Reporting it as
+"net of slack" would get the arithmetic backwards, and the study says so
+in as many words.
+
+**The re-pricing pass is also a determinism control**: a stored request
+must re-price to its own recorded loss, and **255 of 255 did, drifted 0**.
+The rows are committed with their requests, so every figure above can be
+re-derived rather than trusted.
+
+**Two corrections to the study's own scope, both found before publishing:**
+
+- **It cannot price a multiway-origin pot.** Three players take the flop,
+  one folds, two are left - production answers that with its multiway
+  machinery and there is no two-position solve of that preflop path. The
+  scope is pots heads-up FROM THE FLOP, **67.1%** of real postflop
+  decisions, recounted over the hand store. Forced by a refusal rather
+  than a result; the six rows priced before the amendment were discarded.
+- **Hunting cost more than measuring.** Building one request costs an
+  `/advise` call at every postflop bet on the line, so looking for river
+  decisions among hands that ended on the flop burns solver time and
+  yields nothing. Each cell is now drawn from hands that reach its
+  street.
+
+**Cost**: 3.6 hours for the sample and ~1 hour for the slack pass, peak
+7.89 GB, free RAM never below 14 GB, both under `bench/memory_guard.py`.
+It also filled 76 new multiway preflop buckets on disk, which every
+remaining R3 study inherits.
+
+**R3's stale count goes 11 -> 9**, and the registry now shows 25
+disclosures rather than 26.

@@ -1021,6 +1021,10 @@ requests now reject unknown fields by name rather than ignoring them.
                            the run's drift (M286)
       memory_guard.py      run a long job under a RAM watchdog that stops it
                            before the machine crashes, and records its peak (M290)
+      price.py             price ONE real decision in big blinds against a
+                           fuller solve of the same request - the harness
+                           every chips-priced figure here used to need and
+                           none of them kept (M299)
       disclosures.py       every number a player is shown, and its source: a
                            number in copy with no registered constant or
                            sourced literal FAILS THE BUILD, and each figure
@@ -1031,7 +1035,8 @@ requests now reject unknown fields by name rather than ignoring them.
                            `two_live_silent.py` (M287), `node_spread.py` (M288),
                            `preflop_fold_seeds.py` (M289),
                            `multiway_live_cost.py` / `three_live_budget.py` (M291),
-                           `stack_substitution.py` (M295)
+                           `stack_substitution.py` (M295),
+                           `facing_cost.py` (M299)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools
@@ -2684,7 +2689,47 @@ requests now reject unknown fields by name rather than ignoring them.
   **Widening one cap moved THREE cache ceilings** (`river_path` 256->96,
   `canonical_warm_starts` 128->96) — none visible from the config change.
 
-- **The cost concentrates in a STRENGTH BAND, and it is the sharpest
+- **BOTH COST DISCLOSURES ARE RE-PRICED AT THE SHIPPED CONFIGURATION,
+  AND ONE IS WITHDRAWN (M299, the 2026-09-20 audit's R3).** M188/M189
+  both predate the bet menu: until M203-M213 the smallest bet this
+  engine could model was 2.5x the pot, so a player facing a half-pot bet
+  was answered at an overbet node, and M209 measured that arm folding
+  IDENTICALLY against a third-pot bet and an overbet - up to 1.85 bb on
+  one decision. **What those notes measured was largely a capability gap
+  that no longer exists.** 255 real decisions, priced in chips against
+  an uncapped solve of the same request:
+  | the copy said | measured now |
+  |---|---|
+  | facing a bet costs "at least 25 times" an opening decision | **2.92x** (2.79 sigma) |
+  | 86% of all cost | **56.2%** |
+  | 18% of facing decisions over a big blind | **3.3%** |
+  | 5% over five big blinds | **0 of 180** |
+  | the 0.55-0.90 band: 6.1x lift, 74% of cost | **1.48x at 0.90 sigma** |
+  **The DIRECTION survives and only the direction** - facing a bet is
+  still separably the more expensive node type, so that note is
+  corrected. **`COSTLY_BAND_NOTE` is WITHDRAWN**: both split halves miss
+  the bar (0.89 / 0.48) and on its own published metric it does not
+  separate at all (3.4% of in-band decisions over a big blind against
+  3.3% out of band, where it claimed 44% against 4%). `COSTLY_BAND_LOW`
+  /`_HIGH` stay live under a test so a future measurement can earn the
+  claim back.
+  **THE YARDSTICK HAS ITS OWN SLACK, and on the river it exceeds what it
+  measures.** A control scored the reference's row against itself (0.0
+  exactly) and against a pure fold, which BEAT it on two spots of three.
+  Per cell the reference's own best deviation is 0.043 (flop facing),
+  0.215 (turn facing) and **0.384 (river facing) against a 0.252 loss**,
+  so 82% of flop rows sit clear of it and only **33%** of river rows do.
+  Median slack is 0.0063 bb against a median loss of 0.0385, i.e. it is
+  tail-heavy rather than large. **It is NOT a correction to subtract** -
+  a loss is already a difference between two rows in one game.
+  **Rule: price a decision with `bench/price.py`**, which carries M177's
+  street-opening pot, M180's own-stack arm, M138's convergence control
+  and M202's menu control, and record the reference's slack beside every
+  figure. Re-pricing a stored request reproduced its loss on **255 of
+  255** rows.
+
+- **(SUPERSEDED by M299 — the band is withdrawn) The cost concentrates
+  in a STRENGTH BAND, and it is the sharpest
   runtime signal available (M189).** Splitting M188's 801 facing spots by
   hand strength, the relationship is NON-MONOTONE — both the weakest and
   the strongest hands are cheap:
@@ -2708,7 +2753,7 @@ requests now reject unknown fields by name rather than ignoring them.
   averages 0.28-0.31 against an opening decision's 0.032 — cheaper, not
   cheap), so the signal is GRADED rather than replaced.
 
-- **The advice costs ~16 bb/100 hands and 86% of it is TWO CELLS (M188,
+- **(SUPERSEDED by M299 for the SPLIT; the level is separate) The advice costs ~16 bb/100 hands and 86% of it is TWO CELLS (M188,
   801 facing spots).** Sampling only the uncertain cells worked: the 95%
   interval closed **+4.7..+25.8 -> +8.4..+23.7** (half-width 10.5 -> 7.6)
   while the level held (15.3 -> 16.1). **The cost is established well
