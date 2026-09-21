@@ -9817,3 +9817,36 @@ def test_the_flop_measured_note_quotes_its_own_measurement():
     # other way. A player reading both needs to be told they are two
     # measurements, not a contradiction.
     assert "not what the difference costs" in note.lower()
+
+
+def test_the_bet_sizing_coverage_note_quotes_its_own_measurement():
+    """M302 (audit R3). M151's figures - a top pair checking 99%, a
+    busted draw shoving 99% - came off the CHAINED river at
+    `FLOP_TO_RIVER_RAISE_SIZES = ()`, a street modelling no bet size at
+    all. M174 made the river standalone and M213 gave it a menu.
+
+    Re-measured over 80 spots inside the gate, making a smaller raise
+    available moves the all-in frequency about a point, and hero takes
+    that raise under 2% of the time. Neither published example
+    reproduces (1 of 80 and 0 of 80), so the note keeps the narrow true
+    statement - the SIZE was never chosen over a smaller one - and drops
+    the claim that the PLAY is distorted.
+    """
+    note = api_config.BET_SIZING_COVERAGE_NOTE
+
+    assert str(api_config.SIZING_COVERAGE_ROWS) in note
+    assert f"{round(api_config.SIZING_COVERAGE_ALL_IN_CHANGE * 100)}" in note
+    assert f"{round(api_config.SIZING_COVERAGE_NEW_SIZE_USED * 100)}%" in note
+
+    # The withdrawn claims must not come back.
+    assert "99%" not in note, "M151's examples are back in the copy"
+    assert "distorts the PLAY" not in note
+
+    # What it must still say: the size is the unreliable part.
+    lowered = note.lower()
+    assert "never chosen over a smaller one" in lowered
+    assert "size" in lowered
+
+    # The effect is small, and the copy must not inflate it.
+    assert api_config.SIZING_COVERAGE_ALL_IN_CHANGE < 0.05
+    assert api_config.SIZING_COVERAGE_NEW_SIZE_USED < 0.05

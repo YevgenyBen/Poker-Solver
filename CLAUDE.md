@@ -1038,7 +1038,8 @@ requests now reject unknown fields by name rather than ignoring them.
                            `stack_substitution.py` (M295),
                            `facing_cost.py` (M299),
                            `flop_measured.py` (M300),
-                           `river_measured.py` (M301)
+                           `river_measured.py` (M301),
+                           `sizing_coverage.py` (M302)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools
@@ -2729,6 +2730,25 @@ requests now reject unknown fields by name rather than ignoring them.
   and M202's menu control, and record the reference's slack beside every
   figure. Re-pricing a stored request reproduced its loss on **255 of
   255** rows.
+
+- **THE BET-SIZING NOTE KEEPS ITS STATEMENT AND LOSES ITS CLAIM (M302,
+  the 2026-09-20 audit's R3).** M151 measured on the CHAINED river at
+  `FLOP_TO_RIVER_RAISE_SIZES = ()`; M174 and M213 replaced that street.
+  Over 80 spots constructed inside the gate, making a smaller raise
+  available moves the all-in frequency **-0.0146** (2.00 sigma,
+  fractionally under the bar) and the new size is taken **under 2%** of
+  the time. Neither published example reproduces - the top-pair case 1
+  of 80, the busted-draw case 0 - so the copy keeps "the SIZE here was
+  never chosen over a smaller one" and drops "that distorts the PLAY".
+  **It fires on 5 of 260** short-stacked heads-up decisions facing a
+  bet, and **zero of 50** ordinary ones, so the RATE and the BEHAVIOUR
+  come from different populations by necessity.
+  **Two harness defects, each returning a plausible number rather than
+  an error**: the largest `modelled_bet_sizes` entry IS the all-in and
+  naming it `raise:` is a 422 (50 of 50 spots refused), and
+  **`raise_sizes`'s SECOND entry is the one hero reads** when facing an
+  opening bet - replacing the last one left 40 of 50 spots with no size
+  offered. M233's trap in a new place.
 
 - **THE RIVER'S RELIABILITY NOTE LOST THREE OF ITS FOUR CLAIMS (M301,
   the 2026-09-20 audit's R3).** M177 measured at cap 26 with no bet size
