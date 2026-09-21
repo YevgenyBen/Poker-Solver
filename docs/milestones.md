@@ -17739,3 +17739,85 @@ argument for committing rows with their requests - two disclosures have
 now been re-measured off one sample.
 
 **R3's stale count goes 9 -> 8.**
+
+## M301 - the river's reliability note, three claims gone (audit R3)
+
+`RIVER_MEASURED_NOTE` told a player four things: reliability on the river
+is **worse for strong hands** (14 of 28 against 3 of 28), it **errs in
+one direction** by putting chips in too often, so a recommendation to
+commit your stack **especially facing a bet** deserves suspicion, and
+**weak-hand advice measured accurate**. All four are M177's, measured at
+the river's range cap 26 with no bet size beyond all-in. M213 gave the
+river a 0.33/0.75/2.5 menu and M231 took it to cap 60 at 1,000
+iterations.
+
+**Two arms, because the claims need different instruments.**
+
+**A - the strength split, no new solving.** M296 priced 492 river rows
+against an INDEPENDENT solver and committed them with hero, the board
+and a regret in big blinds, so the split re-reads directly over its 303
+kept rows:
+
+| band | n | regret bb | mean TVD | over 0.10 TVD |
+|---|---|---|---|---|
+| top quartile | 95 | **0.0530** | 0.1894 | 53.7% |
+| the rest | 208 | **0.0892** | 0.1729 | 52.4% |
+
+**Strong hands are not worse - they cost LESS** (ratio 0.59, -1.28
+sigma), and on frequency the bands are level: **1.02 times as often**
+over the threshold, against the "more than three times" the copy
+published. The TVD halves disagree in sign, so there is nothing there at
+all. **Claim 4 falls with it**: 52% of weak-hand rows exceed 0.10, so
+telling a player weak-hand river advice measured accurate is false in the
+other direction.
+
+**B - the direction, which needed a fresh run.** 240 real river decisions
+through `/advise` against an uncapped 169-class solve of the same
+request, half constructed to face a bet:
+
+| cell | n | mean \|error\| | over 0.10 |
+|---|---|---|---|
+| opening | 120 | **0.1215** | 33.3% |
+| facing a bet | 120 | **0.0842** | 20.8% |
+
+**The direction SURVIVES and is small**: **+0.0314 at 2.29 sigma**, both
+halves positive (+0.0283 / +0.0345). The engine does put chips in more
+often than a fuller solve - by three points, where the copy's phrasing
+invited a player to weigh it heavily. M231 had already cut it from
++0.1909 to +0.0463; this is the third measurement in that sequence and
+the smallest.
+
+**"ESPECIALLY FACING A BET" IS BACKWARDS.** Facing a bet measures **more**
+reliable than acting first - and that is the SECOND street in two
+milestones where it does, after M300 found the same on the flop.
+**Read it beside M299, not instead**: facing a bet is the cheaper node in
+FREQUENCY and the dearer one in CHIPS (2.92x, M299). Three streets now
+show M182/M183/M186's thesis - the biggest frequency errors sit where
+they are cheapest.
+
+**The worst case is over-aggression, not over-commitment.** `5d6s` on
+`AhKsJd5sQh` - a pair of fives on a four-to-Broadway board - is bet
+**0.9994** where the fuller solve checks 0.9990. M177's example was a
+strong hand committing too readily; the real failure at this
+configuration is betting a weak pair into a board that beats it.
+
+**AN AMENDMENT THAT COST A SECOND PASS, AND IS THE POINT.** Arm B's first
+run drew each hand's FIRST river decision and came back with 120 rows of
+which **zero faced a bet** - which is M177's own standing rule ("a
+postflop measurement must cover nodes facing a bet; they must be
+CONSTRUCTED") failing inside the study that re-measures M177, and M252's
+rule in a new place. Those rows are kept as the opening cell and the
+facing cell is a separate pass with `RIVER_FACING_ONLY`. Claim 3 was
+UNMEASURED by that pass, not refuted, and it would have been published as
+a null.
+
+**One implementation defect, found by its own output.** Rule 2 asks
+whether the direction REPLICATES, a one-sample question, and the first
+implementation reached for the two-sample helper rules 1 and 3 use -
+producing a degenerate split with every row on one side and no sigma.
+Fixed to match the rule as written; the rule did not move.
+
+**Cost**: ~2.5 hours across both passes, peak 7.4 GB, free RAM never
+below 15.8 GB. Arm A cost nothing - M296 had already paid for it.
+
+**R3's stale count goes 8 -> 7.**

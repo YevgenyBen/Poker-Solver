@@ -237,12 +237,11 @@ REGISTRY = (
     # withdrawn disclosure leaves this registry rather than sitting in it
     # as `shown=False`, which is for copy that still exists.
     Disclosure(
-        "RIVER_MEASURED_NOTE", "M177", ENGINE,
-        literals={"56": "M177: river spots", "14": "M177: strong-band spots over 0.10",
-                  "28": "M177: spots per band", "3": "M177: weak-band spots over 0.10"},
-        current=False,
-        superseded_by="M231 took the river to cap 60 / 1,000 iterations, which cut its "
-                      "over-aggression against an independent solver from +0.19 to +0.05"),
+        "RIVER_MEASURED_NOTE", "M301", ENGINE,
+        ("RIVER_MEASURED_ROWS", "RIVER_MEASURED_SHARE_OVER_TEN",
+         "RIVER_MEASURED_SIGNED_GAP"),
+        literals={"0.10": "the error threshold, 0.10"},
+        study="bench/studies/river_measured.py"),
     Disclosure(
         "FLOP_MEASURED_NOTE", "M300", ENGINE,
         ("FLOP_MEASURED_ROWS", "FLOP_MEASURED_SHARE_OVER_TEN",

@@ -1036,7 +1036,9 @@ requests now reject unknown fields by name rather than ignoring them.
                            `preflop_fold_seeds.py` (M289),
                            `multiway_live_cost.py` / `three_live_budget.py` (M291),
                            `stack_substitution.py` (M295),
-                           `facing_cost.py` (M299)
+                           `facing_cost.py` (M299),
+                           `flop_measured.py` (M300),
+                           `river_measured.py` (M301)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools
@@ -2727,6 +2729,30 @@ requests now reject unknown fields by name rather than ignoring them.
   and M202's menu control, and record the reference's slack beside every
   figure. Re-pricing a stored request reproduced its loss on **255 of
   255** rows.
+
+- **THE RIVER'S RELIABILITY NOTE LOST THREE OF ITS FOUR CLAIMS (M301,
+  the 2026-09-20 audit's R3).** M177 measured at cap 26 with no bet size
+  beyond all-in; M213 and M231 replaced both.
+  | the copy said | measured now |
+  |---|---|
+  | worse for strong hands, 3x as often | **1.02x, and strong hands cost LESS** (0.0530 bb against 0.0892) |
+  | weak-hand advice measured accurate | **false** - 52% of weak rows exceed 0.10 |
+  | especially facing a bet | **backwards** - facing is MORE reliable (0.0842 against 0.1215) |
+  | it errs in one direction | **survives, small**: +0.0314 at 2.29 sigma |
+  Arm A re-read M296's 303 rows against an INDEPENDENT solver at no
+  cost; arm B ran 240 fresh decisions against an uncapped solve of our
+  own model. **The two are never pooled** - different instruments.
+  **FACING A BET IS THE MORE RELIABLE NODE ON TWO STREETS NOW** (M300
+  flop, M301 river) **and the DEARER one in chips** (M299, 2.92x). Three
+  streets showing M182/M183/M186: the biggest frequency errors sit where
+  they are cheapest.
+  **The worst case is over-aggression**: `5d6s` on `AhKsJd5sQh` is bet
+  **0.9994** where the fuller solve checks - a weak pair into a
+  four-to-Broadway board, not M177's over-committed strong hand.
+  **A study re-measuring M177 broke M177's own rule.** Arm B's first
+  pass took each hand's FIRST river decision and produced 120 rows with
+  ZERO facing a bet, which would have published claim 3 as a null.
+  **Construct facing-a-bet nodes explicitly, every time.**
 
 - **THE FLOP'S RELIABILITY NOTE WAS UNDERSTATING ITSELF (M300, the
   2026-09-20 audit's R3).** M180's figures came off a tree with one bet
