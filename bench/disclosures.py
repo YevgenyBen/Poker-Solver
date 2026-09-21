@@ -281,12 +281,10 @@ REGISTRY = (
                       "and M234 measured cap 25 separably worse (+0.1134, 2.56 sigma)",
         provenance="m221_texture.py"),
     Disclosure(
-        "BET_SIZING_COVERAGE_NOTE", "M151", ENGINE,
-        literals={"99%": "M151: a top pair checking / a busted draw shoving, with all-in "
-                         "the only bet available"},
-        current=False,
-        superseded_by="measured on the chained river M174 replaced; the note still fires only "
-                      "where all-in is the sole size, derived from the response's rows"),
+        "BET_SIZING_COVERAGE_NOTE", "M302", ENGINE,
+        ("SIZING_COVERAGE_ROWS", "SIZING_COVERAGE_ALL_IN_CHANGE",
+         "SIZING_COVERAGE_NEW_SIZE_USED"),
+        study="bench/studies/sizing_coverage.py"),
 
     # -- dormant: cannot reach a player -----------------------------------
     Disclosure(

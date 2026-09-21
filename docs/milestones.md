@@ -17821,3 +17821,70 @@ Fixed to match the rule as written; the rule did not move.
 below 15.8 GB. Arm A cost nothing - M296 had already paid for it.
 
 **R3's stale count goes 8 -> 7.**
+
+## M302 - the bet-sizing note keeps its statement and loses its claim (audit R3)
+
+`BET_SIZING_COVERAGE_NOTE` tells a player that where all-in is the only
+way to put money in, **the PLAY is distorted and not just the size**, and
+quotes two cases: a top pair that should bet about a third of the time
+**checks 99%**, and a busted draw that should bet a third of the pot
+**moves all in 99%**. Both are M151's, measured on the CHAINED river at
+`FLOP_TO_RIVER_RAISE_SIZES = ()` - a street modelling no bet size at all.
+M174 made the river standalone and M213 gave it a 0.33/0.75/2.5 menu.
+
+**The population changed too.** M260 narrowed the gate so the note stays
+silent where the STACK removes the smaller sizes (189 of 303 firings),
+leaving the case where the tree's re-raise multiple does not fit - a
+limit of the model, which is what the note is about.
+
+**HOW OFTEN IT FIRES, over real hands.** Hunted over short-stacked
+heads-up decisions facing a bet - the only place it still lives - it
+fired on **5 of 260**, about 2% of that already narrow slice, consistent
+with the audit's 0.7% of all decisions. **Sampling ordinary decisions
+does not reach it at all**: 50 candidates gave zero, which is why the
+behaviour had to be measured on constructed spots. The rate and the
+behaviour therefore come from different populations, and the study says
+which is which (M252: a benchmark measures the population it generates).
+
+**WHAT IT DOES, over 80 constructed spots inside the gate:**
+
+| measure | change | sigma |
+|---|---|---|
+| all-in frequency | **-0.0146** | 2.00, fractionally UNDER the bar |
+| check frequency | +0.0372 | 3.25 - hero checks MORE, not less |
+| the missing size, once offered | **0.0180** | 3.64 |
+
+**Hero puts under 2% on the action whose absence the note is about.**
+That is the finding: adding the missing size moves the play by about a
+point, so the note's narrow statement is true - the SIZE named here was
+never chosen over a smaller one - and its broad claim is not.
+
+**Both published examples fail.** The top-pair case is reproduced by
+**1 row of 80** and the busted-draw case by **none**. The "in both
+directions" wording needs both halves and has neither: strong hands
+check LESS on the shipped arm (-0.023, 1.40 sigma), weak hands
+over-shove by +0.008 (0.97 sigma).
+
+**The five real firing rows agree with the constructed ones** - the new
+size is taken 0.3-4.8% and the all-in frequency moves both ways (one row
+0.020 -> 0.347 UPWARD) - which is what lets a constructed population
+describe the behaviour.
+
+**The borderline is recorded rather than rounded.** The all-in change
+lands at **2.00 sigma**, fractionally under the pre-registered bar, so
+the rule reads it as not established and the copy quotes the SIZE of the
+change instead of claiming a distortion. Rounding that into a claim is
+the edge M232 exists to stop.
+
+**TWO HARNESS DEFECTS, both of which returned a plausible number rather
+than an error**, and both now pinned by tests:
+
+- **The largest "modelled bet size" IS the all-in**, and naming it as
+  `raise:` is a 422. Picking it refused **50 of 50** constructed spots.
+- **`raise_sizes`'s SECOND entry is the one hero reads.** Hero facing
+  villain's opening bet is making raise number two, and the first
+  implementation replaced the LAST entry - the third raise - leaving 40
+  of 50 spots with no size offered because the knob being turned was not
+  the one the node reads. M233's trap in a new place.
+
+**R3's stale count goes 7 -> 6.**

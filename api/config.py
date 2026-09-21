@@ -3724,17 +3724,61 @@ POSTFLOP_SIZING_COVERAGE_REASON = (
     "the size this advice names was never chosen over a smaller one. See the note on "
     "bet sizing in the aggression caveat."
 )
+# **RE-MEASURED AT THE SHIPPED CONFIGURATION (M302, the 2026-09-20
+# audit's R3), AND THE DISTORTION CLAIM DOES NOT SURVIVE.**
+#
+# M151's figures came off the CHAINED river at
+# `FLOP_TO_RIVER_RAISE_SIZES = ()` - a street modelling no bet size at
+# all. M174 made the river standalone and M213 gave it a 0.33/0.75/2.5
+# menu, so that configuration is gone, and with it the population: M260
+# narrowed the gate so the note stays silent where the STACK removes the
+# smaller sizes (189 of 303 firings), leaving the case where the tree's
+# re-raise multiple does not fit.
+#
+# **Where it still fires**, hunted over real short-stacked heads-up
+# decisions facing a bet: **5 of 260**, about 2% of that already narrow
+# slice, which is consistent with the audit's 0.7% of all decisions.
+# Sampling ordinary decisions does not reach it - 50 candidates gave
+# zero - so the BEHAVIOUR was measured on 80 constructed spots that sit
+# inside the gate, and the rate and the behaviour come from different
+# populations on purpose (M252).
+#
+# **Adding the missing size barely moves the play:**
+#
+#   all-in frequency        -0.0146   (2.00 sigma, fractionally under
+#                                      the pre-registered bar)
+#   check frequency         +0.0372   (3.25 sigma - hero checks MORE
+#                                      when a size exists, not less)
+#   the new size is taken    0.0180   (3.64 sigma, i.e. under 2%)
+#
+# **Both published examples fail.** "A top pair that should bet about a
+# third of the time instead checks 99%" is reproduced by **1 row of 80**;
+# "a busted draw moves all in 99%" by **none**. The "in both directions"
+# wording needs both halves and has neither: strong hands check LESS on
+# the shipped arm (-0.023, 1.40 sigma) and weak hands over-shove by
+# +0.008 (0.97 sigma).
+#
+# **What survives is the narrow, true statement**: the SIZE named here
+# was never chosen over a smaller one, because no smaller one existed in
+# the tree. What is withdrawn is the claim that this distorts the PLAY.
+# The five real firing rows agree with the constructed ones - the new
+# size is taken 0.3-4.8% and the all-in frequency moves both ways.
+#
+# The borderline sigma is recorded rather than rounded: the rule reads
+# 2.00 as under the bar, and the copy quotes the SIZE of the change,
+# which is about one point either way.
+SIZING_COVERAGE_ROWS = 80
+SIZING_COVERAGE_ALL_IN_CHANGE = 0.0146
+SIZING_COVERAGE_NEW_SIZE_USED = 0.018
+
 BET_SIZING_COVERAGE_NOTE = (
     " Note also that on this street the solver modelled only checking or calling and "
-    "going all-in: no intermediate bet size was a legal action in its tree. So a low "
-    "all-in frequency here does not mean a smaller bet was considered and rejected — "
-    "smaller bets were never available. That distorts the PLAY here, not just the size. "
-    "Measured against the same spot re-solved with one normal bet size available: a top "
-    "pair that should bet about a third of the time instead checks 99%, and a busted "
-    "draw that should bet a third of the pot instead moves all in 99% of the time. "
-    "Treat the checking and the all-in frequencies on this street as unreliable in both "
-    "directions, and do not read a high check frequency as a reason to give up on a "
-    "value hand."
+    "going all-in: no intermediate bet size was a legal action in its tree, so the size "
+    "named here was never chosen over a smaller one. Measured over 80 spots where that "
+    "happens, making a smaller raise available moves the all-in frequency by about 1 "
+    "point, and that smaller raise is itself taken under 2% of the time. So treat the "
+    "SIZE here as unreliable; the choice between checking and committing measured close "
+    "to what a richer tree gives."
 )
 
 # M145/F41. `solver_confidence` was a pure function of TABLE SIZE and
