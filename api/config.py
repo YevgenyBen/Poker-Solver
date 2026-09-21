@@ -2686,15 +2686,81 @@ RIVER_STRONG_BAND_MEAN_ERROR = 0.3411
 RIVER_WEAK_BAND_MEAN_ERROR = 0.0555
 RIVER_SPOTS_PER_CELL = 14
 
+# **RE-MEASURED AT THE SHIPPED CONFIGURATION (M301, the 2026-09-20
+# audit's R3). THREE OF ITS FOUR CLAIMS ARE GONE; THE SMALLEST ONE
+# SURVIVED.**
+#
+# M177 measured at the river's range cap 26 with no bet size beyond
+# all-in. M213 gave the river a 0.33/0.75/2.5 menu and M231 took it to
+# cap 60 at 1,000 iterations - and M231 already measured that change
+# cutting the river's over-aggression against an independent solver from
+# +0.1909 to +0.0463, so the claim the copy leaned on was known to have
+# shrunk by four fifths before this study ran.
+#
+# Two arms, because the claims need different instruments
+# (`bench/studies/river_measured.py`, rule fixed before either was read):
+#
+# **A - the strength split, against an INDEPENDENT solver, no new
+# solving.** M296's 492 rows carry hero, the board and a regret in big
+# blinds, so the split re-reads directly over its 303 kept rows:
+#
+#   band              n    regret bb    mean TVD    over 0.10 TVD
+#   top quartile     95       0.0530      0.1894            53.7%
+#   the rest        208       0.0892      0.1729            52.4%
+#
+# **Strong hands are not worse - they cost LESS** (ratio 0.59, -1.28
+# sigma) and sit 1.02x from the reference on frequency, against the
+# "more than three times as often" the copy published. The TVD halves
+# disagree in sign (-0.20 / +1.19 sigma), so there is nothing there.
+# **Claim 4 falls with it**: 52% of weak-hand rows exceed 0.10, so
+# "weak-hand advice on this street measured accurate" is false too.
+#
+# **B - the direction, which needed a fresh run.** 240 real river
+# decisions through `/advise` against an uncapped 169-class solve of the
+# same request, half of them constructed to FACE A BET:
+#
+#   cell         n    mean |error|    over 0.10
+#   opening    120          0.1215        33.3%
+#   facing     120          0.0842        20.8%
+#
+# **The direction SURVIVES and is small**: +0.0314 at **2.29 sigma**,
+# both halves positive (+0.0283 / +0.0345). This engine does put chips in
+# more often than a fuller solve - by three points, where the copy's
+# phrasing implied something a player should weigh heavily.
+#
+# **"ESPECIALLY FACING A BET" IS BACKWARDS.** Facing a bet measures
+# **more** reliable than acting first (0.0842 against 0.1215, -1.54
+# sigma, halves disagreeing), which is the same direction M300 found on
+# the flop. Read it beside M299, not instead: facing a bet is the
+# cheaper node in FREQUENCY and the dearer one in CHIPS, which is
+# M182/M183/M186's thesis showing up on a third street.
+#
+# **The worst case is over-aggression, not over-commitment with a strong
+# hand.** `5d6s` on `AhKsJd5sQh` - a pair of fives on a four-to-Broadway
+# board - is bet **0.9994** where the fuller solve checks 0.9990.
+#
+# **An amendment worth keeping**: arm B's first pass drew each hand's
+# FIRST river decision and produced 120 rows of which ZERO faced a bet -
+# M177's own standing rule failing inside the study that re-measures
+# M177. Those rows are the opening cell; the facing cell is a second
+# pass. The clause was UNMEASURED by that pass, not refuted.
+RIVER_MEASURED_ROWS = 240
+RIVER_MEASURED_SHARE_OVER_TEN = 0.271
+RIVER_MEASURED_SIGNED_GAP = 0.0314
+RIVER_MEASURED_FACING_ERROR = 0.0842
+RIVER_MEASURED_OPENING_ERROR = 0.1215
+
 RIVER_MEASURED_NOTE = (
-    "RELIABILITY ON THE RIVER HAS BEEN MEASURED, AND IT IS WORSE FOR STRONG HANDS. "
-    "Against a fuller solve over 56 river spots, advice for hands in the top quarter "
-    "by strength was wrong more than three times as often as advice for weak ones "
-    "(14 of 28 against 3 of 28), and it errs in one direction: it recommends putting "
-    "chips in more often than the fuller solve does. If you hold a strong but not "
-    "unbeatable hand here, especially facing a bet, treat a recommendation to commit "
-    "your stack with particular suspicion. Weak-hand advice on this street measured "
-    "accurate. "
+    "RELIABILITY ON THE RIVER HAS BEEN MEASURED, AND IT IS NOT GOOD ENOUGH TO "
+    "CERTIFY. Against a fuller solve of the same spot over 240 real decisions, "
+    "about 27% of answers were off by more than 0.10 in how often they bet or "
+    "raise, and the advice leans aggressive — it puts chips in 0.03 more often "
+    "than the fuller solve does. How strong your hand is does not predict which "
+    "answers are wrong: measured against an independent solver, strong hands "
+    "cost no more than weak ones. Nor does facing a bet, which measured slightly "
+    "more reliable than acting first. The worst case measured bets a weak pair "
+    "almost always where a fuller solve checks. Treat the action as a suggestion "
+    "rather than a solved answer. "
 )
 
 # M185: where the measured cost of this advice actually is.

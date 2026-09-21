@@ -6540,7 +6540,7 @@ def test_every_street_note_is_distinct_and_matches_its_evidence(client):
 
       flop  — measured, refused, direction on the NODE TYPE only (M300)
       turn  — measured, refused, correlation +0.057 (no signal at all)
-      river — measured, refused, strongly one-sided (strong hands worse)
+      river — measured, refused, a small signed lean and no hand split (M301)
 
     M300 moved the flop's row. M180 could name no direction at all; at
     the shipped configuration hand strength still carries nothing (0.61
@@ -6551,9 +6551,12 @@ def test_every_street_note_is_distinct_and_matches_its_evidence(client):
              api_config.UNMEASURED_STREET_NOTE,
              api_config.RIVER_MEASURED_NOTE}
     assert len(notes) == 3, "two streets are sharing a reliability statement"
-    # The river names a STRENGTH direction because its split is separable;
-    # the flop must not, because strength carries nothing there.
-    assert "worse for strong hands" in api_config.RIVER_MEASURED_NOTE.lower()
+    # NEITHER names a strength direction now: M301 re-measured the river
+    # against an independent solver and strong hands cost no more than
+    # weak ones (ratio 0.59, -1.28 sigma), so the claim M177 made at 14
+    # spots per band is gone the same way M166's was.
+    assert "worse for strong hands" not in api_config.RIVER_MEASURED_NOTE.lower()
+    assert "does not predict" in api_config.RIVER_MEASURED_NOTE.lower()
     flop = api_config.FLOP_MEASURED_NOTE.lower()
     assert "worse for strong hands" not in flop
     assert "how strong your hand is does not predict" in flop, (
@@ -6563,15 +6566,18 @@ def test_every_street_note_is_distinct_and_matches_its_evidence(client):
         "claims nothing predicts the error hides what a player could act on")
 
 
-def test_the_river_says_it_was_measured_and_which_hands_to_distrust(client):
-    """M177. The river was measured (56 spots, 4 cells) and certification
+def test_the_river_says_it_was_measured_and_refuses_the_hand_split(client):
+    """M177, rewritten by M301. The river was measured and certification
     refused, so the blanket "accuracy on this street has not been
-    measured" is now FALSE there — and it buries the actionable half.
+    measured" is FALSE there.
 
-    Error concentrates in the band a certificate would vouch for: strong
-    hands fail 14 of 28, weak hands 3 of 28, and the direction is
-    consistent (over-committing). A player holding a strong hand on the
-    river is exactly who needs telling.
+    M177 said the error concentrates in strong hands - 14 of 28 against
+    3 of 28 - at cap 26 with no bet size beyond all-in. Re-measured at
+    the shipped configuration against an INDEPENDENT solver over 303
+    rows, strong hands cost LESS (0.0530 bb against 0.0892) and sit
+    1.02x from the reference on frequency, so the split is gone. What
+    survives is the signed lean: +0.0314 at 2.29 sigma over 240 fresh
+    decisions.
     """
     body = _advise_body(
         preflop_action_path=["raise", "call_or_check"],
@@ -6587,12 +6593,18 @@ def test_the_river_says_it_was_measured_and_which_hands_to_distrust(client):
     # It must NOT claim the street is unmeasured any more.
     assert "has not been measured" not in reason, (
         "the river has been measured; saying otherwise is a false disclosure")
-    # And it must name the direction, or a player cannot act on it.
+    # It must name the one direction that survived, and refuse the two
+    # splits that did not.
     lowered = reason.lower()
-    assert "strong" in lowered and "worse" in lowered
-    assert "commit" in lowered, (
-        "the note must say which way the error runs — over-committing — "
-        "not merely that error exists")
+    assert "leans aggressive" in lowered, (
+        "the note must say which way the error runs - it puts chips in more "
+        "often than a fuller solve - not merely that error exists")
+    assert "how strong your hand is does not predict" in lowered, (
+        "M301: strong hands measured no worse against an independent solver, "
+        "so naming them is M166's error in a new place")
+    assert "more reliable than acting first" in lowered, (
+        "facing a bet measured MORE reliable (0.0842 against 0.1215), and the "
+        "old copy told players the opposite")
 
 
 def test_the_turn_keeps_the_unmeasured_note_and_the_river_does_not(client):
@@ -6618,23 +6630,29 @@ def test_the_turn_keeps_the_unmeasured_note_and_the_river_does_not(client):
 
 
 def test_the_river_note_quotes_its_own_measurement(client):
-    """M177, the same pin M140 and M175 use. The note tells a player strong
-    hands were wrong "more than three times as often"; the recorded
-    failure counts have to support that, and stay attached if either moves.
+    """M301, the same pin M140 and M175 use, over the numbers that
+    replaced M177's.
+
+    M177's counts (14 of 28 against 3 of 28) came off a tree with a range
+    cap of 26 and no bet size beyond all-in; M213 and M231 replaced both.
     """
-    strong = api_config.RIVER_CERTIFICATION_FAILURES
-    total = api_config.RIVER_CERTIFICATION_REFUSED_SPOTS
-    weak = 3  # weak-band failures over the same 28 spots
-    assert strong > 0 and total >= 20
-    assert strong / weak >= 3.0, (
-        "the note claims strong hands fail more than 3x as often; the "
-        "recorded counts no longer support that")
-    assert f"{strong} of {total}" in api_config.RIVER_MEASURED_NOTE
+    note = api_config.RIVER_MEASURED_NOTE
+    assert str(api_config.RIVER_MEASURED_ROWS) in note
+    assert f"{round(api_config.RIVER_MEASURED_SHARE_OVER_TEN * 100)}%" in note
+    assert f"{api_config.RIVER_MEASURED_SIGNED_GAP:.2f}" in note
+
+    # The withdrawn claims must not survive anywhere in the text.
+    assert "three times as often" not in note
+    assert "14 of 28" not in note and "3 of 28" not in note
+    assert "measured accurate" not in note, (
+        "M301: 52% of weak-hand rows exceed 0.10, so weak-hand river advice "
+        "is not accurate either")
+
+    # The lean that DID survive is small, and the copy must not inflate it.
+    assert 0 < api_config.RIVER_MEASURED_SIGNED_GAP < 0.10
+
     # And the river must actually be refused certification.
     assert "river" not in api_config.CERTIFY_RELIABILITY_ON_STREETS
-    assert api_config.RIVER_SPOTS_PER_CELL >= 12, (
-        "M175's lesson: a claimed strength/error split needs more than a "
-        "handful of spots per cell before it goes in front of a user")
 
 
 def test_the_unmeasured_street_note_quotes_its_own_measurement(client):
