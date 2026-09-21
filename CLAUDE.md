@@ -2728,6 +2728,29 @@ requests now reject unknown fields by name rather than ignoring them.
   figure. Re-pricing a stored request reproduced its loss on **255 of
   255** rows.
 
+- **THE FLOP'S RELIABILITY NOTE WAS UNDERSTATING ITSELF (M300, the
+  2026-09-20 audit's R3).** M180's figures came off a tree with one bet
+  size at cap 140; M207 and M234 replaced both. Re-read over the 176
+  rows M292/M297 had already priced at the shipped configuration - **no
+  new solving** - with the rule fixed first:
+  | the copy said | measured now |
+  |---|---|
+  | one answer in seven off by more than 0.10 | **29.5%, about one in three** |
+  | neither strength nor facing a bet predicts which | **facing a bet does, 2.74 sigma** |
+  | worst case: a top pair the reference bets | **air the reference BLUFFS 0.9753** |
+  **A warning may not understate its own defect** (M232) and this one
+  did, by about half. Hand strength still carries nothing (0.61 sigma),
+  which is the half M166/M167 exist to protect.
+  **THE FREQUENCY SPLIT POINTS OPPOSITE TO THE COST SPLIT, AND BOTH ARE
+  TRUE**: acting first the frequency error is 0.1387 against facing a
+  bet's 0.0586, while M299 priced facing a bet at 2.92x the CHIPS. That
+  is M182/M183/M186 restated - the biggest frequency errors sit where
+  they are cheapest - and the copy says so, because a player meeting
+  both notes needs to know they are two axes.
+  **Rule: two disclosures have now been re-measured off one committed
+  sample.** Commit rows with their requests; the expensive half is the
+  solving, and a later question can often be answered without it.
+
 - **(SUPERSEDED by M299 — the band is withdrawn) The cost concentrates
   in a STRENGTH BAND, and it is the sharpest
   runtime signal available (M189).** Splitting M188's 801 facing spots by

@@ -6494,15 +6494,20 @@ def test_no_street_claims_certified_reliability_any_more(client):
     assert api_config.FLOP_CERTIFICATION_SPOTS >= 28
 
 
-def test_the_flop_note_says_measured_and_refuses_to_name_a_direction(client):
-    """M180. The flop cannot use the unmeasured-street note — that note
-    says accuracy "has not been measured against a larger solve the way
-    the flop has", which contradicts itself when shown on the flop.
+def test_the_flop_note_says_measured_and_refuses_the_strength_split(client):
+    """M180, amended by M300. The flop cannot use the unmeasured-street
+    note — that note says accuracy "has not been measured against a
+    larger solve the way the flop has", which contradicts itself when
+    shown on the flop.
 
-    And the flop note must NOT claim which hands are unreliable: at 56
-    spots, strong-vs-weak is 1.32 sigma and opening-vs-facing is 1.83
-    sigma. Neither is separable. M166 asserted exactly this kind of split
-    from a smaller sample and M167 withdrew it.
+    And the flop note must NOT claim which HANDS are unreliable. M180
+    refused both splits at 56 spots (strength 1.32 sigma, node type
+    1.83). Re-measured over 176 rows at the shipped configuration
+    (M300), strength still carries nothing — top quartile 0.1042 against
+    0.0855, **0.61 sigma** — while the node type separates at 2.74 and
+    is now named. So the refusal this test guards is the STRENGTH one,
+    which is the half M166 asserted from a small sample and M167 had to
+    withdraw.
     """
     body = _advise_body(
         preflop_action_path=["raise", "call_or_check"],
@@ -6517,10 +6522,15 @@ def test_the_flop_note_says_measured_and_refuses_to_name_a_direction(client):
         "the flop has been measured more than any other street; saying "
         "otherwise is false, and self-contradictory in this note's own wording")
     lowered = reason.lower()
-    # It must say the error is NOT predictable, not invent a rule.
-    assert "neither" in lowered and "predicts" in lowered, (
+    # It must refuse the STRENGTH split explicitly rather than invent a
+    # rule about which hands to distrust.
+    assert "how strong your hand is does not predict" in lowered, (
         "the note must say hand strength does not predict the error — "
-        "claiming a direction is what M166 did and M167 had to withdraw")
+        "claiming a direction there is what M166 did and M167 had to withdraw")
+    for invented in ("strong hands", "weak hands", "top pair"):
+        assert f"{invented} are" not in lowered, (
+            f"the note names {invented!r} as the unreliable ones; strength "
+            "measured 0.61 sigma (M300) and cannot carry that claim")
 
 
 def test_every_street_note_is_distinct_and_matches_its_evidence(client):
@@ -6528,18 +6538,29 @@ def test_every_street_note_is_distinct_and_matches_its_evidence(client):
     positions, and collapsing any two into one sentence would misstate at
     least one of them:
 
-      flop  — measured, refused, no usable direction (neither split separable)
+      flop  — measured, refused, direction on the NODE TYPE only (M300)
       turn  — measured, refused, correlation +0.057 (no signal at all)
       river — measured, refused, strongly one-sided (strong hands worse)
+
+    M300 moved the flop's row. M180 could name no direction at all; at
+    the shipped configuration hand strength still carries nothing (0.61
+    sigma) while facing-a-bet separates at 2.74 — so the flop names one
+    split and must still refuse the other.
     """
     notes = {api_config.FLOP_MEASURED_NOTE,
              api_config.UNMEASURED_STREET_NOTE,
              api_config.RIVER_MEASURED_NOTE}
     assert len(notes) == 3, "two streets are sharing a reliability statement"
-    # The river names a direction because its split IS separable; the flop
-    # must not, because its is not.
+    # The river names a STRENGTH direction because its split is separable;
+    # the flop must not, because strength carries nothing there.
     assert "worse for strong hands" in api_config.RIVER_MEASURED_NOTE.lower()
-    assert "worse for strong hands" not in api_config.FLOP_MEASURED_NOTE.lower()
+    flop = api_config.FLOP_MEASURED_NOTE.lower()
+    assert "worse for strong hands" not in flop
+    assert "how strong your hand is does not predict" in flop, (
+        "the flop must keep refusing the strength split - 0.61 sigma (M300)")
+    assert "facing a bet" in flop, (
+        "the flop's one real predictor is the node type, and a note that "
+        "claims nothing predicts the error hides what a player could act on")
 
 
 def test_the_river_says_it_was_measured_and_which_hands_to_distrust(client):
@@ -9746,3 +9767,35 @@ def test_a_pot_with_four_or_more_live_keeps_the_pre_m264_budget(client, monkeypa
         client.post("/advise", json=body)
     assert seen["multiway"] is True
     assert seen["solve_iterations"] == expected
+
+
+def test_the_flop_measured_note_quotes_its_own_measurement():
+    """M300 (audit R3), and M140's rule that copy states what was
+    measured.
+
+    M180's figures came off a tree with one bet size and a range cap of
+    140; M207 and M234 changed both. Re-read over 176 rows priced at the
+    shipped configuration, the share of answers off by more than 0.10 is
+    **29.5%, against the one-in-seven the copy published** - so the note
+    was understating its own defect by about half, which is the single
+    failure mode M232 says a warning may not have.
+    """
+    note = api_config.FLOP_MEASURED_NOTE
+
+    assert str(api_config.FLOP_MEASURED_ROWS) in note
+    assert f"{round(api_config.FLOP_MEASURED_SHARE_OVER_TEN * 100)}%" in note
+    assert f"{api_config.FLOP_MEASURED_OPENING_ERROR:.2f}" in note
+    assert f"{api_config.FLOP_MEASURED_FACING_ERROR:.2f}" in note
+
+    # The withdrawn figures must not survive anywhere in the text.
+    assert "one answer in seven" not in note, "the understated share is back"
+    assert "56" not in note, "M180's spot count is back in the copy"
+
+    # M232 runs both ways: the note must not read as smaller than it is.
+    assert api_config.FLOP_MEASURED_SHARE_OVER_TEN > 8 / 56
+
+    # The two axes must not be confusable: this note is about betting
+    # FREQUENCY, and M299 priced the same node types in chips pointing the
+    # other way. A player reading both needs to be told they are two
+    # measurements, not a contradiction.
+    assert "not what the difference costs" in note.lower()
