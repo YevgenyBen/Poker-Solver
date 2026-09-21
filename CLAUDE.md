@@ -1039,7 +1039,8 @@ requests now reject unknown fields by name rather than ignoring them.
                            `facing_cost.py` (M299),
                            `flop_measured.py` (M300),
                            `river_measured.py` (M301),
-                           `sizing_coverage.py` (M302)
+                           `sizing_coverage.py` (M302),
+                           `turn_measured.py` (M303)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools
@@ -2730,6 +2731,33 @@ requests now reject unknown fields by name rather than ignoring them.
   and M202's menu control, and record the reference's slack beside every
   figure. Re-pricing a stored request reproduced its loss on **255 of
   255** rows.
+
+- **THE TURN IS MEASURED NOW, AND IT INVERTS ITS OWN NOTE (M303, the
+  2026-09-20 audit's R3).** It was the last street carrying "accuracy
+  here has not been measured"; M175's supporting figures came off a tree
+  at cap 26 with no bet menu. 120 real decisions - 60 opening, 60
+  constructed to face a bet - against an uncapped solve of the same
+  request:
+  | the copy said | measured now |
+  |---|---|
+  | has not been measured | **34.9% off by more than 0.10** |
+  | more than 0.30 at BOTH ends | **0.18 top, 0.05 bottom** - false at both |
+  | strength did not predict | **it does, 2.30 sigma**, strong hands 2.24x worse |
+  **THE TURN IS THE ONE STREET WHERE HAND STRENGTH PREDICTS**: 0.61
+  sigma on the flop (M300), **-1.28** on the river (M301), **+2.30**
+  here. M177 published strong-hands-worse for the RIVER, where it is
+  false, while the turn carried "strength does not predict", where it is
+  true. **The two notes had the finding on the wrong streets** - M168's
+  rule, three times in four milestones.
+  **FACING A BET IS THE MORE RELIABLE NODE ON ALL THREE STREETS**, and
+  the turn is the sharpest: 0.0426 against 0.1652, **-4.42 sigma**.
+  Beside M299's 2.92x in CHIPS, the frequency and the money point
+  opposite ways on every street.
+  **The harness defect that voided M222's first run, caught again**: the
+  first draft patched `MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE`, the
+  CHAINED turn's cap, which is inert on the standalone path - and **the
+  arms still differed**, because the iterations knob was doing the work.
+  `UNMEASURED_STREET_NOTE` is now unreachable and leaves the registry.
 
 - **THE BET-SIZING NOTE KEEPS ITS STATEMENT AND LOSES ITS CLAIM (M302,
   the 2026-09-20 audit's R3).** M151 measured on the CHAINED river at

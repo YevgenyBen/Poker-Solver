@@ -2238,8 +2238,13 @@ def _advisory_notes(raw: dict, hero: dict | None = None) -> list:
         # the flop has" wording is self-contradictory there); the river is
         # measured with a one-sided strength signal; the turn is measured
         # with no usable signal at all.
+        # M303: the turn is measured now too, so all three postflop
+        # streets carry their own measured note and the blanket
+        # "not measured" fallback is unreachable. It is kept for an
+        # unknown street rather than deleted, and registered as dormant.
         name, text = {
             "flop": ("flop-measured", cfg.FLOP_MEASURED_NOTE),
+            "turn": ("turn-measured", cfg.TURN_MEASURED_NOTE),
             "river": ("river-measured", cfg.RIVER_MEASURED_NOTE),
         }.get(street, ("street-unmeasured", cfg.UNMEASURED_STREET_NOTE))
         notes.append((name, text))

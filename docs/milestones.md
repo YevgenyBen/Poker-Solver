@@ -17888,3 +17888,80 @@ than an error**, and both now pinned by tests:
   the one the node reads. M233's trap in a new place.
 
 **R3's stale count goes 7 -> 6.**
+
+## M303 - the turn is measured now, and it inverts its own note (audit R3)
+
+`UNMEASURED_STREET_NOTE` fired on the turn and only the turn - the flop
+and river map to their own notes - and told a player three things, all
+M175's, all taken at the turn's range cap 26 with no bet menu:
+
+1. accuracy here **has not been measured** the way the flop has;
+2. the advice was off by more than **0.30 at BOTH ends** of the strength
+   range;
+3. **hand strength did not predict** which answers were accurate.
+
+**Claim 1 is self-undermining**: measuring the turn the same way makes
+the sentence false. M177 made that move on the river; this makes it on
+the last street that had not.
+
+**120 real heads-up turn decisions** - 60 opening, 60 constructed to
+face a bet - against an uncapped 169-class solve of the same request at
+2,500 iterations:
+
+| cell | n | mean error | median | worst | over 0.10 | signed |
+|---|---|---|---|---|---|---|
+| opening | 60 | **0.1652** | 0.0771 | 0.7072 | 45% | +0.042 |
+| facing a bet | 60 | **0.0426** | 0.0030 | 0.6308 | 10% | +0.030 |
+
+Weighted by real occurrence: **34.9% of answers off by more than 0.10**.
+
+**Claim 2 is false at BOTH ends**: the top quartile measures 0.1764 and
+the bottom 0.0524, against the 0.30 the copy published for each.
+
+**CLAIM 3 IS FALSE, AND THE TURN IS THE ONE STREET WHERE STRENGTH
+PREDICTS.** Top quartile 0.1764 against the rest's 0.0787 - **2.24x at
+2.30 sigma**, both halves agreeing in direction (1.29 and 1.78, so
+neither clears the bar alone, and the copy names the split without
+overstating it).
+
+**M168's rule, demonstrated three times in four milestones:**
+
+| street | strength split | milestone |
+|---|---|---|
+| flop | 0.61 sigma - nothing | M300 |
+| river | -1.28 sigma - strong hands CHEAPER | M301 |
+| **turn** | **+2.30 sigma - strong hands worse** | M303 |
+
+M177 published the strong-hands-worse claim for the RIVER, where M301
+has just killed it, while the turn - which carried "strength does not
+predict" - is where it is actually true. The two notes had the finding
+on the wrong streets.
+
+**FACING A BET IS THE MORE RELIABLE NODE ON ALL THREE STREETS NOW**, and
+here it is the sharpest: 0.0426 against 0.1652, **-4.42 sigma**, halves
+-2.75 and -3.50. Read beside M299, which priced facing a bet at **2.92x
+the CHIPS**: the frequency and the money point opposite ways on every
+street, which is M182/M183/M186's thesis holding across the board.
+
+The turn leans aggressive by **+0.0358 at 2.06 sigma** - the same
+direction an independent solver measures much larger (M222/M236/M260),
+which is what a shared-model lower bound should look like.
+
+**A harness defect caught before it produced a figure, and it is the one
+that voided M222's first run.** The first draft patched
+`MAX_TURN_PATH_QUERY_CLASSES_PER_SIDE` - the CHAINED turn's cap, which
+is 4 and inert on the standalone path that ships. **The arms still
+differed**, because the ITERATIONS knob was doing the work, so nothing
+looked wrong. `api/config.py` records M222's void run three lines from
+the constant. M155's rule: the constant governing the path you are on is
+not always the one you patched.
+
+**`UNMEASURED_STREET_NOTE` is now unreachable** - all three postflop
+streets carry a measured note - and is kept only as a defensive fallback
+for an unknown street. It quotes no number any more, so it leaves the
+disclosure registry.
+
+**Cost**: 66 minutes across both passes, peak 4.78 GB, free RAM never
+below 17.2 GB.
+
+**R3's stale count goes 6 -> 5.**

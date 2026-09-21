@@ -2618,14 +2618,77 @@ FLOP_CERTIFICATION_WORST_ERROR = 0.9535
 # no signal there at all. Both statements refuse certification, but only
 # the true one stops a reader concluding that WEAK turn hands are the
 # safe ones — 2 of 12 of those exceed 0.10 error too.
+# **THE TURN IS MEASURED NOW (M303, the 2026-09-20 audit's R3), AND THE
+# NOTE BELOW IS UNREACHABLE.**
+#
+# `UNMEASURED_STREET_NOTE` fired on the turn and only the turn - the flop
+# and river map to their own notes - and told a player accuracy here "has
+# not been measured against a larger solve the way the flop has". M303
+# measured it exactly that way, so the sentence is false and the street
+# joins the other two. The constant is kept as a defensive fallback for
+# an unknown street and is registered as DORMANT.
+#
+# 120 real heads-up turn decisions - 60 opening, 60 constructed to face a
+# bet (M177's rule, which M301 broke three milestones ago) - scored
+# against an uncapped 169-class solve of the same request at 2,500
+# iterations:
+#
+#   cell        n    mean error   median   worst   over 0.10   signed
+#   opening    60       0.1652    0.0771   0.7072       45%    +0.042
+#   facing     60       0.0426    0.0030   0.6308       10%    +0.030
+#
+# Weighted by real occurrence (the turn is 0.1382 opening against 0.0562
+# facing): **34.9% of answers off by more than 0.10**, mean 0.1297.
+#
+# **M175's "more than 0.30 at BOTH ends" is false at both ends**: the top
+# quartile measures 0.1764 and the bottom 0.0524.
+#
+# **AND "strength does not predict" IS FALSE HERE - the turn is the one
+# street where it does.** Top quartile 0.1764 against the rest's 0.0787,
+# **2.24x at 2.30 sigma**, both halves agreeing in direction (1.29 and
+# 1.78, so neither half clears the bar alone - the copy names the split
+# without overstating it).
+#
+# **M168's rule, demonstrated three times over.** Hand strength carries
+# 0.61 sigma on the flop (M300), -1.28 on the river (M301) and +2.30
+# here. A claim about one street's strength split transfers to neither
+# of the others, which is what M167/M168 were about and what M177's
+# river note got wrong in the opposite direction.
+#
+# **Facing a bet is MORE reliable than acting first, on all three
+# streets now**: 0.0426 against 0.1652 here, at **-4.42 sigma** with
+# halves -2.75 and -3.50 - the sharpest node-type split measured on any
+# street. Read beside M299, which priced facing a bet at 2.92x the
+# CHIPS: the frequency and the money point opposite ways
+# (M182/M183/M186).
+#
+# The turn leans aggressive by **+0.0358 at 2.06 sigma**, the same
+# direction an independent solver measures much larger (M222/M236/M260).
+TURN_MEASURED_ROWS = 120
+TURN_MEASURED_OVER_TEN = 0.349
+TURN_MEASURED_STRONG_ERROR = 0.1764
+TURN_MEASURED_WEAK_ERROR = 0.0787
+TURN_MEASURED_OPENING_ERROR = 0.1652
+TURN_MEASURED_FACING_ERROR = 0.0426
+TURN_MEASURED_SIGNED = 0.0358
+
+TURN_MEASURED_NOTE = (
+    "RELIABILITY ON THE TURN HAS BEEN MEASURED, AND IT IS NOT GOOD ENOUGH TO "
+    "CERTIFY. Against a fuller solve of the same spot over 120 real decisions, "
+    "about 35% of answers were off by more than 0.10 in how often they bet or "
+    "raise. Unlike the other two streets, how strong your hand is does predict "
+    "which: hands in the top quarter by strength are off by 0.18 on average "
+    "against 0.08 for the rest. Acting first is worse than facing a bet here "
+    "too (0.17 against 0.04), and the advice leans aggressive, putting chips in "
+    "0.04 more often than the fuller solve does. Treat a strong hand's "
+    "recommendation on this street with particular care. "
+)
+
 UNMEASURED_STREET_NOTE = (
     "HOW RELIABLE THIS PARTICULAR ANSWER IS, IS NOT KNOWN. Accuracy on this street "
-    "has not been measured against a larger solve the way the flop has, and hand "
-    "strength does not substitute for it: on the turn, where this was tested "
-    "directly, the advice was off by more than 0.30 at BOTH ends of the strength "
-    "range, and how strong your hand is did not predict which answers were the "
-    "accurate ones. Treat the action as a suggestion and avoid committing a large "
-    "part of your stack on it alone. "
+    "has not been measured against a larger solve the way the flop has. Treat the "
+    "action as a suggestion and avoid committing a large part of your stack on it "
+    "alone. "
 )
 
 # M175's measurement, recorded so the note above cannot drift from it.

@@ -249,9 +249,17 @@ REGISTRY = (
         literals={"0.10": "the error threshold, 0.10"},
         study="bench/studies/flop_measured.py"),
     Disclosure(
-        "UNMEASURED_STREET_NOTE", "M175", ENGINE,
-        literals={"0.30": "M175: turn error at both ends of the strength range"},
-        current=False, superseded_by="M179 took the turn cap 26 -> 140; M213 its bet menu"),
+        "TURN_MEASURED_NOTE", "M303", ENGINE,
+        ("TURN_MEASURED_ROWS", "TURN_MEASURED_OVER_TEN", "TURN_MEASURED_STRONG_ERROR",
+         "TURN_MEASURED_WEAK_ERROR", "TURN_MEASURED_OPENING_ERROR",
+         "TURN_MEASURED_FACING_ERROR", "TURN_MEASURED_SIGNED"),
+        literals={"0.10": "the error threshold, 0.10"},
+        study="bench/studies/turn_measured.py"),
+    # UNMEASURED_STREET_NOTE was registered here until M303 measured the
+    # turn - the only street it reached. It is kept in `api/config.py` as
+    # a defensive fallback for an unknown street, and it no longer quotes
+    # a number, so it has nothing for this registry to source: M175's
+    # "0.30 at both ends" was false at both ends when re-measured.
     Disclosure(
         "POSTFLOP_AGGRESSION_CAVEAT_REASON", "M292", ENGINE,
         ("POSTFLOP_AGGRESSION_ERROR_MEAN", "POSTFLOP_AGGRESSION_ERROR_WORST",
