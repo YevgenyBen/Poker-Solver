@@ -157,6 +157,36 @@ def keep(rows: list) -> list:
             and r.get("reference_exploitability_pct", 0.0) <= MAX_REFERENCE_PCT]
 
 
+def net_of_slack(rows: list) -> dict:
+    """How much of the measured loss the instrument can actually see.
+
+    **Added AFTER the verdicts were read, and it changes none of them**
+    - rules 3 and 6 are computed on the raw |loss| they were written
+    against, and this is reported beside them. It exists because the
+    control run found the reference's own row beatable by a pure fold on
+    two spots of three: the yardstick has per-hand slack, and a median
+    loss of 0.039 bb means nothing if the yardstick's own floor is that
+    size. M259 measured its figure net of exactly this, and M296
+    published raw and net side by side.
+
+    `visible` is the share of rows whose loss exceeds the reference's own
+    best deviation at that node - the rows where something real is being
+    measured rather than the reference's own convergence error.
+    """
+    have = [r for r in rows if r.get("reference_slack_bb") is not None]
+    if not have:
+        return {"n": 0}
+    net = [abs(r["loss_bb"]) - r["reference_slack_bb"] for r in have]
+    return {
+        "n": len(have),
+        "mean_slack": statistics.mean(r["reference_slack_bb"] for r in have),
+        "median_slack": statistics.median(r["reference_slack_bb"] for r in have),
+        "mean_net": statistics.mean(net),
+        "median_net": statistics.median(net),
+        "visible": sum(1 for v in net if v > 0) / len(net),
+    }
+
+
 def _stats(values: list) -> dict:
     if not values:
         return {"n": 0}
@@ -326,12 +356,98 @@ def main(argv=None) -> int:                              # pragma: no cover
     args = list(argv if argv is not None else sys.argv[1:])
     if args and args[0] == "run":
         return _run(args[1])
+    if args and args[0] == "reprice":
+        return _reprice(args[1], args[2])
     import pathlib
     source = pathlib.Path(args[0]) if args else (
         pathlib.Path(__file__).resolve().parents[2] / "tests" / "data" / "facing_cost_m299.jsonl")
     rows = [json.loads(line) for line in source.read_text().splitlines() if line.strip()]
     summary = summarise(rows)
     print(json.dumps({**summary, "verdict": verdict(summary)}, indent=1, default=str))
+    return 0
+
+
+# -- WHERE THIS STOPPED (M299, paused with the verdicts read) ------------
+#
+# The 255 rows are committed at `tests/data/facing_cost_m299.jsonl` and
+# every verdict above is derived from them:
+#
+#   ratio_claim        "quote_measured" - facing 0.1544 bb against
+#                      opening 0.0529, a ratio of 2.92 at 2.79 sigma,
+#                      where the copy claims "at least 25 times"
+#   band_note_survives False - in-band 0.2370 against 0.1607 is 1.48x at
+#                      0.90 sigma, and both halves miss the bar
+#   facing share       56.2% of weighted cost, where the copy says 86%
+#   tail               3.3% of facing rows over 1 bb (copy: 18%) and
+#                      0 of 180 over 5 bb (copy: 5%)
+#
+# WHAT IS NOT DONE: the slack pass. `reprice` adds `reference_slack_bb`
+# to every row - the reference's own best deviation at that node - and
+# it had finished 2 of 255 when this was paused. It is needed before any
+# absolute figure reaches a player, because the control run found the
+# reference's own row beaten by a pure fold on two spots of three, so
+# the yardstick's per-hand slack may be the size of the median loss
+# (0.039 bb) this would otherwise quote. It does NOT move the two
+# verdicts, which are ratios read on the raw metric they were
+# pre-registered against.
+#
+#     python -m bench.memory_guard --log reprice.guard.json -- \
+#         python -m bench.studies.facing_cost reprice \
+#             tests/data/facing_cost_m299.jsonl rows_with_slack.jsonl
+#
+# Roughly an hour, ~8 GB peak. It is also a determinism control: a
+# stored request must re-price to its own recorded loss exactly, and the
+# 3-row smoke did (drifted 0).
+#
+# THEN: rewrite both disclosures against these numbers, register the
+# constants, update `bench/disclosures.py` (both currently `current=
+# False`), and re-run the suite.
+
+
+def _reprice(in_path: str, out_path: str) -> int:        # pragma: no cover
+    """Re-price every stored row from its own request, adding the slack.
+
+    Two things at once, and the second is why it is worth an hour:
+
+    * it adds `reference_slack_bb`, the reference's own best deviation
+      at the node, which is the floor beneath every loss here - a
+      measurement smaller than its own yardstick's error is not a
+      measurement (M259/M296's net figure);
+    * it is a DETERMINISM control. The reference solve is seeded, so
+      re-pricing a stored request must reproduce its loss exactly. A row
+      that does not is a row whose request did not capture everything
+      the price depended on, and it is reported rather than quietly
+      overwritten.
+    """
+    import json as _json
+
+    from api import config as cfg
+    from api import solving
+    from api.main import app
+    from bench import price
+    from fastapi.testclient import TestClient
+
+    TestClient(app)                                       # wire the app up
+    rows = [_json.loads(line) for line in open(in_path) if line.strip()]
+    drift = []
+    with open(out_path, "w") as fh:
+        for index, row in enumerate(rows, 1):
+            priced = price.price_request(
+                body=row["request"], street=row["street"],
+                shipped_strategy=dict(zip(row["actions"], row["shipped_row"])),
+                entry_pot=row["entry_pot"], entry_stack=row["entry_stack"],
+                solving=solving, cfg=cfg)
+            delta = abs(priced.loss_bb - row["loss_bb"])
+            if delta > 1e-9:
+                drift.append({"hand": row["hand"], "i": row["i"], "delta": delta})
+            fh.write(_json.dumps({**row,
+                                  "reference_slack_bb": priced.reference_slack_bb,
+                                  "repriced_loss_bb": priced.loss_bb}) + "\n")
+            fh.flush()
+            if index % 20 == 0:
+                print(index, "of", len(rows), "drifted", len(drift), flush=True)
+    print("DONE repriced", len(rows), "drifted", len(drift),
+          _json.dumps(drift[:5]), flush=True)
     return 0
 
 

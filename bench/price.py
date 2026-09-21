@@ -82,6 +82,9 @@ REFERENCE_ITERATIONS = 2500
 class PricedRow:
     """One decision, priced. `loss_bb` is positive when shipped is worse."""
     loss_bb: float
+    #: What the REFERENCE itself leaves on the table at this node for
+    #: this hand. A loss below it is inside the yardstick's own error.
+    reference_slack_bb: float
     value_spread_bb: float
     ev_shipped_bb: float
     ev_reference_bb: float
@@ -303,6 +306,12 @@ def price_request(*, body: dict, street: str, shipped_strategy: dict,
     stage["control"] = time.time() - started
     return PricedRow(
         loss_bb=priced["loss_bb"],
+        # The reference's OWN best deviation at this node, for this hand:
+        # `max_a Q(a) - EV(reference row)`. It is the instrument's floor
+        # - a loss smaller than it is inside the reference's own slack
+        # and says nothing about the shipped answer. M259's rule, and the
+        # reason M296 published a net figure beside a raw one.
+        reference_slack_bb=max(values.values()) - priced["ev_reference_bb"],
         value_spread_bb=priced["value_spread_bb"],
         ev_shipped_bb=priced["ev_shipped_bb"],
         ev_reference_bb=priced["ev_reference_bb"],
