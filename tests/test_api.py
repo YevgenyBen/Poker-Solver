@@ -6241,70 +6241,47 @@ def test_the_unmeasured_street_note_says_why_rather_than_only_that(client):
     assert "least accurate" not in note
 
 
-def test_the_costly_band_needs_BOTH_conditions(client, monkeypatch):
-    """M189. The cost concentrates non-monotonically by hand strength:
-    both the weakest and the strongest hands are cheap, and the money is
-    in roughly the 55th-90th percentile — "is my top pair actually good?".
+def test_the_costly_band_note_is_withdrawn_and_stays_silent(client, monkeypatch):
+    """M299 (audit R3). M189 shipped a second, sharper warning on top of
+    the facing-a-bet one: hands in the 0.55-0.90 strength band facing a
+    bet, published as 12% of postflop decisions carrying 74% of all cost,
+    a 6.1x lift replicated across split halves.
 
-    Facing a bet AND in that band is **12% of postflop decisions carrying
-    74% of all cost** (lift 6.1x), against M185's coarse rule at 33% and
-    2.9x. Neither condition alone is the signal: an in-band hand acting
-    first is cheap, and a facing-a-bet decision outside the band is much
-    cheaper than one inside it.
+    Every figure in it was measured before this engine had a bet menu.
+    Re-priced at the shipped configuration over 180 real facing-a-bet
+    decisions - against a fuller solve of the same request, weighted by
+    real occurrence - the band is **1.48x at 0.90 sigma**, both split
+    halves miss the bar (0.89 / 0.48), and on the metric the copy itself
+    quoted it does not separate at all: **3.4% of in-band decisions cost
+    over a big blind against 3.3% out of band**, where the copy claimed
+    44% against 4%.
+
+    So it is withdrawn. This test holds the bounds live - they are kept
+    for M180's reason, in case a future measurement earns the claim back
+    - while asserting the product makes no band claim to a player.
     """
     monkeypatch.setattr(api_config, "FLOP_TURN_RAISE_SIZES", (2.5,))
     monkeypatch.setattr(api_config, "FLOP_TURN_MAX_RAISES", 2)
-    base = {"stack_bb": 100.0, "preflop_action_path": ["raise", "call_or_check"],
-            "players": 2, "board": "Kd7c2h"}
+    body = {"stack_bb": 100.0, "preflop_action_path": ["raise", "call_or_check"],
+            "players": 2, "board": "Kd7c2h", "hero_cards": "9c9d",
+            "flop_action_path": ["raise"]}
+    payload = client.post("/advise", json=body).json()
 
-    def reason_for(hero, facing):
-        body = {**base, "hero_cards": hero}
-        if facing:
-            body["flop_action_path"] = ["raise"]
-        payload = client.post("/advise", json=body).json()
-        return payload["aggression_confidence_reason"], payload["hand_strength_percentile"]
+    # The spot is squarely inside the withdrawn band and facing a bet,
+    # which is exactly where the note used to fire.
+    percentile = payload["hand_strength_percentile"]
+    assert api_config.COSTLY_BAND_LOW <= percentile < api_config.COSTLY_BAND_HIGH, percentile
+    assert "fold" in payload["hero"]["strategy"], "this spot must be facing a bet"
 
-    # 9c9d on Kd7c2h sits inside the band; KsQh above it; Tc9c below.
-    in_facing, pct_in = reason_for("9c9d", True)
-    assert api_config.COSTLY_BAND_LOW <= pct_in < api_config.COSTLY_BAND_HIGH, pct_in
-    assert api_config.COSTLY_BAND_NOTE in in_facing
-
-    in_opening, _ = reason_for("9c9d", False)
-    assert api_config.COSTLY_BAND_NOTE not in in_opening, (
-        "the band note fired on an opening decision; acting first with an "
-        "in-band hand is cheap and the signal needs BOTH conditions")
-
-    above, pct_hi = reason_for("KsQh", True)
-    assert pct_hi >= api_config.COSTLY_BAND_HIGH
-    assert api_config.COSTLY_BAND_NOTE not in above, (
-        "very strong hands measured 11.5% expensive against the band's 44%")
-
-    below, pct_lo = reason_for("Tc9c", True)
-    assert pct_lo < api_config.COSTLY_BAND_LOW
-    assert api_config.COSTLY_BAND_NOTE not in below, (
-        "weak hands measured 4-5% expensive; flagging them dilutes the signal")
-
-
-def test_the_band_is_narrow_enough_to_be_worth_reading(client):
-    """M189. The point of the band over M185's coarse flag is that it
-    fires rarely. A signal on a third of all decisions is one a player
-    learns to ignore (M167); this one fires on ~12%.
-
-    Guarding the WIDTH rather than the prose: if someone widens the band
-    to catch more cost, they trade away the property that makes it worth
-    surfacing, and should do that deliberately.
-    """
-    width = api_config.COSTLY_BAND_HIGH - api_config.COSTLY_BAND_LOW
-    assert width <= 0.40, (
-        f"the costly band spans {width:.2f} of the strength range; wider than "
-        "0.40 and it approaches M185's coarse flag, which fires on a third of "
-        "decisions and was measured at less than half this one's lift")
-    assert api_config.COSTLY_BAND_LOW > 0.4, (
-        "extending the band down into weak hands adds decisions that measured "
-        "4-5% expensive and dilutes it")
-    assert api_config.COSTLY_BAND_HIGH < 1.0, (
-        "the very strongest hands measured 11.5% expensive, well below the "
-        "band's 44% — including them dilutes it")
+    assert not hasattr(api_config, "COSTLY_BAND_NOTE"), (
+        "the band's copy is withdrawn; a constant left behind is one a future "
+        "edit can wire back up without re-measuring it")
+    ids = set(payload["advisory_notes"])
+    assert "costly-band" not in ids, (
+        "the withdrawn band warning still reaches a player")
+    assert "facing-a-bet-cost" in ids, (
+        "the coarse facing-a-bet note is NOT withdrawn - it measured 2.9x at "
+        "2.79 sigma - and must still fire where the band one used to")
 
 
 def test_facing_a_bet_is_flagged_as_where_the_cost_is(client, monkeypatch):
@@ -9109,15 +9086,19 @@ def test_the_flop_under_fold_note_is_silent_everywhere_else(why, cards, kwargs, 
 
 def test_every_facing_a_bet_note_still_fires_together():
     """A6 (M272) was first written one indent too far out, which nested
-    `turn-shove` and `costly-band` inside the new flop note and silenced
-    them. The suite caught it; this pins the whole facing-a-bet family."""
+    `turn-shove` and the band note inside the new flop note and silenced
+    them. The suite caught it; this pins the whole facing-a-bet family.
+
+    The band note itself is gone (M299 withdrew it), so what this guards
+    now is that removing one member of the family did not take its
+    siblings with it - the same failure in the opposite direction."""
     from api import main as api_main
 
     raw, hero = _flop_facing_raw("Ah9h")
     ids = [i for i, _text in api_main._advisory_notes(raw, hero)]
     assert "facing-a-bet-cost" in ids
     assert "flop-under-fold" in ids
-    assert "costly-band" in ids, "the costly band covers this decision too"
+    assert "costly-band" not in ids, "withdrawn by M299"
 
     shove = {"fold": 0.0001, "call_or_check": 0.0003, "raise:9.90": 0.0032,
              "all_in:92.50": 0.9964}

@@ -233,13 +233,12 @@ REGISTRY = (
         current=False,
         superseded_by="M190 cap 140, M207 bet menu, M231 river; M192 then measured TOTAL cost "
                       "at the shipped config as no longer separable from zero"),
-    Disclosure(
-        "COSTLY_BAND_NOTE", "M189", ENGINE, ("COSTLY_BAND_LOW", "COSTLY_BAND_HIGH"),
-        literals={"44%": "M189: in-band facing decisions over 1 bb",
-                  "4%": "M189: weak hands over 1 bb", "12%": "M189: strong hands over 1 bb, "
-                  "and the band's share of postflop decisions",
-                  "74%": "M189: the band's share of all cost"},
-        current=False, superseded_by="M190 cap 140, M207 bet menu, M231 river (as M188)"),
+    # COSTLY_BAND_NOTE was registered here until M299 (audit R3)
+    # WITHDREW it. Re-priced at the shipped configuration the 0.55-0.90
+    # band is 1.48x at 0.90 sigma with both split halves under the bar,
+    # and on its own published metric it does not separate at all. A
+    # withdrawn disclosure leaves this registry rather than sitting in it
+    # as `shown=False`, which is for copy that still exists.
     Disclosure(
         "RIVER_MEASURED_NOTE", "M177", ENGINE,
         literals={"56": "M177: river spots", "14": "M177: strong-band spots over 0.10",

@@ -2290,13 +2290,15 @@ def _advisory_notes(raw: dict, hero: dict | None = None) -> list:
         # M260: the turn's shove facing a bet, priced from outside.
         if _turn_shove_applies(raw, street, hero):
             notes.append(("turn-shove", cfg.TURN_SHOVE_NOTE))
-        # M189: graded, not replaced. The coarse note covers all
-        # facing-a-bet decisions because even out-of-band ones average
-        # ~0.3 bb against an opening decision's 0.03. This adds the
-        # sharper half: 12% of postflop decisions carrying 74% of cost.
-        if (percentile is not None
-                and cfg.COSTLY_BAND_LOW <= percentile < cfg.COSTLY_BAND_HIGH):
-            notes.append(("costly-band", cfg.COSTLY_BAND_NOTE))
+        # M189 added a sharper half here - facing a bet AND holding a
+        # hand in the 0.55-0.90 band, 12% of postflop decisions carrying
+        # 74% of cost. **M299 (audit R3) withdrew it**: re-priced at the
+        # shipped configuration over 180 real facing-a-bet decisions the
+        # band is 1.48x at 0.90 sigma, both split halves miss the bar,
+        # and on the copy's own metric it separates not at all (3.4% of
+        # in-band decisions over a big blind against 3.3% out of it).
+        # `COSTLY_BAND_LOW`/`_HIGH` are kept so a future measurement can
+        # earn the claim back; see `bench/studies/facing_cost.py`.
         # A6 (M272): the flop's own facing-a-bet gap, gated on the bet
         # size and the hand rather than on how mixed the row is - the
         # river's predictor carries nothing here (1.15 / 1.11 sigma).

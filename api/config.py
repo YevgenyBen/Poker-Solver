@@ -2726,18 +2726,31 @@ FACING_A_BET_COST_NOTE = (
 # The coarser note still fires outside the band, because out-of-band
 # facing decisions average 0.28-0.31 bb against an opening decision's
 # 0.032 — cheaper, not cheap.
+#
+# **WITHDRAWN AT THE SHIPPED CONFIGURATION (M299, the 2026-09-20 audit's
+# R3).** Everything above was measured before this engine had a bet menu:
+# until M203-M213 the smallest bet it could model was 2.5x the pot, so a
+# player facing a half-pot bet was answered at an overbet node, and
+# M209/M213 priced that capability gap at up to 1.85 bb on a single
+# facing-a-bet decision. Re-priced over 180 real facing-a-bet decisions
+# at today's settings, against a fuller solve of the same request:
+#
+#   in band (0.55-0.90)   n=59   mean |loss| 0.2370 bb   3.4% over 1 bb
+#   out of band           n=121  mean |loss| 0.1607 bb   3.3% over 1 bb
+#
+# **1.48x at 0.90 sigma**, against the 6.1x this note was built on — and
+# the split halves give 0.89 and 0.48 sigma, so it fails the replication
+# bar that M166/M167 exist to enforce. On the metric the copy actually
+# quoted the band has no signal at all: 3.4% of in-band decisions cost
+# over a big blind against 3.3% out of it, where the copy said 44%
+# against 4%. The strongest hands (n=17) cost over a big blind 0% of the
+# time, so even the non-monotone shape is gone.
+#
+# The BOUNDS are kept, and so is a test that the note no longer fires,
+# for M180's reason: the machinery is worth keeping runnable in case a
+# future measurement earns the claim back. What is not kept is the claim.
 COSTLY_BAND_LOW = 0.55
 COSTLY_BAND_HIGH = 0.90
-
-COSTLY_BAND_NOTE = (
-    "AND YOUR HAND IS IN THE RANGE THIS ADVICE HANDLES WORST. Hands roughly between "
-    "the 55th and 90th percentile — good enough to continue, not good enough to be "
-    "obvious — are where the measured cost concentrates: facing a bet holding one, "
-    "44% of decisions were off by more than a big blind, against 4% for weak hands "
-    "and 12% for very strong ones. This combination is 12% of postflop decisions and "
-    "carries 74% of everything the advice costs. If you are going to override this "
-    "engine anywhere, here is where your own judgement is most likely to beat it. "
-)
 
 RELIABLE_HAND_STRENGTH_PERCENTILE = 0.75
 

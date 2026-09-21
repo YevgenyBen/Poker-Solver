@@ -344,6 +344,11 @@ def summarise(rows: list) -> dict:
         "ratio": ratio(kept),
         "cost_share": cost_share(kept),
         "band": band(kept),
+        "slack": {
+            "all": net_of_slack(kept),
+            **{kind: net_of_slack([r for r in kept if r["kind"] == kind])
+               for kind in KINDS},
+        },
     }
 
 

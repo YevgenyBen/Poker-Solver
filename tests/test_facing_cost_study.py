@@ -163,6 +163,38 @@ def test_the_band_boundaries_are_the_shipped_ones():
     assert (study.BAND_LOW, study.BAND_HIGH) == (cfg.COSTLY_BAND_LOW, cfg.COSTLY_BAND_HIGH)
 
 
+# -- the slack control ---------------------------------------------------
+
+def test_a_loss_smaller_than_the_references_own_slack_is_not_visible():
+    """The control run found the reference's own row beaten by a pure
+    fold, so the yardstick has per-hand slack. A loss underneath it says
+    nothing about the shipped answer."""
+    out = study.net_of_slack([_row(loss=0.02, reference_slack_bb=0.10)])
+    assert out["mean_net"] == pytest.approx(-0.08) and out["visible"] == 0.0
+
+
+def test_a_loss_clear_of_the_slack_is_visible():
+    out = study.net_of_slack([_row(loss=1.0, reference_slack_bb=0.05)])
+    assert out["mean_net"] == pytest.approx(0.95) and out["visible"] == 1.0
+
+
+def test_the_slack_reading_ignores_rows_that_have_none():
+    """The slack is a second pass over the same rows, so a sample can be
+    read before it has run - and must then report zero rows rather than
+    an invented floor."""
+    assert study.net_of_slack([_row(loss=1.0)]) == {"n": 0}
+
+
+def test_the_slack_does_not_change_either_verdict():
+    """It was added after the verdicts were read; rules 3 and 6 stay on
+    the raw metric they were pre-registered against."""
+    rows = _band_rows(5.0, 0.1)
+    before = study.verdict(study.summarise(rows))
+    after = study.verdict(study.summarise(
+        [{**r, "reference_slack_bb": 99.0} for r in rows]))
+    assert before == after
+
+
 # -- rule 7: scope -------------------------------------------------------
 
 def test_the_exposure_table_covers_every_heads_up_postflop_cell():
