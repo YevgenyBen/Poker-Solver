@@ -17965,3 +17965,75 @@ disclosure registry.
 below 17.2 GB.
 
 **R3's stale count goes 6 -> 5.**
+
+## M304 - street isolation, re-measured: every figure understated (audit R3)
+
+`STREET_ISOLATION_NOTE` is the product's highest-exposure stale
+disclosure - **11% of real decisions** - and the most quantitative thing
+it tells a player. M197-M202 measured both arms on SINGLE-BET-SIZE
+trees; M203-M207 gave the flop a 0.33/0.75/2.5 menu and M234 took its
+range cap to 100.
+
+**16 real heads-up flop opening decisions at SPR 6.2-19.6, three arms
+each:** `shipped` (solve_flop at 250), `shipped_converged` (solve_flop at
+400) and `chained` (solve_flop_turn at 400). The middle arm exists
+because M197 caught M195/M196 confounding DEPTH with PRECISION.
+
+| | M197-M202 | M304 |
+|---|---|---|
+| typical difference | 0.0382 | **0.5959** |
+| within 5 points | "more than half" | **3 of 16** |
+| categorical disagreements | 3 of 16 | **10 of 16** |
+| signed gap | +0.1848, CI 0.007-0.362 | **+0.5495, CI 0.363-0.736** |
+| separability | 2.08 sigma | **5.77 sigma** |
+| chained bets more on | 9 of 16 | **14 of 16** |
+| cost | 0.1097 bb, worst 0.41, none over 1 bb | **0.7424 bb, worst 3.0404, 5 of 16 over 1 bb** |
+
+**Every figure understated, most of them several-fold**, and M232 says
+understating is the one failure mode a warning may not have. The note
+told players the typical difference was about 4 points when it is about
+60, and that not one spot cost a full big blind when 5 of 16 do - one at
+**3.04 bb**.
+
+**M197'S CONFOUND IS CONTROLLED, AND IT IS NOT THE STORY.** Precision
+moves aggression **+0.0053 (0.19 sigma)** while depth moves it **+0.5442
+(5.54 sigma)**: precision is **1.0%** of the gap. M195/M196 ran the
+chained arm at 20 iterations against a flop arm at 250 and could not
+separate the two; here the flop arm runs at both budgets and the
+attribution is measured.
+
+**It is no longer a tail phenomenon.** M200 measured a bare 9-of-16
+direction majority and wrote "it is the tail that makes the mean". The
+MEDIAN spot now disagrees by 0.60, and 10 of 16 disagree categorically -
+the fuller solve betting ~1.0 where the shipped one bets ~0.0.
+
+**What did NOT change**: the chained solve is still not established as
+correct (M173's caveat, and F38's over-aggression signature), and the
+copy still says so. M304 adds a third limit - that the fuller model is
+the more aggressive one, not the right one.
+
+**COST, AND WHY THE SCOPE HAS A CEILING.** 16.7 machine-hours, 21 to 235
+minutes a spot, peak 5.16 GB. Two things made it possible at all:
+
+- **`parallel_equity_batch`** is the `equity_batch_fn` written for a map
+  over BOARDS, which is exactly the 47 turn branches. Without it a
+  single 20-iteration solve did not finish in ten minutes; with it, 561s.
+- **SPR is bounded above at 20.** M257 measured reference cost scaling
+  with SPR rather than width, and the first probe drew a LIMPED pot at
+  **SPR 74.5** whose 20-iteration solve never finished. The note fires
+  from SPR 5; above 20 the gap stays unmeasured and the copy says so.
+
+**The cost model was measured, and it was still wrong about variance.**
+The probe put the fixed cost at ~490s of turn tables and the marginal
+iteration at 3.6s, predicting ~32 min a spot - and the first spot took
+exactly that. Later spots took 89, 96 and **235** minutes, and the
+spread does not track SPR (19.5 took 235 min, 19.6 took 96). Range width
+per preflop line is the likely driver. **A per-spot cost model built on
+one spot predicts the mean and not the tail** - the same shape this
+project keeps finding in its accuracy work.
+
+**A Windows trap worth recording**: the cost probe ran once per pool
+worker, because `spawn` re-imports `__main__` and the probe had no main
+guard. `api/parallel.py` documents this from M132.
+
+**R3's stale count goes 5 -> 4.**

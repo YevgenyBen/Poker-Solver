@@ -131,3 +131,68 @@ def test_the_chained_budget_matches_the_figures_it_replaces():
     different budget would not be a re-measurement of the same claim."""
     assert study.CHAINED_ITERATIONS == 400
     assert study.CONTROL_ITERATIONS < study.CHAINED_ITERATIONS
+
+
+# -- the committed rows --------------------------------------------------
+
+import json
+import pathlib
+
+FIXTURE = pathlib.Path(__file__).parent / "data" / "street_isolation_m304.jsonl"
+
+
+def _recorded():
+    return [json.loads(line) for line in FIXTURE.read_text().splitlines() if line.strip()]
+
+
+def test_the_shipped_constants_reproduce_from_the_recorded_rows():
+    from api import config as cfg
+
+    summary = study.summarise(_recorded())
+    head, price_out = summary["headline"], summary["price"]
+    assert head["n"] == cfg.STREET_ISOLATION_ROWS
+    assert round(head["signed"]["mean"], 4) == cfg.STREET_ISOLATION_GAP_MEAN
+    assert round(head["signed"]["ci_low"], 4) == cfg.STREET_ISOLATION_GAP_CI_LOW
+    assert round(head["signed"]["ci_high"], 4) == cfg.STREET_ISOLATION_GAP_CI_HIGH
+    assert round(head["median_abs"], 4) == cfg.STREET_ISOLATION_MEDIAN_GAP
+    assert (head["categorical"], head["n"]) == cfg.STREET_ISOLATION_CATEGORICAL
+    assert (head["chained_more_aggressive_on"], head["n"]) == cfg.STREET_ISOLATION_MORE_AGGRESSIVE
+    assert round(price_out["mean"], 4) == cfg.STREET_ISOLATION_COST_BB
+    assert round(price_out["worst"], 4) == cfg.STREET_ISOLATION_COST_WORST
+    assert (price_out["over_one_bb"], head["n"]) == cfg.STREET_ISOLATION_COST_OVER_ONE
+
+
+def test_the_note_was_understating_itself_several_fold():
+    """The finding that forced the fourth rewrite, and the direction
+    M232 says a warning may not err in."""
+    summary = study.summarise(_recorded())
+    assert summary["headline"]["median_abs"] > 10 * 0.0382, "M197-M202's median"
+    assert summary["headline"]["categorical"] > 3, "M200 published 3 of 16"
+    assert summary["price"]["worst"] > 1.0, "the copy said no spot cost a full blind"
+    assert summary["price"]["over_one_bb"] > 0
+
+
+def test_the_precision_control_clears_depth_of_the_confound():
+    """M197's catch, controlled rather than argued: precision moves
+    aggression 0.19 sigma while depth moves it 5.54."""
+    control = study.precision_control(_recorded())
+    assert control["precision_over_depth"] < 0.05
+    assert control["depth_is_the_story"] is True
+    assert abs(control["precision"]["sigma"]) < 2.0
+    assert control["depth"]["sigma"] > 5.0
+
+
+def test_the_direction_is_no_longer_a_bare_majority():
+    """M200 measured 9 of 16 and said the tail made the mean. The median
+    spot now disagrees by 0.60."""
+    summary = study.summarise(_recorded())
+    assert summary["headline"]["chained_more_aggressive_on"] >= 14
+    assert summary["headline"]["signed"]["sigma"] > 5.0
+
+
+def test_every_row_sits_inside_the_declared_spr_band():
+    from api import config as cfg
+
+    rows = _recorded()
+    assert all(cfg.STREET_ISOLATION_SPR_MIN <= r["spr"] <= study.SPR_MAX for r in rows)
+    assert study.SPR_MAX == cfg.STREET_ISOLATION_SPR_MAX

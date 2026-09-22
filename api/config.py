@@ -3137,13 +3137,84 @@ STREET_ISOLATION_BIAS_AT_150_ITERS = 0.4156
 # F38's over-aggression signature. What is established is that the two
 # models DISAGREE and that chaining is the more aggressive one - not
 # which is right. M173's standing caveat applies.
-STREET_ISOLATION_GAP_MEAN = 0.1848
-STREET_ISOLATION_GAP_CI_LOW = 0.0074
-STREET_ISOLATION_GAP_CI_HIGH = 0.3623
-STREET_ISOLATION_MEDIAN_GAP = 0.0382
-STREET_ISOLATION_CATEGORICAL = (3, 16)
+# **RE-MEASURED AT THE SHIPPED CONFIGURATION (M304, the 2026-09-20
+# audit's R3), AND EVERY FIGURE ABOVE UNDERSTATES THE GAP - MOST OF THEM
+# SEVERAL-FOLD.**
+#
+# M197-M202 measured both arms on SINGLE-BET-SIZE trees. M203-M207 gave
+# the flop a 0.33/0.75/2.5 menu and M234 took its range cap to 100, so
+# the comparison behind these numbers is one neither arm now runs. This
+# is the product's highest-exposure stale disclosure, at 11% of real
+# decisions.
+#
+# 16 real heads-up flop OPENING decisions at SPR 6.2-19.6, each solved
+# three ways at the shipped menu and cap (`bench/studies/
+# street_isolation.py`, rule fixed before any spot was solved):
+#
+#   arm                 what it is
+#   shipped             solve_flop at 250 iterations - what a player gets
+#   shipped_converged   solve_flop at 400 - the PRECISION control
+#   chained             solve_flop_turn at 400 - only the DEPTH differs
+#
+# | | M197-M202 | M304 |
+# |---|---|---|
+# | typical difference | 0.0382 | **0.5959** |
+# | within 5 points | "more than half" | **3 of 16** |
+# | categorical disagreements | 3 of 16 | **10 of 16** |
+# | signed gap | +0.1848, CI 0.0074-0.3623 | **+0.5495, CI 0.3627-0.7362** |
+# | separability | 2.08 sigma | **5.77 sigma** |
+# | cost | 0.1097 bb, worst 0.4123, none over 1 bb | **0.7424 bb, worst 3.0404, 5 of 16 over 1 bb** |
+#
+# **M197's CONFOUND IS CONTROLLED AND IT IS NOT THE STORY.** M195/M196
+# ran the chained arm at 20 iterations against a flop-only arm at 250,
+# confounding depth with precision; here the flop arm runs at BOTH
+# budgets. Precision moves aggression **+0.0053 (0.19 sigma)** while
+# depth moves it **+0.5442 (5.54 sigma)** - precision is **1.0%** of the
+# gap. The disagreement is depth, measured rather than assumed.
+#
+# **The chained solve bets more on 14 of 16**, where M200 measured a bare
+# 9 of 16 majority and said "it is the tail that makes the mean". It is
+# no longer the tail: the MEDIAN spot now disagrees by 0.60.
+#
+# **A warning may not understate its own defect** (M232), and this one
+# told players the typical difference was about 4 points when it is
+# about 60, and that no spot cost a full big blind when 5 of 16 do - one
+# at 3.04 bb.
+#
+# **SCOPE: SPR 6.2 to 19.6.** M257 measured reference cost scaling with
+# SPR rather than width, and the first cost probe drew a LIMPED pot at
+# SPR 74.5 whose 20-iteration chained solve had not finished in fifteen
+# minutes. The note fires from SPR 5; above 20 the gap stays unmeasured
+# and the copy says so. Within the band the gap does not obviously grow
+# with depth (SPR < 10: +0.5014 over 3 spots; SPR >= 10: +0.5606 over
+# 13), so the band is a limit on the claim, not a gradient in it.
+#
+# **The reference is still NOT established as correct** - M173's
+# standing caveat, and the chained tree's own over-aggression signature
+# (F38) has not gone away. What is established is that the two models
+# disagree, that chaining is the more aggressive one, and that the
+# disagreement is depth rather than precision.
+#
+# **Cost of this measurement: 16.7 machine-hours**, 21 to 235 minutes a
+# spot, peak 5.16 GB. `parallel_equity_batch` is what made it possible -
+# it builds the 47 turn branches' tables as a map over boards, and
+# without it a single 20-iteration solve did not finish in ten minutes.
+STREET_ISOLATION_ROWS = 16
+STREET_ISOLATION_GAP_MEAN = 0.5495
+STREET_ISOLATION_GAP_CI_LOW = 0.3627
+STREET_ISOLATION_GAP_CI_HIGH = 0.7362
+STREET_ISOLATION_MEDIAN_GAP = 0.5959
+STREET_ISOLATION_CATEGORICAL = (10, 16)
+STREET_ISOLATION_CLOSE = (3, 16)
+STREET_ISOLATION_CLOSE_LEVEL = 0.05
+STREET_ISOLATION_MORE_AGGRESSIVE = (14, 16)
+STREET_ISOLATION_WORST_CATEGORICAL = 0.9955
+STREET_ISOLATION_SPR_MAX = 20.0
+#: The precision control (M197's confound), as a share of the depth gap.
+STREET_ISOLATION_PRECISION_SHARE = 0.0098
+#: M200's 9-of-16 direction majority, kept because the copy no longer
+#: quotes it and the change is the finding: it is 14 of 16 now.
 STREET_ISOLATION_PRODUCTION_AGREE = (9, 16)
-STREET_ISOLATION_WORST_CATEGORICAL = 0.9661
 
 # M202. What the gap COSTS, now that M201 gave `ev.py` a chance-node case
 # and a chained tree can be priced. Same 16 spots, references rebuilt at
@@ -3174,10 +3245,16 @@ STREET_ISOLATION_WORST_CATEGORICAL = 0.9661
 # one node type at one depth, so their value spreads barely vary and
 # carry no information; M183's set spanned three streets and both node
 # types. **Neither predictor generalises off its own population.**
-STREET_ISOLATION_COST_BB = 0.1097
-STREET_ISOLATION_COST_CI_LOW = 0.0336
-STREET_ISOLATION_COST_CI_HIGH = 0.1857
-STREET_ISOLATION_COST_WORST = 0.4123
+# M304 re-priced these on the chained tree the same way, handing
+# `ev.py` the solve's own `chance_data` so the turn is played out
+# (M201/M202's method, unchanged). The level moved 6.8x and the tail
+# moved 7.4x.
+STREET_ISOLATION_COST_BB = 0.7424
+STREET_ISOLATION_COST_CI_LOW = 0.2905
+STREET_ISOLATION_COST_CI_HIGH = 1.1944
+STREET_ISOLATION_COST_WORST = 3.0404
+STREET_ISOLATION_COST_MEDIAN = 0.3094
+STREET_ISOLATION_COST_OVER_ONE = (5, 16)
 
 # M222. The TURN, checked from outside for the first time - and it is
 # the worst result this project has measured.
@@ -3690,25 +3767,19 @@ STREET_ISOLATION_NOTE = (
     " One more thing this number cannot see: the solve behind it models the betting on "
     "this street only, and averages the turn and river in as card runouts rather than "
     "playing them out. Measured against a solve that also plays out the turn - same "
-    "board, same range, same seed, so only that changes - the advice you are reading is "
-    "usually close to it, and occasionally the opposite of it. On more than half the "
-    "spots tested the two differed by under 5 percentage points, and the typical "
-    "difference was about 4. But 3 of 16 disagreed CATEGORICALLY - the fuller solve bet "
-    "97% to 100% of the time where this one bet under a quarter - and those few spots "
-    "carry most of the total difference. Averaged over everything, the advice here is "
-    "the LESS aggressive of the two by about 18 percentage points, though the "
-    "measurement is only sharp enough to place that somewhere between 1 and 36. "
-    "Priced in chips, though, that disagreement is a small leak rather than a "
-    "disaster: about a tenth of a big blind per decision, four tenths at its worst, "
-    "and not one of the 16 spots cost a full blind - even the ones where the two "
-    "models disagreed almost completely. That pricing covers decisions where you act "
-    "FIRST; the cost of facing a bet was not priced here, and that is where this "
-    "engine's mistakes are otherwise around twenty times more expensive. So a "
-    "marginal check or call "
-    "here is better read as this model's floor than as its verdict. Two limits worth "
-    "knowing: that is the gap to a fuller model of the same kind, not the distance to "
-    "correct play, and the direction reverses at short stacks, which is why this note "
-    "appears only when there is real money behind relative to the pot."
+    "board, same range, same seed, so only that changes - the two mostly DISAGREE, and "
+    "often completely. Over 16 spots the fuller solve bet more on 14 of them, by 55 "
+    "percentage points on average, and 10 of the 16 disagreed CATEGORICALLY: it bet "
+    "almost always where this advice almost never does. Only 3 of 16 came within 5 "
+    "points. Priced in chips that is about 0.74 of a big blind per decision, 3.04 at "
+    "its worst, and 5 of the 16 cost more than a full blind. That pricing covers "
+    "decisions where you act FIRST; the cost of facing a bet was not priced here. So a "
+    "check or a small bet here is better read as this model's floor than as its "
+    "verdict. Three limits worth knowing: that is the gap to a fuller model of the "
+    "same kind, not the distance to correct play; the fuller model is not established "
+    "as the correct one, only as the more aggressive; and it was measured between 5 "
+    "and 20 in stack-to-pot terms, which is why this note appears only when there is "
+    "real money behind relative to the pot."
 )
 
 # M292 (audit R7). Re-measured at the configuration that SHIPS - flop cap

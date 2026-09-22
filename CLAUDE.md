@@ -1040,7 +1040,8 @@ requests now reject unknown fields by name rather than ignoring them.
                            `flop_measured.py` (M300),
                            `river_measured.py` (M301),
                            `sizing_coverage.py` (M302),
-                           `turn_measured.py` (M303)
+                           `turn_measured.py` (M303),
+                           `street_isolation.py` (M304)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools
@@ -2731,6 +2732,35 @@ requests now reject unknown fields by name rather than ignoring them.
   and M202's menu control, and record the reference's slack beside every
   figure. Re-pricing a stored request reproduced its loss on **255 of
   255** rows.
+
+- **STREET ISOLATION UNDERSTATED ITSELF SEVERAL-FOLD (M304, the
+  2026-09-20 audit's R3).** The product's highest-exposure stale
+  disclosure, 11% of decisions. M197-M202 measured both arms on
+  SINGLE-BET-SIZE trees; M203-M207 and M234 replaced that flop. 16 real
+  spots at SPR 6.2-19.6, three arms each:
+  | | M197-M202 | M304 |
+  |---|---|---|
+  | typical difference | 0.0382 | **0.5959** |
+  | categorical disagreements | 3 of 16 | **10 of 16** |
+  | signed gap | +0.1848 (2.08 sigma) | **+0.5495 (5.77 sigma)** |
+  | chained bets more on | 9 of 16 | **14 of 16** |
+  | cost | 0.1097 bb, none over 1 bb | **0.7424 bb, worst 3.04, 5 of 16 over 1 bb** |
+  **M197's CONFOUND IS CONTROLLED**: the flop arm runs at BOTH budgets,
+  and precision moves aggression +0.0053 (0.19 sigma) against depth's
+  +0.5442 (5.54) - **precision is 1.0% of the gap**.
+  **It is no longer a tail phenomenon**: M200 wrote "it is the tail that
+  makes the mean" at 9 of 16; the MEDIAN spot now disagrees by 0.60.
+  **Rule: `parallel_equity_batch` is the `equity_batch_fn` for a chained
+  solve** - a map over the 47 turn BOARDS. Without it one 20-iteration
+  solve did not finish in ten minutes; with it, 561s.
+  **Rule: bound SPR ABOVE when scoping a chained campaign.** M257's cost
+  law bites hard - the first probe drew a limped pot at **SPR 74.5**
+  that never finished. Measured 5-20; above 20 is unmeasured and the
+  copy says so.
+  **A cost model built on one spot predicts the mean, not the tail**:
+  the probe predicted 32 min a spot and the first spot took exactly
+  that, while later ones took 89, 96 and 235 - and the spread does not
+  track SPR.
 
 - **THE TURN IS MEASURED NOW, AND IT INVERTS ITS OWN NOTE (M303, the
   2026-09-20 audit's R3).** It was the last street carrying "accuracy
