@@ -6870,88 +6870,75 @@ def test_the_standalone_turn_still_refuses_an_impossible_board(client):
 
 
 def test_the_street_isolation_note_quotes_its_own_measurement():
-    """M196/M197/M199/M200. The copy states magnitudes, a shape and a
-    direction; all must match the constants recording the measurement.
+    """M304 (audit R3), the fourth rewrite of this note and the first
+    that made it BIGGER.
 
-    This has been rewritten three times as the measurement improved, and
-    each rewrite corrected an overstatement: M196 quoted a range whose
-    upper bound the next run doubled, M197 replaced it with a floor, and
-    M200 withdrew the floor because the 95% interval reaches 0.007 - well
-    short of it. So the assertions pin the INTERVAL and the SHAPE, not a
-    single number, because a point estimate is what keeps going wrong.
+    M196 quoted a range the next run doubled, M197 replaced it with a
+    floor, M200 withdrew the floor because the interval reached 0.007.
+    All three were corrections downward, and all three measured both
+    arms on SINGLE-BET-SIZE trees - M203-M207 gave the flop a menu and
+    M234 took its cap to 100. Re-measured there over 16 spots, with the
+    precision arm running so depth is not confounded with convergence
+    (M197's catch), every figure moved up several-fold: the typical
+    difference is 0.60 rather than 0.038, 10 of 16 disagree
+    categorically rather than 3, and 5 spots cost more than a big blind
+    where the copy said none did.
     """
     note = api_config.STREET_ISOLATION_NOTE
     pct = lambda v: round(v * 100)
 
-    # The mean and its interval, in the units the copy uses.
-    assert f"about {pct(api_config.STREET_ISOLATION_GAP_MEAN)} percentage points" in note
-    assert (f"between {pct(api_config.STREET_ISOLATION_GAP_CI_LOW)} and "
-            f"{pct(api_config.STREET_ISOLATION_GAP_CI_HIGH)}") in note, (
-        "the note must give the interval, not just the point estimate - "
-        "three rewrites have now been caused by quoting a bare number")
+    # The mean, in the units the copy uses.
+    assert f"{pct(api_config.STREET_ISOLATION_GAP_MEAN)} " in note
+    assert str(api_config.STREET_ISOLATION_ROWS) in note
 
-    # The shape: usually close, occasionally opposite. This is the part a
-    # player acts on, and reporting only the mean would misdescribe a
-    # distribution whose median is 0.038 and whose top 3 spots carry 71%.
-    assert f"about {pct(api_config.STREET_ISOLATION_MEDIAN_GAP)}" in note, (
-        "the note must report the TYPICAL difference; the mean alone "
-        "implies every decision is off by 18 points and the median is 4")
+    # The shape a player acts on: mostly NOT close, and often total.
     n, total = api_config.STREET_ISOLATION_CATEGORICAL
-    assert f"{n} of {total} disagreed" in note
+    assert f"{n} of the {total} disagreed" in note
     assert "CATEGORICALLY" in note
+    close, close_total = api_config.STREET_ISOLATION_CLOSE
+    assert f"Only {close} of {close_total} came within" in note
+    assert f"{pct(api_config.STREET_ISOLATION_CLOSE_LEVEL)} points" in note
+    more, more_total = api_config.STREET_ISOLATION_MORE_AGGRESSIVE
+    assert f"bet more on {more} of them" in note
 
-    assert "LESS aggressive" in note, "the measured direction must survive edits"
+    # The price, which is the calibration this project's thesis demands.
+    assert f"{api_config.STREET_ISOLATION_COST_BB:.2f}" in note
+    assert f"{api_config.STREET_ISOLATION_COST_WORST:.2f}" in note
+    over, over_total = api_config.STREET_ISOLATION_COST_OVER_ONE
+    assert f"{over} of the {over_total} cost more than a full blind" in note
 
-    # M202: the note must say what the disagreement COSTS, not only how
-    # big it is. This project's stated metric is money, and a frequency
-    # gap of 0.97 that costs 0.26 bb reads very differently from one that
-    # costs a stack - the copy has to carry the calibration.
-    assert "a tenth of a big blind" in note, (
-        "the note quotes a frequency gap without its price; "
-        f"STREET_ISOLATION_COST_BB is {api_config.STREET_ISOLATION_COST_BB}")
-    assert "not one of the 16 spots cost a full blind" in note, (
-        "the reassuring half is load-bearing: 0 of 16 exceeded 1bb, and "
-        "omitting it leaves 'CATEGORICALLY' reading as a disaster")
-    # Scope. M188 measured facing-a-bet nodes ~20x more expensive, and
-    # the pricing covers opening decisions ONLY - a reader must not take
-    # a tenth of a blind as the number for the node type carrying the money.
-    # Phrased to avoid the substring "has not been measured": M180's
-    # guard forbids it in the flop note because the flop is the
-    # most-measured street, and a scoped use of it here still reads as
-    # the claim that guard exists to prevent. The full suite caught this.
-    assert "the cost of facing a bet was not priced here" in note, (
-        "the cost figure is from opening decisions only and the note "
-        "must not let it be read as covering facing-a-bet nodes")
-    assert "has not been measured" not in note, (
-        "M180: this substring is false of the flop and its own guard "
-        "rejects it; keep the facing-a-bet scope worded around it")
-    assert api_config.STREET_ISOLATION_COST_WORST < 1.0, (
-        "the copy says no spot cost a full blind; if the worst case now "
-        "exceeds 1bb that sentence is false")
-    assert (api_config.STREET_ISOLATION_COST_CI_LOW > 0
-            < api_config.STREET_ISOLATION_COST_CI_HIGH), (
-        "the cost interval no longer excludes zero, so calling it a real "
-        "leak is no longer supported")
-
-    # Withdrawn claims must not come back.
-    for stale in ("AT LEAST", "as a floor rather than an estimate",
-                  "23 of 24", "systematically", "5 of 8 spots"):
+    # **The withdrawn reassurances must not survive**: they were the
+    # understating half, and M232 says understating is the one failure
+    # mode a warning may not have.
+    for stale in ("a tenth of a big blind", "not one of the 16 spots cost a full blind",
+                  "usually close to it", "AT LEAST", "23 of 24", "5 of 8 spots"):
         assert stale not in note, (
-            f"the note quotes a withdrawn claim ({stale!r}); "
-            f"M200 settled this at n=16 and none of these survived")
+            f"the note quotes a withdrawn reassurance ({stale!r}); M304 measured "
+            "0.74 bb a decision, 3.04 at worst, and 5 of 16 over a blind")
 
-    # The two standing limits.
-    assert "not the distance to correct play" in note, (
-        "the chained solve is more complete, not established as right - "
-        "and 2 of its 3 categorical wins bet two pots with air")
-    assert "reverses at short stacks" in note
+    # Scope. M188 measured facing-a-bet nodes ~20x more expensive, and
+    # the pricing covers opening decisions ONLY. Phrased to avoid the
+    # substring "has not been measured", which M180's guard forbids.
+    assert "the cost of facing a bet was not priced here" in note
+    assert "has not been measured" not in note
 
-    # The interval must actually straddle the withdrawn floor, or the
-    # withdrawal itself no longer follows from the data.
-    assert (api_config.STREET_ISOLATION_GAP_CI_LOW
-            < api_config.STREET_ISOLATION_BIAS_LOW), (
-        "the 95% interval no longer reaches below the old floor; if that "
-        "changed, the floor framing may be supportable again")
+    # The three standing limits, including the one M304 added: the
+    # chained solve is the more aggressive model, not the correct one.
+    assert "not the distance to correct play" in note
+    assert "not established" in note, (
+        "the chained tree's own over-aggression signature (F38) has not "
+        "gone away, and 2 of M200's 3 categorical wins bet two pots with air")
+    assert f"between {round(api_config.STREET_ISOLATION_SPR_MIN)} and "            f"{round(api_config.STREET_ISOLATION_SPR_MAX)}" in note, (
+        "the measurement stops at SPR 20 and the copy must say so - the "
+        "first cost probe drew a limped pot at SPR 74.5 that never finished")
+
+    # The cost interval must exclude zero, or calling it a real leak is
+    # no longer supported.
+    assert api_config.STREET_ISOLATION_COST_CI_LOW > 0
+
+    # And the gap must be separable, which is what the fourth rewrite
+    # rests on where the third rested on a bare majority.
+    assert api_config.STREET_ISOLATION_GAP_CI_LOW > 0
 
 
 def test_street_isolation_is_gated_on_BOTH_street_and_depth():
