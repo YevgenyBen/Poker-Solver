@@ -9165,6 +9165,32 @@ def test_the_reproducibility_warning_quotes_its_own_measurement(client):
         "A4c measured more iterations cutting the river's action changes "
         "0.53 -> 0.31; the note may not say computation cannot help")
 
+    # M306: the flop's split cell holds 15 spots, so a bare percentage
+    # claims more than the sample supports - M254's own rule, which the
+    # quiet branch has always obeyed and the firing branch did not.
+    for value in (api_config.MULTIWAY_UNSTABLE_FLOP_SPOTS,
+                  api_config.MULTIWAY_UNSTABLE_TURN_SPOTS,
+                  api_config.MULTIWAY_UNSTABLE_RIVER_SPOTS):
+        assert str(value) in note
+    assert "50%" not in note, "M267's flop figure, measured at 0.2889 now"
+
+
+def test_the_two_branches_describe_populations_of_the_same_size(client):
+    """M306. The gate splits one sample, so the branches' own counts have
+    to add up to the spots measured - a guard against one branch being
+    re-measured and the other left at an older run's figures, which is
+    how M285 found the sizing caveat quoting M251 two corrections late.
+    """
+    measured = (api_config.MULTIWAY_STABLE_SPOTS
+                + api_config.MULTIWAY_UNSTABLE_FLOP_SPOTS
+                + api_config.MULTIWAY_UNSTABLE_TURN_SPOTS
+                + api_config.MULTIWAY_UNSTABLE_RIVER_SPOTS)
+    assert measured == api_config.MULTIWAY_INSTABILITY_SPOTS
+    assert (api_config.MULTIWAY_STABLE_FLOP_SPOTS
+            + api_config.MULTIWAY_STABLE_TURN_SPOTS
+            + api_config.MULTIWAY_STABLE_RIVER_SPOTS
+            == api_config.MULTIWAY_STABLE_SPOTS)
+
 
 def _turn_facing_raw(row, positions=("BB", "BTN"), entering=92.5, bet=4.95, pot=15.0):
     return {"street": "turn", "positions": list(positions),

@@ -1724,11 +1724,14 @@ MULTIWAY_BRANCH_TRAIN_ITERATIONS = 100
 #
 # So this is disclosed, not fixed. The figures below are the SHIPPED
 # ones: quoting the uncapped floor instead would repeat M232 exactly.
-MULTIWAY_SEED_PAIRS = 306
-MULTIWAY_SEED_MEDIAN_TVD = 0.3605
-MULTIWAY_SEED_ACTION_FLIP_FLOP = 0.45
-MULTIWAY_SEED_ACTION_FLIP_TURN = 0.41
-MULTIWAY_SEED_ACTION_FLIP_RIVER = 0.75
+#
+# **M245's own constants are gone (M306).** `MULTIWAY_SEED_PAIRS` (306),
+# `MULTIWAY_SEED_MEDIAN_TVD` (0.3605) and `MULTIWAY_SEED_ACTION_FLIP_*`
+# (0.45 / 0.41 / 0.75) lived here, read by nothing, from M254 onward -
+# the graded pair below replaced them in the copy and nobody removed the
+# originals. A constant no copy quotes is M216's dead guard in another
+# shape: it looks current, it is not re-derived by any test, and the
+# next reader may quote it. The numbers stay above as history.
 # M254: the multiway irreproducibility warning is GRADED, because the
 # blanket version quoted a figure that is false for half the decisions it
 # fires on.
@@ -1786,21 +1789,62 @@ MULTIWAY_STABLE_MAX_TOP_ACTION = 0.90
 # longer excluded from the quiet branch. The rule M254 fixed in advance
 # passes without the exclusion: 6.23 sigma, split halves 4.07 / 5.01,
 # quiet share 58%.
-MULTIWAY_INSTABILITY_SPOTS = 90
-MULTIWAY_UNSTABLE_ACTION_CHANGES = 0.4386
-MULTIWAY_UNSTABLE_FLIP_FLOP = 0.50
-MULTIWAY_UNSTABLE_FLIP_TURN = 0.3333
-MULTIWAY_UNSTABLE_FLIP_RIVER = 0.4902
-MULTIWAY_STABLE_ACTION_CHANGES = 0.0449
-MULTIWAY_STABLE_HELD_SPOTS = 46
-MULTIWAY_STABLE_SPOTS = 52
-MULTIWAY_STABLE_FLOP_HELD = 22
-MULTIWAY_STABLE_FLOP_SPOTS = 22
-MULTIWAY_STABLE_TURN_HELD = 14
-MULTIWAY_STABLE_TURN_SPOTS = 17
-MULTIWAY_STABLE_RIVER_HELD = 10
-MULTIWAY_STABLE_RIVER_SPOTS = 13
-MULTIWAY_STABLE_TVD = 0.1013
+#
+# **M306 (the 2026-09-20 audit's R3) RE-MEASURED BOTH BRANCHES AT THE
+# SHIPPED CONFIGURATION, AND THE PER-STREET FIGURES WERE WRONG IN BOTH
+# DIRECTIONS.** M267's figures predate M269's
+# `MULTIWAY_POSTFLOP_ACTION_GROUPING`, which changed how the sampled
+# solver matches regret across action kinds - and M264 had located this
+# defect in exactly that place. 150 spots, preflop lines walked off the
+# real tree (M252) so three-bet pots appear, both node types drawn
+# (M177), each asked through `/advise` at the shipped seed and three
+# fresh ones, `bench/studies/multiway_instability.py`:
+#
+#   street   split rows: action changes      decisive rows: held
+#            M267        M306                M267      M306
+#   flop     0.50        0.2889 (n=15)       22 of 22  31 of 32
+#   turn     0.3333      0.4348 (n=23)       14 of 17  23 of 25
+#   river    0.4902      0.5556 (n=39)       10 of 13  12 of 16
+#
+# **The flop is much better than published and the turn and river are
+# worse.** A player on the flop was being told the action changes half
+# the time where it changes under a third; a player on the turn was
+# being told a third where it is nearly a half.
+#
+# **This is NOT attributable to M269's grouping**, and saying so matters:
+# M254's spot list was a scratch file and is gone, so this is a fresh
+# population (150 against 90, walked rather than listed, with facing-a-
+# bet nodes that M254 may never have drawn). What is established is what
+# the shipped configuration does now, not what changed it - M252's rule,
+# that a benchmark measures the population it generates.
+#
+# **The gate itself survives, and more strongly**: 0.4219 at 8.80 sigma
+# with halves 6.94 / 5.79, against M267's 6.23 and 4.07 / 5.01. It also
+# separates at BOTH node types, which no earlier run checked - opening
+# 0.4525 (6.87 sigma), facing a bet 0.3902 (5.62).
+MULTIWAY_INSTABILITY_SPOTS = 150
+MULTIWAY_INSTABILITY_SIGMA = 8.80
+MULTIWAY_UNSTABLE_ACTION_CHANGES = 0.4675
+MULTIWAY_UNSTABLE_TVD = 0.3674
+MULTIWAY_UNSTABLE_FLIP_FLOP = 0.2889
+MULTIWAY_UNSTABLE_FLIP_TURN = 0.4348
+MULTIWAY_UNSTABLE_FLIP_RIVER = 0.5556
+#: The split cell's own n per street. The flop's 15 is small, so the
+#: copy carries the count beside the rate - M254's rule, that at a small
+#: cell a bare percentage claims more than the spots support.
+MULTIWAY_UNSTABLE_FLOP_SPOTS = 15
+MULTIWAY_UNSTABLE_TURN_SPOTS = 23
+MULTIWAY_UNSTABLE_RIVER_SPOTS = 39
+MULTIWAY_STABLE_ACTION_CHANGES = 0.0457
+MULTIWAY_STABLE_HELD_SPOTS = 66
+MULTIWAY_STABLE_SPOTS = 73
+MULTIWAY_STABLE_FLOP_HELD = 31
+MULTIWAY_STABLE_FLOP_SPOTS = 32
+MULTIWAY_STABLE_TURN_HELD = 23
+MULTIWAY_STABLE_TURN_SPOTS = 25
+MULTIWAY_STABLE_RIVER_HELD = 12
+MULTIWAY_STABLE_RIVER_SPOTS = 16
+MULTIWAY_STABLE_TVD = 0.0817
 
 MULTIWAY_STABLE_REASON = (
     "This is a multiway pot - three or more players saw this street - and multiway advice has "
@@ -1808,17 +1852,24 @@ MULTIWAY_STABLE_REASON = (
     "particular decision, though, the instability that affects multiway answers generally is "
     "measured to be small: this engine is settled on one action here rather than split between "
     "several, and on decisions like it the recommended ACTION survives being solved again with "
-    "a different random draw. It held on 46 of 52 such spots - on the flop it did not change "
-    "once in 22, on the turn it held on 14 of 17 and on the river on 10 of 13. The exact "
-    "frequencies still move by roughly 0.10, so lean on the recommendation itself rather than on the precise percentages "
-    "beside it."
+    f"a different random draw. It held on {MULTIWAY_STABLE_HELD_SPOTS} of "
+    f"{MULTIWAY_STABLE_SPOTS} such spots - on the flop {MULTIWAY_STABLE_FLOP_HELD} of "
+    f"{MULTIWAY_STABLE_FLOP_SPOTS}, on the turn {MULTIWAY_STABLE_TURN_HELD} of "
+    f"{MULTIWAY_STABLE_TURN_SPOTS} and on the river {MULTIWAY_STABLE_RIVER_HELD} of "
+    f"{MULTIWAY_STABLE_RIVER_SPOTS}. The exact frequencies still move by roughly "
+    f"{MULTIWAY_STABLE_TVD:.2f}, so lean on the recommendation itself rather than on the "
+    "precise percentages beside it."
 )
 
 MULTIWAY_REPRODUCIBILITY_REASON = (
     "This is a multiway pot - three or more players saw this street - and multiway advice "
     "here is NOT REPRODUCIBLE. Solving the same spot again, changing nothing but the "
-    "solver's internal random draw, gives a different recommended ACTION 50% of the time on "
-    "the flop, 33% on the turn and 49% on the river - measured on decisions like this one, "
+    f"solver's internal random draw, gives a different recommended ACTION "
+    f"{round(MULTIWAY_UNSTABLE_FLIP_FLOP * 100)}% of the time on the flop (over "
+    f"{MULTIWAY_UNSTABLE_FLOP_SPOTS} such decisions), {round(MULTIWAY_UNSTABLE_FLIP_TURN * 100)}% "
+    f"on the turn (over {MULTIWAY_UNSTABLE_TURN_SPOTS}) and "
+    f"{round(MULTIWAY_UNSTABLE_FLIP_RIVER * 100)}% on the river (over "
+    f"{MULTIWAY_UNSTABLE_RIVER_SPOTS}) - measured on decisions like this one, "
     "where this engine is split between actions. "
     "The answer you are reading is one draw from a range of answers, not a solved result. "
     "More computation reduces this only partly and modelling more hands does not help - both "
