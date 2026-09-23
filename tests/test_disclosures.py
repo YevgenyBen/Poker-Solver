@@ -81,6 +81,16 @@ def test_the_matcher_is_tight_enough_to_catch_a_stray_number():
     assert d.renderings(True) == set()
 
 
+def test_a_mapping_constant_sources_its_values_and_not_its_keys():
+    """M305: `PREFLOP_POSITION_OPENS` is a seat -> frequency map and the
+    copy quotes two of its entries. Sourcing the KEYS too would let a
+    seat name explain a number, which is the loose-matcher failure this
+    module exists to avoid."""
+    rendered = d.renderings({"UTG": 0.2842, "BTN": 0.3579})
+    assert "28%" in rendered and "36%" in rendered
+    assert "utg" not in rendered and "UTG" not in rendered
+
+
 def test_a_number_typed_into_copy_without_a_source_is_caught(monkeypatch):
     """The failure mode itself: someone adds a figure to copy and not to a
     constant. It must fail here, not reach a player."""

@@ -90,6 +90,12 @@ def renderings(value) -> set:
     if isinstance(value, (tuple, list)):
         for item in value:
             out |= renderings(item)
+    if isinstance(value, dict):
+        # M305: `PREFLOP_POSITION_OPENS` is a seat -> frequency map and
+        # the copy quotes two of its entries. Only the VALUES render -
+        # taking the keys too would source a number by its seat name.
+        for item in value.values():
+            out |= renderings(item)
     return out
 
 
@@ -212,18 +218,17 @@ REGISTRY = (
         superseded_by="M269 grouped action matching (see MULTIWAY_STABLE_REASON)",
         provenance="m254_predict_instability.py"),
     Disclosure(
-        "SIZING_CAVEAT_REASON", "M110/M282/M287", ENGINE,
-        _TWO_LIVE + _ONE_RAISE,
+        "SIZING_CAVEAT_REASON", "M305", ENGINE,
+        _TWO_LIVE + _ONE_RAISE + (
+            "PREFLOP_POSITION_SEEDS", "PREFLOP_POSITION_OPENS",
+            "PREFLOP_POSITION_GRADIENT", "PREFLOP_POSITION_GTO_SPAN",
+            "PREFLOP_SIZING_SPLIT_MOVE", "PREFLOP_SIZING_SPLIT_WORST",
+            "PREFLOP_SIZING_AA_LOW", "PREFLOP_SIZING_AA_HIGH",
+            "PREFLOP_FOLD_AXIS_FIRST_IN", "PREFLOP_FOLD_AXIS_FACING"),
         literals={"72": "hand name (72o)", "6": "6-max",
-                  "0.03": "M72/M139: AA's jam at the shipped 6-max budget and its converged value",
-                  "0.92": "M110: AA's jam at 12,000 iterations, worst seed",
                   "15%": "published GTO: opening range under the gun",
                   "45%": "published GTO: opening range on the button"},
-        current=False,
-        superseded_by="the AA-jam range and the flat positional fold mass were measured at "
-                      "12,000 iterations (M110/M111); 6-max ships 3,000. 'A converged solve "
-                      "puts it near 0.03' predates F37/M139, which put the converged value at "
-                      "0.0. The two-live clause is current (M282) and built from constants"),
+        study="bench/studies/preflop_position.py"),
     Disclosure(
         "FACING_A_BET_COST_NOTE", "M299", ENGINE,
         ("FACING_A_BET_COST_ROWS", "FACING_A_BET_COST_FACING_ROWS",

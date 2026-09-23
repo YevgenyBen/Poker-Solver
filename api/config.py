@@ -2162,12 +2162,76 @@ SIZING_CAVEAT_TABLE_SIZES = {
 # here too. Its test asserted the literal "98%", so a correction would have
 # failed the build and been reverted. It is now BUILT from the two-live
 # constants, so the two places cannot disagree again.
+#
+# **M305 (the 2026-09-20 audit's R3) RE-MEASURED THE OTHER TWO CLAUSES AT
+# THE CONFIGURATION THAT SHIPS, AND M110 HAD ALREADY MEASURED THE RIGHT
+# ARM.** Both figures above came from the 12,000-iteration column of
+# M110's own table; six-handed ships 3,000 iterations with M290's
+# four-seed ensemble. Re-run at the shipped budget on four base seeds,
+# `bench/studies/preflop_position.py`:
+#
+#     combo-weighted opening frequency, 6-max 100bb, mean of four seeds
+#     arm              UTG     MP      CO      BTN     BTN-UTG  seed noise
+#     shipped (x4)     0.284   0.301   0.310   0.358   +0.074   0.037
+#     one seed         0.291   0.307   0.309   0.381   +0.091   0.058
+#
+# **The range DOES widen with position** - by twice the solver's own
+# movement between seeds, which is M111's own yardstick for calling it
+# absent, and every one of the four seeds agrees in sign. So "flat" and
+# "does not widen at all" are withdrawn. What replaces them is worse for
+# the player and truer: **7 points where real play widens about 30**, a
+# quarter of the effect rather than none of it.
+#
+# **The single-seed arm reproduces M110's published row to the digit** -
+# 0.281 / 0.319 / 0.316 / 0.384 / 0.498 at seed 1, all five seats, almost
+# two hundred milestones later. The instrument is measuring what M110
+# measured; what was wrong was only WHICH COLUMN the copy quoted.
+#
+# **The seed spread on SIZING is real and far smaller than published.**
+# Across the 83 classes that play at all, the all-in share of a class's
+# own non-fold mass moves 0.044 between seeds (worst 0.274); the ensemble
+# is what shrank it, halving the single-seed arm's 0.074. AA's all-in
+# share measures **0.039 to 0.211**, not the 0.03-to-0.92 the copy
+# carried - that span is the 12,000-iteration arm, where M98's pricing
+# defect converges ONTO the jam. So the caveat now rests on the defect
+# itself, which no budget fixes, rather than on a seed spread the
+# shipped configuration does not have.
+#
+# **And the fold clause lost its own bar.** M289 measured the fold call
+# moving 0.150 facing a raise against 0.067 first in at six-handed, on
+# SINGLE seeds. Re-read on the ensemble arm off M290's committed rows -
+# no new solving - it is **0.079 against 0.035**: the ordering holds and
+# the gap is 0.044 against M289's own 0.05. M290 made its neighbour's
+# disclosure false, which is M281's rule arriving one milestone late.
+PREFLOP_POSITION_SEEDS = 4
+PREFLOP_POSITION_OPENS = {"UTG": 0.2842, "MP": 0.3010, "CO": 0.3098,
+                          "BTN": 0.3579, "SB": 0.4576}
+PREFLOP_POSITION_GRADIENT = 0.0738
+PREFLOP_POSITION_SEED_NOISE = 0.0371
+#: Published GTO opens roughly 15% under the gun and roughly 45% on the
+#: button, so the span the gradient is quoted against is 30 points.
+PREFLOP_POSITION_GTO_SPAN = 0.30
+PREFLOP_SIZING_SPLIT_MOVE = 0.0438
+PREFLOP_SIZING_SPLIT_WORST = 0.2739
+PREFLOP_SIZING_SPLIT_CLASSES = 83
+PREFLOP_SIZING_AA_LOW = 0.0388
+PREFLOP_SIZING_AA_HIGH = 0.2110
+#: From M290's own committed rows, read on the arm that ships.
+PREFLOP_FOLD_AXIS_FIRST_IN = 0.0355
+PREFLOP_FOLD_AXIS_FACING = 0.0793
 SIZING_CAVEAT_REASON = (
-    "Multiway preflop is unreliable for which sizing to use: the split among the "
-    "non-fold actions (limp / raise / all-in) moves with the random seed — at 6-max, "
-    "AA's all-in frequency has measured anywhere from 0.03 to 0.92 where a converged "
-    "solve puts it near 0.03. The fold-vs-play call is sounder when you are first in — it too moves with the "
-    "seed once you face a raise — and it is NOT a positional "
+    "Multiway preflop is unreliable for which sizing to use, and the cause is "
+    "structural rather than a budget: every showdown with money still behind is "
+    "priced as if the hand ended there, so an all-in is valued correctly and every "
+    "smaller raise is scored without the postflop play that is most of its worth. "
+    "The split among the non-fold actions (limp / raise / all-in) also moves with the "
+    f"solver's random seed — at 6-max by about "
+    f"{round(PREFLOP_SIZING_SPLIT_MOVE * 100)} points on the average hand and up to "
+    f"{round(PREFLOP_SIZING_SPLIT_WORST * 100)} on the worst, with AA's all-in share "
+    f"measuring between {PREFLOP_SIZING_AA_LOW:.2f} and {PREFLOP_SIZING_AA_HIGH:.2f} "
+    f"across {PREFLOP_POSITION_SEEDS} seeds. The fold-vs-play call moves less — about "
+    f"{round(PREFLOP_FOLD_AXIS_FIRST_IN * 100)} points when you are first in and about "
+    f"{round(PREFLOP_FOLD_AXIS_FACING * 100)} once you face a raise — and it is NOT a positional "
     "range chart. Individual hands are classified sensibly while three or more players "
     "are live — premiums are never folded, trash is — but NOT once everyone else has "
     "folded and you face a raise heads-up, where hands as weak as 72o are told to "
@@ -2177,9 +2241,12 @@ SIZING_CAVEAT_REASON = (
     "correct, and the weakest quarter of hands continues about "
     f"{round(PREFLOP_TWO_LIVE_ONE_RAISE_CONTINUES * 100)}% against a single open where a "
     f"strong player continued about {round(PREFLOP_TWO_LIVE_ONE_RAISE_REFERENCE * 100)}%. The "
-    "opening range also does not widen with position at all — at 6-max "
-    "the fold frequency is flat across UTG, MP, CO and BTN, where real GTO play widens "
-    "from roughly 15% of hands under the gun to roughly 45% on the button. Treat this "
+    "opening range does respond to position, and by far too little: at 6-max it opens "
+    f"about {round(PREFLOP_POSITION_OPENS['UTG'] * 100)}% of hands under the gun and "
+    f"about {round(PREFLOP_POSITION_OPENS['BTN'] * 100)}% on the button — "
+    f"{round(PREFLOP_POSITION_GRADIENT * 100)} points of spread where real GTO play "
+    f"has about {round(PREFLOP_POSITION_GTO_SPAN * 100)}, widening from roughly 15% of "
+    "hands under the gun to roughly 45% on the button. Treat this "
     "as a strong hint about whether a hand is playable, not as a guide to how position "
     "should change your range."
 )

@@ -4258,22 +4258,37 @@ def test_the_sizing_caveat_does_not_repeat_a_withdrawn_measurement():
     TIGHTER than under the gun". That is M110's claim, and **M111
     withdrew it in the same milestone that sharpened the finding** — the
     1.7pp gap it rested on is smaller than the 2.8pp CO varies between
-    seeds. M111's actual result is stronger and simpler: among the
-    non-blind seats position is not learned at all, fold mass flat at
-    0.82-0.84 across UTG/MP/CO/BTN.
+    seeds.
 
-    Guarded by shape, not just by phrasing: the caveat must describe
-    flatness, and must not assert that any one seat opens tighter or
-    looser than another, which is the form of claim that was retracted.
+    **M305 replaced its replacement, on the same yardstick.** M111 put
+    "flat" here from the 12,000-iteration arm; six-handed ships 3,000
+    with a four-seed ensemble, and there the button opens 7 points wider
+    than under the gun against a seed-to-seed movement of 3.7 — clear of
+    the bar M111 itself used, with all four seeds agreeing in sign. So
+    the copy states the gradient now, and this test guards the one thing
+    that has never been supported: the WITHDRAWN DIRECTION, later
+    position opening tighter. A measured spread may be quoted; an
+    inverted one may not, and neither may a bare seat comparison with no
+    yardstick beside it.
     """
     caveat = api_config.SIZING_CAVEAT_REASON.lower()
 
-    assert "flat" in caveat, "the caveat should state what was measured: a flat range"
-    for withdrawn in ("tighter than", "looser than", "wider than"):
+    for withdrawn in ("tighter than", "looser than", "narrower than"):
         assert withdrawn not in caveat, (
-            f"the caveat asserts a seat-vs-seat comparison ({withdrawn!r}); M111 withdrew "
+            f"the caveat asserts the retracted direction ({withdrawn!r}); M111 withdrew "
             "exactly that claim as an over-read of a gap smaller than seed variance"
         )
+    assert "flat" not in caveat, (
+        "M305 measured a gradient clear of the solver's own seed movement, so "
+        "'flat' is now the stale claim rather than the corrected one"
+    )
+    utg = round(api_config.PREFLOP_POSITION_OPENS["UTG"] * 100)
+    btn = round(api_config.PREFLOP_POSITION_OPENS["BTN"] * 100)
+    assert f"{utg}%" in caveat and f"{btn}%" in caveat
+    assert str(round(api_config.PREFLOP_POSITION_GTO_SPAN * 100)) in caveat, (
+        "a spread quoted with nothing to compare it against reads as a positional "
+        "range chart, which is the thing this paragraph exists to deny"
+    )
 
 
 @pytest.mark.parametrize("players,solver,sizing", [
@@ -9071,6 +9086,48 @@ def test_the_sizing_caveat_no_longer_claims_trash_is_always_folded():
     assert f"{round(api_config.PREFLOP_TWO_LIVE_THREE_BET_CONTINUES * 100)}%" in reason
     assert str(api_config.PREFLOP_TWO_LIVE_NODES) in reason
     assert "98%" not in reason and "22 spots" not in reason
+
+
+def test_the_sizing_caveat_quotes_the_configuration_that_ships(client):
+    """M305 (the 2026-09-20 audit's R3). Both of this paragraph's own
+    figures came from M110's 12,000-iteration column while six-handed
+    ships 3,000 with M290's four-seed ensemble.
+
+    The 0.03-to-0.92 span is the clearest case: at the shipped budget
+    AA's all-in share spans 0.04 to 0.21, so the published high end was
+    more than four times the measured one - a warning describing a
+    defect the player will never meet at these settings.
+    """
+    reason = api_config.SIZING_CAVEAT_REASON
+
+    assert f"{api_config.PREFLOP_SIZING_AA_LOW:.2f}" in reason
+    assert f"{api_config.PREFLOP_SIZING_AA_HIGH:.2f}" in reason
+    assert "0.92" not in reason, "the withdrawn 12,000-iteration figure"
+    assert str(api_config.PREFLOP_POSITION_SEEDS) in reason
+    assert f"{round(api_config.PREFLOP_SIZING_SPLIT_MOVE * 100)} points" in reason
+    assert f"{round(api_config.PREFLOP_SIZING_SPLIT_WORST * 100)}" in reason
+    # The defect the copy now leads with is M98's pricing rule, which no
+    # budget fixes (M113-M116, M250 and M279 each failed to). Leading on
+    # a seed spread instead would rest the warning on the half M290's
+    # ensemble has already halved.
+    assert "structural" in reason and "as if the hand ended there" in reason
+
+
+def test_the_fold_clause_is_quoted_at_the_level_the_ensemble_left_it(client):
+    """M289 measured 0.150 facing a raise against 0.067 first in, on
+    single seeds. Six-handed ships four averaged seeds, and there it is
+    0.079 against 0.035 - so the copy may still ORDER the two and may
+    not call the difference large.
+    """
+    reason = api_config.SIZING_CAVEAT_REASON
+
+    assert api_config.PREFLOP_FOLD_AXIS_FIRST_IN < api_config.PREFLOP_FOLD_AXIS_FACING
+    assert f"{round(api_config.PREFLOP_FOLD_AXIS_FIRST_IN * 100)} points" in reason
+    assert f"{round(api_config.PREFLOP_FOLD_AXIS_FACING * 100)} once you face a raise" in reason
+    assert "sounder" not in reason, (
+        "the gap is 0.044 against M289's own 0.05 bar, so the copy states both "
+        "numbers and leaves the reader to see that one is smaller"
+    )
 
 def test_the_reproducibility_warning_quotes_its_own_measurement(client):
     """The copy moves if the measurement does (M232's rule).
