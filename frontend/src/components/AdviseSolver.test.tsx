@@ -495,6 +495,36 @@ describe('AdviseSolver', () => {
     expect(warning).toHaveTextContent(/NOT for which sizing/);
   });
 
+  it('falls back to a claim no re-measurement can overturn', async () => {
+    // M305, and this is the SECOND time this exact fallback has gone
+    // stale: M125 found it still saying "the fold-vs-play call is
+    // sound" two milestones after M111 withdrew that, and the sentence
+    // which replaced it then said "the opening range does not widen
+    // with position" — which M305 measured false at the shipped
+    // configuration, while correcting only the backend's copy.
+    //
+    // Nothing pinned this string either time, which is why it rotted
+    // twice. It is pinned now, and to the one thing here that is
+    // structural rather than measured: M98's terminal pricing, which
+    // M113-M116, M250 and M279 each failed to fix.
+    vi.stubGlobal(
+      'fetch',
+      mockFetch(walkFor, () =>
+        adviceResponse({ players: 6, solver_confidence: 'high', sizing_confidence: 'low' }),
+      ),
+    );
+    render(<AdviseSolver />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Get advice' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Get advice' }));
+
+    const warning = await screen.findByRole('alert');
+    expect(warning).toHaveTextContent('Sizes are unreliable here');
+    expect(warning).toHaveTextContent(/priced as if the hand ended at showdown/);
+    // The withdrawn claims, neither of which may come back.
+    expect(warning.textContent).not.toMatch(/fold-vs-play call is sound/);
+    expect(warning.textContent).not.toMatch(/does not widen with position/);
+  });
+
   it('shows both warnings at 9-max without one hiding the other', async () => {
     // The general warning must not swallow the specific one. A user who
     // sees only "low confidence" does not learn that the sizes are the

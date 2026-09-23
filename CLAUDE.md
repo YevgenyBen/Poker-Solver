@@ -1041,7 +1041,8 @@ requests now reject unknown fields by name rather than ignoring them.
                            `river_measured.py` (M301),
                            `sizing_coverage.py` (M302),
                            `turn_measured.py` (M303),
-                           `street_isolation.py` (M304)
+                           `street_isolation.py` (M304),
+                           `preflop_position.py` (M305)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools
@@ -1704,8 +1705,16 @@ requests now reject unknown fields by name rather than ignoring them.
   was corrected — it used to say "trust the fold-vs-play call". **M123
   corrected it again**: it still told users "at 6-max the button has
   measured TIGHTER than under the gun", which is M110's claim and the
-  one M111 withdrew in the same breath. It now states the flat result
-  that was actually measured.
+  one M111 withdrew in the same breath.
+  **M305 CORRECTED IT A FOURTH TIME, AND THE ANSWER WAS IN THE TABLE
+  ABOVE ALL ALONG.** M111's flatness is the **12,000** column and the
+  product ships the **3,000** one, which has a gradient — 0.281 rising
+  to 0.384 — and now also averages four seeds (M290). Re-measured
+  there, the button opens **7 points** wider than under the gun against
+  a seed movement of **3.7**, clearing M111's own yardstick 2.0x with
+  four seeds of four agreeing. **The copy had been describing a budget
+  the product never ran**, and the single-seed arm reproduces M110's
+  3,000 row to the digit at all five seats.
   Heads-up is unaffected (BTN opens 0.871, inside the 0.70-0.95 band).
 - **Equity noise explains the sizing INSTABILITY, not its level (M98).**
   A 50-sample multiway equity estimate has error sd 0.091 — **+/-55bb of
@@ -2732,6 +2741,42 @@ requests now reject unknown fields by name rather than ignoring them.
   and M202's menu control, and record the reference's slack beside every
   figure. Re-pricing a stored request reproduced its loss on **255 of
   255** rows.
+
+- **THE PREFLOP SIZING CAVEAT QUOTED THE WRONG COLUMN OF M110'S OWN
+  TABLE (M305, the 2026-09-20 audit's R3).** Both of its figures came
+  from the **12,000-iteration** arm; six-handed ships **3,000 with
+  M290's four-seed ensemble**. Four base seeds at the shipped budget,
+  `bench/studies/preflop_position.py`:
+  | the copy said | measured now |
+  |---|---|
+  | AA's all-in 0.03 to 0.92 | **0.039 to 0.211** |
+  | the split moves with the seed | **0.044 on the average hand** (worst 0.274), under the 0.10 bar |
+  | the range does not widen with position AT ALL | **it widens 7 points**, UTG 0.284 to BTN 0.358 |
+  | the fold call is "sounder" first in | 0.035 against 0.079 - a gap of **0.044 against M289's own 0.05** |
+  **THE GRADIENT CLEARS M111's OWN YARDSTICK.** M111 withdrew M110's
+  positional claim because 1.7 points was under the 2.8 a seat varies
+  between seeds. Re-run, the gradient is **+0.0738 against a seed
+  movement of 0.0371 - 2.0x, and all four seeds agree in sign.** So
+  "flat" is withdrawn in its turn. What replaces it is worse for the
+  player and truer: **7 points where real play spans about 30**, a
+  quarter of the effect rather than none of it.
+  **THE SINGLE-SEED ARM REPRODUCES M110's PUBLISHED ROW TO THE DIGIT** -
+  0.281 / 0.319 / 0.316 / 0.384 / 0.498 at seed 1, all five seats, 195
+  milestones later. The instrument is measuring what M110 measured;
+  what was wrong was only **which column the copy quoted**.
+  **The copy now leads with M98's pricing defect**, which no budget
+  fixes, instead of a seed spread M290's ensemble has already halved
+  (0.074 -> 0.044 at fixed precision, the same 0.6x it bought on the
+  fold axis).
+  **Rule: a bar you cannot pre-register, inherit.** The fold clause was
+  re-read off M290's committed rows - rows that existed before the
+  question - so its level is M289's own `MIN_GAP`, chosen by somebody
+  else before any of it was measured. An inherited bar is the only kind
+  that can be trusted once the data is already on disk.
+  **Rule: an improvement makes its neighbours' disclosures false, not
+  just its own.** M281 learnt this about the string it was changing;
+  M290's ensemble quietly invalidated a clause in a paragraph it never
+  touched.
 
 - **STREET ISOLATION UNDERSTATED ITSELF SEVERAL-FOLD (M304, the
   2026-09-20 audit's R3).** The product's highest-exposure stale

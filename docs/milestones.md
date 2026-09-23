@@ -18037,3 +18037,98 @@ worker, because `spawn` re-imports `__main__` and the probe had no main
 guard. `api/parallel.py` documents this from M132.
 
 **R3's stale count goes 5 -> 4.**
+
+## M305 — the preflop sizing caveat quoted the wrong column of M110's own table (audit R3)
+
+`SIZING_CAVEAT_REASON` is the eighth of the 2026-09-20 audit's eleven
+stale disclosures, and the one with the longest correction history: M110
+wrote it, M111 withdrew half of it, M123 found the withdrawn half still
+there, M251 scoped its two-live clause, M285 found that clause quoting a
+figure two milestones had already corrected elsewhere. What nobody had
+checked is the one thing this audit item asks: **which configuration its
+numbers were measured at.**
+
+Both of its own figures — AA's all-in frequency ranging 0.03 to 0.92, and
+the opening range being flat across UTG/MP/CO/BTN — come from the
+**12,000-iteration** column of M110's table. Six-handed ships **3,000
+iterations with M290's four-seed ensemble**. The right column was in the
+same table the whole time.
+
+**Method.** `bench/studies/preflop_position.py`. Six-handed, 100bb, the
+shipped seat list and iteration budget, equity held fixed so only the
+traversal seed moves. Four base seeds — 1 (shipped) and three fresh —
+in two arms: the shipped ensemble of four, and one seed at the SAME
+budget, which is M197's depth/precision confound in its preflop form.
+Per solve, each non-blind seat's first-in node gives a combo-weighted
+opening frequency over all 169 classes; the under-the-gun node gives
+each class's all-in share of its own non-fold mass.
+
+**PRE-REGISTERED READING RULE**, fixed before any seed was solved, and
+in the study's docstring. Its load-bearing clause is rule 3: **the
+gradient is graded against the solver's own movement between seeds**,
+which is the yardstick M111 used to withdraw M110's claim. Re-using it
+is what makes this a re-measurement of the same claim rather than a new
+one under a friendlier bar.
+
+| | the copy said | measured at the shipped configuration |
+|---|---|---|
+| AA's all-in share | 0.03 to 0.92 | **0.039 to 0.211** |
+| the split moves with the seed | quoted as the reason | **0.044** on the average hand, worst 0.274 — under the 0.10 bar |
+| the opening range | "does not widen with position at all" | **widens 0.0738**, UTG 0.284 → BTN 0.358 |
+| the fold call | "sounder when you are first in" | 0.035 against 0.079 — a gap of **0.044 against M289's own 0.05** |
+
+**THE GRADIENT CLEARS M111's OWN YARDSTICK, 2.0x.** +0.0738 against a
+seed-to-seed movement of 0.0371, with all four seeds agreeing in sign.
+M111 withdrew M110's positional claim because 1.7 points sat under the
+2.8 a seat varies between seeds; at the shipped configuration the
+gradient is twice the noise, so "flat" is withdrawn in its turn. **What
+replaces it is worse for the player and truer**: 7 points of spread
+where real play has about 30 — a quarter of the effect rather than none
+of it. A player told the range does not respond to position at all will
+discard positional advice that is directionally right.
+
+**THE SINGLE-SEED ARM REPRODUCES M110's PUBLISHED ROW TO THE DIGIT.**
+0.281 / 0.319 / 0.316 / 0.384 / 0.498 at seed 1 — all five seats, 195
+milestones later, with the engine rebuilt underneath it many times
+over. The instrument is measuring exactly what M110 measured. **What
+was wrong was only which column the copy quoted**, which is a different
+failure from a stale measurement and a harder one to notice: nothing
+had drifted.
+
+**THE COPY NOW LEADS WITH THE DEFECT INSTEAD OF THE SEED SPREAD.** M98's
+pricing rule — every showdown with money behind priced as if the hand
+ended there — is structural, unfixed after M113-M116, M250 and M279, and
+no budget touches it. The seed spread it used to lead with is real and
+small: 0.044 on the average hand, and the ensemble is what shrank it,
+halving the single-seed arm's 0.074 at fixed precision (0.59x, against
+the 0.58x M290 bought on the fold axis). Resting the warning on the half
+that M290 already halved would have made it stale again on the next
+improvement.
+
+**A BAR YOU CANNOT PRE-REGISTER, INHERIT.** The fold clause was re-read
+off M290's committed rows — rows that existed before the question did,
+so the reading rule could not be fixed before the data. The substitute
+is a bar chosen by somebody else: `FOLD_MIN_GAP` is M289's own
+`MIN_GAP`. An inherited bar is the only kind that can be trusted once
+the data is already on disk, and saying so is cheaper than pretending
+the rule came first.
+
+**AN IMPROVEMENT MAKES ITS NEIGHBOURS' DISCLOSURES FALSE, NOT JUST ITS
+OWN.** M281's rule was that a setting which improves a disclosed defect
+makes its own disclosure false. M290 shipped the ensemble, correctly
+retired the six-handed fold-seed note it was measuring, and left a
+clause in a paragraph it never touched claiming a contrast its own
+change had taken below the threshold.
+
+**Cost: 680 seconds, peak 0.73 GB** — eight solves, run under
+`bench/memory_guard.py`. The cheapest R3 item so far, and it sat behind
+five milestones' worth of corrections to the same paragraph.
+
+**What did NOT change**: the two-live clauses (M282/M287) and the
+categorical claim at three or more live were already measured at this
+configuration and are untouched. The caveat still fires at every
+multiway table size, and its positional figures still name six-handed
+in their own text — a six-handed figure is not a table-wide one (M282),
+and that scope was already correct.
+
+**R3's stale count goes 4 -> 3.**

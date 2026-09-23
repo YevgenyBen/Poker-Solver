@@ -522,9 +522,22 @@ export function AdviseSolver() {
                   call is sound". That is the claim M111 withdrew and
                   M123 corrected in api/config.py — and it survived here,
                   in the copy a user actually reads, for two more
-                  milestones. */}
+                  milestones.
+
+                  M305: IT HAPPENED AGAIN, to the sentence that replaced
+                  it. This said "the opening range does not widen with
+                  position", which M305 measured false at the shipped
+                  configuration — and the backend string was corrected
+                  while this one was not, exactly as in M125.
+
+                  So the fallback now carries NO FIGURE and no claim that
+                  a re-measurement can overturn: only M98's pricing rule,
+                  which is structural and has survived M113-M116, M250
+                  and M279. A fallback exists for a backend too old to
+                  send its own reason, and the one thing it must not do
+                  is age differently from the string it stands in for. */}
               {result.sizing_confidence_reason ??
-                'The split among the non-fold actions moves with the random seed, and the opening range does not widen with position.'}
+                'Raises smaller than all-in are priced as if the hand ended at showdown, so the size named here is unreliable and the opening range responds to position far too weakly.'}
             </p>
           )}
 
