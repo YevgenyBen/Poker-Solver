@@ -201,22 +201,18 @@ REGISTRY = (
         provenance="m262_pluribus.py / m263_arms.py; M285 recomputed it from "
                    "m263_grouped_mean.jsonl (the shipped arm) after M269 left it stale"),
     Disclosure(
-        "MULTIWAY_STABLE_REASON", "M267", ENGINE,
+        "MULTIWAY_STABLE_REASON", "M306", ENGINE,
         ("MULTIWAY_STABLE_HELD_SPOTS", "MULTIWAY_STABLE_SPOTS", "MULTIWAY_STABLE_FLOP_HELD",
          "MULTIWAY_STABLE_FLOP_SPOTS", "MULTIWAY_STABLE_TURN_HELD", "MULTIWAY_STABLE_TURN_SPOTS",
          "MULTIWAY_STABLE_RIVER_HELD", "MULTIWAY_STABLE_RIVER_SPOTS", "MULTIWAY_STABLE_TVD",
          "MULTIWAY_STABLE_ACTION_CHANGES", "MULTIWAY_STABLE_MAX_TOP_ACTION"),
-        current=False,
-        superseded_by="M269 grouped action matching changed how the multiway postflop "
-                      "solver matches regret; reproducibility was measured before it",
-        provenance="m254_predict_instability.py"),
+        study="bench/studies/multiway_instability.py"),
     Disclosure(
-        "MULTIWAY_REPRODUCIBILITY_REASON", "M267", ENGINE,
-        literals={"50%": "M267: split flop rows change action", "33%": "M267: turn",
-                  "49%": "M267: river"},
-        current=False,
-        superseded_by="M269 grouped action matching (see MULTIWAY_STABLE_REASON)",
-        provenance="m254_predict_instability.py"),
+        "MULTIWAY_REPRODUCIBILITY_REASON", "M306", ENGINE,
+        ("MULTIWAY_UNSTABLE_FLIP_FLOP", "MULTIWAY_UNSTABLE_FLIP_TURN",
+         "MULTIWAY_UNSTABLE_FLIP_RIVER", "MULTIWAY_UNSTABLE_FLOP_SPOTS",
+         "MULTIWAY_UNSTABLE_TURN_SPOTS", "MULTIWAY_UNSTABLE_RIVER_SPOTS"),
+        study="bench/studies/multiway_instability.py"),
     Disclosure(
         "SIZING_CAVEAT_REASON", "M305", ENGINE,
         _TWO_LIVE + _ONE_RAISE + (

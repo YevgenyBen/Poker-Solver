@@ -18132,3 +18132,100 @@ in their own text — a six-handed figure is not a table-wide one (M282),
 and that scope was already correct.
 
 **R3's stale count goes 4 -> 3.**
+
+## M306 — multiway reproducibility re-measured: wrong in both directions (audit R3)
+
+`MULTIWAY_REPRODUCIBILITY_REASON` and `MULTIWAY_STABLE_REASON` are the
+graded pair M254 built and M267 re-measured, and between them they are
+**the most-met disclosed defect in this product** — M252 put the exposure
+at one decision in five, several times anything else disclosed here. They
+are also the last stale pair with a measurable claim.
+
+M267's figures were taken at M264's budget. **M269 then shipped
+`MULTIWAY_POSTFLOP_ACTION_GROUPING = "mean"`**, which changes how the
+sampled solver matches regret across action kinds — and M264 had already
+located this defect in exactly that place ("the problem is in how the
+solver treats three similar bet sizes"). The change most likely to move
+seed-to-seed agreement landed after the figures were taken.
+
+**The original study was a scratch file and is gone**
+(`m254_predict_instability.py`), so this is a rebuild rather than a
+re-run, and that has a consequence the copy now carries.
+
+**Method.** `bench/studies/multiway_instability.py`. Six-handed, 100bb,
+preflop solve warm. Preflop lines WALKED off the real tree (M252) so
+three-bet pots can appear, kept when they close with three or more live.
+150 spots, each asked through `/advise` (M174) at the shipped solver seed
+and three fresh ones, with `clear_postflop_caches()` between arms —
+postflop only, because clearing everything re-pays a cold preflop solve
+no player meets and clearing nothing serves the previous arm's answer.
+Both node types drawn: M177's rule is that facing-a-bet nodes are
+CONSTRUCTED or a study silently measures opening decisions only, and M301
+broke that rule inside a study re-measuring M177.
+
+**The reading rule is M254's own**, reused rather than rewritten, so this
+is a re-measurement of the same claim and not a new one under a
+friendlier bar.
+
+| street | split rows change: M267 → M306 | decisive rows held: M267 → M306 |
+|---|---|---|
+| flop | 0.50 → **0.2889** (n=15) | 22 of 22 → **31 of 32** |
+| turn | 0.3333 → **0.4348** (n=23) | 14 of 17 → **23 of 25** |
+| river | 0.4902 → **0.5556** (n=39) | 10 of 13 → **12 of 16** |
+
+**WRONG IN BOTH DIRECTIONS.** A player on the flop was told the action
+changes half the time where it changes under a third; a player on the
+turn was told a third where it is nearly a half. Overstating a defect is
+not the safe direction — M232's rule is usually read as "a warning may
+not understate", and the other half matters too: a player told the flop
+is a coin flip discards advice that is settled 71% of the time.
+
+**IT IS NOT ATTRIBUTABLE TO M269's GROUPING, AND THE COPY SAYS SO.** The
+tempting write-up is "grouping fixed the flop and hurt the later
+streets". It cannot be supported: M254's spot list is gone, so this is a
+fresh population — 150 spots against 90, walked rather than listed, with
+facing-a-bet nodes M254 may never have drawn. What is established is what
+the shipped configuration does now. M252's rule, applied to this
+study's own comparison: a benchmark measures the population it
+generates, and two benchmarks over different populations are not an A/B.
+
+**The gate survives, more strongly than before**: 0.4219 at **8.80
+sigma**, split halves 6.94 / 5.79, against M267's 6.23 and 4.07 / 5.01.
+**And it separates at both node types**, which no earlier run checked —
+opening decisions 0.4525 (6.87 sigma), facing a bet 0.3902 (5.62). The
+quiet branch's frequencies now move 0.0817 rather than 0.1013.
+
+**THE RULE TESTS CAUGHT THREE DEFECTS BEFORE A SINGLE SPOT WAS SOLVED,
+and one of them would have destroyed the run.**
+
+- **The split halves would have tested the generator.** M254 alternated
+  spots in draw order; this generator cycles street by `drawn % 3` and
+  node type by `drawn % 2`, so every other row can be the same street.
+  The halves now come from a stable digest of each spot's IDENTITY —
+  never of anything it measured, which would be the halves grading
+  themselves. `hash()` is salted per process, so the digest is explicit
+  or the committed figures would not re-derive.
+- **A zero-variance cell scored sigma 0.0**, which reads as "did not
+  separate" when it means undefined. At these sample sizes sem 0 is a
+  small-sample artifact, not infinite precision, so it reports `None`:
+  `inf` would have passed rule 3 on a degenerate cell.
+- **A local name shadowed the `halves` function**, which would have
+  crashed on the run's last line after twenty-two minutes of solving.
+
+**The seed control ran before the campaign, not after.** Patching the
+seed moves 41-47 of ~150 hands' rows on each of the three streets, so the
+arms are genuinely different games — M222's void run is why that check
+exists, and `/advise` never passes a seed, so the only way to move it is
+to bind one onto the engine call the production path makes.
+
+**Five of M245's constants were deleted.** `MULTIWAY_SEED_PAIRS`,
+`MULTIWAY_SEED_MEDIAN_TVD` and `MULTIWAY_SEED_ACTION_FLIP_*` had been
+read by nothing since M254 replaced them in the copy. A constant no copy
+quotes is M216's dead guard in another shape: it looks current, no test
+re-derives it, and the next reader may quote it. Their numbers stay in
+the comment as history.
+
+**Cost: 1,320 seconds, peak 0.34 GB**, under `bench/memory_guard.py`.
+
+**R3's stale count goes 3 -> 1.** Only `DRAWY_BOARD_NOTE` remains, and it
+needs the independent solver.

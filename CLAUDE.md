@@ -1042,7 +1042,8 @@ requests now reject unknown fields by name rather than ignoring them.
                            `sizing_coverage.py` (M302),
                            `turn_measured.py` (M303),
                            `street_isolation.py` (M304),
-                           `preflop_position.py` (M305)
+                           `preflop_position.py` (M305),
+                           `multiway_instability.py` (M306)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools
@@ -1866,6 +1867,41 @@ requests now reject unknown fields by name rather than ignoring them.
   inert (below), iterations leave 0.240 at 150x the budget (F46/M163),
   and M169's ensembles leave the worst cases untouched at every K. So it
   is disclosed, not fixed.
+  **M306 (the 2026-09-20 audit's R3) RE-MEASURED BOTH BRANCHES AND THE
+  PER-STREET FIGURES WERE WRONG IN BOTH DIRECTIONS.** This pair is the
+  **most-met disclosed defect in the product** (M252: one decision in
+  five), and M267's figures predate M269's grouped action matching. 150
+  spots, preflop lines walked off the real tree (M252), both node types
+  constructed (M177), each asked at the shipped seed and three fresh
+  ones:
+  | street | split rows change: M267 → M306 | decisive rows held: M267 → M306 |
+  |---|---|---|
+  | flop | 0.50 → **0.2889** (n=15) | 22/22 → **31/32** |
+  | turn | 0.3333 → **0.4348** (n=23) | 14/17 → **23/25** |
+  | river | 0.4902 → **0.5556** (n=39) | 10/13 → **12/16** |
+  **A flop player was told the action changes half the time where it
+  changes under a third; a turn player was told a third where it is
+  nearly a half.** Overstating a defect is not the safe direction - it
+  teaches a player to discard advice that is settled.
+  **It is NOT attributable to M269's grouping, and the copy says so.**
+  M254's spot list was a scratch file and is gone, so this is a fresh
+  population - 150 against 90, walked rather than listed, with
+  facing-a-bet nodes M254 may never have drawn. What is established is
+  what the shipped configuration does now, not what changed it.
+  **The gate survives more strongly**: 0.4219 at **8.80 sigma**, halves
+  6.94 / 5.79 against M267's 6.23 and 4.07 / 5.01 - and it separates at
+  **both node types**, which no earlier run checked (opening 0.4525 at
+  6.87 sigma, facing a bet 0.3902 at 5.62).
+  **Rule: a study's own rule tests are what stop a long run dying at its
+  last line.** Writing them first caught three defects here before any
+  spot was solved - halves alternating in draw order when the generator
+  cycles by index (they would have tested the generator), a
+  zero-variance cell scoring sigma 0.0 where it is UNDEFINED, and a
+  local name shadowing the function it was computed from.
+  **Five of M245's constants were deleted**: nothing had read
+  `MULTIWAY_SEED_*` since M254 replaced them in the copy. A constant no
+  copy quotes is M216's dead guard in another shape - it looks current,
+  no test re-derives it, and the next reader may quote it.
 
 - **MULTIWAY RANGE WIDTH IS INERT — do not widen it (M245).** The cap of
   8 was frozen in M76 on a latency argument ("a cold flop under ~45s")
