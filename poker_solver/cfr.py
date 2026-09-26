@@ -483,6 +483,7 @@ def _terminal_value_vector(
     position_b: str,
     traverser_is_a: bool,
     reach_opp: np.ndarray,
+    leaf_value_fn: Optional[Callable] = None,
 ) -> np.ndarray:
     """The traverser's counterfactual value VECTOR at a leaf, length num_hands.
 
@@ -517,6 +518,34 @@ def _terminal_value_vector(
     Blocked hand pairs are NOT excluded, matching the matrix version:
     `solver.solve_flop` replaces the equity table's NaNs with 0.5 before
     solving, so every (i, j) pair is treated as reachable.
+
+    **`leaf_value_fn` replaces what a SHOWDOWN leaf is worth (M247's
+    depth-limited route).** Given the terminal it returns an (N, N) array
+    of `position_a`'s chips at that leaf for each (a_hand, b_hand) pair -
+    exactly the quantity `equity_table * node.pot - invested_a` stands in
+    for - or None to fall through to that default. It is the seam a
+    solved-river value or a learned estimate plugs into, and the reason
+    it exists is that the only affordable alternative, chaining a real
+    next street through a chance node, ALSO changes the accounting: F45's
+    dead-pot offset cancels within one street and stops cancelling across
+    a chance node. Injecting here crosses no chance node, so a depth
+    measurement taken this way tests the leaf value and nothing else.
+
+    **A FOLD leaf is never injected.** The hand ended there, so there is
+    no later street to value and the pot is decided by who folded; the
+    `constant` branch below returns before any injection.
+
+    **Injecting the DEFAULT does not reproduce the solve bit-for-bit, and
+    on a realistic table that does not matter.** The default scales after
+    the matmul (`(table @ reach) * pot`) while an injected value must
+    scale before it, so the two do identical arithmetic in a different
+    ORDER - M161's case. Measured through 1,000 iterations, the worst
+    per-hand strategy difference is **1.3e-14** on an antisymmetric table
+    where hands differ, and **0.50** on a FLAT one, where every decision
+    is exactly tied and M74's bang-bang behaviour amplifies a single ULP
+    wholesale. So a leaf-value study must not be built on a uniform
+    equity table: it would measure its own fixture. Guarded by
+    `tests/test_leaf_value_seam.py`.
     """
     num_hands = equity_table.shape[0]
     opp_mass = reach_opp.sum()
@@ -532,6 +561,23 @@ def _terminal_value_vector(
         return np.full(
             num_hands, total if traverser_is_a else -total, dtype=reach_opp.dtype
         )
+
+    leaf = None if leaf_value_fn is None else leaf_value_fn(node)
+    if leaf is not None:
+        expected = (num_hands, num_hands)
+        if leaf.shape != expected:
+            # A wrong shape would BROADCAST and return a plausible number
+            # rather than fail - this project's recurring failure mode
+            # (M214, M219, M257), so it is refused by name.
+            raise ValueError(
+                f"leaf_value_fn returned {leaf.shape}, expected {expected}"
+            )
+        # Already in position_a's chips at this leaf, so the pot and the
+        # investment are inside it. The negation for b is the SAME
+        # convention the equity path uses, kept deliberately (F45).
+        if traverser_is_a:
+            return leaf @ reach_opp
+        return -(leaf.T @ reach_opp)
 
     if traverser_is_a:
         return (equity_table @ reach_opp) * node.pot - invested_a * opp_mass
@@ -553,6 +599,7 @@ def _vector_recurse(
     chance_fn: Optional[Callable],
     chance_data: Optional[dict],
     strategy_weight: float,
+    leaf_value_fn: Optional[Callable] = None,
 ) -> np.ndarray:
     """Returns the traverser's counterfactual value VECTOR at `node`.
 
@@ -590,7 +637,7 @@ def _vector_recurse(
             _vector_recurse(
                 branch.root, reach_trav, reach_opp, traverser, position_a,
                 position_b, traverser_is_a, node_data, branch.equity_table,
-                branch.chance_fn, chance_data, strategy_weight,
+                branch.chance_fn, chance_data, strategy_weight, leaf_value_fn,
             )
             for branch in node.branches.values()
         ]
@@ -605,10 +652,11 @@ def _vector_recurse(
             return _vector_recurse(
                 chance_node, reach_trav, reach_opp, traverser, position_a,
                 position_b, traverser_is_a, node_data, equity_table, chance_fn,
-                chance_data, strategy_weight,
+                chance_data, strategy_weight, leaf_value_fn,
             )
         return _terminal_value_vector(
-            node, equity_table, position_a, position_b, traverser_is_a, reach_opp
+            node, equity_table, position_a, position_b, traverser_is_a, reach_opp,
+            leaf_value_fn,
         )
 
     num_hands = equity_table.shape[0]
@@ -633,12 +681,14 @@ def _vector_recurse(
                 child, reach_trav * reach_strategy[:, a_idx], reach_opp,
                 traverser, position_a, position_b, traverser_is_a, node_data,
                 equity_table, chance_fn, chance_data, strategy_weight,
+                leaf_value_fn,
             ))
         else:
             child_values.append(_vector_recurse(
                 child, reach_trav, reach_opp * reach_strategy[:, a_idx],
                 traverser, position_a, position_b, traverser_is_a, node_data,
                 equity_table, chance_fn, chance_data, strategy_weight,
+                leaf_value_fn,
             ))
 
     if not acting_is_traverser:
@@ -673,6 +723,7 @@ def _solve_recurse(
     chance_fn: Optional[Callable] = None,
     chance_data: Optional[dict] = None,
     strategy_weight: float = 1.0,
+    leaf_value_fn: Optional[Callable] = None,
 ) -> np.ndarray:
     """Vector CFR (M161). Signature-compatible with `_solve_recurse_matrix`.
 
@@ -700,6 +751,7 @@ def _solve_recurse(
         chance_fn,
         chance_data,
         strategy_weight,
+        leaf_value_fn,
     )
 
 
@@ -714,6 +766,7 @@ def solve(
     chance_data: Optional[dict] = None,
     linear_averaging: bool = True,
     initial_node_data: Optional[dict] = None,
+    leaf_value_fn: Optional[Callable] = None,
     _recurse: Optional[Callable] = None,
 ) -> dict:
     """Run `iterations` of CFR+ over `root`, for the given `hands`.
@@ -830,6 +883,12 @@ def solve(
     # one and quietly stop comparing what ships. Production never passes
     # it; the default IS the shipped recursion.
     recurse = _recurse or _solve_recurse
+    # Passed ONLY when in use, so the default call is byte-identical and
+    # `_solve_recurse_matrix` - kept runnable for the equivalence tests
+    # (M161: "don't delete it") - still accepts it. Asking the matrix
+    # recursion for a leaf value then fails loudly rather than silently
+    # ignoring it, which is the right failure: it does not implement one.
+    extra = {} if leaf_value_fn is None else {"leaf_value_fn": leaf_value_fn}
     for iteration in range(iterations):
         updating_player = position_a if iteration % 2 == 0 else position_b
         recurse(
@@ -837,6 +896,7 @@ def solve(
             node_data, equity_table, position_a, position_b,
             chance_fn, chance_data,
             float(iteration + 1) if linear_averaging else 1.0,
+            **extra,
         )
     return node_data
 
