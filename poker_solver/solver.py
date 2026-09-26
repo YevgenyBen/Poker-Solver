@@ -616,6 +616,7 @@ def solve_flop(
     equity_seed: int = DEFAULT_EQUITY_SEED,
     equity_table_fn=None,
     warm_start=None,
+    leaf_value_fn=None,
 ) -> StrategyResult:
     """Solve a single flop betting round and return its strategy.
 
@@ -716,6 +717,10 @@ def solve_flop(
         positions=positions,
         initial_reach={hero_position: hero_reach, villain_position: villain_reach},
         initial_node_data=initial_node_data,
+        # M247's depth-limited seam: what a SHOWDOWN leaf is worth, in
+        # chips, instead of `equity * pot`. None (the default) leaves
+        # every existing solve byte-identical.
+        leaf_value_fn=leaf_value_fn,
     )
     elapsed = time.perf_counter() - start
 
