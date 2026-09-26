@@ -41,7 +41,15 @@ def test_a_small_batch_stays_sequential_and_is_still_correct():
 
     assert len(got) == len(want)
     for a, b in zip(got, want):
-        assert np.allclose(a, b, equal_nan=True)
+        # M132's contract is BIT-identity, and `allclose` cannot see the
+        # failure it exists to catch: M161 measured float32 arithmetic in a
+        # different ORDER diverging chaotically, with CFR amplifying it
+        # through M74's bang-bang behaviour into 0.194 on a strategy entry.
+        # Worker scheduling is an ordering, so a tolerance here is M219's
+        # dead guard - a docstring claiming "not merely close" over an
+        # assertion that only checks close.
+        assert np.array_equal(a, b), "parallel and sequential tables must be bit-identical"
+
 
 
 def test_the_batch_matches_a_sequential_build_exactly():
@@ -57,7 +65,8 @@ def test_the_batch_matches_a_sequential_build_exactly():
 
     assert len(got) == len(boards)
     for a, b in zip(got, want):
-        assert np.allclose(a, b, equal_nan=True)
+        assert np.array_equal(a, b), "parallel and sequential tables must be bit-identical"
+
 
 
 def test_it_falls_back_rather_than_failing_when_no_pool_is_available(monkeypatch):
@@ -69,7 +78,8 @@ def test_it_falls_back_rather_than_failing_when_no_pool_is_available(monkeypatch
     got = parallel.parallel_equity_batch(boards, combos)
     want = [np.nan_to_num(build_board_equity_table(b, combos), nan=0.5) for b in boards]
     for a, b in zip(got, want):
-        assert np.allclose(a, b, equal_nan=True)
+        assert np.array_equal(a, b), "parallel and sequential tables must be bit-identical"
+
 
 
 def test_a_pool_that_raises_falls_back_instead_of_propagating(monkeypatch):
@@ -86,7 +96,8 @@ def test_a_pool_that_raises_falls_back_instead_of_propagating(monkeypatch):
     got = parallel.parallel_equity_batch(boards, combos)
     want = [np.nan_to_num(build_board_equity_table(b, combos), nan=0.5) for b in boards]
     for a, b in zip(got, want):
-        assert np.allclose(a, b, equal_nan=True)
+        assert np.array_equal(a, b), "parallel and sequential tables must be bit-identical"
+
 
 
 def test_the_worker_count_is_the_measured_one_not_the_core_count():
