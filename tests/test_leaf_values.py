@@ -208,3 +208,214 @@ def test_a_real_river_value_differs_from_its_equity_default():
     assert not np.allclose(solved, default), (
         "a solved river equals its showdown-equity default - then there is "
         "nothing for a leaf value to carry")
+
+
+# -- the fiction masking keeps out of the average ------------------------
+
+def test_a_river_blocked_pair_is_averaged_only_over_rivers_it_can_exist_on():
+    """A combo holding the river card cannot exist on that river. The
+    engine's own convention gives such a pair equity 0.5 and solves
+    anyway - fine for a turn table, where nothing is blocked by a card
+    still to come, but averaging it INTO a leaf value imports the
+    fiction. Each pair is averaged over the rivers it is live on.
+    """
+    from poker_solver.cards import Card, parse_cards
+    from poker_solver.combos import HandCombo
+
+    turn = tuple(parse_cards("Kd7c2h9s"))
+    # One combo holds the 4d, so it is dead on exactly that river.
+    combos = [HandCombo(*parse_cards(c)) for c in ("AhAs", "4d5d")]
+    ranges = {c: 1.0 for c in combos}
+    root = _tree(pot=6.0, stack=12.0)
+    leaf = sorted((t for t in _terminals(root) if not t.folded),
+                  key=lambda t: t.pot)[0]
+    deck = [Card("4", "d"), Card("Qs"[0], "s"), Card("3", "c")]
+
+    out = leaf_values.turn_leaf_values(
+        turn_board=turn, hero_range=ranges, villain_range=ranges,
+        positions=("OOP", "IP"), effective_stack_bb=12.0, terminals=[leaf],
+        raise_sizes=(0.75,), max_raises=2, iterations=5, deck=deck)
+
+    assert out, "the leaf should have a value"
+    matrix = next(iter(out.values()))
+    assert np.isfinite(matrix).all(), "masking must not leave a division by zero"
+
+
+def test_a_pair_live_on_no_river_is_refused_rather_than_divided_by_zero():
+    """A zero count means the deck was wrong, not that the pair is
+    impossible - one card blocks at most two of forty-eight. Refused by
+    name rather than returning a NaN that would propagate into a solve.
+    """
+    from poker_solver.cards import Card, parse_cards
+    from poker_solver.combos import HandCombo
+
+    turn = tuple(parse_cards("Kd7c2h9s"))
+    combos = [HandCombo(*parse_cards("4d5d"))]
+    ranges = {c: 1.0 for c in combos}
+    root = _tree(pot=6.0, stack=12.0)
+    leaf = sorted((t for t in _terminals(root) if not t.folded),
+                  key=lambda t: t.pot)[0]
+
+    with pytest.raises(ValueError, match="live on no river"):
+        leaf_values.turn_leaf_values(
+            turn_board=turn, hero_range=ranges, villain_range=ranges,
+            positions=("OOP", "IP"), effective_stack_bb=12.0, terminals=[leaf],
+            raise_sizes=(0.75,), max_raises=2, iterations=5,
+            deck=[Card("4", "d")])          # the only river blocks the only combo
+
+
+def test_each_rivers_equity_table_is_built_once_across_leaves():
+    """Most of what this study costs. Cutting the river solve's iterations
+    4x saved 10% of the time, so the cost is the TABLE and not CFR -
+    M176's inversion one street over. The leaves differ only in pot and
+    stack, so a table computed for river card X serves all of them, and
+    seven leaves over 48 cards would otherwise build 336 tables where 48
+    will do.
+    """
+    from poker_solver.cards import Card, parse_cards
+    from poker_solver.combos import HandCombo
+
+    turn = tuple(parse_cards("Kd7c2h9s"))
+    combos = [HandCombo(*parse_cards(c)) for c in ("AhAs", "QhQd", "3h4s")]
+    ranges = {c: 1.0 for c in combos}
+    root = _tree(pot=6.0, stack=24.0)
+    live = [t for t in _terminals(root)
+            if not t.folded and 24.0 - max(t.invested.values()) > 1e-9]
+    situations = {leaf_values.leaf_key(t, "OOP") for t in live}
+    assert len(situations) > 1, "the fixture must have more than one leaf"
+
+    built = []
+
+    def counting(board, combos_, samples, seed=None):
+        built.append(tuple(board))
+        return np.nan_to_num(
+            __import__("poker_solver.board_equity", fromlist=["x"])
+            .build_board_equity_table(board, combos_), nan=0.5)
+
+    deck = [Card("4", "d"), Card("5", "c")]
+    leaf_values.turn_leaf_values(
+        turn_board=turn, hero_range=ranges, villain_range=ranges,
+        positions=("OOP", "IP"), effective_stack_bb=24.0, terminals=live,
+        raise_sizes=(0.75,), max_raises=2, iterations=3, deck=deck,
+        equity_table_fn=counting)
+
+    assert len(set(built)) == len(deck), "one table per river board"
+    assert len(built) == len(deck), (
+        f"built {len(built)} tables for {len(deck)} boards across "
+        f"{len(situations)} leaf situations - the cache is not holding")
+
+
+# -- the identity that catches an offset ---------------------------------
+
+def test_the_turns_own_investment_is_taken_off_the_river_value():
+    """The guard that was missing, and the bug lived in the gap.
+
+    `test_leaf_value_seam` has an identity test for the SEAM - hand it the
+    default and the solve must not move. There was no identity test for
+    the VALUE BUILDER, and it was wrong: the river subgame is solved with
+    `pot = turn_pot` while its own `invested` restarts at zero, so it
+    accounted for the turn pot as money A could win and never subtracted
+    what A had already paid to reach the leaf.
+
+    That offset differs per leaf, so unlike F45's it does not cancel out
+    of regret differences - it flattens them. Left in, a whole campaign's
+    depth arm came back as the exactly-uniform prior (0.8 = 4/5 aggressive
+    at a five-action node), which is F43's signature and not a finding.
+
+    Tested on ONE river card so the identity is exact and depends on no
+    premise about the river's tree. A first version of this test tried to
+    disable river betting with `raise_sizes=()` - which does not disable
+    it, because all-in is always legal (F40).
+    """
+    from poker_solver.cards import Card, parse_cards
+    from poker_solver.combos import HandCombo
+
+    turn = tuple(parse_cards("Kd7c2h9s"))
+    combos = [HandCombo(*parse_cards(c)) for c in ("AhAs", "QhQd", "3s4s")]
+    ranges = {c: 1.0 for c in combos}
+    stack = 24.0
+    root = _tree(pot=6.0, stack=stack)
+    live = [t for t in _terminals(root)
+            if not t.folded and stack - max(t.invested.values()) > 1e-9]
+    # A leaf where the two players put in DIFFERENT amounts: an
+    # equal-investment leaf can hide an offset bug.
+    leaf = max(live, key=lambda t: max(t.invested.values()))
+    invested = leaf.invested["OOP"]
+    assert invested > 0, "the fixture must have money in from the turn"
+
+    card = Card("5", "c")
+    assert card not in set(turn)
+    behind = stack - max(leaf.invested.values())
+
+    built = leaf_values.turn_leaf_values(
+        turn_board=turn, hero_range=ranges, villain_range=ranges,
+        positions=("OOP", "IP"), effective_stack_bb=stack, terminals=[leaf],
+        raise_sizes=(0.75,), max_raises=2, iterations=20, deck=[card])
+
+    raw = leaf_values.solved_value(
+        board=tuple(turn) + (card,), hero_range=ranges, villain_range=ranges,
+        pot=leaf.pot, effective_stack_bb=behind, positions=("OOP", "IP"),
+        raise_sizes=(0.75,), max_raises=2, iterations=20)
+
+    got = next(iter(built.values()))
+    assert np.allclose(got, raw - invested, atol=1e-9), (
+        "the built value must be the river's value MINUS what A already "
+        f"paid on the turn (off by {np.abs(got - (raw - invested)).max():.4f})")
+    assert not np.allclose(got, raw), "the investment was not taken off at all"
+
+
+def test_a_supplied_equity_table_is_nan_scrubbed_like_one_it_builds_itself():
+    """The bug the per-board cache introduced, and it is the project's
+    most-repeated shape: an optimisation that silently changes the answer.
+
+    A blocked pair's equity is NaN and `solve_flop` replaces it with 0.5
+    before solving (M161). `solved_value` used to scrub only the table it
+    built ITSELF, so the cache - added to make the study affordable -
+    handed NaNs into the walk. NaN regrets make `current_strategy` return
+    the uniform prior, so the depth arm came back as exactly 4/5
+    aggressive at a five-action node: F43's signature, not a finding.
+    """
+    from poker_solver.board_equity import build_board_equity_table
+    from poker_solver.cards import parse_cards
+    from poker_solver.combos import HandCombo
+
+    board = tuple(parse_cards("Kd7c2h9s4h"))
+    combos = [HandCombo(*parse_cards(c)) for c in ("AhAs", "QhQd", "3s4s")]
+    ordered = sorted(combos, key=str)
+    ranges = {c: 1.0 for c in ordered}
+
+    raw = build_board_equity_table(board, ordered)
+    assert np.isnan(raw).any(), "the fixture must contain a blocked pair"
+
+    supplied = leaf_values.solved_value(
+        board=board, hero_range=ranges, villain_range=ranges, pot=10.0,
+        effective_stack_bb=20.0, positions=("OOP", "IP"),
+        raise_sizes=(0.75,), max_raises=2, iterations=20, equity_table=raw)
+    built = leaf_values.solved_value(
+        board=board, hero_range=ranges, villain_range=ranges, pot=10.0,
+        effective_stack_bb=20.0, positions=("OOP", "IP"),
+        raise_sizes=(0.75,), max_raises=2, iterations=20)
+
+    assert np.isfinite(supplied).all(), "a supplied table must be scrubbed too"
+    assert np.allclose(supplied, built), (
+        "handing in the table must give the same answer as building it")
+
+
+def test_a_non_finite_leaf_value_is_refused_at_the_boundary(monkeypatch):
+    """A NaN reaching a solve comes back as the uniform prior rather than
+    as an error, which is how the cache bug hid. The boundary refuses it.
+    """
+    from poker_solver.cards import parse_cards
+    from poker_solver.combos import HandCombo
+
+    board = tuple(parse_cards("Kd7c2h9s4c"))
+    combos = [HandCombo(*parse_cards(c)) for c in ("AhAs", "QhQd")]
+    ranges = {c: 1.0 for c in combos}
+
+    monkeypatch.setattr(leaf_values, "value_matrix",
+                        lambda *a, **k: np.full((2, 2), np.nan))
+    with pytest.raises(ValueError, match="not finite"):
+        leaf_values.solved_value(
+            board=board, hero_range=ranges, villain_range=ranges, pot=10.0,
+            effective_stack_bb=20.0, positions=("OOP", "IP"),
+            raise_sizes=(0.75,), max_raises=2, iterations=5)

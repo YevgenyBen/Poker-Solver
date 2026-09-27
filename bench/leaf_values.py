@@ -116,8 +116,17 @@ def solved_value(*, board, hero_range, villain_range, pot, effective_stack_bb,
         equity_table_fn=equity_table_fn)
     combos = result.hands
     if equity_table is None:
-        equity_table = np.nan_to_num(
-            build_board_equity_table(board, combos), nan=0.5)
+        equity_table = build_board_equity_table(board, combos)
+    # **Unconditionally, and that is the point.** A blocked pair's equity
+    # is NaN, and `solve_flop` replaces it with 0.5 before solving
+    # (M161's docstring). This used to nan_to_num only the table it built
+    # ITSELF, so a caller passing a pre-built one - which the per-board
+    # cache added to make this affordable does - handed NaNs straight
+    # into the walk. NaN regrets make `current_strategy` return the
+    # uniform prior, so the depth arm came back as exactly 4/5 aggressive
+    # at a five-action node: F43's signature, produced by an optimisation
+    # that silently changed the answer.
+    equity_table = np.nan_to_num(equity_table, nan=0.5)
 
     def strategy_of(node):
         table = result.node_data.get(id(node))
@@ -129,9 +138,16 @@ def solved_value(*, board, hero_range, villain_range, pot, effective_stack_bb,
                            1.0 / len(node.legal_actions))
         return table.average_strategy()
 
-    return value_matrix(result.root, position_a=positions[0],
-                        position_b=positions[1], equity_table=equity_table,
-                        strategy_of=strategy_of)
+    matrix = value_matrix(result.root, position_a=positions[0],
+                          position_b=positions[1], equity_table=equity_table,
+                          strategy_of=strategy_of)
+    # A NaN here reaches a solve and returns the uniform prior rather than
+    # an error, so it is refused at the boundary instead.
+    if not np.isfinite(matrix).all():
+        raise ValueError(
+            "the leaf value is not finite - a NaN would reach the solve and "
+            "come back as the uniform prior rather than as an error")
+    return matrix
 
 
 def leaf_key(node, position_a: str) -> tuple:
@@ -147,14 +163,36 @@ def leaf_key(node, position_a: str) -> tuple:
 
 def turn_leaf_values(*, turn_board, hero_range, villain_range, positions,
                      effective_stack_bb, terminals, raise_sizes, max_raises,
-                     iterations, deck, progress=None) -> dict:
+                     iterations, deck, equity_table_fn=None,
+                     progress=None) -> dict:
     """`{leaf_key: (N, N) value matrix}` for each distinct turn leaf.
 
     Each leaf's value is the mean over every river card of that river's
     solved value - the same uniform average over runouts `chance.py` and
     `ev._value` use, so the difference from the shipped arm is the
     BETTING the river now contains, not a different runout weighting.
+
+    **Every river's equity table is built ONCE and reused across leaves,
+    which is most of what this study costs.** Measured: cutting the river
+    solve's iterations 4x saved 10% of the time, so the cost is the TABLE
+    and not CFR - M176's finding one street over, and the inversion M217
+    says must be measured rather than assumed. The leaves differ only in
+    pot and stack; the BOARD is the same, so a table computed for river
+    card X serves all of them. Without this, seven leaf situations over
+    48 cards build 336 tables where 48 will do.
     """
+    tables: dict = {}
+
+    def table_fn(board, combos, samples, seed=None):
+        cached = tables.get(tuple(board))
+        if cached is None:
+            cached = (equity_table_fn(board, combos, samples, seed=seed)
+                      if equity_table_fn is not None
+                      else np.nan_to_num(
+                          build_board_equity_table(board, combos), nan=0.5))
+            tables[tuple(board)] = cached
+        return cached
+
     values, seen = {}, {}
     for terminal in terminals:
         if terminal.folded:
@@ -165,16 +203,48 @@ def turn_leaf_values(*, turn_board, hero_range, villain_range, positions,
         behind = effective_stack_bb - max(terminal.invested.values())
         if behind <= 0:
             continue                       # all in: no river betting to solve
-        per_card = []
+        combos = sorted(set(hero_range) | set(villain_range), key=str)
+        total = live_count = None
         for card in deck:
             river_board = tuple(turn_board) + (card,)
-            per_card.append(solved_value(
+            matrix = solved_value(
                 board=river_board, hero_range=hero_range,
                 villain_range=villain_range, pot=terminal.pot,
                 effective_stack_bb=behind, positions=positions,
                 raise_sizes=raise_sizes, max_raises=max_raises,
-                iterations=iterations))
-        values[key] = sum(per_card) / len(per_card)
+                iterations=iterations,
+                equity_table=tables.get(river_board),
+                equity_table_fn=table_fn)
+            # A combo holding the river card cannot exist on that river.
+            # The engine's own convention replaces such a pair's equity
+            # with 0.5 and solves anyway (`_terminal_value_vector`), which
+            # is fine for a turn table where nothing is blocked by a card
+            # still to come - but averaging it INTO a leaf value would
+            # import that fiction. Each pair is averaged over the rivers
+            # it is actually live on instead.
+            alive = np.array([card not in combo.cards for combo in combos])
+            mask = np.outer(alive, alive).astype(np.float64)
+            total = matrix * mask if total is None else total + matrix * mask
+            live_count = mask if live_count is None else live_count + mask
+        # A hand PAIR holds up to four distinct cards, so a deck of five
+        # or more always leaves one river live and a zero means the deck
+        # was too small - not that the pair is impossible. Refused by name
+        # rather than dividing by zero and seeding a solve with NaN.
+        if live_count is None or not (live_count > 0).all():
+            raise ValueError(
+                f"some hand pair was live on no river card: a deck of "
+                f"{len(deck)} is too small, a pair blocks up to 4")
+        # **The turn's own investment has to come off.** The default this
+        # replaces is `equity * turn_pot - turn_invested_a`, but the river
+        # subgame is solved with `pot = turn_pot` and its OWN `invested`
+        # restarting at zero - so it accounts for the turn pot as money A
+        # can win and never subtracts what A paid to reach the leaf. The
+        # offset differs per leaf, so it does not cancel out of regret
+        # differences the way F45's does within a street: it just flattens
+        # them. Left out, a whole campaign's depth arm came back as the
+        # exactly-uniform prior (0.8 = 4/5 aggressive at a five-action
+        # node), which is F43's signature, not a finding.
+        values[key] = total / live_count - terminal.invested[positions[0]]
         if progress:
             progress(index + 1, len(seen), key, len(per_card))
     return values
