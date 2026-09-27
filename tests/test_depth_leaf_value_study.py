@@ -1,0 +1,172 @@
+"""`bench/studies/depth_leaf_value.py` - the reading rule for the depth
+question asked WITHOUT chaining.
+
+The rule these pin is rule 7: a null here is a real refutation, because
+neither of the two things that could explain the chained arm's null can
+explain this one. Both arms run at the shipped budget, so precision is
+not it (M197), and neither crosses a chance node, so F45's dead-pot
+offset is not it (M161).
+"""
+import pytest
+
+from bench.studies import depth_leaf_value as study
+
+
+def _row(agg_p=0.30, agg_d=0.30, lift_p=0.05, lift_d=0.05, spr=8.0):
+    return {"agg_P": agg_p, "agg_D": agg_d, "lift_P": lift_p, "lift_D": lift_d,
+            "spr": spr, "zero": 0.0, "iterations": 250, "river_cards": 12,
+            "leaf_situations": 7}
+
+
+# -- the axes ------------------------------------------------------------
+
+def test_aggression_is_the_non_check_non_fold_mass():
+    row = {"fold": 0.1, "call_or_check": 0.3, "raise:0.75": 0.4, "all_in:20.00": 0.2}
+    assert study.aggression(row) == pytest.approx(0.6)
+
+
+@pytest.mark.parametrize("action,kind", [
+    ("fold", "fold"), ("call_or_check", "call_or_check"),
+    ("check", "call_or_check"), ("raise:0.75", "aggressive"),
+    ("all_in:20.00", "aggressive")])
+def test_every_action_maps_to_one_of_three_kinds(action, kind):
+    """Mapped by KIND so the two arms need no size mapping between them
+    (M241's axis choice)."""
+    assert study.kind_of(action) == kind
+
+
+def test_the_card_blind_prior_cannot_be_won_by_hedging():
+    """M262's control. Two arms with the SAME prior: the hedging one earns
+    nothing for hedging, the decisive-and-right one earns the lot."""
+    hedgy = {"a": {"call_or_check": 0.5, "raise:1": 0.5},
+             "b": {"call_or_check": 0.5, "raise:1": 0.5}}
+    sharp = {"a": {"call_or_check": 0.0, "raise:1": 1.0},
+             "b": {"call_or_check": 1.0, "raise:1": 0.0}}
+    weights = {"a": 1.0, "b": 1.0}
+    assert study.card_blind(hedgy, weights, "aggressive") == pytest.approx(0.5)
+    assert study.card_blind(sharp, weights, "aggressive") == pytest.approx(0.5)
+    # hero holds "a", which is aggressive in both arms
+    assert 0.5 - study.card_blind(hedgy, weights, "aggressive") == pytest.approx(0.0)
+    assert 1.0 - study.card_blind(sharp, weights, "aggressive") == pytest.approx(0.5)
+
+
+def test_a_zero_weight_hand_does_not_vote_in_the_prior():
+    strategy = {"a": {"raise:1": 1.0}, "b": {"call_or_check": 1.0}}
+    assert study.card_blind(strategy, {"a": 1.0, "b": 0.0}, "aggressive") == 1.0
+
+
+def test_an_empty_range_has_no_prior_rather_than_a_zero_one():
+    assert study.card_blind({}, {}, "aggressive") is None
+
+
+# -- rule 4: does depth move the answer? --------------------------------
+
+def test_a_movement_over_the_level_counts_as_moving_it():
+    rows = [_row(agg_p=0.2, agg_d=0.2 + 0.06 + 0.001 * i) for i in range(8)]
+    out = study.verdict(study.summarise(rows))
+    assert out["depth_moves_the_answer"] is True
+
+
+def test_a_movement_inside_the_level_does_not():
+    rows = [_row(agg_p=0.2, agg_d=0.2 + 0.01 + 0.001 * i) for i in range(8)]
+    out = study.verdict(study.summarise(rows))
+    assert out["depth_moves_the_answer"] is False
+
+
+def test_the_level_is_the_one_this_project_already_calls_close():
+    """Inherited rather than invented (M305's rule): M304's CLOSE_LEVEL
+    and M200's "9 of 16 under 0.05"."""
+    assert study.MOVE_LEVEL == 0.05
+
+
+# -- rule 5: is depth better? -------------------------------------------
+
+def test_depth_is_better_only_when_the_lift_separates():
+    rows = [_row(lift_p=0.02, lift_d=0.30 + 0.001 * i) for i in range(10)]
+    out = study.verdict(study.summarise(rows))
+    assert out["depth_is_better"] is True
+    assert out["depth_is_worse"] is False
+    assert out["refutation_is_clean"] is False
+
+
+def test_depth_is_worse_when_the_lift_separates_the_other_way():
+    rows = [_row(lift_p=0.30, lift_d=0.02 + 0.001 * i) for i in range(10)]
+    out = study.verdict(study.summarise(rows))
+    assert out["depth_is_worse"] is True
+    assert out["depth_is_better"] is False
+
+
+def test_a_lift_that_does_not_separate_is_a_null_not_a_win():
+    rows = [_row(lift_p=0.10, lift_d=0.10 + (0.15 if i % 2 else -0.15))
+            for i in range(10)]
+    out = study.verdict(study.summarise(rows))
+    assert out["depth_is_better"] is False and out["depth_is_worse"] is False
+
+
+# -- rule 7: what makes a null here mean something ----------------------
+
+def test_a_null_is_recorded_as_a_clean_refutation():
+    """The whole reason the seam was built. A chained arm's null could be
+    precision (M197) or F45's dead-pot offset (M161); here both arms run
+    at the shipped budget and neither crosses a chance node, so a null
+    cannot be either."""
+    rows = [_row(agg_p=0.3, agg_d=0.3 + 0.2, lift_p=0.10, lift_d=0.09)
+            for _ in range(10)]
+    out = study.verdict(study.summarise(rows))
+    assert out["depth_moves_the_answer"] is True, "it changed the answer"
+    assert out["depth_is_better"] is False, "and did not improve it"
+    assert out["refutation_is_clean"] is True
+
+
+def test_both_arms_are_declared_at_the_shipped_budget():
+    """If the arms ever differ in iterations this study has the chained
+    arm's confound back and rule 7 no longer holds."""
+    import pathlib
+    from api import config as cfg
+
+    source = pathlib.Path(study.__file__).read_text(encoding="utf-8")
+    runner = source.split("def main(", 1)[1]
+    assert "iterations=cfg.TURN_STANDALONE_ITERATIONS" in runner
+    assert runner.count("iterations=cfg.TURN_STANDALONE_ITERATIONS") == 1, (
+        "both arms share one `common` dict, so the budget cannot diverge")
+    assert cfg.TURN_STANDALONE_ITERATIONS > 0
+
+
+# -- rule 8: scope -------------------------------------------------------
+
+def test_a_shallow_sample_is_flagged_rather_than_quietly_read():
+    """An earlier probe drew SPR 0.2-3.2 and got M223's direction wrong
+    for it - M222 measured the turn's disagreement collapsing there."""
+    shallow = study.summarise([_row(spr=1.3) for _ in range(6)])
+    assert study.verdict(shallow)["scope_is_the_real_regime"] is False
+    deep = study.summarise([_row(spr=6.0) for _ in range(6)])
+    assert study.verdict(deep)["scope_is_the_real_regime"] is True
+
+
+def test_the_spr_bound_is_the_one_the_turn_note_already_uses():
+    from api import config as cfg
+    assert study.MIN_SPR == cfg.TURN_INDEPENDENT_SPR_MIN
+
+
+# -- the shape of the reading --------------------------------------------
+
+def test_an_unrun_study_reports_as_unmeasured():
+    assert study.summarise([]) == {"n": 0}
+    assert study.verdict({"n": 0})["measured"] is False
+
+
+def test_the_direction_is_reported_as_a_count_as_well_as_a_mean():
+    """M223 claimed the fuller model "bets everything". A mean can hide a
+    split, so the per-spot count is reported beside it."""
+    rows = [_row(agg_p=0.2, agg_d=0.9) for _ in range(6)] + [
+        _row(agg_p=0.9, agg_d=0.2) for _ in range(2)]
+    out = study.summarise(rows)
+    assert out["more_aggressive_on"] == 6 and out["n"] == 8
+
+
+def test_the_leaf_situation_count_is_recorded_with_the_figures():
+    """It is what makes the study affordable at all - M247 measured 27
+    terminals collapsing to 8, and the cost probe measured 7."""
+    out = study.summarise([_row() for _ in range(4)])
+    assert out["leaf_situations_median"] == 7
+    assert out["river_cards"] == 12
