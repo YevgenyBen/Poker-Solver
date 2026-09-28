@@ -410,3 +410,54 @@ def test_the_table_size_is_the_one_the_reference_studies_used():
     """M262's reference agent is six-handed, and M264/M266/M269 all scored
     on it. Matching removes table size as a confound."""
     assert study.TABLE_SIZE == 6
+
+
+def test_the_study_runs_at_the_references_own_stack_depth():
+    """Restricting to one bucket is not a convenience: the published agent
+    plays 100bb only, so the PRIMARY cell has no other depth available.
+    Every figure is therefore a 100bb statement (M274)."""
+    from api import config as cfg
+    assert study.STACK_BUCKET_BB == 100
+    assert study.STACK_BUCKET_BB in cfg.MULTIWAY_PREWARM_STACK_DEPTHS
+
+
+def test_the_targets_do_not_let_the_secondary_source_starve_the_primary():
+    """779 handhq rows against the reference's 238 at 4+ live: one flat
+    quota would fill with data the verdict cannot read."""
+    assert study.TARGETS[(4, study.REFERENCE_SOURCE)] > study.TARGETS[(4, "handhq-2009")]
+    assert set(study.TARGETS) == {(4, "pluribus"), (3, "pluribus"),
+                                 (4, "handhq-2009"), (3, "handhq-2009")}
+
+
+def test_min_detectable_recovers_the_bar_times_the_standard_error():
+    """A cell measuring +0.10 at exactly 2 sigma has a sem of 0.05, so the
+    smallest effect it could have cleared 2 sigma with is +0.10 itself."""
+    cell = {"hand_delta": 0.10, "hand_sigma": 2.0}
+    assert study.min_detectable(cell, 2.0) == pytest.approx(0.10)
+    assert study.min_detectable({"hand_delta": 0.10, "hand_sigma": 4.0},
+                               2.0) == pytest.approx(0.05)
+
+
+def test_min_detectable_is_none_when_nothing_was_measured():
+    assert study.min_detectable({"hand_sigma": None, "hand_delta": 0.1}) is None
+    assert study.min_detectable({"hand_sigma": 2.0, "hand_delta": None}) is None
+    assert study.min_detectable({}) is None
+
+
+def test_a_null_says_what_it_could_have_detected():
+    """A null is evidence of absence only if the cell could have SEEN the
+    effect. So NO PRIZE carries the floor and A10's figure beside it."""
+    rows = _rows(40, 3, 0.12) + _rows(40, 5, 0.0, spread=0.05)
+    out = study.verdict(study.summarise(rows))
+    assert out["prize"] == "NO PRIZE"
+    assert out["a10_reported"] == study.A10_SIGNED_GAP
+    assert "could_have_detected" in out
+    assert "underpowered_for_a10" in out
+
+
+def test_a_prize_does_not_claim_a_power_floor():
+    """The floor only qualifies a null; quoting it beside a positive result
+    would invite reading it as a confidence bound, which it is not."""
+    out = study.verdict(study.summarise(_rows(40, 3, 0.12) + _rows(40, 5, 0.10)))
+    assert out["prize"] == "PRIZE"
+    assert "could_have_detected" not in out

@@ -129,6 +129,9 @@ MIN_HALF_SIGMA = 1.0
 MAX_GUARD_SIGMA = -2.0
 #: Rule 5. What the outside reference bets when checked to (M264).
 REFERENCE_BETS_CHECKED_TO = 0.194
+#: What A10 (M269) reported at 4+ live, which is the effect this study
+#: must be able to SEE for a null to mean anything.
+A10_SIGNED_GAP = 0.040
 #: Amendment 2: the PRIMARY cell's source - the published six-handed agent
 #: M262 established. Everything else is recorded and reported, never read
 #: for the verdict.
@@ -147,6 +150,19 @@ STREETS = ("flop", "turn")
 #: It also removes table size as a confound and holds the warm-up to one
 #: table size - 1,017 scorable decisions at 4+ live, against A10's 260.
 TABLE_SIZE = 6
+#: The one 5bb stack bucket, and it is the REFERENCE's own depth rather
+#: than a convenience: the published agent plays 100bb only, so all 549 of
+#: its six-handed hands sit in this single bucket while 2009 online play
+#: spans 87. Restricting both sources to it removes stack depth as a
+#: confound between the primary and secondary cells, and holds the preflop
+#: warm-up to one solve instead of 87 cold ones - about four hours that
+#: would have been spent entirely on the half excluded from the verdict.
+#:
+#: **So every figure here is a 100bb statement**, and M274 is why that is
+#: said out loud: a flop finding that held at 100bb inverted at 50bb. This
+#: study cannot speak to any other depth, and the primary cell has no
+#: other depth available by construction.
+STACK_BUCKET_BB = 100
 #: Fixed so the draw is reproducible and a partial run is still a sample.
 DRAW_SEED = 309
 #: Targets per (live band, source). The primary 4+ live cell takes
@@ -274,6 +290,24 @@ def paired(rows: list, left: str = "S", right: str = "W") -> dict:
     return out
 
 
+def min_detectable(cell: dict, bar: float = MIN_SIGMA):
+    """The smallest effect this cell could have cleared the bar with.
+
+    A null is only evidence of absence if the cell could have SEEN the
+    effect it is looking for. With 36 clustered units that is not
+    guaranteed, so every null here is reported beside the effect size it
+    was able to detect - and A10's +0.040 beside it.
+
+    Derived from the cell's own per-hand spread: `bar * sem`, where sem is
+    recovered from the reported hand sigma. Returns None when the cell
+    carries no defined hand sigma, because then nothing was measured.
+    """
+    if cell.get("hand_sigma") in (None, 0) or cell.get("hand_delta") is None:
+        return None
+    sem = abs(cell["hand_delta"]) / abs(cell["hand_sigma"])
+    return bar * sem
+
+
 def guard(rows: list) -> dict:
     """Rule 3: the same comparison on the CARD-BLIND lift.
 
@@ -382,9 +416,18 @@ def verdict(summary: dict) -> dict:
         state = "UNREPLICATED"
     else:
         state = "PRIZE"
-    return {"control": "passed", "prize": state, "guard": guard_state,
-            "halves": "held" if halves_ok else "did not hold",
-            "hands": summary["wide4plus"].get("hands")}
+    out = {"control": "passed", "prize": state, "guard": guard_state,
+           "halves": "held" if halves_ok else "did not hold",
+           "hands": summary["wide4plus"].get("hands")}
+    if state == "NO PRIZE":
+        # A null is only evidence of absence if the cell could have seen
+        # the effect. Say what it could have seen, and what A10 reported.
+        floor = min_detectable(summary["wide4plus"])
+        out["could_have_detected"] = floor
+        out["a10_reported"] = A10_SIGNED_GAP
+        out["underpowered_for_a10"] = (floor is not None
+                                       and floor > A10_SIGNED_GAP)
+    return out
 
 
 def decisions_in(hand, min_live: int = 3) -> list:
@@ -440,10 +483,12 @@ def run(out_path, wide_target: int, control_target: int,
 
     db = hand_db.connect()
     print("building the decision list...", flush=True)
+    bucket = cfg.MULTIWAY_STACK_BUCKET_BB
     pool = []
     for hand in hand_db.query(
-            db, "clean = 1 AND players_to_flop >= 3 AND n_players = ?",
-            (TABLE_SIZE,)):
+            db, "clean = 1 AND players_to_flop >= 3 AND n_players = ? "
+                "AND eff_stack_bb >= ? AND eff_stack_bb < ?",
+            (TABLE_SIZE, STACK_BUCKET_BB, STACK_BUCKET_BB + bucket)):
         picks, acts, cards = decisions_in(hand)
         for i, a, live in picks:
             pool.append((hand.id, i, live, a.street, hand.source))
