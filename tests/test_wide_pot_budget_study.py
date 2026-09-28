@@ -461,3 +461,16 @@ def test_a_prize_does_not_claim_a_power_floor():
     out = study.verdict(study.summarise(_rows(40, 3, 0.12) + _rows(40, 5, 0.10)))
     assert out["prize"] == "PRIZE"
     assert "could_have_detected" not in out
+
+
+def test_the_control_is_m264s_own_comparison_at_todays_configuration():
+    """The control's arms ARE M264's baseline and 4x arm, so a failure
+    means its headline no longer reproduces - not only that the instrument
+    is unfit. M269's grouping shipped in between and attacks the same
+    mechanism, at a FIXED 4x budget; the budget at a fixed grouping has
+    never been measured."""
+    from api import config as cfg
+    assert study.SHIPPED_ITERATIONS == 1000        # M264's baseline
+    assert study.WIDE_ITERATIONS == 4000           # M264's 4x arm
+    assert cfg.DEFAULT_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS == study.WIDE_ITERATIONS
+    assert cfg.MULTIWAY_POSTFLOP_ACTION_GROUPING == "mean"

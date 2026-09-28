@@ -53,6 +53,25 @@ choosing an axis that needs no size mapping.
     1. CONTROL FIRST. At 3 live, W - S must clear +2.0 sigma. M264
        measured +0.107 at 7.86 sigma there. If the control fails the
        instrument is broken and NOTHING is concluded at 4+ live.
+
+       **THE CONTROL DOES DOUBLE DUTY, and this was written into the rule
+       while it stood at 24 hands and -0.85 sigma - nowhere near
+       conclusive either way, so it is not a reading chosen to suit an
+       answer.** At 3 live the two arms are exactly M264's own comparison:
+       its baseline was 1,000 iterations and its 4x arm 4,000. But M264
+       measured that BEFORE `MULTIWAY_POSTFLOP_ACTION_GROUPING` shipped,
+       and grouping attacks the same mechanism - it divides a kind's
+       regret by how many actions it holds, so a menu of three bet sizes
+       stops collecting three actions' positive regret against checking's
+       one. M269 measured grouping at a FIXED 4x budget (+0.042, 3.65
+       sigma, bets when checked to 0.472 -> 0.410); **nobody has measured
+       the budget at a fixed grouping.** So a control failure here would
+       not only mean the instrument is unfit: it would mean M264's
+       headline no longer reproduces at the shipped configuration, and
+       `DEFAULT_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = 4000` carries a
+       justification that has expired - the same family as M292, M299 and
+       M300-M306. Either way rule 1 stands as written and nothing is
+       concluded at 4+ live from this design.
     2. PRIZE. At 4+ live, W - S must clear +2.0 sigma.
     3. GUARD. The card-blind lift difference must not be -2.0 sigma or
        worse. Raw agreement is not a proper scoring rule and a better
