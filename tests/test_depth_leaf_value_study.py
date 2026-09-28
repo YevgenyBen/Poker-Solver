@@ -279,3 +279,76 @@ def test_the_facing_populations_bias_is_recorded_in_the_rule():
     assert "0 fold" in study.__doc__
     assert "42%" in study.__doc__
     assert "not decisive" in study.__doc__
+
+
+# -- the facing-a-bet rows (M308) ----------------------------------------
+
+FACING_FIXTURE = pathlib.Path(__file__).parent / "data" / "depth_leaf_facing_m308.json"
+
+
+def _facing():
+    return json.loads(FACING_FIXTURE.read_text(encoding="utf-8"))
+
+
+def test_the_facing_sample_is_what_it_claims_to_be():
+    from api import config as cfg
+
+    rows = _facing()
+    assert len(rows) == 16
+    assert all(r["facing"] for r in rows), "every row faced a bet"
+    assert all(r["turn_path"] for r in rows), "and reached that node by a real path"
+    assert all(r["spr"] >= study.MIN_SPR for r in rows)
+    assert all(r["iterations"] == cfg.TURN_STANDALONE_ITERATIONS for r in rows)
+    assert all(r["river_cards"] == 48 for r in rows)
+
+
+def test_depth_moves_the_turn_LESS_facing_a_bet():
+    """The finding, and it is the opposite of what M188/M189 predict -
+    they put 74% of all cost at 12% of decisions there. Whatever makes
+    those nodes expensive, it is not that the turn values its leaves at
+    showdown equity."""
+    facing = study.summarise(_facing())
+    opening = study.summarise(_recorded())
+    assert facing["move_median"] < opening["move_median"]
+    assert study.verdict(facing)["depth_moves_the_answer"] is False
+    assert study.verdict(opening)["depth_moves_the_answer"] is True
+
+
+def test_it_is_bimodal_so_neither_average_describes_it():
+    """Ten spots move under 0.02 - five of those under 0.001 - and five
+    move 0.14-0.60. A correct leaf value is irrelevant or transformative
+    with almost nothing between.
+
+    Those five are 1.4e-05 to 3.95e-04, NOT zero: they print as 0.000 at
+    three decimals and a first version of this test asserted exact zeros
+    off the log rather than off the data.
+    """
+    moves = sorted(abs(r["agg_D"] - r["agg_P"]) for r in _facing())
+    assert sum(1 for m in moves if m < 0.02) == 10
+    assert sum(1 for m in moves if m < 0.001) == 5
+    assert not any(m == 0.0 for m in moves), "negligible is not zero"
+    assert sum(1 for m in moves if m > 0.20) == 5
+
+
+def test_neither_population_shows_depth_improving_the_advice():
+    """Both clean: both arms at the shipped budget, neither crossing a
+    chance node, so neither precision (M197) nor F45 (M161) explains
+    either null."""
+    for rows in (_recorded(), _facing()):
+        out = study.verdict(study.summarise(rows))
+        assert out["depth_is_better"] is False
+        assert out["refutation_is_clean"] is True
+
+
+def test_the_agreement_axis_stayed_underpowered_and_that_is_recorded():
+    """M307 predicted this population would settle the lift question. It
+    does not: hole cards are known mainly at SHOWDOWN so folders are
+    absent, and SPR >= 5 selects spots where hero CALLS. If this mix ever
+    balances, the lift null becomes decisive and the copy about it must be
+    re-derived rather than kept (M281)."""
+    facing = _facing()
+    aggressive = sum(1 for r in facing if r["chosen"] == "aggressive")
+    assert aggressive == 2, "2 of 16, against the ~20% projected from the scan"
+    assert not any(r["chosen"] == "fold" for r in facing), (
+        "a fold in this population would mean the store now carries a "
+        "folder's cards, and the axis M241/M242 chose becomes available")
