@@ -236,3 +236,46 @@ def test_the_populations_action_mix_is_recorded_as_the_limitation_it_is():
     assert passive == 15, (
         "if this mix ever balances, the lift null becomes decisive and the "
         "copy about it should be re-derived rather than kept")
+
+
+# -- the facing-a-bet mode (M308) ---------------------------------------
+
+def test_the_facing_mode_builds_at_the_streets_opening_pot():
+    """M177's other rule, and the one that voids a study rather than
+    weakening it: the tree sizes bets off the pot it was BUILT with, so
+    building at the post-bet pot models a much larger bet and scores two
+    different situations against each other. The facing arm therefore
+    takes pot and stack from the street's OPENING decision and walks the
+    real bet."""
+    import pathlib
+
+    source = pathlib.Path(study.__file__).read_text(encoding="utf-8")
+    runner = source.split("def main(", 1)[1]
+    assert "street_turns[0]" in runner, "the opening decision supplies the pot"
+    assert 'pot, stack = o_js["pot"], o_js["max_affordable_bb"]' in runner
+    # And the node hero is scored at is the one the bet leads to.
+    assert "_resolve_action_path(result.root, turn_path)" in runner
+
+
+def test_the_two_modes_cannot_read_each_others_nodes():
+    """Opening mode wants no turn path and facing mode needs one. A
+    mismatch would have the arms answering a different question than the
+    player faced - M177's rule in reverse, which is how M301's first pass
+    produced 120 rows with zero facing a bet."""
+    import pathlib
+
+    runner = pathlib.Path(study.__file__).read_text(
+        encoding="utf-8").split("def main(", 1)[1]
+    assert "if bool(turn_path) != facing_mode:" in runner
+
+
+def test_the_facing_populations_bias_is_recorded_in_the_rule():
+    """Measured over 150 real facing-a-bet turn decisions: 42% at SPR >= 5,
+    and an action mix of 30 raise / 120 call / ZERO fold, because hole
+    cards are known mainly when a hand reaches showdown. The fold axis is
+    the one M241/M242 chose for needing no size mapping, and it is
+    unavailable here - so the mode improves the agreement axis without
+    making it decisive, and the docstring says so."""
+    assert "0 fold" in study.__doc__
+    assert "42%" in study.__doc__
+    assert "not decisive" in study.__doc__
