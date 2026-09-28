@@ -18229,3 +18229,143 @@ the comment as history.
 
 **R3's stale count goes 3 -> 1.** Only `DRAWY_BOARD_NOTE` remains, and it
 needs the independent solver.
+
+## M307 — a correct leaf value changes the turn's advice and does not improve it
+
+M247 costed depth-limited solving and found it the only structural idea
+for the turn that had not come back worse: turn leaves collapse to 8
+situations, an exact leaf value costs 400x the budget, the correction
+carries sd 1.75-1.86 bb (12% of pot), two runs agree to four decimals so
+it is not noise, and **no cheap feature predicts it** - equity 0-2%,
+equity-swing 0-2%. That last finding is the argument for a learned value
+rather than a formula, and the question it left open is the one this
+milestone answers: does acting on a correct leaf value make the advice
+better?
+
+**Why nothing before this could ask it.** The affordable way to add depth
+is `solve_flop_turn` on a four-card board, which plays the river out
+through a chance node. M223 measured that WORSE (+0.1713, 2.79 sigma)
+with a converged chain running to 0.997 aggression - but a chained solve
+changes TWO things: it plays the street out AND it crosses a chance node,
+where F45's dead-pot offset stops cancelling (M161: 0.97 of strategy
+difference, dtype-independent). It also cannot afford the shipped budget:
+the chained turn's marginal iteration is 12.4s, so every chained figure
+is taken unconverged, which is M197's confound by construction.
+
+**What shipped to make the question askable.** `cfr`'s `leaf_value_fn`
+replaces a SHOWDOWN terminal's value inside a single-street solve. Off by
+default and byte-identical unused, the pattern `continuation_table`,
+`ensemble` and the four `*_SOLVE_STANDALONE` flags already use. Fold
+leaves are never offered a value - the hand ended, and injecting would
+invent money. A wrong shape is refused by name rather than broadcasting
+into a plausible number. `bench/leaf_values.py` builds the value: solve
+each river out and take ONE matrix-valued walk over the solved tree,
+because `ev._value` prices one hero hand against one opponent reach and a
+full table would be N^2 walks - the cost M277 had to cut.
+
+**RESULT, 16 real heads-up turn opening decisions at SPR 5.3-9.2 (median
+8.5), both arms at the shipped 250 iterations, 8.0 machine hours:**
+
+| reading | value |
+|---|---|
+| movement, median absolute aggression difference | **0.0549** (bar 0.05) |
+| spots over the bar | **8 of 16** |
+| direction | -0.0354, **0.62 sigma**, more aggressive on 8 of 16 |
+| card-blind lift, depth arm | +0.0807 (1.75 sigma) |
+| card-blind lift, shipped arm | +0.0764 (1.38 sigma) |
+| **lift difference** | **+0.0043, 0.08 sigma** |
+
+**A correct leaf value changes the advice and does not improve it.** When
+it moves it moves hard - five spots shift 0.25-0.44, including 0.530 to
+0.088 and 0.172 to 0.595 - and half the spots are untouched. This
+project's usual shape: the tail carries it.
+
+**THE NULL IS CLEAN, and that is what the seam bought.** Both arms ran at
+the shipped budget and neither crossed a chance node, so neither
+precision (M197) nor F45 (M161) can explain it. Every earlier attempt at
+this question had one of those escapes available.
+
+**M223's DIRECTION IS GONE.** "A converged chain runs to 0.997 aggression
+- it bets everything" measures 8 of 16 at 0.62 sigma once the menu
+matches and no chance node is crossed. Three samples taken while getting
+here read 3/8, 5/8 and 8/16 - it was the TREE and the BUDGET, not depth.
+M223's chained path still ships `FLOP_TURN_RAISE_SIZES = (2.5, 2.0)`, one
+2.5x-pot bet, while the standalone turn has had a three-size menu since
+M213, and M209/M213 priced that inability at up to 1.85 bb.
+
+**THE WEAK HALF, STATED.** The real player chose check or call on **15 of
+16** spots. Each hand's FIRST turn action is the street's opening
+decision, where checking dominates, so the agreement axis had almost no
+variation to detect anything with. M252's rule: a benchmark measures the
+population it generates. The MOVEMENT finding does not depend on the
+player's choice and stands; the "is depth better" null is **underpowered
+rather than decisive**, and the next population to run is facing-a-bet
+turn nodes, where the action mix is not 15 to 1. That is M177's rule and
+the blind spot that has caught this project six times.
+
+**FOUR COST LEVERS MEASURED, THREE REFUSED, AND THE REFUSAL FOUND THE
+FOURTH.**
+
+| lever | result |
+|---|---|
+| 12-of-48 river sampling | **refused**: signal 1.4126 against noise 0.8027, ratio 1.8 against a bar of 5.0 |
+| river iterations 1000 to 250 | **refused** at 4.9 - and only **1.11x** faster |
+| narrowing the river's range | not attempted: M116 measured the building range moving a value by up to 0.23 of pot |
+| **per-board equity table reuse** | **adopted**, 200 to 50 min a spot |
+
+The sampling refusal matters for its direction as well as its size: noise
+in a leaf value perturbs the solve, so sampling would have biased the
+study TOWARD "depth is alive". And the iteration refusal is what found
+the lever that worked - 1.11x from a 4x cut proves the cost is the equity
+TABLE and not CFR (M176's inversion one street over), so seven leaves
+over 48 cards were building 336 tables where 48 will do.
+
+**TWO BUGS OF MY OWN, AND THE SECOND WAS CAUSED BY THE FIRST FIX.**
+
+- **The turn's investment was never subtracted.** The river subgame is
+  solved with `pot = turn_pot` while its own `invested` restarts at zero,
+  so the value counted the turn pot as money to win and never took off
+  what had been paid to reach the leaf. That offset differs per leaf, so
+  unlike F45's it does not cancel out of regret differences.
+- **The per-board table cache fed NaNs into the walk.** `solved_value`
+  scrubbed NaNs only in a table it built ITSELF; a blocked pair's equity
+  is NaN and `solve_flop` replaces it with 0.5 before solving (M161).
+  Handed a pre-built table - which the cache exists to do - the NaNs went
+  through, every regret became NaN, and `current_strategy` returned the
+  prior. **An optimisation that silently changed the answer**: M132's
+  pool fallback, M245's uncleared cache and M284's fingerprint again.
+
+**What caught them: 0.8000 / 0.2000 at a five-action node** is 4/5 and
+1/5 exactly. Round numbers in a solver's output are F43's fingerprint,
+not a result. An arm that was merely WRONG rather than exactly uniform
+would have spent 8 hours producing a confident null that nothing could
+have been blamed for.
+
+**The missing guard was structural**: there was an identity test for the
+SEAM and none for the VALUE BUILDER, and both bugs lived in the gap.
+
+**A numerical trap worth carrying.** Injecting the algebraically-identical
+default does not reproduce the solve bit-for-bit - the default scales
+after the matmul, an injected value scales before it, so the arithmetic
+is reordered (M161's case). Measured through 1,000 iterations, the worst
+per-hand strategy difference is **1.3e-14** on an antisymmetric table and
+**0.50** on a FLAT one, where every decision is exactly tied and M74's
+bang-bang behaviour amplifies one ULP wholesale. **A leaf-value study on
+a uniform equity table measures its own fixture**, and the first fixture
+written here was the flat one.
+
+**What this says about a learned value network.** A net approximates this
+leaf value, so it cannot beat it: if the exact version does not improve
+the advice, a learned one will not either - at the turn, at these
+depths, on this metric. That is a refutation of the premise rather than a
+refusal on cost, which is new. It is bounded by the weak half above, and
+by M168: the FLOP is where M304 measured a 0.55 aggression gap and 0.74
+bb, and nothing here transfers to it.
+
+**Also recorded**: load moves the cost and not the answer. One turn spot
+solved three times per arm - twice quiet, once under full CPU contention
+- is bit-identical across all 1,128 hands' rows on both paths, while the
+chained arm runs 3.66x slower loaded. So `parallel_equity_batch` is
+ordering-independent, which no test had checked, and every cost figure
+here is a point reading on a machine M240 measured drifting 9.7x within
+one run - the same 48-card leaf took 15.3 min once and 35.2 min later.
