@@ -333,6 +333,34 @@ facing a bet it barely changes it. A net approximates that value, so it
 cannot beat it. The FLOP is untouched and has no instrument - M298
 measured its three-round dump as impossible here at any stack, width or
 thread count.
+**BUT THE PREMISE ASKED THE WRONG QUESTION, AND M309 FOUND WHERE IT IS
+ALIVE.** M307/M308 replaced a leaf value INSIDE a solve. A fast stand-in
+pays off wherever we already know a better answer and cannot serve it,
+which need not involve leaves at all - and trained on our own solves such
+a thing buys **latency, never knowledge** (the stone law forbids training
+on the reference; M194 says shared model error is the whole residual
+anyway). So the precondition is "is there a prize", and there is one:
+**the MULTIWAY FLOP at four live.** `MULTIWAY_WIDE_POT_MIN_LIVE`'s comment
+said the cell's accuracy question was "UNDERPOWERED, not answered"; over
+every 4-live decision the reference plays at 100bb (238, from all **36**
+four-way flops in 10,000 hands) the 4x budget is worth **+0.0751 at 3.59
+sigma**, **+0.1004 at 4.33 sigma on the flop** against +0.0241 at 0.17 on
+the turn, surviving M262's card-blind control at 2.50 sigma and both
+split halves. It costs **3.15 -> 10.30s against a 5s bar**, so M266's
+revert now stands on LATENCY ALONE. Exposure is 6.43% of real decisions
+(M291). **That is the shape a depth-limited or learned stand-in has to
+fill**, and it is a FLOP target rather than a turn one - the opposite
+street to the one four milestones were spent on.
+**Rule: a power floor must come from the CELL'S OWN spread.** M309
+projected a +0.0956 floor at 36 hands from the control's spread and
+predicted the cell would be underpowered; the cell's own per-hand spread
+is **0.1268 against the control's 0.2868**, so it cleared at +0.0751.
+Borrowing a neighbouring cell's variance understated this one by 2.3x.
+**Rule: score the arms against a source that plays WELL.** M309's
+secondary cell - unselected 2009 online play - moves the OTHER way
+(-0.0541), because a better solve agrees less with a weaker player. It
+was excluded in advance, and its reversal is a sanity signal rather than
+a contradiction.
 **Rule: a leaf-value study must not use a UNIFORM equity table.** One ULP
 of reordering moves a realistic solve 1.3e-14 and a flat one **0.50**,
 because every decision there is exactly tied and M74's bang-bang
@@ -1110,7 +1138,8 @@ requests now reject unknown fields by name rather than ignoring them.
                            `street_isolation.py` (M304),
                            `preflop_position.py` (M305),
                            `multiway_instability.py` (M306),
-                           `depth_leaf_value.py` (M307)
+                           `depth_leaf_value.py` (M307),
+                           `wide_pot_budget.py` (M309)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools

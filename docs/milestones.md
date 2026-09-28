@@ -18467,3 +18467,135 @@ machine drifting 9.7x within a single run; the same 48-card leaf took
 15.3 minutes once and 35.2 later. Every cost figure in M307 and M308 is a
 point reading, and none went through `bench/reference_units.py`, which
 exists for exactly this and which I did not use.
+
+## M309 — the 4-live budget DOES pay, and it is the answer we know and cannot serve
+
+M307 and M308 refuted the value-network premise at the turn: over 32 spots
+and both node types, a correct leaf value changes the advice and does not
+improve it. The user asked the question again in a better form - can a
+fast model serve the places it is too costly for us to SOLVE? - and that
+is a different question, because it is about replacing a solve rather
+than a leaf inside one.
+
+**The reasoning that decided what to measure.** A net trained on our own
+solves buys LATENCY, never knowledge: the stone law forbids training on
+the reference, and M194 says shared model error is the whole residual
+anyway. So it pays off in exactly one situation - we already know a
+better answer and cannot serve it in time. The precondition is therefore
+not "can a net be built" but "is there a prize", and the product records
+one candidate in as many words. `MULTIWAY_WIDE_POT_MIN_LIVE`'s own
+comment:
+
+    The 4-live accuracy question is UNDERPOWERED, not answered: this
+    reverts a cost nobody measured a benefit for.
+
+**RESULT: the benefit is real.** Every 4-live decision the published
+six-handed agent plays at 100bb - 238 of them, out of all **36** four-way
+flops it reaches in 10,000 hands - scored on our probability mass on the
+action kind it chose, 1,000 iterations against 4,000:
+
+| cell | n | hands | 1000 | 4000 | delta | hand sigma |
+|---|---|---|---|---|---|---|
+| 3 live (control) | 250 | 198 | 0.5002 | 0.5715 | +0.0713 | +3.28 |
+| **4 live** | 238 | **36** | 0.5482 | 0.6233 | **+0.0751** | **+3.59** |
+| ...flop | 159 | 36 | 0.5610 | 0.6614 | **+0.1004** | **+4.33** |
+| ...turn | 79 | 20 | 0.5226 | 0.5467 | +0.0241 | +0.17 |
+
+**It is a FLOP result** - flop minus turn is **+0.0957 at 2.19 sigma** -
+which is also where the exposure is: M291 measured the 4-live flop at
+6.43% of real decisions.
+
+**THE CARD-BLIND CONTROL IS WHAT MAKES IT A RESULT.** Raw agreement is
+not a proper scoring rule and a better-converged arm is more DECISIVE
+(M173: mixed rows 37.3% -> 22.1%), so the gain could have been
+decisiveness alone. Scoring each arm against its OWN range-weighted
+average row instead - M262's prior - the gain survives at **+0.0461, 2.50
+sigma**. Both split halves hold (+2.10 / +2.86), split by HAND. And
+aggression when checked to moves **0.515 -> 0.421** toward the
+reference's 0.194, which is M264's own pre-registered bar.
+
+**Why it still is not taken: 3.15 -> 10.30s** median on the 4-live flop
+against a 5s bar. So M266's revert was right on the evidence it had
+(n=38, +0.056 at 1.01 sigma) and is now right for a different reason -
+it stands on **latency alone**, and the clause about "a cost nobody
+measured a benefit for" is withdrawn from its comment. **This is the
+clearest case in the product of an answer we know and cannot serve**,
+which is precisely the shape a depth-limited or learned stand-in would
+have to fill.
+
+**THE CONTROL DOES DOUBLE DUTY, AND M264'S HEADLINE REPRODUCES.** At 3
+live the two arms ARE M264's own comparison. It published +0.107 at 7.86
+sigma before `MULTIWAY_POSTFLOP_ACTION_GROUPING` shipped, and grouping
+attacks the same mechanism - M269 measured grouping at a FIXED 4x budget
+and nobody had measured the budget at a fixed grouping. Re-measured:
+**+0.0713 at 3.28 sigma**, about two thirds of the published size, with
+both arms' aggression sitting lower than M264's (0.492/0.392 against
+0.589/0.470) while the gap survives nearly intact. So
+`DEFAULT_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = 4000` keeps its
+justification - a shipped constant surviving re-measurement, which is
+rarer here than the ones that have not.
+
+**THE SECONDARY CELL POINTS THE OTHER WAY, and that is a sanity signal
+rather than a contradiction.** Agreement with unselected 2009 online play
+gets **worse** with the bigger budget (-0.0541 over 29 hands), which is
+what a move toward correct play should do when the comparison player is
+not strong. It was excluded from the verdict in advance for an
+independent reason: 1,797 distinct anonymised players, the most frequent
+with 45 hands, admit no win-rate selection.
+
+**MY OWN POWER PROJECTION WAS WRONG, IN THE FAVOURABLE DIRECTION.** From
+the control's per-hand spread I projected a minimum detectable effect of
+**+0.0956** at 36 hands and said in advance the cell would probably be
+underpowered for A10's +0.040. The 4-live cell's per-hand spread is
+**0.1268 against the control's 0.2868** - less than half - so it cleared
+at +0.0751. **A power projection must use the cell's own spread, not a
+neighbouring cell's**; borrowing one understated this cell by 2.3x.
+
+**A false alarm I raised and resolved, recorded because the process
+matters.** At 24 hands the control read **-0.85 sigma** - the wrong
+direction - and I flagged it with a plausible mechanism (grouping having
+already collected M264's gain). Filled to 198 hands it reads +3.28. It
+was noise, it was labelled provisional and not significant at the time,
+and nothing was acted on. What the episode did produce is worth keeping:
+the reframing of the control as a re-measurement of M264 was written into
+the rule WHILE it stood at -0.85 sigma, so it could not be a reading
+chosen to suit an answer.
+
+**Scope, and it is narrow.**
+- **100bb only** (M274: a flop finding that held at 100bb inverted at
+  50bb). The reference plays no other depth, so the primary cell has none
+  available; restricting 2009 play to the same bucket also removed 87
+  cold preflop solves, about four hours spent entirely on the half
+  excluded from the verdict.
+- **Exactly FOUR live.** The reference never reaches a five-way flop, so
+  the 5- and 6-live pots this gate also covers remain unmeasured.
+- **Flop and turn only.** The multiway river is capped at 200 iterations
+  at every live count and has no second arm - established before the run
+  rather than discovered inside it.
+- **Hero is force-included on all 702 rows**, which is correct for a
+  request (M243) and means no row carried a naturally-in-range hero.
+
+**The ensemble arm was deliberately not re-run.** M264 measured a
+four-seed postflop ensemble at +0.002, 0.23 sigma against this same
+reference, and M169 had already refused it with the worst case never
+improving at any K. Re-running it would have been M131's eighth scoring
+function.
+
+**Rules.**
+- **A power floor must come from the cell's own spread.** A neighbouring
+  cell's is not a substitute, in either direction.
+- **Quotas must be per (cell, source) when the sources differ in size.**
+  779 secondary rows against 238 primary ones would have filled a flat
+  quota with data the verdict cannot read.
+- **The unit of independence is the spot, not the decision.** Six or
+  seven decisions share one board, one preflop line and one set of
+  ranges; a per-decision sigma overstated this cell roughly six-fold.
+- **Set an arm through the request and verify it from the response's own
+  echo.** No config constant moved, so M245's cache trap could not apply,
+  and a mismatch stops the run instead of being recorded.
+
+**Cost**: 702 rows in 138.6 minutes, peak 1.1 GB under
+`bench/memory_guard.py`. The per-arm seconds for the first ~90 rows were
+taken while the test suite ran beside it, so they are contended; the
+engine is bit-identical under contention (M307), so only the timings are
+affected, and latency was never a veto here.
