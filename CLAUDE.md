@@ -279,6 +279,46 @@ is dead.** What remains is M116's range-strength-keyed OFFLINE table,
 uncosted, and carrying M116's warning that the range an entry is built
 from moves it by up to 0.23 of pot.
 
+**M307 MEASURED IT, AND A CORRECT LEAF VALUE DOES NOT IMPROVE THE
+ADVICE.** `cfr`'s `leaf_value_fn` replaces a SHOWDOWN terminal's value
+inside a SINGLE-street solve, so the arms differ by the leaf value and
+nothing else - no chance node, hence no F45 offset (M161), and both at
+the shipped 250 iterations, hence no M197 confound. `bench/leaf_values.py`
+builds the value by solving each river out and taking one MATRIX-valued
+walk (N^2 price calls is the cost M277 had to cut). 16 real heads-up turn
+opening decisions, SPR 5.3-9.2, 8.0 machine hours:
+| reading | value |
+|---|---|
+| movement, median | **0.0549** (bar 0.05), over it on **8 of 16** |
+| direction | -0.0354, **0.62 sigma**, more aggressive on 8 of 16 |
+| card-blind lift, depth / shipped | +0.0807 / +0.0764 |
+| **lift difference** | **+0.0043, 0.08 sigma** |
+**It changes the advice and does not improve it** - five spots shift
+0.25-0.44 while half are untouched, this project's usual tail shape.
+**A net approximates this value, so it cannot beat it**: the premise is
+refuted rather than refused on cost, which is new.
+**M223's DIRECTION IS WITHDRAWN.** "A converged chain bets everything at
+0.997" is 8 of 16 at 0.62 sigma once the menu matches and no chance node
+is crossed; three samples read 3/8, 5/8, 8/16. It was the TREE - the
+chained path still ships one 2.5x-pot bet - and the BUDGET.
+**THE WEAK HALF, and it bounds the claim**: the real player chose check
+or call on **15 of 16** spots, because a hand's first turn action IS the
+street's opening decision. So the "is depth better" null is
+UNDERPOWERED, not decisive, and facing-a-bet nodes are the population
+that settles it (M177). Nothing here transfers to the FLOP, where M304
+measured 0.55 of aggression and 0.74 bb (M168).
+**Rule: a leaf-value study must not use a UNIFORM equity table.** One ULP
+of reordering moves a realistic solve 1.3e-14 and a flat one **0.50**,
+because every decision there is exactly tied and M74's bang-bang
+behaviour amplifies it wholesale. The first fixture written here was the
+flat one.
+**Rule: an identity test for a seam does not cover its VALUE BUILDER.**
+Two bugs lived in that gap - a missing turn investment, and a per-board
+table cache (added for COST) feeding NaNs into the walk, which made every
+regret NaN and returned the uniform prior. Caught because 0.8000/0.2000
+at a five-action node is 4/5 and 1/5 exactly: round numbers are F43's
+fingerprint, not a result.
+
 ### THE FREQUENCY GAPS COST ALMOST NOTHING IN CHIPS (M237) — and that is a limited claim
 
 Every study in this round measured a FREQUENCY distance, which this
@@ -1043,7 +1083,8 @@ requests now reject unknown fields by name rather than ignoring them.
                            `turn_measured.py` (M303),
                            `street_isolation.py` (M304),
                            `preflop_position.py` (M305),
-                           `multiway_instability.py` (M306)
+                           `multiway_instability.py` (M306),
+                           `depth_leaf_value.py` (M307)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools

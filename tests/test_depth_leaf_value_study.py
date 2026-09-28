@@ -170,3 +170,69 @@ def test_the_leaf_situation_count_is_recorded_with_the_figures():
     out = study.summarise([_row() for _ in range(4)])
     assert out["leaf_situations_median"] == 7
     assert out["river_cards"] == 12
+
+
+# -- the committed rows --------------------------------------------------
+
+import json
+import pathlib
+
+FIXTURE = pathlib.Path(__file__).parent / "data" / "depth_leaf_value_m308.json"
+
+
+def _recorded():
+    return json.loads(FIXTURE.read_text(encoding="utf-8"))
+
+
+def test_the_sample_is_the_real_regime_at_the_shipped_budget():
+    from api import config as cfg
+
+    rows = _recorded()
+    assert len(rows) == 16
+    assert all(r["spr"] >= study.MIN_SPR for r in rows)
+    assert all(r["iterations"] == cfg.TURN_STANDALONE_ITERATIONS for r in rows)
+    assert all(r["river_cards"] == 48 for r in rows), "sampling was refused"
+    assert all(r["leaf_situations"] == 7 for r in rows), "M247 measured 8"
+
+
+def test_depth_changes_the_answer_and_does_not_improve_it():
+    """The finding. It clears the movement bar and the lift difference is
+    a dead null - and because both arms share the shipped budget and
+    neither crosses a chance node, the null is explained by neither
+    precision (M197) nor F45 (M161)."""
+    out = study.verdict(study.summarise(_recorded()))
+    assert out["depth_moves_the_answer"] is True
+    assert out["depth_is_better"] is False
+    assert out["depth_is_worse"] is False
+    assert out["refutation_is_clean"] is True
+    assert out["scope_is_the_real_regime"] is True
+
+
+def test_it_is_a_tail_rather_than_a_shift():
+    """Half the spots are untouched and five move 0.25-0.44. Quoting the
+    median alone would describe neither."""
+    rows = _recorded()
+    moves = sorted(abs(r["agg_D"] - r["agg_P"]) for r in rows)
+    assert sum(1 for m in moves if m >= study.MOVE_LEVEL) == 8
+    assert sum(1 for m in moves if m > 0.20) == 5
+    assert moves[0] < 0.01, "the quiet end is genuinely quiet"
+
+
+def test_m223s_direction_does_not_reproduce():
+    """"A converged chain bets everything at 0.997" - measured 8 of 16 at
+    0.62 sigma with the menu matched and no chance node crossed."""
+    out = study.summarise(_recorded())
+    assert out["more_aggressive_on"] == 8
+    assert abs(out["signed"]["sigma"]) < 2.0
+
+
+def test_the_populations_action_mix_is_recorded_as_the_limitation_it_is():
+    """M252: a benchmark measures the population it generates. A hand's
+    FIRST turn action is the street's opening decision, where checking
+    dominates - so the agreement axis had almost nothing to separate, and
+    the lift null is underpowered rather than decisive."""
+    rows = _recorded()
+    passive = sum(1 for r in rows if r["chosen"] == "call_or_check")
+    assert passive == 15, (
+        "if this mix ever balances, the lift null becomes decisive and the "
+        "copy about it should be re-derived rather than kept")
