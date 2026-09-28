@@ -474,3 +474,60 @@ def test_the_control_is_m264s_own_comparison_at_todays_configuration():
     assert study.WIDE_ITERATIONS == 4000           # M264's 4x arm
     assert cfg.DEFAULT_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS == study.WIDE_ITERATIONS
     assert cfg.MULTIWAY_POSTFLOP_ACTION_GROUPING == "mean"
+
+
+@pytest.mark.skipif(not ROWS.exists(), reason="the campaign has not run yet")
+def test_the_primary_cell_is_exactly_four_live_and_the_copy_must_say_so():
+    """Scope, pinned. The gate covers 4, 5 and 6 live; the reference never
+    reaches a five-way flop, so every primary row sits at exactly FOUR.
+    Nothing here measures 5- or 6-live pots."""
+    rows = json.loads(ROWS.read_text())
+    primary = [r for r in rows if study.is_reference(r) and r["live"] >= 4]
+    assert primary
+    assert {r["live"] for r in primary} == {4}
+
+
+@pytest.mark.skipif(not ROWS.exists(), reason="the campaign has not run yet")
+def test_every_row_is_at_one_stack_depth():
+    """M274: a finding measured at one depth is a statement about that
+    depth. All 702 rows sit in the reference's own 100bb bucket."""
+    from api import config as cfg
+    rows = json.loads(ROWS.read_text())
+    for r in rows:
+        assert study.STACK_BUCKET_BB <= r["stack"] < (
+            study.STACK_BUCKET_BB + cfg.MULTIWAY_STACK_BUCKET_BB)
+
+
+@pytest.mark.skipif(not ROWS.exists(), reason="the campaign has not run yet")
+def test_hero_was_force_included_on_every_row():
+    """M243: force-inclusion is CORRECT for a request - a player really
+    holds what they ask about - so this measures shipped behaviour. But it
+    means no row has a naturally-in-range hero, and the write-up says so
+    rather than leaving it to be inferred."""
+    rows = json.loads(ROWS.read_text())
+    assert all(r["S_in_range"] is False for r in rows)
+
+
+@pytest.mark.skipif(not ROWS.exists(), reason="the campaign has not run yet")
+def test_both_arms_modelled_the_same_range_on_every_row():
+    """Rule 3 compares two averages over one support, or it compares two
+    different things."""
+    rows = json.loads(ROWS.read_text())
+    assert all(r["support_matches"] for r in rows)
+
+
+@pytest.mark.skipif(not ROWS.exists(), reason="the campaign has not run yet")
+def test_the_committed_result_is_the_one_the_milestone_quotes():
+    """So a future configuration change that moves this result fails the
+    build instead of leaving the prose stale."""
+    rows = json.loads(ROWS.read_text())
+    summary = study.summarise(rows)
+    out = study.verdict(summary)
+    assert out["prize"] == "PRIZE"
+    assert out["control"] == "passed" and out["guard"] == "held"
+    assert summary["wide4plus"]["hands"] == 36
+    assert summary["wide4plus"]["hand_sigma"] == pytest.approx(3.59, abs=0.05)
+    assert summary["wide_flop"]["hand_sigma"] == pytest.approx(4.33, abs=0.05)
+    assert summary["wide_turn"]["hand_sigma"] == pytest.approx(0.17, abs=0.05)
+    # the secondary cell points the OTHER way, which is why it is excluded
+    assert summary["other_wide4plus"]["delta"] < 0

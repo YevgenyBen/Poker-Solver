@@ -1597,6 +1597,37 @@ MULTIWAY_POSTFLOP_ACTION_GROUPING = "mean"
 # pot with this many players still in keeps the pre-M264 budget. The
 # 4-live accuracy question is UNDERPOWERED, not answered: this reverts
 # a cost nobody measured a benefit for. The river is unchanged (0.7s).
+#
+# M309 ANSWERED IT, AND THE BENEFIT IS REAL - so the clause above about
+# "a cost nobody measured a benefit for" no longer holds, and this revert
+# now stands on LATENCY ALONE. Every 4-live decision the reference plays
+# at 100bb (238 of them, out of all **36** four-way flops it reaches in
+# 10,000 hands), both arms verified from the response's own echo:
+#
+#   cell            n    hands  1000     4000     delta      hand sigma
+#   3 live control  250  198    0.5002   0.5715   +0.0713     +3.28
+#   4 live          238   36    0.5482   0.6233   +0.0751     +3.59
+#   ...flop         159   36    0.5610   0.6614   +0.1004     +4.33
+#   ...turn          79   20    0.5226   0.5467   +0.0241     +0.17
+#
+# It is a FLOP result (flop minus turn +0.0957, 2.19 sigma), it survives
+# the card-blind control (+0.0461, 2.50 sigma, so it is not decisiveness
+# alone), both split halves hold (+2.10 / +2.86), and aggression when
+# checked to moves 0.515 -> 0.421 toward the reference's 0.194 - M264's
+# own bar. `bench/studies/wide_pot_budget.py` carries the rule, and the
+# 3-live control also re-measures M264's own headline at today's
+# configuration: it reproduces at about two thirds of its published size.
+#
+# **Scope, and it is narrow.** 100bb only (M274). Every primary row is at
+# exactly FOUR live, because the reference never reaches a five-way flop,
+# so the 5- and 6-live pots this gate also covers remain unmeasured. Hero
+# is force-included on all 702 rows, which is correct for a request
+# (M243) and means no row carried a naturally-in-range hero.
+#
+# **Why it still is not taken**: 3.15 -> 10.30s median on the 4-live flop
+# in that run, against a 5s bar. The benefit is now measured and remains
+# unaffordable at request time, which makes this the clearest case in the
+# product of an answer we know and cannot serve.
 MULTIWAY_WIDE_POT_MIN_LIVE = 4
 MULTIWAY_WIDE_POT_ITERATIONS = {"flop": 1000, "turn": 1000}
 MAX_MULTIWAY_PATH_QUERY_FLOP_ITERATIONS = 4000
