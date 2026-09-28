@@ -304,9 +304,35 @@ chained path still ships one 2.5x-pot bet - and the BUDGET.
 **THE WEAK HALF, and it bounds the claim**: the real player chose check
 or call on **15 of 16** spots, because a hand's first turn action IS the
 street's opening decision. So the "is depth better" null is
-UNDERPOWERED, not decisive, and facing-a-bet nodes are the population
-that settles it (M177). Nothing here transfers to the FLOP, where M304
-measured 0.55 of aggression and 0.74 bb (M168).
+UNDERPOWERED, not decisive. Nothing here transfers to the FLOP, where
+M304 measured 0.55 of aggression and 0.74 bb (M168).
+**M308 RAN THE FACING-A-BET POPULATION, AND DEPTH MOVES THE TURN LESS
+THERE - NOT MORE.** 16 real decisions where hero faced a bet, tree built
+at the street's OPENING pot and the real bet walked (M177):
+| reading | opening | facing a bet |
+|---|---|---|
+| movement, median | 0.0549 | **0.0080** - under the bar |
+| under 0.02 / over 0.20 | 4 / 5 | **10 / 5** |
+| lift difference | +0.0043 (0.08 sigma) | **-0.0662 (0.78 sigma)** |
+**Opposite to M188/M189**, which put 74% of all cost at 12% of decisions
+there: whatever makes those nodes expensive, it is not that the turn
+values its leaves at showdown equity. **Bimodal** - ten spots move under
+0.02 (five under 0.001), five move 0.14-0.60 - so neither the median nor
+the mean describes it.
+**M307's prediction that facing-a-bet nodes would SETTLE the lift
+question is withdrawn.** The same 1-to-2-of-16 action mix survives the
+change of node type: hole cards are known mainly at SHOWDOWN, so folders
+are systematically absent (**0 folds in 150** facing-a-bet decisions),
+and filtering to SPR >= 5 selects spots where hero CALLS. **The agreement
+axis cannot be powered from this hand store at any n** - it needs a
+source where a folder's cards are known, or an instrument that does not
+read the player's action.
+**So the value-network premise is refuted AT THE TURN** over 32 spots and
+both node types: the exact leaf value does not improve the advice, and
+facing a bet it barely changes it. A net approximates that value, so it
+cannot beat it. The FLOP is untouched and has no instrument - M298
+measured its three-round dump as impossible here at any stack, width or
+thread count.
 **Rule: a leaf-value study must not use a UNIFORM equity table.** One ULP
 of reordering moves a realistic solve 1.3e-14 and a flat one **0.50**,
 because every decision there is exactly tied and M74's bang-bang

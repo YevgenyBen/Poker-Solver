@@ -18369,3 +18369,101 @@ chained arm runs 3.66x slower loaded. So `parallel_equity_batch` is
 ordering-independent, which no test had checked, and every cost figure
 here is a point reading on a machine M240 measured drifting 9.7x within
 one run - the same 48-card leaf took 15.3 min once and 35.2 min later.
+
+## M308 — facing a bet, a correct leaf value barely changes the turn at all
+
+M307 measured depth-limited solving at turn OPENING decisions and found a
+clean null: a correct leaf value changes the advice (median 0.0549) and
+does not improve it (lift difference +0.0043, 0.08 sigma). It flagged its
+own weak half - the real player chose check or call on 15 of 16 spots,
+because a hand's first turn action IS the street's opening decision - and
+named facing-a-bet nodes as the population that would settle it. This ran
+that population. **It does not settle it, and the reason is worth more
+than the prediction was.**
+
+**Both populations, 32 spots, 17.2 machine hours:**
+
+| reading | opening (M307) | facing a bet (M308) |
+|---|---|---|
+| movement, median | 0.0549 | **0.0080** |
+| clears the 0.05 bar | **yes** | **no** |
+| spots under 0.02 / over 0.20 | 4 / 5 | **10 / 5** |
+| direction | -0.0354 (0.62 sigma) | +0.0644 (1.06 sigma) |
+| lift, depth / shipped | +0.0807 / +0.0764 | +0.1273 / +0.1934 |
+| **lift difference** | +0.0043 (0.08 sigma) | **-0.0662 (0.78 sigma)** |
+
+**DEPTH CHANGES THE TURN LESS WHERE THE MONEY IS.** Facing a bet the
+median movement is 0.0080 against an opening decision's 0.0549 - an order
+of magnitude smaller, and under the bar entirely. That is the opposite of
+what M188/M189 predict, having put **74% of all cost at 12% of
+decisions** there. Whatever makes facing-a-bet nodes expensive, it is not
+that the turn values its leaves at showdown equity.
+
+**THE DISTRIBUTION IS BIMODAL AND THE MEDIAN HIDES IT.** Ten of sixteen
+facing spots move under 0.02 - five of those under 0.001, though none
+exactly zero - while five move 0.14 to 0.60. A correct leaf value is either irrelevant or
+transformative, with almost nothing between. This project's tail shape in
+its sharpest form: quoting either the median or the mean alone describes
+neither half.
+
+**BOTH NULLS STAND, AND BOTH ARE CLEAN.** Both arms ran at the shipped
+250 iterations and neither crossed a chance node, so neither precision
+(M197) nor F45's dead-pot offset (M161) explains either. Facing a bet the
+lift difference is nominally NEGATIVE - the shipped arm ahead by 0.0662
+at 0.78 sigma - which is not separable and is not a reversal, only the
+absence of the gain.
+
+**TWO ERRORS OF MINE, BOTH RECORDED BECAUSE BOTH COST SOMETHING.**
+
+- **I quoted a smoke spot as "dramatic" and it was sampling noise.** At
+  12 river cards one board read lift -0.364 against **+0.366**; at 48 the
+  same board reads -0.364 against **-0.247**. The validation probe had
+  already refused 12-card sampling at signal/noise 1.8 against a bar of
+  5.0, and the refusal's own reasoning - that noise in a leaf value
+  perturbs the solve and biases toward "depth is alive" - is exactly what
+  happened. **A lever refused for a campaign must not be trusted for a
+  preview of it.**
+- **The population fix did not materialise: 2 of 16 aggressive, not the
+  ~20% projected.** The projection came from scanning 150 real
+  facing-a-bet decisions and reading off their action mix (30 raise / 120
+  call / 0 fold) - but the study then filters to SPR >= 5, and deep
+  facing-a-bet decisions are ones where hero CALLS rather than raises.
+  **The scan measured the unfiltered population and the filter was
+  applied afterwards.** Eight hours bought a movement measurement and no
+  improvement in the axis it was run for.
+
+**THE AGREEMENT AXIS CANNOT BE POWERED FROM THIS HAND STORE, and that is
+a structural limit rather than a sampling one.** Hole cards are known
+mainly when a hand reaches SHOWDOWN, so players who FOLDED are
+systematically absent: 0 folds in 150 facing-a-bet decisions. The fold
+axis is the one M241/M242 chose precisely because it needs no size
+mapping between two menus, and it is unavailable here at any n. Powering
+it needs a source where a folder's cards are known - which this store is
+not - or an instrument that does not read the player's action at all.
+
+**WHAT THIS SAYS ABOUT A VALUE NETWORK.** A net approximates this leaf
+value, so it cannot beat it. Over 32 spots at both node types, the exact
+version does not improve the advice on the metric available, and facing a
+bet it barely moves it. **That is a refutation of the premise at the
+TURN**, on movement evidence that is fully powered and lift evidence that
+is not.
+
+**It says nothing about the FLOP** (M168), which is where M304 measured
+street isolation at 0.55 of aggression and 0.74 bb, five of sixteen spots
+over a big blind. A flop leaf needs the turn AND river valued beneath it,
+and M298 measured the flop's three-round dump as impossible on this
+machine at any stack, width or thread count - so the flop version of this
+question has no instrument yet.
+
+**M307's PREDICTION IS CORRECTED.** Its entry said the facing-a-bet
+population "settles it". It does not: the same 1-to-2-of-16 action mix
+survives the change of node type, for a reason that was visible in the
+scan and that I applied the filter on top of rather than reading first.
+
+**Cost, and why it is not a figure to quote.** 9.2 hours for 16 spots,
+against 8.0 for M307's - but the per-spot cost inside this run went 28,
+28, 30 ... 38, 53, **66** minutes on identical work. M240 measured this
+machine drifting 9.7x within a single run; the same 48-card leaf took
+15.3 minutes once and 35.2 later. Every cost figure in M307 and M308 is a
+point reading, and none went through `bench/reference_units.py`, which
+exists for exactly this and which I did not use.

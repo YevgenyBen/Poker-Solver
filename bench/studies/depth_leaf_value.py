@@ -69,7 +69,30 @@ comparison has ever managed.
    accident and got a direction wrong for it.
 9. Direction is recorded and decides nothing on its own.
 
-    python -m bench.studies.depth_leaf_value out.json [spots] [river_cards]
+**MODE `facing` (M308).** The opening-decision run above had the real
+player choosing check or call on 15 of 16 spots, because a hand's FIRST
+turn action IS the street's opening decision - so its agreement axis had
+almost nothing to separate and its lift null is underpowered. This mode
+takes real decisions where hero FACED A BET instead. M177's rule: those
+nodes are constructed explicitly or a study silently measures opening
+decisions only, and it is the node type M188/M189 put 74% of all cost at.
+
+The tree is built at the street's OPENING pot and stack and the real bet
+is then WALKED, never built at the node's own pot - the tree sizes bets
+off the pot it was built with, so building at the post-bet pot models a
+much larger bet and scores two different situations against each other
+(M177's other rule).
+
+**Its own selection bias, measured and stated.** Over 150 real facing-a-bet
+turn decisions with known cards: 42% sit at entering SPR >= 5 (median
+3.96, shallower than an opening decision's by construction), and hero's
+action mix is 30 raise / 120 call / **0 fold**. Hole cards are known
+mainly when a hand reaches showdown, so players who FOLDED are
+systematically absent. That lifts the aggressive share from 6% to ~20% -
+better, not decisive - and the fold axis is unavailable, which is the axis
+M241/M242 chose precisely because it needs no size mapping.
+
+    python -m bench.studies.depth_leaf_value out.json [spots] [river_cards] [facing]
 """
 from __future__ import annotations
 
@@ -177,6 +200,7 @@ def main(argv=None) -> int:                              # pragma: no cover
     out_path = args[0]
     spots = int(args[1]) if len(args) > 1 else SPOTS
     river_cards = int(args[2]) if len(args) > 2 else RIVER_CARDS
+    facing_mode = len(args) > 3 and args[3].lower() in ("facing", "1", "true")
 
     from fastapi.testclient import TestClient
     from api import config as cfg, solving
@@ -205,8 +229,17 @@ def main(argv=None) -> int:                              # pragma: no cover
             break
         acts = [a for a in hand.streets() if a.kind != "show"]
         hole = hand.hole_cards
-        turns = [i for i, a in enumerate(acts)
-                 if a.street == "turn" and hole.get(a.player)]
+        street_turns = [i for i, a in enumerate(acts) if a.street == "turn"]
+        if not street_turns:
+            continue
+        if facing_mode:
+            # A real decision where hero faced a bet (M177), not a
+            # constructed one - so the action scored is one a strong
+            # player actually took at that node.
+            turns = [i for i in street_turns
+                     if (acts[i].facing_bb or 0) > 1e-9 and hole.get(acts[i].player)]
+        else:
+            turns = [i for i in street_turns[:1] if hole.get(acts[i].player)]
         if not turns:
             continue
         index = turns[0]
@@ -220,13 +253,32 @@ def main(argv=None) -> int:                              # pragma: no cover
         except (KeyError, ValueError) as exc:
             skipped.append(f"{type(exc).__name__}: {exc}")
             continue
-        if body is None or body.get("turn_action_path"):
+        if body is None:
+            continue
+        turn_path = list(body.get("turn_action_path") or [])
+        if bool(turn_path) != facing_mode:
+            # Opening mode wants no turn path; facing mode needs one. A
+            # mismatch means the arms would read a different node than the
+            # player faced, which is M177's rule in reverse.
             continue
         body["hero_cards"] = hole[acts[index].player]
         status, js = post(body)
         if status != 200 or len(js.get("positions") or []) != 2:
             continue
-        pot, stack = js["pot"], js["max_affordable_bb"]
+        # The street's OPENING pot and stack, which is what the tree must
+        # be built at even when hero acts later on it (M177).
+        if facing_mode:
+            opening_body, _ow, _ox = request_for(
+                hand, acts, street_turns[0], round(hand.row["eff_stack_bb"], 2),
+                hole, post=post)
+            if opening_body is None or opening_body.get("turn_action_path"):
+                continue
+            o_status, o_js = post(opening_body)
+            if o_status != 200 or len(o_js.get("positions") or []) != 2:
+                continue
+            pot, stack = o_js["pot"], o_js["max_affordable_bb"]
+        else:
+            pot, stack = js["pot"], js["max_affordable_bb"]
         if pot <= 0 or stack <= 0 or stack / pot < MIN_SPR:
             continue
 
@@ -300,18 +352,35 @@ def main(argv=None) -> int:                              # pragma: no cover
 
         arms = {"P": shipped, "D": deep}
         weights = {str(c): w for c, w in hero_range.items()}
+
+        def node_of(result):
+            """Hero's node: the root at an opening decision, or the node
+            the real bet leads to when hero faced one."""
+            if not turn_path:
+                return result.root
+            _actions, node = solving._resolve_action_path(result.root, turn_path)
+            return node
         entry = {"board": body["board"] + body["turn_card"],
                  "hero": body["hero_cards"], "i": index, "pot": pot,
                  "stack": stack, "spr": stack / pot, "chosen": chosen,
                  "iterations": cfg.TURN_STANDALONE_ITERATIONS,
                  "river_cards": river_cards, "leaf_situations": len(values),
                  "value_seconds": value_seconds, "zero": 0.0,
+                 "facing": facing_mode, "turn_path": turn_path,
                  "combos": len(set(hero_range) | set(villain_range))}
+        try:
+            nodes = {name: node_of(result) for name, result in arms.items()}
+        except ValueError:
+            skipped.append("turn path did not resolve in the solved tree")
+            continue
+        if any(not hasattr(n, "legal_actions") for n in nodes.values()):
+            skipped.append("the turn path ended at a terminal")
+            continue
         for name, result in arms.items():
-            row = (result.strategy_at(result.root).get(hero_key) or {})
+            row = (result.strategy_at(nodes[name]).get(hero_key) or {})
             entry[f"agg_{name}"] = aggression(row)
             entry[f"agree_{name}"] = mass_on(row, chosen)
-            blind = card_blind(result.strategy_at(result.root), weights, chosen)
+            blind = card_blind(result.strategy_at(nodes[name]), weights, chosen)
             entry[f"blind_{name}"] = blind
             entry[f"lift_{name}"] = (entry[f"agree_{name}"] - blind
                                      if blind is not None else None)

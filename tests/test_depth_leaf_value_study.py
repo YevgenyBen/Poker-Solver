@@ -236,3 +236,119 @@ def test_the_populations_action_mix_is_recorded_as_the_limitation_it_is():
     assert passive == 15, (
         "if this mix ever balances, the lift null becomes decisive and the "
         "copy about it should be re-derived rather than kept")
+
+
+# -- the facing-a-bet mode (M308) ---------------------------------------
+
+def test_the_facing_mode_builds_at_the_streets_opening_pot():
+    """M177's other rule, and the one that voids a study rather than
+    weakening it: the tree sizes bets off the pot it was BUILT with, so
+    building at the post-bet pot models a much larger bet and scores two
+    different situations against each other. The facing arm therefore
+    takes pot and stack from the street's OPENING decision and walks the
+    real bet."""
+    import pathlib
+
+    source = pathlib.Path(study.__file__).read_text(encoding="utf-8")
+    runner = source.split("def main(", 1)[1]
+    assert "street_turns[0]" in runner, "the opening decision supplies the pot"
+    assert 'pot, stack = o_js["pot"], o_js["max_affordable_bb"]' in runner
+    # And the node hero is scored at is the one the bet leads to.
+    assert "_resolve_action_path(result.root, turn_path)" in runner
+
+
+def test_the_two_modes_cannot_read_each_others_nodes():
+    """Opening mode wants no turn path and facing mode needs one. A
+    mismatch would have the arms answering a different question than the
+    player faced - M177's rule in reverse, which is how M301's first pass
+    produced 120 rows with zero facing a bet."""
+    import pathlib
+
+    runner = pathlib.Path(study.__file__).read_text(
+        encoding="utf-8").split("def main(", 1)[1]
+    assert "if bool(turn_path) != facing_mode:" in runner
+
+
+def test_the_facing_populations_bias_is_recorded_in_the_rule():
+    """Measured over 150 real facing-a-bet turn decisions: 42% at SPR >= 5,
+    and an action mix of 30 raise / 120 call / ZERO fold, because hole
+    cards are known mainly when a hand reaches showdown. The fold axis is
+    the one M241/M242 chose for needing no size mapping, and it is
+    unavailable here - so the mode improves the agreement axis without
+    making it decisive, and the docstring says so."""
+    assert "0 fold" in study.__doc__
+    assert "42%" in study.__doc__
+    assert "not decisive" in study.__doc__
+
+
+# -- the facing-a-bet rows (M308) ----------------------------------------
+
+FACING_FIXTURE = pathlib.Path(__file__).parent / "data" / "depth_leaf_facing_m308.json"
+
+
+def _facing():
+    return json.loads(FACING_FIXTURE.read_text(encoding="utf-8"))
+
+
+def test_the_facing_sample_is_what_it_claims_to_be():
+    from api import config as cfg
+
+    rows = _facing()
+    assert len(rows) == 16
+    assert all(r["facing"] for r in rows), "every row faced a bet"
+    assert all(r["turn_path"] for r in rows), "and reached that node by a real path"
+    assert all(r["spr"] >= study.MIN_SPR for r in rows)
+    assert all(r["iterations"] == cfg.TURN_STANDALONE_ITERATIONS for r in rows)
+    assert all(r["river_cards"] == 48 for r in rows)
+
+
+def test_depth_moves_the_turn_LESS_facing_a_bet():
+    """The finding, and it is the opposite of what M188/M189 predict -
+    they put 74% of all cost at 12% of decisions there. Whatever makes
+    those nodes expensive, it is not that the turn values its leaves at
+    showdown equity."""
+    facing = study.summarise(_facing())
+    opening = study.summarise(_recorded())
+    assert facing["move_median"] < opening["move_median"]
+    assert study.verdict(facing)["depth_moves_the_answer"] is False
+    assert study.verdict(opening)["depth_moves_the_answer"] is True
+
+
+def test_it_is_bimodal_so_neither_average_describes_it():
+    """Ten spots move under 0.02 - five of those under 0.001 - and five
+    move 0.14-0.60. A correct leaf value is irrelevant or transformative
+    with almost nothing between.
+
+    Those five are 1.4e-05 to 3.95e-04, NOT zero: they print as 0.000 at
+    three decimals and a first version of this test asserted exact zeros
+    off the log rather than off the data.
+    """
+    moves = sorted(abs(r["agg_D"] - r["agg_P"]) for r in _facing())
+    assert sum(1 for m in moves if m < 0.02) == 10
+    assert sum(1 for m in moves if m < 0.001) == 5
+    assert not any(m == 0.0 for m in moves), "negligible is not zero"
+    assert sum(1 for m in moves if m > 0.20) == 5
+
+
+def test_neither_population_shows_depth_improving_the_advice():
+    """Both clean: both arms at the shipped budget, neither crossing a
+    chance node, so neither precision (M197) nor F45 (M161) explains
+    either null."""
+    for rows in (_recorded(), _facing()):
+        out = study.verdict(study.summarise(rows))
+        assert out["depth_is_better"] is False
+        assert out["refutation_is_clean"] is True
+
+
+def test_the_agreement_axis_stayed_underpowered_and_that_is_recorded():
+    """M307 predicted this population would settle the lift question. It
+    does not: hole cards are known mainly at SHOWDOWN so folders are
+    absent, and SPR >= 5 selects spots where hero CALLS. If this mix ever
+    balances, the lift null becomes decisive and the copy about it must be
+    re-derived rather than kept (M281)."""
+    facing = _facing()
+    aggressive = sum(1 for r in facing if r["chosen"] == "aggressive")
+    assert aggressive == 2, "2 of 16, against the ~20% projected from the scan"
+    assert not any(r["chosen"] == "fold" for r in facing), (
+        "a fold in this population would mean the store now carries a "
+        "folder's cards, and the axis M241/M242 chose becomes available")
