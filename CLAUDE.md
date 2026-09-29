@@ -361,6 +361,36 @@ secondary cell - unselected 2009 online play - moves the OTHER way
 (-0.0541), because a better solve agrees less with a weaker player. It
 was excluded in advance, and its reversal is a sanity signal rather than
 a contradiction.
+**M310: BOTH YARDSTICKS ARE EXHAUSTED AT 4+ LIVE, so the prize cannot be
+measured WIDER than M309 measured it.** The reference-free criterion that
+set this very budget (M214: facing a smaller bet must fold less, 6.90
+sigma against the exact solver) was calibrated against the solver's own
+seed noise and REFUSED: over 18 spots and 36 adjacent bet-size pairs, at
+the shipped budget with nothing changed but the traversal seed, **19 of 36
+pairs REVERSE their ordering sign** and an adjacent pair moves a median
+0.0371 / p90 0.1170, against a 1,000-to-4,000 effect of 0.01-0.09. **The
+noise is the size of the signal and the direction is a coin flip**, which
+no number of spots repairs.
+**M214 could use it because it compared 200 -> 1,000** and moved the gap
++0.167 - two to ten times larger against the same noise. The criterion did
+not stop being valid; the question got finer than its resolution.
+| instrument | why it cannot reach 5-/6-live or other depths |
+|---|---|
+| the outside reference (M309) | 36 hands, and never a five-way flop |
+| the reference-free criterion (M310) | the ordering's sign flips with the seed on 53% of pairs |
+**So a learned or depth-limited stand-in for multiway postflop could be
+BUILT and could not be VALIDATED** - the harder half. M309's +0.0751
+stands on the only cell where a reference exists at all; everything wider
+is **unmeasurable rather than unmeasured**.
+**Rule: calibrate a reference-free criterion against seed noise before
+using it on a finer question than the one it was built for.** M214's
+criterion is sound and its resolution was never recorded.
+**Rule: a criterion's published numbers tell you what quantity it
+measured.** M310 first measured HERO'S row, which saturates at 0.977-1.0
+in a multiway pot and carries nothing; M214's own 0.40-0.71 figures are
+arithmetically impossible for one saturated hand, so they had to be
+RANGE-level. Reading the figure being replicated is what found it - and
+the error was biased against the better arm, which saturates harder.
 **Rule: a leaf-value study must not use a UNIFORM equity table.** One ULP
 of reordering moves a realistic solve 1.3e-14 and a flat one **0.50**,
 because every decision there is exactly tied and M74's bang-bang
@@ -1139,7 +1169,8 @@ requests now reject unknown fields by name rather than ignoring them.
                            `preflop_position.py` (M305),
                            `multiway_instability.py` (M306),
                            `depth_leaf_value.py` (M307),
-                           `wide_pot_budget.py` (M309)
+                           `wide_pot_budget.py` (M309),
+                           `wide_pot_ordering.py` (M310)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools

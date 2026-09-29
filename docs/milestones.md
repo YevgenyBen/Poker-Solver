@@ -18599,3 +18599,111 @@ function.
 taken while the test suite ran beside it, so they are contended; the
 engine is bit-identical under contention (M307), so only the timings are
 affected, and latency was never a veto here.
+
+## M310 — the reference-free criterion cannot adjudicate this, and both yardsticks are now exhausted at 4+ live
+
+M309 measured the 4x multiway postflop budget as worth **+0.0751 at 3.59
+sigma** at four live, concentrated on the flop. It did so against an
+outside reference, which capped it at **36 hands** - the published
+six-handed agent reaches a four-way flop 36 times in 10,000 hands and
+**never reaches a five-way one**. So it could say nothing about five- or
+six-live pots, nothing about any depth but 100bb, and nothing beyond 36
+spots.
+
+This was built to reach wider using this project's own reference-free
+criterion - facing a SMALLER bet must fold LESS, which M214 validated
+against the heads-up exact solver at 6.90 sigma, 17 of 17, and then used
+to take the multiway flop budget 200 -> 1,000 when no converged multiway
+reference existed. **THE ARMS WERE NEVER RUN, AND THAT IS THE RESULT.**
+
+**THE CALIBRATION FAILS.** Same spot, shipped budget, nothing changed but
+the traversal seed, 18 spots and 36 adjacent bet-size pairs:
+
+| reading | value |
+|---|---|
+| adjacent pairs whose ordering SIGN reverses | **19 of 36 (52.8%)** |
+| point-wise seed movement | median 0.0280, p90 0.0501, max **0.472** |
+| ADJACENT-PAIR seed movement | median **0.0371**, p90 **0.1170**, max 0.461 |
+
+The effect looked for - the 1,000-to-4,000 ordering gap - measured **0.01
+to 0.09**. The seed alone moves an adjacent pair by a median 0.0371 and a
+p90 of 0.1170, so **the noise is the same size or larger than the signal
+and the direction is a coin flip.** No number of spots recovers a
+direction from that; more would measure the noise more precisely.
+
+**WHY M214 COULD USE THIS AND THIS CANNOT.** M214 compared **200 ->
+1,000** and moved the gap **+0.1466 -> +0.3138**, a change of +0.167
+against the same noise. This compares **1,000 -> 4,000**, worth 0.01-0.09
+- two to ten times smaller. The criterion did not stop being valid; the
+question got finer than it can resolve. **A reference-free criterion has a
+resolution, and it must be calibrated against the solver's own seed noise
+before it is used on a smaller question than the one it was built for.**
+
+**IT WAS PREDICTABLE FROM WHAT WAS ALREADY KNOWN, and I did not predict
+it.** F46/M163 measured the multiway flop seed spread at p90 0.462, still
+0.240 at 150x the shipped budget; M245 measured the top action changing
+41-75% between seeds; M306 measured split rows moving 0.42. The multiway
+postflop solve IS a draw from a distribution, and any criterion read off
+one draw inherits that. Three entries in this file say so.
+
+**WHAT IT BOUNDS, AND IT IS MORE THAN ONE BUDGET QUESTION.** At 4+ live
+**both** available yardsticks are now exhausted, for different reasons:
+
+| instrument | why it cannot reach these cells |
+|---|---|
+| the outside reference (M309) | 36 hands; never a five-way flop |
+| the reference-free criterion (M310) | the ordering's sign flips with the seed on 53% of pairs |
+
+So a depth-limited or learned stand-in for multiway postflop could be
+BUILT and could not be **VALIDATED**, which is the harder half. M309's
++0.0751 stands, and it stands on the only cell where any reference exists
+at all - four live, 100bb, 36 hands. Everything wider is **unmeasurable
+rather than merely unmeasured**, and that is a sharper statement than a
+null would have been.
+
+**TWO SPECIFICATION ERRORS OF MINE, both caught by smoke runs of 9 and 27
+spots costing minutes, and both forced by the SHAPE of the output rather
+than by which arm won.**
+
+- **The walk built pots too big for the menu.** A 2.5x-pot bet needs
+  SPR >= 2.5 or it collapses into the all-in and the third size vanishes
+  with nothing saying so. The first smoke **skipped 172 of 181 spots** for
+  want of it, paying a solve for each. Fixed by biasing the walk toward
+  calls (`RAISE_WEIGHT = 0.6` against the default 3.0).
+- **I measured HERO'S ROW where the criterion needs the RANGE'S.** For one
+  middling hand in a five-way pot, folding to every size is simply
+  correct, so the true curve is flat and any ordering is third-decimal
+  noise: hero's row came back **0.977-1.0 on all six arm-readings** of a
+  three-spot probe. The range average is structured (0.18-0.39) and orders
+  visibly. **M214's own published numbers were the tell** - fold
+  frequencies of 0.40-0.71 are arithmetically impossible for a saturated
+  single hand, so M214 must have measured a range-level frequency. The
+  correction came from re-reading the figure being replicated, not from
+  looking at results.
+
+  Worse, the mis-specification was **biased against the better arm**: the
+  4,000-iteration arm saturated harder (fold range 0.01-0.26 against the
+  shipped arm's 0.22-0.68), so a saturation filter would have discarded
+  exactly the spots where the arms differed most.
+
+**Rules.**
+- **Calibrate a reference-free criterion against the solver's own seed
+  noise before using it.** M214's criterion is sound and its resolution is
+  finite; nothing recorded its resolution until now.
+- **A criterion's published numbers tell you what quantity it measured.**
+  Fold frequencies of 0.40-0.71 cannot come from one saturated hand. Read
+  the figure being replicated before specifying the measurement.
+- **A saturation filter can be biased even when it is symmetric.**
+  Excluding spots where neither arm has room is arm-neutral by
+  construction and still removes the spots that carry the effect, when one
+  arm saturates systematically.
+
+**Kept, not deleted** (M169's precedent): the study runs, its 49 rule
+tests pass, and `--calibrate` is the gate `--run` must clear.
+`tests/data/wide_pot_ordering_calibration_m310.json` holds the 18 spots,
+so the refusal is re-derivable and a future configuration that fixes the
+noise fails
+`test_the_committed_calibration_refuses_the_criterion` loudly.
+
+**Cost**: three smoke runs and one calibration, about 35 minutes of
+machine time in total. The campaign it refused would have been hours.
