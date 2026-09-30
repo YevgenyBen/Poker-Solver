@@ -1,0 +1,262 @@
+[
+{
+"hand": "a25af167ea2c0fafc2902902c53274ffdb2dc92d",
+"i": 12,
+"street": "turn",
+"reference": 5.871,
+"vectorised": 4.069,
+"identical": true,
+"rows": 165,
+"iterations": 4000
+},
+{
+"hand": "c5c63231546f10bb39daba6c24898a52976441a1",
+"i": 9,
+"street": "turn",
+"reference": 5.577,
+"vectorised": 4.066,
+"identical": true,
+"rows": 155,
+"iterations": 4000
+},
+{
+"hand": "90811f3b123e2190a4c1ee4459e6cbc58c294241",
+"i": 6,
+"street": "flop",
+"reference": 6.189,
+"vectorised": 3.829,
+"identical": true,
+"rows": 148,
+"iterations": 4000
+},
+{
+"hand": "33261581d11f96740fdecbdcf60ddd31ee5e74c6",
+"i": 9,
+"street": "flop",
+"reference": 7.329,
+"vectorised": 5.228,
+"identical": true,
+"rows": 162,
+"iterations": 4000
+},
+{
+"hand": "78fde8040320012420f06195e6fdb0ae00560dba",
+"i": 8,
+"street": "flop",
+"reference": 7.026,
+"vectorised": 4.608,
+"identical": true,
+"rows": 148,
+"iterations": 4000
+},
+{
+"hand": "27b5c7ff9c60feb61cdd68792a7220b49bdb70c2",
+"i": 10,
+"street": "turn",
+"reference": 4.486,
+"vectorised": 2.839,
+"identical": true,
+"rows": 145,
+"iterations": 4000
+},
+{
+"hand": "b2767f5d396f230bf1088ccfc03cf7b9ead6936c",
+"i": 10,
+"street": "turn",
+"reference": 6.264,
+"vectorised": 4.316,
+"identical": true,
+"rows": 164,
+"iterations": 4000
+},
+{
+"hand": "d3a1bcef738182192105135835de3ce412e505af",
+"i": 10,
+"street": "turn",
+"reference": 4.682,
+"vectorised": 3.602,
+"identical": true,
+"rows": 124,
+"iterations": 4000
+},
+{
+"hand": "98b12e093cf8053d3556ff9b6e3e6fae645fac3c",
+"i": 8,
+"street": "flop",
+"reference": 6.987,
+"vectorised": 4.45,
+"identical": true,
+"rows": 148,
+"iterations": 4000
+},
+{
+"hand": "72c55f1a55a03dd2d1408251effbdbd3387a9af0",
+"i": 8,
+"street": "flop",
+"reference": 6.798,
+"vectorised": 4.123,
+"identical": true,
+"rows": 152,
+"iterations": 4000
+},
+{
+"hand": "cd3457a208930c979467d73ade45d9f5bde16c40",
+"i": 6,
+"street": "flop",
+"reference": 5.75,
+"vectorised": 4.076,
+"identical": true,
+"rows": 120,
+"iterations": 4000
+},
+{
+"hand": "8bd89b3026b6ad8291c34faf82bedf4f946e3272",
+"i": 6,
+"street": "flop",
+"reference": 4.731,
+"vectorised": 3.182,
+"identical": true,
+"rows": 138,
+"iterations": 4000
+},
+{
+"hand": "f6036a67ba54f375f0577456e08a1e3024d4f127",
+"i": 12,
+"street": "turn",
+"reference": 5.35,
+"vectorised": 3.686,
+"identical": true,
+"rows": 134,
+"iterations": 4000
+},
+{
+"hand": "344620ff9f6c3c2b1a36b5380a4b2e7987557347",
+"i": 9,
+"street": "flop",
+"reference": 6.36,
+"vectorised": 4.318,
+"identical": true,
+"rows": 161,
+"iterations": 4000
+},
+{
+"hand": "f47c0681a0a88d41689a90dbf9b4174df9a7aabb",
+"i": 9,
+"street": "flop",
+"reference": 5.218,
+"vectorised": 3.468,
+"identical": true,
+"rows": 124,
+"iterations": 4000
+},
+{
+"hand": "7096daabad7ba6b0fa29663072aadfb35c44ced2",
+"i": 10,
+"street": "flop",
+"reference": 5.331,
+"vectorised": 3.744,
+"identical": true,
+"rows": 127,
+"iterations": 4000
+},
+{
+"hand": "8340ca5b12657230783238f34dbbc17d1b32607b",
+"i": 6,
+"street": "flop",
+"reference": 6.854,
+"vectorised": 4.674,
+"identical": true,
+"rows": 166,
+"iterations": 4000
+},
+{
+"hand": "51e01045c2edebb8b6c2185291dad7ec59ff56a2",
+"i": 8,
+"street": "flop",
+"reference": 7.22,
+"vectorised": 4.291,
+"identical": true,
+"rows": 172,
+"iterations": 4000
+},
+{
+"hand": "07db37ada3fc3c0a9bb9ace7ca511e98d201e982",
+"i": 7,
+"street": "flop",
+"reference": 6.385,
+"vectorised": 4.518,
+"identical": true,
+"rows": 130,
+"iterations": 4000
+},
+{
+"hand": "d8d068697f551ca96eed70c223801e68d343c4db",
+"i": 11,
+"street": "turn",
+"reference": 6.425,
+"vectorised": 4.636,
+"identical": true,
+"rows": 165,
+"iterations": 4000
+},
+{
+"hand": "a879df7d44cd4dd79fcc59ce4c5ad101105b7c78",
+"i": 6,
+"street": "flop",
+"reference": 6.426,
+"vectorised": 3.946,
+"identical": true,
+"rows": 153,
+"iterations": 4000
+},
+{
+"hand": "ec27d0439817c155b7deb770152cec897ebe330c",
+"i": 8,
+"street": "flop",
+"reference": 5.898,
+"vectorised": 4.994,
+"identical": true,
+"rows": 134,
+"iterations": 4000
+},
+{
+"hand": "519765b608d97b7348db826bcd866604d3be5304",
+"i": 6,
+"street": "flop",
+"reference": 7.175,
+"vectorised": 4.99,
+"identical": true,
+"rows": 150,
+"iterations": 4000
+},
+{
+"hand": "f11f66af1a82125096c292cfdf4cb7f728fd0dd7",
+"i": 9,
+"street": "turn",
+"reference": 6.037,
+"vectorised": 4.268,
+"identical": true,
+"rows": 158,
+"iterations": 4000
+},
+{
+"hand": "2516018e4e9b04a48aadab29a3f0883aa97d2430",
+"i": 10,
+"street": "turn",
+"reference": 5.64,
+"vectorised": 4.275,
+"identical": true,
+"rows": 162,
+"iterations": 4000
+},
+{
+"hand": "90756f136b11cb9bc27d9f561aa8604f38644c95",
+"i": 11,
+"street": "turn",
+"reference": 4.704,
+"vectorised": 3.384,
+"identical": true,
+"rows": 125,
+"iterations": 4000
+}
+]

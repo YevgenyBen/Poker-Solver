@@ -430,3 +430,165 @@ def test_the_nway_cache_uses_shared_runouts():
     assert len(cache) == 1
     cache.traverser_equity_vector(opponents)
     assert len(cache) == 1
+
+
+# ---------------------------------------------------------------------------
+# M311: the vectorised miss path. It must be BIT-IDENTICAL to the reference
+# `equity_vector`, not merely close - MCCFR makes chaotic choices at
+# near-ties (M74), so a one-ULP difference can move the advice while
+# `allclose` passes. Every comparison here is `array_equal`.
+# ---------------------------------------------------------------------------
+
+import poker_solver.multiway_board_equity as mbe
+from poker_solver.cards import remaining_deck
+
+
+def _pool(board, rng, size):
+    """`size` distinct random combos that can coexist with `board`."""
+    deck = list(remaining_deck(frozenset(board)))
+    out = set()
+    while len(out) < size:
+        a, b = rng.sample(deck, 2)
+        out.add(HandCombo(a, b))
+    return sorted(out, key=str)
+
+
+def test_exact_sum_rows_leaves_dyadic_ties_on_the_fast_path():
+    """A two-way chop's 1/2 and a four-way chop's 1/4 sum exactly in any
+    order, so rows carrying only those need no fallback."""
+    tie = np.array([[True, False, True], [False, True, False]])
+    assert not mbe._exact_sum_rows(tie, np.array([1, 1, 1])).any()
+    assert not mbe._exact_sum_rows(tie, np.array([3, 3, 3])).any()
+    assert not mbe._exact_sum_rows(tie, np.array([0, 0, 0])).any()
+
+
+def test_exact_sum_rows_flags_a_three_way_chop_only_where_it_ties():
+    """1/3 has no exact binary form, so a row with a usable three-way tie
+    must be summed the reference's own way - and only that row."""
+    tie = np.array([[True, False], [False, True]])
+    k = np.array([2, 1])                       # sample 0 is a three-way chop
+    assert mbe._exact_sum_rows(tie, k).tolist() == [True, False]
+
+
+def test_exact_sum_rows_ignores_an_inexact_share_the_row_does_not_tie_at():
+    tie = np.array([[False, True]])
+    assert not mbe._exact_sum_rows(tie, np.array([2, 1])).any()
+
+
+@pytest.mark.parametrize("board_text", [
+    "7h 7d 7c",           # flop, sampled runouts
+    "Kd 8d 3c",           # flop, rainbow-ish
+    "Ah Ad Ac As",        # turn, chop-heavy (everyone plays the quads)
+    "As Ks Qs Js",        # turn, four to a royal
+    "2c 2d 3h 3s",        # turn, double-paired
+    "Kd 8d 3c 5d 9h",     # river, exact single runout
+])
+def test_the_block_path_is_bit_identical_to_the_reference(board_text):
+    rng = random.Random(311)
+    board = tuple(cards(board_text))
+    ranks = SharedRunoutRanks(board, samples=320, seed=42)
+    candidates = _pool(board, rng, 90)
+    block = ranks.candidate_block(candidates)
+    for opponents in range(1, 4):
+        for _ in range(40):
+            opps = tuple(_pool(board, rng, opponents))
+            ref = ranks.equity_vector(opps, candidates)
+            got = ranks.equity_vector_block(opps, block)
+            assert np.array_equal(ref, got, equal_nan=True), (board_text, opps)
+
+
+def test_the_three_way_chop_fallback_is_load_bearing():
+    """The guard must be able to FAIL. With the fallback forced off, the
+    obvious vectorisation differs from the reference on most two-opponent
+    tuples of a chop-heavy board (measured 159-252 of 300 across four
+    boards); with it on, none do."""
+    rng = random.Random(7)
+    board = tuple(cards("Ah Ad Ac As"))
+    ranks = SharedRunoutRanks(board, samples=320, seed=42)
+    candidates = _pool(board, rng, 80)
+    block = ranks.candidate_block(candidates)
+    tuples = [tuple(_pool(board, rng, 2)) for _ in range(60)]
+
+    with_fallback = sum(
+        np.array_equal(ranks.equity_vector(o, candidates),
+                       ranks.equity_vector_block(o, block), equal_nan=True)
+        for o in tuples)
+    assert with_fallback == len(tuples)
+
+    original = mbe._exact_sum_rows
+    mbe._exact_sum_rows = lambda tie, k: np.zeros(tie.shape[0], dtype=bool)
+    try:
+        without = sum(
+            np.array_equal(ranks.equity_vector(o, candidates),
+                           ranks.equity_vector_block(o, block), equal_nan=True)
+            for o in tuples)
+    finally:
+        mbe._exact_sum_rows = original
+    assert without < len(tuples), "the fallback never mattered - dead guard"
+
+
+def test_the_block_path_keeps_the_nan_contract():
+    board = tuple(cards("Kd 8d 3c"))
+    ranks = SharedRunoutRanks(board, samples=320, seed=42)
+    on_board = HandCombo(*cards("Kd 2c"))            # shares the board's Kd
+    blocked_by_opp = HandCombo(*cards("As 2h"))
+    free = HandCombo(*cards("Qh Jh"))
+    block = ranks.candidate_block([on_board, blocked_by_opp, free])
+
+    opponent = HandCombo(*cards("As Ac"))
+    got = ranks.equity_vector_block((opponent,), block)
+    assert np.isnan(got[0]) and np.isnan(got[1]) and not np.isnan(got[2])
+
+    clashing = (HandCombo(*cards("As Ac")), HandCombo(*cards("As Ad")))
+    assert np.isnan(ranks.equity_vector_block(clashing, block)).all()
+
+    on_the_board = (HandCombo(*cards("Kd Qc")),)
+    assert np.isnan(ranks.equity_vector_block(on_the_board, block)).all()
+
+
+def test_an_empty_candidate_list_returns_an_empty_vector():
+    ranks = SharedRunoutRanks(tuple(cards("Kd 8d 3c")), samples=64, seed=42)
+    block = ranks.candidate_block([])
+    opponent = HandCombo(*cards("As Ac"))
+    assert ranks.equity_vector_block((opponent,), block).shape == (0,)
+
+
+def test_block_ranks_match_lazily_built_ranks():
+    """Ranking the candidates in one batch up front must give the ranks the
+    reference builds lazily, alongside whatever else was missing."""
+    rng = random.Random(1)
+    board = tuple(cards("7h 7d 7c"))
+    candidates = _pool(board, rng, 50)
+    eager = SharedRunoutRanks(board, samples=320, seed=42)
+    block = eager.candidate_block(candidates)
+    lazy = SharedRunoutRanks(board, samples=320, seed=42)
+    lazy.equity_vector(tuple(_pool(board, rng, 2)), candidates)
+    for row, combo in enumerate(candidates):
+        assert np.array_equal(block.ranks[row], lazy._rank_of[combo])
+        assert np.array_equal(block.blocked[row], lazy._blocked_of[combo])
+
+
+def test_the_cache_serves_identical_vectors_on_either_path(monkeypatch):
+    """`VECTORISED_EQUITY_LOOKUP = False` restores the reference path, and
+    the two caches must agree bit for bit on every tuple."""
+    rng = random.Random(9)
+    board = tuple(cards("As Ks Qs Js"))
+    candidates = _pool(board, rng, 70)
+    tuples = [tuple(_pool(board, rng, 2)) for _ in range(40)]
+
+    monkeypatch.setattr(mbe, "VECTORISED_EQUITY_LOOKUP", True)
+    fast = NwayBoardEquityCache(board, candidates, seed=42)
+    fast_out = [fast.traverser_equity_vector(t) for t in tuples]
+    assert fast._block is not None
+
+    monkeypatch.setattr(mbe, "VECTORISED_EQUITY_LOOKUP", False)
+    slow = NwayBoardEquityCache(board, candidates, seed=42)
+    slow_out = [slow.traverser_equity_vector(t) for t in tuples]
+    assert slow._block is None
+
+    for a, b in zip(fast_out, slow_out):
+        assert np.array_equal(a, b, equal_nan=True)
+
+
+def test_the_vectorised_path_is_the_default():
+    assert mbe.VECTORISED_EQUITY_LOOKUP is True
