@@ -1617,8 +1617,18 @@ def mccfr_solve(
     stack_bb: float | None = None,
     continuation_table: dict | None = None,
     action_grouping: str | None = None,
+    initial_node_data: dict | None = None,
 ) -> dict:
     """Run `iterations` of External-Sampling MCCFR over `root`.
+
+    `initial_node_data` (M312) warm-starts the solve, exactly as it does
+    for the exact solver (`solve`, M158): a pre-populated dict IS the
+    starting point, and regrets and strategy sums accumulate on top of
+    whatever is handed in. Default None, so an unused seam changes nothing.
+    The tables are MUTATED in place - pass copies you do not mind losing.
+    What to keep from a donor (regrets, strategy sums, how much of each)
+    is the caller's decision, because it depends on how far the donor is
+    from the spot being solved.
 
     `positions` is the acting order (matches GameConfig.positions); the
     traverser cycles through it, one per iteration. `equity_cache` should
@@ -1818,7 +1828,14 @@ def mccfr_solve(
         position_weights[position] = weights
 
     rng = random.Random(seed)
-    node_data: dict = {}
+    node_data: dict = dict(initial_node_data or {})
+    for table in node_data.values():
+        if table.regret_sum.shape[0] != num_hands:
+            raise ValueError(
+                f"initial_node_data has {table.regret_sum.shape[0]} hand rows "
+                f"but this solve has {num_hands} hands — re-shape the tables "
+                "onto the new pool before warm-starting"
+            )
     for iteration in range(iterations):
         traverser = positions[iteration % len(positions)]
         opponent_hands = _sample_opponent_hands(positions, traverser, position_weights, hands, rng)
