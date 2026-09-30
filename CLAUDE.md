@@ -391,6 +391,22 @@ in a multiway pot and carries nothing; M214's own 0.40-0.71 figures are
 arithmetically impossible for one saturated hand, so they had to be
 RANGE-level. Reading the figure being replicated is what found it - and
 the error was biased against the better arm, which saturates harder.
+**M311: AT THREE LIVE THE LEVER WAS OVERHEAD, NOT A STAND-IN.** Taken
+apart by exclusive wall time, a three-live flop request is 60.9% CFR
+iterations, 35.7% equity lookups and ~3% everything else; the lookups were
+a Python loop over the candidates on every cache miss. Vectorised and
+bit-identical, the cell drops under the five-second bar serving **exactly
+the answer a stand-in would have had to approximate**. If a learned
+proposal enters this thread again, it is a WARM START for the remaining
+CFR iterations on this cell, checked with M309's control - the only place
+the idea has both a target and an instrument.
+**Rule: profile the thread the work runs on.** cProfile reported ZERO
+solve time for a 10-second request, because `/advise` runs its work through
+`run_in_threadpool` and cProfile sees only its own thread.
+**Rule: the obvious vectorisation is not bit-identical.** A three-way
+chop's 1/3 makes a sum's float depend on its order; without a fallback to
+the reference's own sum, 159-252 of 300 opponent pairs differed. Claim
+identity only with `array_equal` and a test that can fail.
 **Rule: a leaf-value study must not use a UNIFORM equity table.** One ULP
 of reordering moves a realistic solve 1.3e-14 and a flat one **0.50**,
 because every decision there is exactly tied and M74's bang-bang
@@ -776,6 +792,14 @@ fuller solve of our OWN model across all three streets.
   turn -2.00). M264 paid for that accuracy.
   **So there is no cap to add** - R6's "cap total work by live count" is
   answered and closed. The breach is F62 in the 2026-09-18 audit.
+  **M311 TOOK BOTH CELLS UNDER THE BAR WITHOUT CHANGING AN ANSWER.** A
+  third of a three-live request was overhead: the multiway equity cache's
+  MISS path walked ~140 candidate hands in a Python loop, ~2,200 times a
+  request (2.21s of 6.24s). Vectorised over the fixed candidate list, and
+  **bit-identical by construction** - 26 of 26 real requests, 3,830
+  strategy rows - the flop goes **6.41 -> 4.30s (x1.48), 15 -> 1 of 16
+  over five seconds**, and the turn **5.61 -> 4.07s (x1.40), 7 -> 0 of
+  10**. What remains is CFR iterations, ~61% and ~3.5s.
 
 - **MULTIWAY AT AN UNPREWARMED STACK IS NOT LIVE-USABLE ON FIRST ASK.**
   - **The cost:** the multiway preflop solve is cached per 5 bb bucket,
@@ -1170,7 +1194,8 @@ requests now reject unknown fields by name rather than ignoring them.
                            `multiway_instability.py` (M306),
                            `depth_leaf_value.py` (M307),
                            `wide_pot_budget.py` (M309),
-                           `wide_pot_ordering.py` (M310)
+                           `wide_pot_ordering.py` (M310),
+                           `equity_lookup_ab.py` (M311)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools

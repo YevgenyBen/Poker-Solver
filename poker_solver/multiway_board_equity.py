@@ -56,6 +56,57 @@ from .hand_eval import best_hand_rank_batch
 DEFAULT_NWAY_BOARD_EQUITY_SAMPLES = 200
 DEFAULT_SEED = 42
 
+# M311. `NwayBoardEquityCache` computes a MISS over its whole candidate list
+# at once (`SharedRunoutRanks.equity_vector_block`) instead of walking the
+# candidates in a Python loop (`equity_vector`, kept as the reference).
+# Measured on real three-live flop requests at the shipped 4,000
+# iterations, the miss path was 2.21s of a 6.24s request - ~2,200 misses
+# at ~1.0ms, ~140 candidates each - while the hit path was 0.03s. The two
+# return BIT-IDENTICAL vectors by construction (see `_exact_sum_rows`), so
+# False restores the old path exactly and changes no answer either way.
+# Through `/advise`, interleaved, 26 real three-live requests: identical on
+# every one (3,830 strategy rows), flop x1.48 and turn x1.40, requests over
+# five seconds 15 -> 1 of 16 and 7 -> 0 of 10
+# (`bench/studies/equity_lookup_ab.py`).
+VECTORISED_EQUITY_LOOKUP = True
+
+
+def _exact_sum_rows(tie: np.ndarray, opponents_at_best: np.ndarray) -> np.ndarray:
+    """Rows whose share-sum depends on the ORDER it is added in.
+
+    A candidate's share on a runout is 1.0 (win), 0.0 (loss) or
+    1 / (1 + k) on a tie, where k opponents share the best rank. When
+    1 + k is a power of two every share is a dyadic rational, every partial
+    sum of up to a few hundred of them is exactly representable, and any
+    summation order gives the same float. When it is not - k = 2 gives 1/3,
+    a three-way chop - the float depends on the order, and only the
+    reference path's own compacted `.sum()` reproduces it.
+
+    `tie` is (candidates, samples) and already masked to usable samples;
+    `opponents_at_best` is (samples,).
+    """
+    inexact = ((opponents_at_best + 1) & opponents_at_best) != 0
+    return (tie & inexact[None, :]).any(axis=1)
+
+
+class CandidateBlock:
+    """A FIXED candidate list's per-runout arrays, stacked once (M311).
+
+    `ranks` and `blocked` are (candidates, samples); `card_index` is
+    (candidates, 2); `board_blocked` is (candidates,). Built by
+    `SharedRunoutRanks.candidate_block` and valid only for the instance
+    that built it - the runouts are that instance's own.
+    """
+
+    __slots__ = ("combos", "ranks", "blocked", "card_index", "board_blocked")
+
+    def __init__(self, combos, ranks, blocked, card_index, board_blocked):
+        self.combos = combos
+        self.ranks = ranks
+        self.blocked = blocked
+        self.card_index = card_index
+        self.board_blocked = board_blocked
+
 _SUIT_INDEX = {suit: i for i, suit in enumerate("cdhs")}
 
 
@@ -443,6 +494,102 @@ class SharedRunoutRanks:
 
         return result
 
+    def candidate_block(self, candidate_combos: list) -> CandidateBlock:
+        """Rank a fixed candidate list once and stack its arrays (M311)."""
+        combos = list(candidate_combos)
+        self._ensure(combos)
+        count = len(combos)
+        if count:
+            ranks = np.stack([self._rank_of[c] for c in combos])
+            blocked = np.stack([self._blocked_of[c] for c in combos])
+            card_index = np.array(
+                [[_card_bit_index(c.card_a), _card_bit_index(c.card_b)]
+                 for c in combos], dtype=np.int64)
+            board_blocked = self._board_bits[card_index].any(axis=1)
+        else:
+            ranks = np.empty((0, self.num_samples), dtype=np.int64)
+            blocked = np.empty((0, self.num_samples), dtype=bool)
+            card_index = np.empty((0, 2), dtype=np.int64)
+            board_blocked = np.empty(0, dtype=bool)
+        return CandidateBlock(combos, ranks, blocked, card_index, board_blocked)
+
+    def equity_vector_block(self, opponent_combos: tuple,
+                            block: CandidateBlock) -> np.ndarray:
+        """`equity_vector` over a whole candidate block at once (M311).
+
+        **Bit-identical to `equity_vector` by construction, not merely
+        close.** MCCFR makes chaotic choices at near-ties (M74), so a
+        single-ULP difference in an equity could send a solve down a
+        different path; `allclose` would pass while the advice moved.
+
+        Every row is one of two kinds. When all its usable tie shares are
+        dyadic, every partial sum is exact, so wins + tie-shares computed
+        in any order IS the reference's float, and one division by the
+        same integer gives the same result. A row carrying a non-dyadic
+        share (a three-way chop's 1/3) is recomputed the reference's own
+        way, from its compacted array, because only that order reproduces
+        its rounding. `_exact_sum_rows` decides which is which.
+        """
+        count = len(block.combos)
+        result = np.full(count, np.nan, dtype=float)
+        opponents = list(opponent_combos)
+
+        seen = set()
+        for combo in opponents:
+            for card in combo.cards:
+                if card in seen or self._board_bits[_card_bit_index(card)]:
+                    return result
+                seen.add(card)
+
+        if self.num_samples == 0 or count == 0:
+            return result
+
+        self._ensure(opponents)
+
+        if opponents:
+            opponent_ranks = np.stack([self._rank_of[c] for c in opponents])
+            best_opponent = opponent_ranks.max(axis=0)
+            opponents_at_best = (opponent_ranks == best_opponent[None, :]).sum(axis=0)
+            opponent_blocked = np.zeros(self.num_samples, dtype=bool)
+            for combo in opponents:
+                opponent_blocked |= self._blocked_of[combo]
+        else:
+            best_opponent = np.full(self.num_samples, np.iinfo(np.int64).min,
+                                    dtype=np.int64)
+            opponents_at_best = np.zeros(self.num_samples, dtype=np.int64)
+            opponent_blocked = np.zeros(self.num_samples, dtype=bool)
+
+        excluded = block.board_blocked.copy()
+        if seen:
+            opponent_index = np.fromiter((_card_bit_index(c) for c in seen),
+                                         dtype=np.int64, count=len(seen))
+            excluded |= np.isin(block.card_index, opponent_index).any(axis=1)
+
+        usable = ~(block.blocked | opponent_blocked[None, :])
+        usable_count = usable.sum(axis=1)
+        valid = ~excluded & (usable_count > 0)
+
+        tie = (block.ranks == best_opponent[None, :]) & usable
+        # The reference's own expression, so the per-sample share is the
+        # same float it adds.
+        share = 1.0 / (1.0 + opponents_at_best)
+
+        exact = valid & _exact_sum_rows(tie, opponents_at_best)
+        fast = valid & ~exact
+        if fast.any():
+            wins = ((block.ranks[fast] > best_opponent[None, :]) & usable[fast]).sum(axis=1)
+            tie_share = tie[fast].astype(float) @ share
+            result[fast] = (wins + tie_share) / usable_count[fast]
+
+        for index in np.flatnonzero(exact):
+            ranks = block.ranks[index]
+            shares = np.where(ranks > best_opponent, 1.0, 0.0)
+            shares += np.where(ranks == best_opponent, share, 0.0)
+            result[index] = (float(shares[usable[index]].sum())
+                             / int(usable_count[index]))
+
+        return result
+
 
 class NwayBoardEquityCache:
     """Lazy, memoized N-way board-aware equity: computes and caches a
@@ -481,6 +628,7 @@ class NwayBoardEquityCache:
         self.seed = seed
         self._cache: dict = {}
         self._ranks = SharedRunoutRanks(self.board, samples=samples, seed=seed)
+        self._block = None      # the candidates, stacked once on first miss
 
     def traverser_equity_vector(self, opponent_combos: tuple) -> np.ndarray:
         key = tuple(sorted(opponent_combos, key=str))
@@ -488,7 +636,12 @@ class NwayBoardEquityCache:
         if cached is not None:
             return cached
 
-        vector = self._ranks.equity_vector(opponent_combos, self.candidate_combos)
+        if VECTORISED_EQUITY_LOOKUP:
+            if self._block is None:
+                self._block = self._ranks.candidate_block(self.candidate_combos)
+            vector = self._ranks.equity_vector_block(opponent_combos, self._block)
+        else:
+            vector = self._ranks.equity_vector(opponent_combos, self.candidate_combos)
         self._cache[key] = vector
         return vector
 

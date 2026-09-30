@@ -18707,3 +18707,114 @@ noise fails
 
 **Cost**: three smoke runs and one calibration, about 35 minutes of
 machine time in total. The campaign it refused would have been hours.
+
+## M311 — the three-live pot's cost was overhead inside the solve, not the solve: same advice, x1.4 faster, under the bar
+
+M309 and M310 left the THREE-live multiway pot as the one place a fast
+stand-in could both pay and be checked: 22.2% of real flop decisions and
+14.5% of turn ones (M291), both over the five-second bar, with a budget
+M291 refused to halve (-2.78 sigma) and an outside instrument that works
+there (M309's control, 198 reference hands, 3.28 sigma). **Before building
+any stand-in, the request was taken apart - and the lever turned out not
+to be a stand-in at all.**
+
+**THE ANATOMY, by exclusive wall time per stage**, 10 cold real three-live
+flop requests at the shipped 4,000 iterations, median 6.24s against M291's
+6.49s:
+
+| stage | share | median |
+|---|---|---|
+| CFR iterations (excluding equity) | **60.9%** | 3.48s |
+| equity lookups (inside the CFR loop) | **35.7%** | 2.06s |
+| runout ranking | 2.7% | 0.16s |
+| range derivation, tree, node training, other | 0.4% | 0.02s |
+
+Every spot's stages sum to its wall time. And the equity lookups split
+sharply: a **hit path of 0.03s** (~2us over ~14,000 calls) and a **miss
+path of 2.21s** - ~2,200 distinct opponent pairs at ~1.0ms each, each
+walking **~140 candidate hands in a Python loop**. Pure overhead, removable
+without touching any answer.
+
+**THE FIRST INSTRUMENT LIED, AND IT IS WORTH THE ENTRY.** cProfile reported
+**zero** solve time for a 10-second request. `/advise` runs its work through
+`run_in_threadpool`, and cProfile profiles only the thread it was enabled
+in. It would also have overstated CFR's share, because its per-call
+overhead inflates deeply recursive Python. What worked was wall timers
+wrapped where each function is LOOKED UP, with a thread-local stack for
+EXCLUSIVE time - the equity lookups run inside the CFR loop and would
+otherwise count twice. M217's "a measurement that silently reports
+nothing" in a new place.
+
+**WHAT SHIPPED.** `SharedRunoutRanks.candidate_block` stacks a fixed
+candidate list's per-runout arrays ONCE; `equity_vector_block` computes a
+miss over all of them at once. `NwayBoardEquityCache` - the only
+production caller, whose candidate list is fixed for its lifetime - uses
+it. `equity_vector` stays as the reference, and
+`VECTORISED_EQUITY_LOOKUP = False` restores it exactly.
+
+**BIT-IDENTICAL BY CONSTRUCTION, because "close" was not good enough.**
+MCCFR makes chaotic choices at near-ties (M74), so a one-ULP equity
+difference can send a solve down another path while `allclose` passes. A
+candidate's share on a runout is 1.0, 0.0, or 1/(1+k) on a k-way tie.
+When 1+k is a power of two every partial sum is exact, so any summation
+order gives the reference's float; when it is not - a three-way chop's
+1/3 - only the reference's own compacted `.sum()` reproduces the rounding,
+and those rows fall back to it. `_exact_sum_rows` decides which is which.
+
+**THE FALLBACK IS LOAD-BEARING, and the guard was made able to fail.**
+Removing it - the vectorisation anyone would write first - differs from
+the reference on **159 to 252 of 300** two-opponent pairs across four
+boards, 53-84%. With it, **300 of 300** on every board.
+`test_the_three_way_chop_fallback_is_load_bearing` forces the fallback off
+and asserts the mismatches APPEAR, because a bit-identity test that cannot
+fail is M214's dead guard. Every comparison in the suite is `array_equal`,
+PR #309's lesson.
+
+**END TO END, through `/advise`, interleaved** (M70), arm order alternating
+per spot, postflop caches cleared before every request, 26 real
+three-live decisions from M309's committed rows:
+
+| | first A/B | committed harness | over five seconds |
+|---|---|---|---|
+| **identical** | 26 / 26 | **26 / 26 (3,830 rows)** | - |
+| flop (n=16) | x1.43 | **x1.48**, 6.41 -> 4.30s, min x1.18 | **15 -> 1** |
+| turn (n=10) | x1.37 | **x1.40**, 5.61 -> 4.07s, min x1.30 | **7 -> 0** |
+
+**Every request faster**, and the ratio replicated in a second machine
+state. The absolute seconds are one machine state each (M240); the paired
+ratio is the claim.
+
+**WHAT THIS SAYS ABOUT THE SYSTEM-1 QUESTION.** The three-live cell's
+problem was "we serve the right answer too slowly", and a third of that
+slowness was overhead nobody had measured. Removing it gives **exactly the
+answer a stand-in would have had to approximate**, which no stand-in could
+promise. What remains is the CFR iterations themselves - 61%, ~3.5s, still
+the dominant term - so **if a learned proposal ever enters this thread, it
+is a warm start for those iterations, on this cell, checked with M309's
+control**. That is now the only place the idea has both a target and an
+instrument.
+
+**Scope.** Measured end to end on three-live flop and turn. Four-or-more
+live and the river use the same cache and are covered by the unit tests
+(one, two and three opponents; flop, turn and river boards) plus the
+argument that identical equity vectors make an identical solve - not by an
+end-to-end run. Heads-up uses `board_equity`'s pairwise table and preflop
+multiway uses `MultiwayEquityCache`; neither is touched.
+
+**The one cost, stated plainly.** Both disk stores (M284's preflop solves,
+M294's shared equity) fingerprint EVERY `poker_solver/` file, so this
+change invalidates them although no stored value would move. That is their
+deliberate design - "a stored answer from last week's engine is last week's
+engine" - and every engine change since M284 has paid it, including M307's.
+It means **one background refill, ~3.4 hours of idle warming**, during
+which a cold multiway bucket pays its full solve on first ask. The
+fingerprint is not weakened to avoid it.
+
+**Rules.**
+- **Profile the thread the work runs on.** A threadpool hides the whole
+  request from cProfile, and it reports zero rather than an error.
+- **The obvious vectorisation is not bit-identical.** When a sum mixes
+  exact and inexact shares, its float depends on order; claim identity
+  only with a test that can fail, and `array_equal`, never `allclose`.
+- **Take the request apart before building its replacement.** A third of
+  the cost here was overhead a stand-in would have been trained to hide.
