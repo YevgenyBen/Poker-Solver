@@ -67,8 +67,32 @@ amendments, inherited).
 
 The 2.0 bar is M291's `MIN_SIGMA`, inherited.
 
+**FOLLOW-UP, PRE-REGISTERED AFTER THE PRIZE AND BEFORE THIS ARM RAN.** The
+main rule answered "does a head start from the neighbour reach C4000" -
+yes - and left open WHY, which decides what would have to be built. If a
+head start from ANY board on the same preflop line does as well, the gain
+is a generic warm-up and one donor per (line, stack) serves everything;
+if only a NEARBY board does, a board library or a learned model is needed.
+So a third donor, on the same spots:
+
+    FAR0     a FAR board's 4,000 answer, as-is
+    WARM_F   1,000 iterations from a head start taken from FAR0's solve
+
+The far board is three cards drawn uniformly from the deck minus the
+target board and hero's cards, seeded by the spot's identity, so it is
+reproducible and unrelated to the target's texture.
+
+    GENERIC   WARM_F - C1000 >= 2 sigma AND WARM_N - WARM_F < 2 sigma:
+              the neighbour's closeness is not what carries the gain.
+    SPECIFIC  otherwise: proximity matters.
+
+**Joining onto the first run is only valid if the solve is deterministic**,
+so C1000 is recomputed on every spot and must EQUAL the stored value
+exactly; one mismatch voids the join and the follow-up is not read.
+
     python -m bench.studies.warm_start [rows.json]
     python -m bench.studies.warm_start --run rows.json [limit]
+    python -m bench.studies.warm_start --followup rows.json out.json
 
 An instrument: nothing under `poker_solver/` or `api/` imports it.
 """
@@ -117,6 +141,34 @@ def neighbour_board(board: str, hero: str):
                 continue
             return "".join(new_card if c == card else c for c in cards)
     return None
+
+
+def far_board(board: str, hero: str, key: str) -> str:
+    """Three cards drawn uniformly from the deck minus the target board and
+    hero's cards, seeded by `key` so the draw is reproducible."""
+    import random as _random
+    import zlib
+    taken = {board[i:i + 2] for i in range(0, len(board), 2)}
+    taken |= {hero[0:2], hero[2:4]}
+    deck = [r + s for r in RANKS for s in "cdhs" if r + s not in taken]
+    rng = _random.Random(zlib.crc32(key.encode("utf-8")))
+    return "".join(rng.sample(deck, 3))
+
+
+def followup_verdict(rows: list) -> dict:
+    """The follow-up rule. Pure. `rows` carry C1000, WARM_N, WARM_F and
+    `c1000_matches` - the determinism check that makes the join valid."""
+    if not rows:
+        return {"result": "NO DATA"}
+    if not all(r.get("c1000_matches") for r in rows):
+        return {"result": "NOT READ",
+                "note": "C1000 did not reproduce exactly, so the follow-up "
+                        "cannot be joined onto the first run"}
+    primary = [r for r in rows if r.get("source") == "pluribus"]
+    far_helps = _clears(paired(primary, "C1000", "WARM_F"), MIN_SIGMA)
+    near_better = _clears(paired(primary, "WARM_F", "WARM_N"), MIN_SIGMA)
+    return {"result": "GENERIC" if far_helps and not near_better else "SPECIFIC",
+            "far_helps": far_helps, "near_separably_better": near_better}
 
 
 def head_start(by_path: dict, donor_iterations: int = DONOR_ITERATIONS,
@@ -187,6 +239,132 @@ def verdict(s: dict) -> dict:
     return {"instrument": "passed", "mechanism": "passed", "result": result,
             "guard": "REVERSED" if reversed_ else "held",
             "halves": "held" if halves_ok else "did not hold"}
+
+
+class _Harness:                                           # pragma: no cover
+    """One `/advise` client with the seed and the head start bindable onto
+    the engine call the production path makes. Shared by `run` and
+    `followup`, so the two arms can never be measured two different ways."""
+
+    def __init__(self):
+        import random
+        import time
+        from fastapi.testclient import TestClient
+        from api import solving
+        from api.main import app
+        from bench import hand_db
+        from bench.real_replay import deal, request_for
+        from bench.server_warmup import clear_postflop_caches, warm_multiway
+        from bench.studies.wide_pot_budget import decisions_in
+        from poker_solver.warmstart import index_by_path
+
+        self._random, self._time = random, time
+        self._deal, self._request_for = deal, request_for
+        self._decisions_in, self._clear = decisions_in, clear_postflop_caches
+        self._index_by_path = index_by_path
+        self._solving = solving
+        self.control = {"seed": None, "warm": None, "captured": None}
+        self._real = solving.solve_flop_multiway
+        control, real = self.control, self._real
+
+        def solve(*a, **kw):
+            if control["seed"] is not None:
+                kw["seed"] = control["seed"]
+            if control["warm"] is not None:
+                kw["warm_start"] = control["warm"]
+            result = real(*a, **kw)
+            control["captured"] = result
+            return result
+
+        solving.solve_flop_multiway = solve
+        self.client = TestClient(app)
+        warm_multiway(depths=(100.0,), table_sizes=(6,), verbose=False)
+        self.db = hand_db.connect()
+        self._hand_db = hand_db
+
+    def close(self):
+        self._solving.solve_flop_multiway = self._real
+
+    def ask(self, body, iterations, seed=None, warm=None):
+        self.control.update(seed=seed, warm=warm, captured=None)
+        self._clear()            # a warm and a cold solve share a cache key
+        t0 = self._time.perf_counter()
+        r = self.client.post("/advise", json=dict(body, solve_iterations=iterations))
+        elapsed = self._time.perf_counter() - t0
+        js = r.json() if r.status_code == 200 else None
+        return js, self.control["captured"], elapsed
+
+    def warm_from(self, donor):
+        return (list(donor.hands),
+                head_start(self._index_by_path(donor.root, donor.node_data)))
+
+    def body(self, hand_id, index):
+        hand = next(self._hand_db.query(self.db, "id = ?", (hand_id,)))
+        _, acts, real = self._decisions_in(hand)
+        cards = self._deal(hand.board, hand.n_players, self._random.Random(index))
+        cards.update(real)
+        client = self.client
+        body, _, _ = self._request_for(
+            hand, acts, index, round(hand.row["eff_stack_bb"], 2), cards,
+            lambda b: (lambda r: (r.status_code, r.json() if r.status_code == 200 else {}))(
+                client.post("/advise", json=b)))
+        if body is None:
+            return None, None
+        body["hero_cards"] = cards[acts[index].player]
+        return body, real_kind(acts[index].kind)
+
+
+def _score(js, kind):
+    hero = (js.get("hero") or {}).get("strategy") or {}
+    table = js.get("strategy") or {}
+    if not hero:
+        return None, None
+    return mass_on(hero, kind), card_blind(table, {k: 1.0 for k in table}, kind)
+
+
+def followup(rows_path, out_path) -> int:                 # pragma: no cover
+    """The far-board arm, joined onto the first run's rows - valid only if
+    C1000 reproduces exactly on every spot."""
+    import pathlib
+    import time
+    rows = json.loads(pathlib.Path(rows_path).read_text())
+    h = _Harness()
+    out, started = [], time.perf_counter()
+    try:
+        for row in rows:
+            body, kind = h.body(row["hand"], row["i"])
+            if body is None or kind != row["real_kind"]:
+                continue
+            far = far_board(body["board"], body["hero_cards"],
+                            "%s:%s" % (row["hand"], row["i"]))
+            c1000_js, _, _ = h.ask(body, BUDGET)
+            far_js, far_result, far_t = h.ask(dict(body, board=far), DONOR_ITERATIONS)
+            if c1000_js is None or far_js is None or far_result is None:
+                continue
+            warm_js, _, warm_t = h.ask(body, BUDGET, warm=h.warm_from(far_result))
+            if warm_js is None:
+                continue
+            c1000, _ = _score(c1000_js, kind)
+            far0, far0_blind = _score(far_js, kind)
+            warm_f, warm_f_blind = _score(warm_js, kind)
+            if None in (c1000, far0, warm_f):
+                continue
+            merged = dict(row, far=far, FAR0=far0, FAR0_blind=far0_blind,
+                          WARM_F=warm_f, WARM_F_blind=warm_f_blind,
+                          WARM_F_seconds=round(warm_t, 3),
+                          WARM_F_iterations=warm_js.get("solve_iterations"),
+                          c1000_recheck=c1000,
+                          c1000_matches=(c1000 == row["C1000"]))
+            out.append(merged)
+            if len(out) % 10 == 0:
+                print("  %3d spots  %.1f min  c1000 reproduced on all so far: %s" % (
+                    len(out), (time.perf_counter() - started) / 60,
+                    all(r["c1000_matches"] for r in out)), flush=True)
+    finally:
+        h.close()
+    pathlib.Path(out_path).write_text(json.dumps(out, indent=0))
+    print("wrote %d spots" % len(out), flush=True)
+    return 0
 
 
 def run(out_path, limit=None) -> int:                     # pragma: no cover
@@ -320,6 +498,8 @@ def main(argv=None) -> int:                               # pragma: no cover
     args = list(argv if argv is not None else sys.argv[1:])
     if args and args[0] == "--run":
         return run(args[1], int(args[2]) if len(args) > 2 else None)
+    if args and args[0] == "--followup":
+        return followup(args[1], args[2])
     source = pathlib.Path(args[0]) if args else (
         pathlib.Path(__file__).resolve().parents[2] / "tests" / "data"
         / "warm_start_m312.json")

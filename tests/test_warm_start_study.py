@@ -190,3 +190,57 @@ def test_every_committed_neighbour_differs_from_its_board_by_one_card():
         a = {r["board"][i:i + 2] for i in range(0, 6, 2)}
         b = {r["neighbour"][i:i + 2] for i in range(0, 6, 2)}
         assert len(a - b) == 1 and len(b - a) == 1
+
+
+# ------------------------------------------------------ the far-board arm
+
+def test_the_far_board_shares_no_card_with_the_target_or_hero():
+    far = study.far_board("Kd8d3c", "AhQh", "spot:1")
+    cards = {far[i:i + 2] for i in range(0, 6, 2)}
+    assert len(cards) == 3
+    assert not cards & {"Kd", "8d", "3c", "Ah", "Qh"}
+
+
+def test_the_far_board_is_reproducible_from_the_spots_identity():
+    assert (study.far_board("Kd8d3c", "AhQh", "spot:1")
+            == study.far_board("Kd8d3c", "AhQh", "spot:1"))
+    assert (study.far_board("Kd8d3c", "AhQh", "spot:1")
+            != study.far_board("Kd8d3c", "AhQh", "spot:2"))
+
+
+def _fu(n, far_delta, near_delta, matches=True):
+    rows = []
+    for i in range(n):
+        wobble = ((i % 7) - 3) * 0.01
+        base = 0.40 + (i % 5) * 0.01
+        rows.append({"hand": "h%03d" % i, "i": 0, "source": "pluribus",
+                     "C1000": base, "WARM_F": base + far_delta + wobble,
+                     "WARM_N": base + near_delta + wobble * 0.5,
+                     "c1000_matches": matches})
+    return rows
+
+
+def test_one_c1000_mismatch_voids_the_join():
+    """Joining onto the first run is only sound if the solve reproduces."""
+    rows = _fu(60, 0.10, 0.10)
+    rows[5]["c1000_matches"] = False
+    assert study.followup_verdict(rows)["result"] == "NOT READ"
+
+
+def test_a_far_board_that_helps_as_much_reads_generic():
+    out = study.followup_verdict(_fu(60, 0.10, 0.10))
+    assert out["result"] == "GENERIC"
+
+
+def test_a_far_board_that_does_not_help_reads_specific():
+    out = study.followup_verdict(_fu(60, 0.0, 0.10))
+    assert out["result"] == "SPECIFIC" and not out["far_helps"]
+
+
+def test_a_far_board_that_helps_less_than_the_neighbour_reads_specific():
+    out = study.followup_verdict(_fu(60, 0.05, 0.30))
+    assert out["result"] == "SPECIFIC" and out["near_separably_better"]
+
+
+def test_no_followup_rows_is_not_a_result():
+    assert study.followup_verdict([]) == {"result": "NO DATA"}
