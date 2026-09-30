@@ -18818,3 +18818,120 @@ fingerprint is not weakened to avoid it.
   only with a test that can fail, and `array_equal`, never `allclose`.
 - **Take the request apart before building its replacement.** A third of
   the cost here was overhead a stand-in would have been trained to hide.
+
+## M312 — a head start lets 1,000 iterations match 4,000 at three live, and what carries it is mostly convergence, not the board
+
+M311 removed a third of the three-live multiway pot's cost as overhead and
+left CFR iterations - ~61% - as the dominant term. The only lever on them
+is to start somewhere better than uniform, which is the shape any learned
+"System 1" stand-in would take: a fast PROPOSAL that a short solve
+refines. So before building any model, this asked whether a proposal CAN
+do that job here, using proposals whose quality is known.
+
+**What shipped to make it askable.** `mccfr_solve(initial_node_data=)` and
+`solve_flop_multiway(warm_start=)` mirror the exact solver's M158 seam: off
+by default and byte-identical unused, grafted onto the tree the solve
+builds, and refused by name for a wrong-shaped table or a warm start
+combined with an ensemble.
+
+**The head start's convention, pre-registered.** Keep the donor's REGRETS,
+scaled to count as much as the refinement; reset its STRATEGY SUMS. Kept,
+a 4,000-iteration donor's sums carry ~16x the linear averaging weight of
+1,000 refinement iterations and simply return the donor's own answer -
+M158's convention is right there only because its donor IS the same spot.
+Regret matching is scale-invariant, so scaling changes how fast refinement
+can move, not where it starts.
+
+**RESULT: PRIZE, every pre-registered condition met.** 169 real three-live
+flop decisions (143 hands) by the published six-handed agent, M309's
+instrument, hand-clustered sigma:
+
+| comparison | delta | hand sigma |
+|---|---|---|
+| instrument: C4000 - C1000 | +0.0786 | **+3.22** (M309's flop control: +0.0746, 3.03) |
+| mechanism: oracle head start - C1000 | +0.1344 | **+4.19** |
+| **question: neighbour head start - C1000** | **+0.1198** | **+3.64** |
+| neighbour head start vs C4000 | higher by 0.0412 | 1.71, not separable |
+| guard: card-blind lift of the question | +0.0839 | +2.76, held |
+| halves | +2.79 / +2.35 | held |
+
+**A head start from the board one card away, plus 1,000 iterations, matches
+the 4,000-iteration answer at ~0.28x its solve time** - a ratio that held
+across a ~2.5x machine drift between the smoke and the campaign (M240), so
+the ratio is the claim and the seconds are not.
+
+**"Matches", not "beats" - the card-blind lift is what says so.** Raw, the
+neighbour arm scores above C4000; on the lift it is +0.0301 at 1.30 sigma,
+and part of its raw edge is a range-wide lean (+0.0111 at 2.68 sigma on the
+blind row) - exactly what the guard exists to separate. The ORACLE head
+start does genuinely beat C4000 (lift +0.0485, 2.45 sigma), consistent with
+a warm-up-free TAIL average over more total iterations: resetting the
+strategy sums discards the early iterations M69/M71 adopted linear
+averaging to down-weight.
+
+**THE FOLLOW-UP, pre-registered after the prize and before it ran: near
+board or ANY board?** It decides what would have to be built - one donor
+per (line, stack) if any same-line board works, a board library or a
+learned model if only a nearby one does. Same 169 spots, a far board drawn
+at random. **C1000 was recomputed on every spot and reproduced EXACTLY on
+169 of 169**, so joining onto the first run is valid - and the multiway
+path through `/advise` is deterministic, which no earlier study had checked
+at this scale.
+
+| comparison | delta | hand sigma |
+|---|---|---|
+| far head start - C1000 | +0.0612 | 1.62 |
+| neighbour - far head start | +0.0586 | 1.60 |
+| far head start vs C4000 | 0.5590 against 0.5600 | 0.48 |
+
+**The rule reads SPECIFIC, and that verdict is weaker than it sounds - my
+rule was mis-specified.** It made SPECIFIC the DEFAULT ("otherwise,
+proximity matters"), so an underpowered far arm reads SPECIFIC although
+proximity mattering was not shown either (1.60 sigma). Neither test
+clears; **the honest reading is UNRESOLVED.** The pre-registered verdict is
+left as written and pinned, with this reason beside it, rather than edited
+after the data - a rule is only worth pre-registering if it is not
+rewritten when it reads awkwardly.
+
+**THE NUMBER THAT REFRAMES IT.** A random far board's 4,000-iteration
+answer, served AS-IS for the target (FAR0), scores **0.5459 - not separable
+from C4000 (0.58 sigma), and +0.054 above C1000**. An answer for the WRONG
+BOARD nearly matches the right one against strong play. So at three live,
+agreement with strong play is driven mostly by CONVERGENCE, not by the
+board - consistent with M264's mechanism, where more iterations cut the
+multiway over-betting, a tendency of the preflop LINE rather than of the
+board. Two consequences:
+- the 4,000 budget's value here is largely GENERIC, so the far head start
+  plausibly carries it too - its point estimate sits at C4000's - and the
+  follow-up is underpowered rather than negative;
+- **"matches C4000" is a claim at the resolution of an instrument that
+  cannot strongly penalise a wrong-board answer.** Kind-level agreement at
+  three live is dominated by line-level tendency, which limits what any
+  study on this instrument can say about board-specific quality.
+
+**What it means for the System-1 question.** A proposal CAN do the job:
+the mechanism carries a perfect one, and a one-card-away neighbour reaches
+C4000 at a quarter of the solve. If the generic reading holds, the product
+change is almost trivial - one precomputed donor per (line, stack), every
+three-live flop request refined for 1,000 iterations - and needs no
+learned model at all. Settling it needs a better-powered far arm (the hand
+store holds ~2,600 three-live decisions by the reference; this used 169)
+under a THREE-outcome rule, or directly testing the design that would ship:
+one fixed donor per line.
+
+**Scope.** Three-live FLOP only, 100bb, the reference agent's decisions,
+hero force-included. Nothing ships in the product: the seam is off by
+default and no request is warm-started.
+
+**Cost.** 114 minutes for the main run and 55 for the follow-up, peak
+0.4 GB. The engine change invalidates the disk stores again (M311's cost,
+paid once more).
+
+**Rules.**
+- **A binary rule needs a third outcome for "neither test clears".** A
+  default verdict silently turns an underpowered arm into a finding.
+- **Check that a study's instrument can penalise the error it is looking
+  for.** Serving a wrong board's answer scored like the right one here,
+  which bounds every board-specific claim made on this instrument.
+- **Recompute one arm on every spot before joining two runs.** 169 of 169
+  exact is what made the follow-up readable at all.

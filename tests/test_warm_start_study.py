@@ -244,3 +244,36 @@ def test_a_far_board_that_helps_less_than_the_neighbour_reads_specific():
 
 def test_no_followup_rows_is_not_a_result():
     assert study.followup_verdict([]) == {"result": "NO DATA"}
+
+
+# ---------------------------------------------- the committed results
+
+FAR = (pathlib.Path(__file__).resolve().parent / "data" / "warm_start_far_m312.json")
+
+
+@pytest.mark.skipif(not ROWS.exists(), reason="the campaign has not run yet")
+def test_the_committed_main_result_is_the_one_the_milestone_quotes():
+    s = study.summarise(json.loads(ROWS.read_text()))
+    out = study.verdict(s)
+    assert out["result"] == "PRIZE"
+    assert out["mechanism"] == "passed" and out["guard"] == "held"
+    assert s["C1000->C4000"]["hand_sigma"] == pytest.approx(3.22, abs=0.05)
+    assert s["C1000->WARM_N"]["hand_sigma"] == pytest.approx(3.64, abs=0.05)
+
+
+@pytest.mark.skipif(not FAR.exists(), reason="the follow-up has not run yet")
+def test_the_follow_up_join_is_valid_because_c1000_reproduced_on_every_spot():
+    rows = json.loads(FAR.read_text())
+    assert rows and all(r["c1000_matches"] for r in rows)
+
+
+@pytest.mark.skipif(not FAR.exists(), reason="the follow-up has not run yet")
+def test_the_follow_up_reads_specific_under_its_own_rule_and_neither_test_clears():
+    """Pinned as pre-registered, and with the reason it is NOT evidence
+    that proximity matters: SPECIFIC was the rule's default, and neither
+    the far arm nor the near-over-far difference cleared 2 sigma. The
+    honest reading is unresolved; the rule is left as it was written."""
+    rows = json.loads(FAR.read_text())
+    out = study.followup_verdict(rows)
+    assert out["result"] == "SPECIFIC"
+    assert out["far_helps"] is False and out["near_separably_better"] is False

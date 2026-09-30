@@ -407,6 +407,24 @@ solve time for a 10-second request, because `/advise` runs its work through
 chop's 1/3 makes a sum's float depend on its order; without a fallback to
 the reference's own sum, 159-252 of 300 opponent pairs differed. Claim
 identity only with `array_equal` and a test that can fail.
+**M312: A HEAD START LETS 1,000 ITERATIONS MATCH 4,000 AT THREE LIVE.**
+`mccfr_solve(initial_node_data=)` / `solve_flop_multiway(warm_start=)` is
+the seam, off by default. A head start from the board one card away -
+the donor's regrets scaled to count as much as the refinement, its
+strategy sums reset - plus 1,000 iterations beats cold 1,000 by **+0.1198
+at 3.64 sigma** and matches C4000 at **~0.28x the solve time** (169 real
+decisions, every pre-registered condition met, card-blind guard held).
+**But what carries it is mostly CONVERGENCE, not the board**: a random far
+board's 4,000 answer served AS-IS is not separable from C4000 (0.58 sigma)
+and +0.054 above C1000, so kind-level agreement at three live is driven by
+line-level tendency (M264's over-betting), and "matches C4000" is a claim
+at that resolution. Whether ANY same-line donor works (one precomputed
+donor per line, no model at all) is UNRESOLVED: the far head start sits at
+C4000's point estimate but clears neither test (1.62 / 1.60 sigma).
+**Rule: a binary rule needs a third outcome for "neither test clears"** -
+M312's follow-up made SPECIFIC the default and so read an underpowered arm
+as a finding; the verdict was left as written and pinned with that reason.
+**Rule: check the instrument can penalise the error being looked for.**
 **Rule: a leaf-value study must not use a UNIFORM equity table.** One ULP
 of reordering moves a realistic solve 1.3e-14 and a flat one **0.50**,
 because every decision there is exactly tied and M74's bang-bang
@@ -1195,7 +1213,8 @@ requests now reject unknown fields by name rather than ignoring them.
                            `depth_leaf_value.py` (M307),
                            `wide_pot_budget.py` (M309),
                            `wide_pot_ordering.py` (M310),
-                           `equity_lookup_ab.py` (M311)
+                           `equity_lookup_ab.py` (M311),
+                           `warm_start.py` (M312)
 
     frontend/src/          React + TypeScript (Vite)
       components/          AdviseSolver is the front door; the rest are narrower demo tools
