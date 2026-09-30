@@ -801,7 +801,7 @@ _SUPERSEDED_ENSEMBLE_DEFAULT = 4  # what a latency budget would buy, if one appe
 
 def _mccfr_ensemble(root, combos, positions, equity_cache, *, iterations, seed,
                     initial_reach, runs, board, equity_kwargs,
-                    action_grouping=None):
+                    action_grouping=None, initial_node_data=None):
     """Average `runs` independent MCCFR solves into one node_data.
 
     Strategy sums are ADDED rather than the averaged strategies being
@@ -821,7 +821,15 @@ def _mccfr_ensemble(root, combos, positions, equity_cache, *, iterations, seed,
         return mccfr_solve(root, combos, positions, equity_cache,
                            iterations=iterations, seed=seed,
                            initial_reach=initial_reach,
-                           action_grouping=action_grouping)
+                           action_grouping=action_grouping,
+                           initial_node_data=initial_node_data)
+
+    if initial_node_data is not None:
+        # One donor seeding K independent runs would count its accumulators
+        # K times over, and handing it to run 0 alone would make run 0 a
+        # different kind of solve from the rest. Neither is a decision to
+        # make silently (M312).
+        raise ValueError("a warm start cannot be combined with an ensemble")
 
     merged: dict = {}
     for index in range(runs):
@@ -857,6 +865,7 @@ def solve_flop_multiway(
     seed: int = 0,
     ensemble: int | None = None,
     action_grouping: str | None = None,
+    warm_start=None,
 ) -> StrategyResult:
     """Solve a single flop betting round for 2+ live positions and return
     its strategy — the direct N-position generalization of `solve_flop`
@@ -931,6 +940,17 @@ def solve_flop_multiway(
         equity_kwargs["samples"] = equity_samples
     equity_cache = NwayBoardEquityCache(board, combos, **equity_kwargs)
 
+    # M312: `warm_start` is `(cached_hands, {action path: InfoSetTable})`,
+    # the heads-up `solve_flop`'s own M158 shape, grafted onto THIS tree
+    # once it exists - a node's action path is stable across rebuilds of
+    # the same config, and `graft_node_data` re-shapes rows onto this pool
+    # (a hand the donor lacked starts at zero, exactly as a cold solve
+    # would). What the donor tables CONTAIN is the caller's choice.
+    initial_node_data = None
+    if warm_start is not None:
+        cached_hands, by_path = warm_start
+        initial_node_data = graft_node_data(root, by_path, cached_hands, combos)
+
     actual_iterations = iterations if iterations is not None else DEFAULT_FLOP_MULTIWAY_ITERATIONS
     start = time.perf_counter()
     node_data = _mccfr_ensemble(
@@ -938,6 +958,7 @@ def solve_flop_multiway(
         iterations=actual_iterations, seed=seed, initial_reach=initial_reach,
         runs=ensemble if ensemble is not None else DEFAULT_MULTIWAY_ENSEMBLE_RUNS,
         board=board, equity_kwargs=equity_kwargs, action_grouping=action_grouping,
+        initial_node_data=initial_node_data,
     )
     elapsed = time.perf_counter() - start
 
